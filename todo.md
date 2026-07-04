@@ -90,6 +90,7 @@ Keep materially new suggestions here so they survive beyond the current chat.
 - Do not delete old entries; mark them completed, declined, deferred, or superseded with date and chat context.
 - Keep audit-created items here only when they are deferred, optional, or not yet execution-ready; otherwise promote them into `## Active Next Steps`.
 - When a suggestion comes from an audit or feedback review, link back to the originating audit record or `Feedback Decision Log` entry and later note which chat implemented or declined it.
+- 2026-07-04 | recommendation: pattern-mine `tabler/tabler` during the next Mission Control UI polish pass, especially cards, dense tables, badges, tabs, segmented controls, and offline-safe icon affordances; do not install `@tabler/core` wholesale unless a later implementation proves the static file:// bundle stays simpler and safer. | why: Tabler is a mature MIT Bootstrap dashboard kit, but this repo's product intent is still a single-file local/offline dashboard. | by: Codex thread `019f2d4e-54ba-7273-8188-12506a3daf19`; source card: third-party index `researched-repos/tabler-tabler.md` commit `171a122`. | linear: self-contained until Linear is configured.
 
 ## Active Branch Ledger
 Keep one entry per non-trivial active branch so any chat can see why it exists, which chat opened or resumed it, what work is active, what must happen before merge or closeout, and whether the branch should be deleted or intentionally retained.
