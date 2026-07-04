@@ -896,6 +896,35 @@ body {
   function edgeColor(t) { return (EDGE_INFO[t] || ["#5b6272"])[0]; }
   function edgeVerb(t)  { return (EDGE_INFO[t] || [null, null, t])[2]; }
 
+  function renderRecentPath(main, nodes) {
+    var recent = (nodes || []).filter(function (n) { return n.last_activity; })
+      .sort(function (a, b) { return Date.parse(b.last_activity) - Date.parse(a.last_activity); })
+      .slice(0, 5);
+    if (!recent.length) return;
+
+    main.appendChild(h("div", { class: "mc-section-head" }, h("h2", { text: "Recent chat journal" })));
+    main.appendChild(h("div", { class: "mc-card-foot" }, "A short trail of what you touched most recently."));
+    var list = h("div", { class: "mc-list" });
+    recent.forEach(function (n) {
+      list.appendChild(h("div", { class: "mc-chatrow" },
+        h("span", { class: "mc-provider" }, journalWhen(n.last_activity)),
+        h("span", { class: "mc-chatrow-title mc-ellipsis", title: n.title || n.id }, n.title || n.id),
+        h("span", { class: "mc-provider" }, "AI: " + providerLabel(n.provider)),
+        n.repo ? h("span", { class: "mc-repo" }, "Repo: " + n.repo) : null));
+    });
+    main.appendChild(list);
+  }
+
+  function journalWhen(iso) {
+    var d = new Date(iso);
+    if (!isFinite(d.getTime())) return "";
+    var n = new Date(LOAD_EPOCH * 1000);
+    var day = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+    var today = new Date(n.getFullYear(), n.getMonth(), n.getDate()).getTime();
+    var label = day === today ? "Today" : (day === today - 86400000 ? "Yesterday" : d.toLocaleDateString([], { month: "short", day: "numeric" }));
+    return label + " " + d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  }
+
   function renderMap(main) {
     var g = guard("chats");
     var head = h("div", { class: "mc-section-head" }, h("h2", { text: "Connection map" }));
@@ -912,6 +941,7 @@ body {
 
     main.appendChild(h("div", { class: "mc-card-secondary" },
       "Each dot is a chat. Lines show how they connect — one chat that started another, an audit of another, a shared topic. Click a dot to see it and reopen it."));
+    renderRecentPath(main, nodes);
 
     if (typeof cytoscape === "undefined") {
       main.appendChild(h("div", { class: "mc-banner mc-banner-amber" },

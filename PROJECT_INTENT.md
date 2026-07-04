@@ -20,6 +20,7 @@ chat without being visible from one place.
 - Primary users: Trevor as solo operator and AI-workflow owner.
 - Top jobs:
   - See which chats and repos need attention now.
+  - Review a short recent-chat journal the next day to remember where work moved.
   - Reopen or inspect the exact chat behind a work item.
   - Confirm local background jobs and data feeds are fresh enough to trust.
   - Decide which model/platform has enough usage headroom for the next task.
@@ -37,6 +38,8 @@ chat without being visible from one place.
 - Home tells Trevor what needs attention and the whole row opens the right place.
 - Map explains chat relationships visually: dots are chats, lines are how they
   started, audited, referenced, or continued each other.
+- Map includes a very short recent-chat journal so Trevor can remember what he
+  touched yesterday without reading transcripts.
 - Chats lists individual chats with plain labels: AI, repo, active in last
   30 minutes, unfinished work, Reopen this chat, and Read it.
 - Git, Usage, and Automation use operator language before implementation labels.

@@ -29,6 +29,7 @@ Mirror every configured Linear issue here with the repo-side home that explains 
 If it's not here, it isn't remembered.
 Preserve a durable completion trail for verified work instead of deleting it from active planning.
 - Going forward, prefer one-line entries in this shape: `YYYY-MM-DD | <issue-or-scope>: short title — landed as <SHA>; full record in Work Record Log YYYY-MM-DD`.
+- 2026-07-04 | Map recent chat journal — added a five-line recent-chat recap to the Connection map; full record below.
 - 2026-07-04 | ER-087 follow-up audit gaps — governance scaffold, product intent, tab wording, stale-ingest honesty, and Map smoke coverage landed in this change; full record below.
 
 ## Work Record Log
@@ -65,6 +66,21 @@ Use one entry per bounded task, fix, audit, or review that would otherwise lose 
 - by: Codex thread `019f2b73-9811-7392-b511-201c1f109997`.
 - triggered by: Trevor follow-up to audited chat `1ef98716-30bb-4530-80e0-6b2f3fa74f79`.
 - led to: ER-089 and ER-090 remain active V2 queue items; Linear remains repo-only until configured.
+- linear: self-contained until Linear is configured.
+
+### 2026-07-04 — Map recent chat journal
+- Problem: Trevor wanted the connected-chat view to show a tiny next-day memory aid: what he touched, when, and which chat it was.
+- Reasoning: the existing chats feed already has title, AI, repo, and `last_activity`, so a separate journal collector or summarizer would be extra moving parts.
+- Diagnosis inputs: `dashboard/index.html`, `scripts/dashboard-render-smoke.js`, `dashboard/fixtures/chats.json`, and installed Map screenshot.
+- Implementation inputs: existing Map renderer, chat fixture feed, and `PROJECT_INTENT.md`.
+- Fix: added a `Recent chat journal` section to Map, capped at five newest chats, using existing feed fields only; render smoke now asserts the newest chat title appears on Map.
+- Self-audit:
+  - method: renderer smoke, dashboard suite, whitespace check, installed-dashboard update, and browser capture.
+  - outcome: passed; screenshot shows the five-row journal above the graph.
+  - did not verify: whether titles are always the best summary text for every provider; this uses current feed data until a real summarizer is justified.
+- by: Codex thread `019f2b73-9811-7392-b511-201c1f109997`.
+- triggered by: Trevor requested a one-to-five-line connected-chat journal/reminder.
+- led to: no new active follow-up; a title-quality upgrade can wait until titles prove insufficient.
 - linear: self-contained until Linear is configured.
 
 ## Suggested Recommendation Log
@@ -143,6 +159,7 @@ If it's not here, it isn't remembered.
 
 ## Test Evidence Log
 If it's not here, it isn't remembered.
+- 2026-07-04 | commands: `node --check scripts/dashboard-render-smoke.js && node scripts/dashboard-render-smoke.js .`; `REPO_ROOT="$PWD" bash scripts/dashboard.test.sh --require-shell`; `git diff --check`; `MISSION_CONTROL_HOME="$HOME/.mission-control" REPO_ROOT="$PWD" bash scripts/dashboard install`; browser capture of installed Map | result: pass; render smoke proves Map includes newest chat title, dashboard suite PASS=21 FAIL=0, screenshot written to `/tmp/mission-control-map-journal.png` | log/PR reference: Work Record Log `2026-07-04 — Map recent chat journal` | by: Codex | linear: self-contained until Linear is configured.
 - 2026-07-04 | commands: `bash scripts/chat-graph.test.sh`; `bash scripts/automation-status.test.sh`; `REPO_ROOT="$PWD" bash scripts/dashboard.test.sh --require-shell`; `node --check scripts/dashboard-render-smoke.js && node scripts/dashboard-render-smoke.js .`; repo governance validators; browser captures for Home/Map/Chats | result: pass; dashboard suite PASS=21 FAIL=0, render smoke all 6 tabs, governance validators pass after thin-root note fix | log/PR reference: local images `/tmp/mission-control-home-audit.png`, `/tmp/mission-control-map-audit.png`, `/tmp/mission-control-chats-audit.png` | by: Codex | linear: self-contained until Linear is configured.
 
 ## Testing Cadence Matrix
@@ -169,3 +186,4 @@ Record outside feedback and the resulting reasoning once, then update the same e
   - `by`
   - `linear`
 - Reuse or update an existing entry when the same feedback thread comes back instead of opening duplicate records.
+- 2026-07-04 | feedback source: Trevor in Codex thread `019f2b73-9811-7392-b511-201c1f109997` | feedback summary: connected-chat view should include a tiny journal/log of what was done and which chat it happened in | evaluation chat: same Codex thread | reasoning response: accepted; implemented from existing chat-feed timestamps/titles instead of adding a new collector | decision status: accepted | implementation/disposition chat: same Codex thread | linked branch / audit / suggestion / test evidence: Work Record `2026-07-04 — Map recent chat journal`; Test Evidence `2026-07-04` | by: Codex | linear: self-contained until Linear is configured.

@@ -82,7 +82,14 @@ function firstStr(obj, keys) {
   }
   return null;
 }
+function newestChatTitle(feed) {
+  const nodes = (((feed || {}).data || {}).nodes || []).slice();
+  nodes.sort((a, b) => Date.parse(b.last_activity || '') - Date.parse(a.last_activity || ''));
+  const n = nodes.find(x => x && x.title);
+  return n && n.title;
+}
 const markers = {
+  map: newestChatTitle(feeds.chats),
   chats: firstStr(feeds.chats, ['nodes']),
   git: firstStr(feeds.git, ['repos', 'repositories']),
   usage: firstStr(feeds.usage, ['providers']),
