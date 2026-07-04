@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.gillettes.mission-control</string>
+  <!-- Runs a STABLE runtime copy at __MCHOME__/bin/dashboard, NOT the repo path —
+       the repo script lives on a feature branch, so a branch switch would otherwise
+       silently kill this unattended job (exactly the failure this tool exists to
+       catch). __MCHOME__ is the mission-control home ($MISSION_CONTROL_HOME, default
+       ~/.mission-control) — install substitutes it with the ALREADY-COMPLETE home
+       path, so this template must NOT re-add ".mission-control" itself. Canonical
+       source is scripts/dashboard; install = cp it to bin/ + substitute. -->
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/zsh</string>
+    <string>-lc</string>
+    <string>exec "$0" "$@"</string>
+    <string>__MCHOME__/bin/dashboard</string>
+    <string>collect</string>
+    <string>--due</string>
+  </array>
+  <key>StartInterval</key><integer>300</integer>
+  <key>RunAtLoad</key><true/>
+  <key>StandardOutPath</key><string>__MCHOME__/logs/launchd.out.log</string>
+  <key>StandardErrorPath</key><string>__MCHOME__/logs/launchd.err.log</string>
+</dict>
+</plist>

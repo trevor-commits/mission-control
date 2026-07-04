@@ -1,0 +1,137 @@
+{
+  "schema": 1,
+  "feed": "automation",
+  "generated_at": "2026-07-02T12:00:00Z",
+  "generated_epoch": 1751467200,
+  "cadence_s": 300,
+  "ok": true,
+  "error": null,
+  "data": {
+    "checked_at": "2026-07-02T12:00:00Z",
+    "t7_mounted": false,
+    "jobs": [
+      {
+        "label": "Nightly Review",
+        "name": "com.gillettes.nightly-review",
+        "kind": "calendar",
+        "schedule": "23:30 daily",
+        "loaded": true,
+        "pid": null,
+        "last_exit": 0,
+        "state": "green",
+        "evidence_age_s": 3600,
+        "err_log_tail": null
+      },
+      {
+        "label": "Usage Snapshot",
+        "name": "com.gillettes.usage-snapshot",
+        "kind": "interval",
+        "schedule": "every 1800s",
+        "loaded": true,
+        "pid": null,
+        "last_exit": 0,
+        "state": "yellow",
+        "evidence_age_s": 2200,
+        "err_log_tail": null
+      },
+      {
+        "label": "morning-health-brief 🚑",
+        "name": "com.gillettes.morning-health-brief",
+        "kind": "calendar",
+        "schedule": "07:00 daily",
+        "loaded": true,
+        "pid": null,
+        "last_exit": 1,
+        "state": "red",
+        "evidence_age_s": 90000,
+        "err_log_tail": "Traceback (most recent call last):\n  File \"brief.py\", line 88, in <module>\n    resets = row['resets_in_min']\nKeyError: 'resets_in_min'"
+      },
+      {
+        "label": "Repo Groom",
+        "name": "com.gillette.repo-groom",
+        "kind": "interval",
+        "schedule": "every 10800s",
+        "loaded": false,
+        "pid": null,
+        "last_exit": null,
+        "state": "degraded",
+        "evidence_age_s": null,
+        "err_log_tail": "launchctl list output could not be parsed"
+      },
+      {
+        "label": "Mobile Connect",
+        "name": "com.gillettes.mobile-connect",
+        "kind": "keepalive",
+        "schedule": "keepalive (throttle 10s)",
+        "loaded": false,
+        "pid": null,
+        "last_exit": null,
+        "state": "never",
+        "evidence_age_s": null,
+        "err_log_tail": null
+      },
+      {
+        "label": "Old Backup Job",
+        "name": "com.gillettes.old-backup",
+        "kind": "calendar",
+        "schedule": "retired 2026-05",
+        "loaded": false,
+        "pid": null,
+        "last_exit": null,
+        "state": "retired",
+        "evidence_age_s": null,
+        "err_log_tail": null
+      },
+      {
+        "label": "Delegation Audit",
+        "name": "com.gillettes.delegation-audit",
+        "kind": "calendar",
+        "schedule": "08:45 daily; Wed 13:15",
+        "loaded": true,
+        "pid": null,
+        "last_exit": 0,
+        "state": "offline-media",
+        "evidence_age_s": null,
+        "err_log_tail": null
+      },
+      {
+        "label": "Mission Control",
+        "name": "com.gillettes.mission-control",
+        "kind": "interval",
+        "schedule": "every 300s",
+        "loaded": true,
+        "pid": null,
+        "last_exit": 0,
+        "state": "green",
+        "evidence_age_s": 120,
+        "err_log_tail": null
+      },
+      {
+        "label": "Chat Graph Ingest",
+        "name": "chat-graph-ingest",
+        "kind": "interval",
+        "schedule": "every 86400s",
+        "loaded": true,
+        "pid": null,
+        "last_exit": 0,
+        "state": "green",
+        "evidence_age_s": 40000,
+        "err_log_tail": null
+      }
+    ],
+    "unregistered": [
+      "com.gillette.repo-state-watch.scan",
+      "com.gillettes.experimental-sweep"
+    ],
+    "exceptions": 3,
+    "counts": {
+      "green": 4,
+      "yellow": 1,
+      "red": 1,
+      "degraded": 1,
+      "never": 1,
+      "retired": 1,
+      "offline-media": 1
+    }
+  }
+}

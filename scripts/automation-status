@@ -1,0 +1,337 @@
+#!/usr/bin/env python3
+# automation-status — background-job health collector for the mission-control
+# dashboard (ER-087 Part B "Automation health"). python3 stdlib only.
+#
+# Reads a registry JSON of expected launchd jobs, compares against live truth
+# (`launchctl list`, evidence file mtimes, err-log tails) and emits either a
+# human table (default) or the standard feed envelope (--json).
+#
+# Truth sources are all overridable for hermetic tests:
+#   AUTOMATION_STATUS_LAUNCHCTL   replaces the `launchctl` binary
+#   AUTOMATION_STATUS_T7          top-level T7 mount path (default /Volumes/T7)
+# Registry path: --registry PATH (default dashboard/jobs.json at repo root).
+#
+# Exit 0 whenever it could run at all — the states live in the data; the
+# dashboard CLI decides exit codes. Registry missing/unreadable → ok:false
+# envelope, still exit 0.
+
+import argparse
+import json
+import os
+import re
+import subprocess
+import sys
+import time
+
+CADENCE_S = 300
+FEED = "automation"
+SCHEMA = 1
+
+# Mirror the secret-redaction layer in scripts/search-transcripts — err-log
+# lines are untrusted display text and must be scrubbed before output.
+_SECRET_RE = re.compile(
+    r"(sk-[A-Za-z0-9_-]{20,}"
+    r"|AIza[0-9A-Za-z_-]{35}"
+    r"|ya29\.[0-9A-Za-z._-]+"
+    r"|ghp_[A-Za-z0-9]{20,}|gho_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}"
+    r"|xox[baprs]-[A-Za-z0-9-]{10,}"
+    r"|AKIA[0-9A-Z]{16}"
+    r"|eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}"  # JWT
+    r"|(?i:bearer)\s+[A-Za-z0-9._-]{16,})"
+)
+
+
+def _redact(s):
+    return _SECRET_RE.sub("«REDACTED-SECRET»", s)
+
+
+def _repo_root():
+    return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def _expand(path):
+    return os.path.expanduser(path or "")
+
+
+def _is_offline_media(path):
+    """A /Volumes/<name> path whose mount root is absent = media unplugged."""
+    p = _expand(path)
+    if not p.startswith("/Volumes/"):
+        return False
+    parts = p.split("/")  # ['', 'Volumes', '<name>', ...]
+    if len(parts) < 3 or not parts[2]:
+        return False
+    mount_root = "/" + os.path.join(parts[1], parts[2])
+    return not os.path.exists(mount_root)
+
+
+def read_registry(path):
+    """Return (entries, error). Missing/unreadable/bad → ([], 'message')."""
+    try:
+        with open(path, "r") as f:
+            data = json.load(f)
+    except FileNotFoundError:
+        return [], "registry not found: %s" % path
+    except (OSError, ValueError) as e:
+        return [], "registry unreadable: %s" % e
+    jobs = data.get("jobs") if isinstance(data, dict) else data
+    if not isinstance(jobs, list):
+        return [], "registry has no jobs[] list"
+    return jobs, None
+
+
+def parse_launchctl(text):
+    """Parse the stable 3-column `PID\\tStatus\\tLabel` form.
+
+    Returns (by_label, parse_ok). by_label[label] = {pid, status}.
+    Garbage that lacks the header → ({}, False) so the caller marks every
+    job 'degraded' rather than falsely all-red.
+    """
+    lines = [ln for ln in text.splitlines() if ln.strip()]
+    if not lines:
+        return {}, False
+    header = lines[0].split("\t")
+    if len(header) < 3 or header[0].strip() != "PID" or "Label" not in header[2]:
+        return {}, False
+    by_label = {}
+    for ln in lines[1:]:
+        cols = ln.split("\t")
+        if len(cols) < 3:
+            continue
+        pid_s, status_s, label = cols[0].strip(), cols[1].strip(), cols[2].strip()
+        pid = None if pid_s in ("-", "") else _to_int(pid_s)
+        status = _to_int(status_s)
+        if label:
+            by_label[label] = {"pid": pid, "status": status}
+    return by_label, True
+
+
+def _to_int(s):
+    try:
+        return int(s)
+    except (TypeError, ValueError):
+        return None
+
+
+def launchctl_list(binary):
+    try:
+        out = subprocess.run(
+            [binary, "list"], capture_output=True, text=True, timeout=15
+        )
+        return out.stdout or ""
+    except (OSError, subprocess.SubprocessError):
+        return ""
+
+
+def err_log_tail(path):
+    p = _expand(path)
+    if not p or not os.path.isfile(p):
+        return None
+    try:
+        with open(p, "r", errors="replace") as f:
+            last = ""
+            for line in f:
+                if line.strip():
+                    last = line.rstrip("\n")
+        if not last:
+            return None
+        return _redact(last[:200])
+    except OSError:
+        return None
+
+
+def evidence_state(evidence):
+    """Return (freshest_age_s | None, offline_media_bool).
+
+    freshest_age = seconds since the newest existing evidence file's mtime.
+    None means no readable evidence. offline_media = evidence lives on
+    unmounted removable media (and none of it is currently readable)."""
+    now = time.time()
+    newest = None
+    saw_media_offline = False
+    saw_readable = False
+    for ev in evidence or []:
+        path = _expand(ev.get("path", ""))
+        if not path:
+            continue
+        if _is_offline_media(path):
+            saw_media_offline = True
+            continue
+        if os.path.isfile(path):
+            try:
+                mt = os.path.getmtime(path)
+                saw_readable = True
+                if newest is None or mt > newest:
+                    newest = mt
+            except OSError:
+                continue
+    age = (now - newest) if newest is not None else None
+    offline = saw_media_offline and not saw_readable
+    return age, offline
+
+
+def classify(entry, by_label, parse_ok):
+    """Compute one job's state + detail fields."""
+    name = entry.get("name", "")
+    result = {
+        "label": entry.get("label", name),
+        "name": name,
+        "kind": entry.get("kind", "interval"),
+        "schedule": entry.get("schedule", ""),
+        "loaded": name in by_label,
+        "pid": by_label.get(name, {}).get("pid"),
+        "last_exit": by_label.get(name, {}).get("status"),
+        "evidence_age_s": None,
+        "err_log_tail": None,
+    }
+
+    if entry.get("retired"):
+        result["state"] = "retired"
+        return result
+
+    # pseudo jobs are NOT launchd labels (e.g. the nightly chat-graph refresh):
+    # skip every launchctl loaded/exit check and classify from evidence freshness
+    # ONLY. green if evidence is within expected_freshness_s, else yellow. Never
+    # red-for-unloaded — an unloaded launchctl label is meaningless for a pseudo job.
+    if entry.get("pseudo"):
+        age, _offline = evidence_state(entry.get("evidence"))
+        result["evidence_age_s"] = None if age is None else round(age, 1)
+        exp = entry.get("expected_freshness_s")
+        fresh = age is not None and isinstance(exp, (int, float)) and age <= exp
+        result["state"] = "green" if fresh else "yellow"
+        return result
+
+    if not parse_ok:
+        result["state"] = "degraded"
+        return result
+
+    age, offline = evidence_state(entry.get("evidence"))
+    result["evidence_age_s"] = None if age is None else round(age, 1)
+    if offline:
+        result["state"] = "offline-media"
+        return result
+
+    exp = entry.get("expected_freshness_s")
+    stale = True
+    if age is not None and isinstance(exp, (int, float)):
+        stale = age > exp
+    nonzero = result["last_exit"] not in (0, None)
+    loaded = result["loaded"]
+
+    # err-log tail always captured when something looks wrong
+    if not loaded or stale or nonzero:
+        result["err_log_tail"] = err_log_tail(entry.get("err_log", ""))
+
+    if not loaded:
+        # red = not loaded (also covers stale-and-nonzero, subsumed here)
+        result["state"] = "red"
+        return result
+
+    if stale and nonzero:
+        result["state"] = "red"
+        return result
+
+    needs_pid = result["kind"] == "keepalive"
+    if not stale and not nonzero and (not needs_pid or result["pid"] is not None):
+        result["state"] = "green"
+    else:
+        result["state"] = "yellow"
+    return result
+
+
+def collect(registry_path):
+    launchctl_bin = os.environ.get("AUTOMATION_STATUS_LAUNCHCTL", "launchctl")
+    t7_path = os.environ.get("AUTOMATION_STATUS_T7", "/Volumes/T7")
+
+    entries, reg_err = read_registry(registry_path)
+    raw = launchctl_list(launchctl_bin)
+    by_label, parse_ok = parse_launchctl(raw)
+
+    jobs = [classify(e, by_label, parse_ok) for e in entries]
+
+    # unregistered: live com.gillette* labels absent from the registry
+    known = set(e.get("name", "") for e in entries)
+    unregistered = sorted(
+        lbl for lbl in by_label
+        if lbl.startswith("com.gillette") and lbl not in known
+    )
+
+    exception_states = {"red", "yellow", "degraded"}
+    exceptions = sum(1 for j in jobs if j["state"] in exception_states)
+    counts = {}
+    for j in jobs:
+        counts[j["state"]] = counts.get(j["state"], 0) + 1
+
+    now = time.time()
+    data = {
+        "checked_at": _iso(now),
+        "t7_mounted": os.path.exists(t7_path),
+        "jobs": jobs,
+        "unregistered": unregistered,
+        "exceptions": exceptions,
+        "counts": counts,
+    }
+    if not parse_ok:
+        data["launchctl_note"] = "launchctl output unparseable — all jobs degraded"
+
+    envelope = {
+        "schema": SCHEMA,
+        "feed": FEED,
+        "generated_at": _iso(now),
+        "generated_epoch": int(now),
+        "cadence_s": CADENCE_S,
+        "ok": reg_err is None,
+        "error": reg_err,
+        "data": data,
+    }
+    return envelope
+
+
+def _iso(epoch):
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(epoch))
+
+
+_GLYPH = {
+    "green": "✓", "yellow": "!", "red": "✕",
+    "offline-media": "○", "retired": "·", "degraded": "?",
+}
+
+
+def render_table(env):
+    out = []
+    d = env["data"]
+    if not env["ok"]:
+        out.append("automation: NOT OK — %s" % env.get("error"))
+    if d.get("launchctl_note"):
+        out.append("note: %s" % d["launchctl_note"])
+    out.append("t7_mounted=%s  checked=%s  exceptions=%d"
+               % (d["t7_mounted"], d["checked_at"], d["exceptions"]))
+    out.append("%-14s %-2s %-34s %s" % ("STATE", "", "LABEL", "SCHEDULE"))
+    for j in d["jobs"]:
+        out.append("%-14s %-2s %-34s %s" % (
+            j["state"], _GLYPH.get(j["state"], "?"),
+            j["label"][:34], j["schedule"]))
+        if j.get("err_log_tail"):
+            out.append("    err: %s" % j["err_log_tail"])
+    if d["unregistered"]:
+        out.append("unregistered: %s" % ", ".join(d["unregistered"]))
+    return "\n".join(out)
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(description="background-job health collector")
+    ap.add_argument("--registry",
+                    default=os.path.join(_repo_root(), "dashboard", "jobs.json"))
+    ap.add_argument("--json", action="store_true", help="emit feed envelope")
+    args = ap.parse_args(argv)
+
+    env = collect(args.registry)
+    if args.json:
+        print(json.dumps(env, ensure_ascii=True, indent=2))
+    else:
+        print(render_table(env))
+    return 0  # exit 0 whenever we could run
+
+
+if __name__ == "__main__":
+    sys.exit(main())

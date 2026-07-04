@@ -1,0 +1,130 @@
+{
+  "jobs": [
+    {
+      "evidence": [
+        {
+          "path": "/Users/gillettes/.claude/nightly-review/reports/2026-07-02.md",
+          "role": "run"
+        }
+      ],
+      "err_log": "/Users/gillettes/.claude/nightly-review/launchd.err.log",
+      "expected_freshness_s": 93600,
+      "kind": "calendar",
+      "label": "Nightly Review",
+      "name": "com.gillettes.nightly-review",
+      "schedule": "23:30 daily"
+    },
+    {
+      "evidence": [
+        {
+          "path": "/Users/gillettes/.usage-snapshot/history.jsonl",
+          "role": "run"
+        }
+      ],
+      "err_log": "/Users/gillettes/.usage-snapshot/launchd.err",
+      "expected_freshness_s": 3600,
+      "kind": "interval",
+      "label": "Usage Snapshot",
+      "name": "com.gillettes.usage-snapshot",
+      "schedule": "every 1800s"
+    },
+    {
+      "evidence": [
+        {
+          "path": "/Users/gillettes/.delegation-audit/last-scan.json",
+          "role": "run"
+        }
+      ],
+      "err_log": "/Users/gillettes/.delegation-audit/launchd.err",
+      "expected_freshness_s": 93600,
+      "kind": "calendar",
+      "label": "Delegation Audit",
+      "name": "com.gillettes.delegation-audit",
+      "schedule": "08:45 daily; Wed 13:15"
+    },
+    {
+      "evidence": [
+        {
+          "path": "/Users/gillettes/.local/state/repo-state-watcher/last-scan.tsv",
+          "role": "scan"
+        }
+      ],
+      "err_log": "/Users/gillettes/.local/state/repo-state-watcher/logs/scan.err.log",
+      "expected_freshness_s": 3000,
+      "kind": "interval",
+      "label": "Repo State Watch Scan",
+      "name": "com.gillette.repo-state-watch.scan",
+      "schedule": "every 1500s"
+    },
+    {
+      "evidence": [
+        {
+          "path": "/Users/gillettes/.local/state/repo-state-watcher/last-scan.tsv",
+          "role": "digest"
+        }
+      ],
+      "err_log": "/Users/gillettes/.local/state/repo-state-watcher/logs/digest.err.log",
+      "expected_freshness_s": 93600,
+      "kind": "calendar",
+      "label": "Repo State Watch Digest",
+      "name": "com.gillette.repo-state-watch.digest",
+      "schedule": "09:00 daily"
+    },
+    {
+      "evidence": [
+        {
+          "path": "/Users/gillettes/.local/state/repo-state-watcher/groom-last.txt",
+          "role": "run"
+        }
+      ],
+      "err_log": "/Users/gillettes/.local/state/repo-state-watcher/groom.launchd.err",
+      "expected_freshness_s": 21600,
+      "kind": "interval",
+      "label": "Repo Groom",
+      "name": "com.gillette.repo-groom",
+      "schedule": "every 10800s"
+    },
+    {
+      "evidence": [
+        {
+          "path": "/Users/gillettes/.mobile-connect/log/launchd.out",
+          "role": "run"
+        }
+      ],
+      "err_log": "/Users/gillettes/.mobile-connect/log/launchd.err",
+      "expected_freshness_s": 20,
+      "kind": "keepalive",
+      "label": "Mobile Connect",
+      "name": "com.gillettes.mobile-connect",
+      "schedule": "keepalive (throttle 10s)"
+    },
+    {
+      "evidence": [
+        {
+          "expected_offline": true,
+          "path": "/Users/gillettes/.mission-control/data/automation.json",
+          "role": "run"
+        }
+      ],
+      "expected_freshness_s": 600,
+      "kind": "interval",
+      "label": "Mission Control",
+      "name": "com.gillettes.mission-control",
+      "schedule": "every 300s"
+    },
+    {
+      "evidence": [
+        {
+          "path": "/Users/gillettes/.chat-graph/last-ingest",
+          "role": "run"
+        }
+      ],
+      "expected_freshness_s": 172800,
+      "kind": "interval",
+      "label": "Chat Graph Ingest",
+      "name": "chat-graph-ingest",
+      "pseudo": true,
+      "schedule": "every 86400s"
+    }
+  ]
+}

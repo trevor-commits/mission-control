@@ -1,0 +1,411 @@
+#!/usr/bin/env bash
+# scripts/dashboard — mission-control CLI (ER-087 packet p4a).
+#
+# Static shell + per-feed data files, no server. Each feed is collected from a
+# feeder command and written twice atomically: data/<feed>.json (canonical
+# contract) + data/<feed>.js (window.MC transport, file:// loadable). JSON is
+# built only inside the embedded python3 engine below — NEVER string-concatenated.
+#
+# Subcommands: collect [--due|--force] [feed] · refresh [feed] · status ·
+#              open [--serve] · install · demo
+#
+# Env: MISSION_CONTROL_HOME (state dir, default ~/.mission-control)
+#      DASHBOARD_CMD_{USAGE,GIT,CHATS,AUTOMATION} override feeder commands
+#      DASHBOARD_NO_OPEN=1 suppresses `open` (tests/CI)
+# bash-3.2 safe; python3 stdlib only.
+
+set -uo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# install bakes the resolved repo root into the copied runtime (bin/dashboard),
+# whose SCRIPT_DIR is ~/.mission-control/bin — dirname of that is NOT the repo.
+# Empty in the committed source, so the repo copy falls back to dirname(SCRIPT_DIR).
+REPO_ROOT_DEFAULT=""
+REPO_ROOT="${REPO_ROOT:-${REPO_ROOT_DEFAULT:-$(dirname "$SCRIPT_DIR")}}"  # pre-set respected (tests point it at a fixture repo)
+MISSION_CONTROL_HOME="${MISSION_CONTROL_HOME:-$HOME/.mission-control}"
+export MISSION_CONTROL_HOME REPO_ROOT
+
+# --- python3 engine (collect/status/demo/freshness) -------------------------
+# Code read from /dev/stdin so the python body may use any quoting freely;
+# subcommand + args arrive as argv.
+engine() {
+  python3 /dev/stdin "$@" <<'PYEOF'
+import json, os, shlex, shutil, subprocess, sys, time
+
+HOME = os.environ["MISSION_CONTROL_HOME"]
+REPO = os.environ.get("REPO_ROOT", ".")
+DATA = os.path.join(HOME, "data")
+
+
+def _repo_script(name):
+    # Feeders are repo siblings, NOT on PATH (live-proof 2026-07-03: bare names
+    # -> exit 127 on the real machine). Quote: repo path contains spaces.
+    return shlex.quote(os.path.join(REPO, "scripts", name))
+
+
+# scan-unfinished-work exits 1 BY DESIGN when findings exist (its normal state)
+OK_EXITS = {"git": (0, 1)}
+
+# name, cadence_s, default feeder cmd, env override var, feeder timeout_s.
+# ORDER MATTERS: collect runs feeds sequentially, so the fast/cheap feeds go FIRST
+# and the slow chats feed (up to 150s catch-up scan) goes LAST — otherwise a chats
+# scan starves usage/git/automation up to 150s every catch-up (sweep FIX 3).
+FEEDS = [
+    ("automation",  300, _repo_script("automation-status") + " --json --registry " + shlex.quote(os.path.join(REPO, "dashboard", "jobs.json")), "DASHBOARD_CMD_AUTOMATION", 30),
+    ("usage",      1800, _repo_script("usage-snapshot") + " --no-ccusage", "DASHBOARD_CMD_USAGE", 60),
+    ("git",         900, _repo_script("scan-unfinished-work") + " --json", "DASHBOARD_CMD_GIT", 120),
+    # export prints a status line; the JSON lives in the snapshot file -> run, then cat.
+    # --catchup-limit bounds the stale-cursor catch-up scan (default 1500 files) so
+    # export ALWAYS reaches its atomic rename inside the 150s budget even on a cold
+    # ~/.chat-graph; successive ticker fires extend coverage via file cursors.
+    # On timeout the feed keeps last-good + a stale banner, so the tab never blanks.
+    # LAST by design so its slow scan never delays the other three tabs.
+    ("chats",      1800, _repo_script("chat-graph") + ' export --json --catchup-limit 1500 >/dev/null && cat "${CHAT_GRAPH_HOME:-$HOME/.chat-graph}/export/graph.json"', "DASHBOARD_CMD_CHATS", 150),
+]
+FEED_CADENCE = dict((n, c) for n, c, _, _, _ in FEEDS)
+
+
+def _now():
+    return int(time.time())
+
+
+def _iso(epoch):
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(epoch))
+
+
+def _dumps(obj):
+    # canonical: ascii-escapes emoji + U+2028/9; sorted keys so .json == .js payload
+    return json.dumps(obj, ensure_ascii=True, sort_keys=True)
+
+
+def ensure_state():
+    os.makedirs(DATA, exist_ok=True)
+    os.chmod(HOME, 0o700)   # security invariant: state dir 700
+    os.chmod(DATA, 0o700)   # ...and the data dir too (sweep FIX 6: was 0755, world-readable)
+
+
+def _atomic_write(path, text):
+    tmp = "%s.tmp.%d" % (path, os.getpid())
+    with open(tmp, "w") as f:
+        f.write(text)
+        f.flush()
+        os.fsync(f.fileno())
+    os.rename(tmp, path)  # atomic: a mid-write reload always sees a complete file
+
+
+def _wrap(name, cadence, obj):
+    """Normalize feeder output into the schema-1 envelope.
+
+    Feeders like automation-status/chat-graph already emit a full envelope ->
+    pass it through (renderer + demo + fixtures stay one shape). Raw payloads ->
+    nest under data. Either way generated_* is stamped at collection time.
+    """
+    now = _now()
+    is_env = isinstance(obj, dict) and {"schema", "feed", "data"} <= set(obj)
+    if is_env:
+        env = dict(obj)
+        env.setdefault("ok", True)
+        env.setdefault("error", None)
+    else:
+        env = {"ok": True, "error": None, "data": obj}
+    env["schema"] = 1
+    env["feed"] = name
+    env["cadence_s"] = cadence
+    env["generated_at"] = _iso(now)
+    env["generated_epoch"] = now
+    return env
+
+
+def _write_feed(name, env):
+    canon = _dumps(env)
+    _atomic_write(os.path.join(DATA, name + ".json"), canon)
+    js = "window.MC = window.MC||{feeds:{}}; window.MC.feeds.%s = %s;" % (name, canon)
+    _atomic_write(os.path.join(DATA, name + ".js"), js)
+    err = os.path.join(DATA, name + ".error.json")
+    if os.path.exists(err):
+        os.remove(err)  # good collection clears a prior error note
+
+
+def _write_error(name, cadence, msg):
+    """Record a feeder failure WITHOUT clobbering the last-good .json/.js."""
+    now = _now()
+    env = {"schema": 1, "feed": name, "generated_at": _iso(now),
+           "generated_epoch": now, "cadence_s": cadence,
+           "ok": False, "error": msg, "data": None}
+    _atomic_write(os.path.join(DATA, name + ".error.json"), _dumps(env))
+
+
+def _collect_one(name, cadence, cmd, timeout_s):
+    lock = os.path.join(DATA, "." + name + ".lock")
+    try:
+        os.mkdir(lock)  # mkdir-lock: another collect owns this feed
+    except OSError:
+        return "locked"
+    try:
+        try:
+            p = subprocess.run(cmd, shell=True, capture_output=True,
+                               text=True, timeout=timeout_s)
+        except subprocess.TimeoutExpired:
+            _write_error(name, cadence, "feeder timed out after %ds" % timeout_s)
+            return "error"
+        if p.returncode not in OK_EXITS.get(name, (0,)):
+            _write_error(name, cadence, "feeder exit %d: %s"
+                         % (p.returncode, (p.stderr or "").strip()[:200]))
+            return "error"
+        try:
+            obj = json.loads(p.stdout)
+        except Exception as e:
+            _write_error(name, cadence, "feeder output not JSON: %s" % e)
+            return "error"
+        _write_feed(name, _wrap(name, cadence, obj))
+        return "ok"
+    finally:
+        try:
+            os.rmdir(lock)  # release even on failure/timeout so --due isn't wedged
+        except OSError:
+            pass
+
+
+def _is_due(name, cadence):
+    p = os.path.join(DATA, name + ".json")
+    if not os.path.exists(p):
+        return True
+    try:
+        env = json.load(open(p))
+        return (_now() - int(env.get("generated_epoch", 0))) >= cadence
+    except Exception:
+        return True
+
+
+def cmd_collect(argv):
+    ensure_state()
+    force = "--force" in argv
+    due = "--due" in argv
+    only = [a for a in argv if not a.startswith("--")]
+    for name, cadence, defcmd, envvar, tmo in FEEDS:
+        if only and name not in only:
+            continue
+        if due and not force and not _is_due(name, cadence):
+            continue
+        cmd = os.environ.get(envvar, defcmd)
+        _collect_one(name, cadence, cmd, tmo)  # feeds fail independently
+    return 0
+
+
+def _load(name):
+    p = os.path.join(DATA, name + ".json")
+    if not os.path.exists(p):
+        return None
+    try:
+        return json.load(open(p))
+    except Exception:
+        return None
+
+
+def _verdict(env, cadence):
+    """(text, is_red). red = errored feed or stale beyond 6x cadence."""
+    if env is None:
+        return "missing", True
+    if not env.get("ok", True):
+        return "error", True
+    age = _now() - int(env.get("generated_epoch", 0))
+    if age < 0:
+        return "skew", False
+    if age > 6 * cadence:
+        return "stale", True
+    if age > cadence:
+        return "aging", False
+    return "fresh", False
+
+
+def _automation_red(env):
+    # structured read: data.jobs[].state == "red". NOT a substring/recursive
+    # scan -- data.counts has a "red" COUNT key that would false-match.
+    if not env or not isinstance(env.get("data"), dict):
+        return False
+    jobs = env["data"].get("jobs")
+    if not isinstance(jobs, list):
+        return False
+    return any(isinstance(j, dict) and j.get("state") == "red" for j in jobs)
+
+
+def cmd_status(argv):
+    ensure_state()
+    now = _now()
+    red = False
+    print("%-12s %-9s %-6s %s" % ("FEED", "AGE", "OK", "VERDICT"))
+    for name, cadence, _, _, _ in FEEDS:
+        env = _load(name)
+        verdict, is_red = _verdict(env, cadence)
+        if name == "automation" and _automation_red(env):
+            is_red = True
+            verdict += " (red job)"
+        if env is None:
+            age, oks = "-", "-"
+        else:
+            age = "%ds" % (now - int(env.get("generated_epoch", 0)))
+            oks = "ok" if env.get("ok", True) else "error"
+        red = red or is_red
+        print("%-12s %-9s %-6s %s" % (name, age, oks, verdict))
+    return 1 if red else 0
+
+
+def cmd_freshness(argv):
+    now = _now()
+    for name, cadence, _, _, _ in FEEDS:
+        env = _load(name)
+        verdict, _ = _verdict(env, cadence)
+        if env is None:
+            print("%-12s no data" % name)
+        else:
+            print("%-12s %s (%ds ago)"
+                  % (name, verdict, now - int(env.get("generated_epoch", 0))))
+    return 0
+
+
+def cmd_demo(argv):
+    """Build feeds from committed fixtures into the given state dir (argv[0])."""
+    dest = argv[0]
+    data_dir = os.path.join(dest, "data")
+    os.makedirs(data_dir, exist_ok=True)
+    os.chmod(dest, 0o700)
+    fixtures = os.path.join(REPO, "dashboard", "fixtures")
+    built = []
+    if os.path.isdir(fixtures):
+        for fn in sorted(os.listdir(fixtures)):
+            if not fn.endswith(".json"):
+                continue
+            name = fn[:-5]
+            env = json.load(open(os.path.join(fixtures, fn)))
+            now = _now()
+            env["generated_at"] = _iso(now)      # fresh dots for design iteration
+            env["generated_epoch"] = now
+            canon = _dumps(env)
+            _atomic_write(os.path.join(data_dir, name + ".json"), canon)
+            js = ("window.MC = window.MC||{feeds:{}}; window.MC.feeds.%s = %s;"
+                  % (name, canon))
+            _atomic_write(os.path.join(data_dir, name + ".js"), js)
+            built.append(name)
+    shell = os.path.join(REPO, "dashboard", "index.html")
+    if os.path.isfile(shell):
+        shutil.copy(shell, os.path.join(dest, "index.html"))
+    print("demo state: %s" % dest)
+    print("demo feeds: %s" % ",".join(built))
+    return 0
+
+
+def main():
+    cmd = sys.argv[1] if len(sys.argv) > 1 else ""
+    rest = sys.argv[2:]
+    fn = {"collect": cmd_collect, "status": cmd_status,
+          "demo": cmd_demo, "freshness": cmd_freshness}.get(cmd)
+    if not fn:
+        sys.stderr.write("dashboard-engine: unknown command %r\n" % cmd)
+        return 2
+    return fn(rest)
+
+
+sys.exit(main())
+PYEOF
+}
+
+usage() {
+  cat <<'EOF'
+usage: dashboard <command>
+  collect [--due|--force] [feed]   collect feeds (--due honors cadence)
+  refresh [feed]                   = collect --force
+  status                           text health table; nonzero if any feed red
+  open [--serve]                   collect --due, open the shell (--serve: local http)
+  install                          install shell + launchd job (idempotent)
+  demo                             build feeds from fixtures into a temp dir + open
+EOF
+}
+
+do_serve() {
+  mkdir -p "$MISSION_CONTROL_HOME/data"
+  chmod 700 "$MISSION_CONTROL_HOME" 2>/dev/null || true
+  python3 /dev/stdin "$MISSION_CONTROL_HOME" <<'PYEOF'
+import http.server, os, socketserver, sys
+root = sys.argv[1]
+os.chdir(root)
+with socketserver.TCPServer(("127.0.0.1", 0), http.server.SimpleHTTPRequestHandler) as h:
+    print("serving %s at http://127.0.0.1:%d/" % (root, h.server_address[1]))
+    sys.stdout.flush()
+    h.serve_forever()
+PYEOF
+}
+
+do_open() {
+  if [ "${1:-}" = "--serve" ]; then
+    do_serve
+    return $?
+  fi
+  engine collect --due
+  if [ "${DASHBOARD_NO_OPEN:-}" != "1" ]; then
+    open "$MISSION_CONTROL_HOME/index.html" 2>/dev/null || true
+  fi
+  engine freshness
+}
+
+do_install() {
+  mkdir -p "$MISSION_CONTROL_HOME/data" "$MISSION_CONTROL_HOME/bin" "$MISSION_CONTROL_HOME/logs"
+  chmod 700 "$MISSION_CONTROL_HOME"
+  # Copy the running dashboard to a STABLE runtime path the plist execs, baking the
+  # resolved REPO_ROOT into the copy so `collect --due` finds repo-sibling feeders
+  # even though the copy's own SCRIPT_DIR is ~/.mission-control/bin (not the repo).
+  sed -e "s|^REPO_ROOT_DEFAULT=.*|REPO_ROOT_DEFAULT=\"$REPO_ROOT\"|" \
+    "$SCRIPT_DIR/dashboard" > "$MISSION_CONTROL_HOME/bin/dashboard"
+  chmod +x "$MISSION_CONTROL_HOME/bin/dashboard"
+  echo "installed runtime -> $MISSION_CONTROL_HOME/bin/dashboard (REPO_ROOT=$REPO_ROOT)"
+  if [ -f "$REPO_ROOT/dashboard/index.html" ]; then
+    cp "$REPO_ROOT/dashboard/index.html" "$MISSION_CONTROL_HOME/index.html"
+    echo "installed shell -> $MISSION_CONTROL_HOME/index.html"
+  else
+    echo "skip: dashboard/index.html not present yet"
+  fi
+  local tmpl="$REPO_ROOT/launchd/com.gillettes.mission-control.plist.template"
+  local dest="$HOME/Library/LaunchAgents/com.gillettes.mission-control.plist"
+  if [ -f "$tmpl" ]; then
+    mkdir -p "$HOME/Library/LaunchAgents"
+    # __MCHOME__ = the COMPLETE mission-control home (already includes .mission-control);
+    # the template must not re-append it (the double-prefix bug the fresh-eyes audit
+    # caught: ~/.mission-control/.mission-control/bin/dashboard). __HOME__/__REPO__ kept
+    # for any real-home / repo references.
+    sed -e "s|__MCHOME__|$MISSION_CONTROL_HOME|g" -e "s|__HOME__|$HOME|g" -e "s|__REPO__|$REPO_ROOT|g" \
+      "$tmpl" > "$dest"
+    echo "installed plist -> $dest"
+    if command -v launchctl >/dev/null 2>&1; then
+      if launchctl list 2>/dev/null | grep -q "com.gillettes.mission-control"; then
+        echo "already bootstrapped: com.gillettes.mission-control"
+      elif launchctl bootstrap "gui/$(id -u)" "$dest" 2>/dev/null; then
+        echo "bootstrapped com.gillettes.mission-control"
+      else
+        echo "bootstrap skipped/failed (non-fatal)"
+      fi
+    fi
+  else
+    echo "skip: launchd template not present yet"
+  fi
+}
+
+do_demo() {
+  local dir
+  dir="$(mktemp -d "${TMPDIR:-/tmp}/mc-demo.XXXXXX")"
+  engine demo "$dir"
+  if [ "${DASHBOARD_NO_OPEN:-}" != "1" ]; then
+    open "$dir/index.html" 2>/dev/null || open "$dir" 2>/dev/null || true
+  fi
+}
+
+cmd="${1:-}"
+[ $# -gt 0 ] && shift
+case "$cmd" in
+  collect)  engine collect "$@" ;;
+  refresh)  engine collect --force "$@" ;;
+  status)   engine status "$@"; exit $? ;;
+  open)     do_open "$@" ;;
+  install)  do_install "$@" ;;
+  demo)     do_demo "$@" ;;
+  ""|-h|--help|help) usage ;;
+  *) usage; exit 2 ;;
+esac

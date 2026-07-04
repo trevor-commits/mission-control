@@ -1,0 +1,107 @@
+{
+  "schema": 1,
+  "feed": "git",
+  "generated_at": "2026-07-02T12:00:00Z",
+  "generated_epoch": 1751467200,
+  "cadence_s": 900,
+  "ok": true,
+  "error": null,
+  "data": {
+    "generated": "2026-07-02T12:00:00Z",
+    "stale_days": 30,
+    "findings_total": 6,
+    "repos": [
+      {
+        "repo": "global-implementations",
+        "branch": "main",
+        "remote": "synced",
+        "dirty": false,
+        "dirty_files": 0,
+        "ahead": 0,
+        "behind": 0,
+        "detached": false,
+        "branches": []
+      },
+      {
+        "repo": "O'Brien's estimator",
+        "branch": "feature/quote-engine",
+        "remote": "ahead",
+        "dirty": false,
+        "dirty_files": 0,
+        "ahead": 3,
+        "behind": 0,
+        "detached": false,
+        "branches": []
+      },
+      {
+        "repo": "bible-ai",
+        "branch": "main",
+        "remote": "behind",
+        "dirty": false,
+        "dirty_files": 0,
+        "ahead": 0,
+        "behind": 2,
+        "detached": false,
+        "branches": []
+      },
+      {
+        "repo": "signal intake",
+        "branch": "wip/ingest",
+        "remote": "diverged",
+        "dirty": false,
+        "dirty_files": 0,
+        "ahead": 2,
+        "behind": 4,
+        "detached": false,
+        "branches": []
+      },
+      {
+        "repo": "scratch-repo 🚧",
+        "branch": "main",
+        "remote": "no-remote",
+        "no_remote": true,
+        "dirty": false,
+        "dirty_files": 0,
+        "ahead": 0,
+        "behind": 0,
+        "detached": false,
+        "branches": []
+      },
+      {
+        "repo": "hermes",
+        "branch": "fix/auth-token",
+        "remote": "synced",
+        "dirty": true,
+        "dirty_files": 7,
+        "ahead": 0,
+        "behind": 0,
+        "detached": false,
+        "branches": [ { "name": "old/experiment", "age_days": 44 } ]
+      },
+      {
+        "repo": "gillette-estimator",
+        "branch": "main",
+        "remote": "synced",
+        "dirty": false,
+        "dirty_files": 0,
+        "ahead": 0,
+        "behind": 0,
+        "detached": false,
+        "branches": []
+      }
+    ],
+    "watcher_flags": [
+      { "repo": "bible-ai", "state": "amber", "flag": "stale-worktree", "detail": "gi-worktrees/old-branch is 40d old and unmerged" },
+      { "repo": "hermes", "state": "red", "flag": "detached-worktree", "detail": "worktree points at a deleted branch" }
+    ],
+    "groom": {
+      "last_run": "2026-07-03 06:00 PT",
+      "done": 4,
+      "failed": 1,
+      "decide": [
+        "gi-worktrees/er080-spike — unmerged, 12d old, your call to keep or drop",
+        "scratch-repo 🚧 — no remote configured, delete after review?"
+      ]
+    }
+  }
+}

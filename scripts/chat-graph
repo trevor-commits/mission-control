@@ -1,0 +1,1192 @@
+#!/usr/bin/env python3
+"""chat-graph — records how chats connect (ER-087 mission-control, Part A core).
+
+Owns a standalone SQLite DB at $CHAT_GRAPH_HOME/graph.db (dir chmod 700). This
+packet = schema + structured collectors + manual commands + durability plumbing.
+Transcript scanning/export = next packet; seams are left clean.
+
+python3 stdlib only. All state + source roots honor env overrides so the tool
+runs write-sandboxed and its tests use mktemp dirs. See docs/MISSION_CONTROL_PLAN.md
+§"Part A" + §"Hardening addenda" for the authoritative design.
+"""
+import glob, hashlib, json, os, re, shutil, sqlite3, subprocess, sys, time
+
+SCHEMA_VERSION = 3
+STALE_INGEST_S = 30 * 60  # show/doctor staleness threshold
+
+# ---- env resolution -------------------------------------------------------
+def _env(name, default):
+    return os.environ.get(name) or os.path.expanduser(default)
+
+HOME_DIR      = lambda: _env("CHAT_GRAPH_HOME", "~/.chat-graph")
+CROSS_AGENT   = lambda: _env("CHAT_GRAPH_CROSS_AGENT_ROOT", "~/.cross-agent")
+SESSION_INDEX = lambda: _env("CHAT_GRAPH_SESSION_INDEX", "~/.codex/session_index.jsonl")
+CHAT_SOURCE   = lambda: _env("CHAT_GRAPH_CHAT_SOURCE", "~/.codex/scripts/chat-source")
+
+def db_path():      return os.path.join(HOME_DIR(), "graph.db")
+def journal_path(): return os.path.join(HOME_DIR(), "journal", "manual.jsonl")
+def lock_path():    return os.path.join(HOME_DIR(), "ingest.lock")
+def marker_path():  return os.path.join(HOME_DIR(), "last-ingest")
+def scanlog_path(): return os.path.join(HOME_DIR(), "logs", "scan-errors.log")
+
+def ensure_dir(path, mode=0o700):
+    os.makedirs(path, exist_ok=True)
+    os.chmod(path, mode)  # makedirs mode is umask-masked; force it
+
+# ---- secret redaction (verbatim mirror of scripts/search-transcripts) -----
+_SECRET_RE = re.compile(
+    r"(sk-[A-Za-z0-9_-]{20,}"
+    r"|AIza[0-9A-Za-z_-]{35}"
+    r"|ya29\.[0-9A-Za-z._-]+"
+    r"|ghp_[A-Za-z0-9]{20,}|gho_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}"
+    r"|xox[baprs]-[A-Za-z0-9-]{10,}"
+    r"|AKIA[0-9A-Z]{16}"
+    r"|eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}"  # JWT
+    r"|(?i:bearer)\s+[A-Za-z0-9._-]{16,})"
+)
+def redact(s):
+    return _SECRET_RE.sub("«REDACTED-SECRET»", s or "")
+
+# ---- edge model -----------------------------------------------------------
+EDGE_TYPES = ("audits", "spawned", "continues", "signaled",
+              "references", "same_issue", "governs", "related_manual")
+UNDIRECTED = ("related_manual",)
+
+def canon(a, b, etype):
+    """Undirected types canonicalize pair order; directed keep it."""
+    if etype in UNDIRECTED and a > b:
+        return b, a
+    return a, b
+
+# ---- DB open + migrations -------------------------------------------------
+def connect():
+    ensure_dir(HOME_DIR())
+    con = sqlite3.connect(db_path())
+    con.execute("PRAGMA journal_mode=WAL")
+    con.execute("PRAGMA busy_timeout=5000")
+    con.row_factory = sqlite3.Row
+    _migrate(con)
+    return con
+
+def _edge_unique_has_source(con):
+    """True if the edges UNIQUE index already includes `source` (v2 shape)."""
+    for idx in con.execute("PRAGMA index_list('edges')").fetchall():
+        if idx["unique"]:
+            cols = [r["name"] for r in con.execute(
+                "PRAGMA index_info('%s')" % idx["name"]).fetchall()]
+            if "source" in cols:
+                return True
+    return False
+
+def _rebuild_edges_v2(con):
+    """Rebuild edges with UNIQUE(src,dst,type,source), preserving every row
+    (status/confidence/evidence intact). v1's coarser key means <=1 row per
+    (src,dst,type,source), so the copy never collides on the finer key."""
+    con.execute("ALTER TABLE edges RENAME TO edges_v1")
+    con.execute("""CREATE TABLE edges(
+        src TEXT, dst TEXT, type TEXT, source TEXT,
+        confidence REAL, evidence TEXT, note TEXT,
+        status TEXT DEFAULT 'active',
+        UNIQUE(src, dst, type, source))""")
+    con.execute("""INSERT INTO edges(src, dst, type, source, confidence, evidence, note, status)
+                   SELECT src, dst, type, source, confidence, evidence, note, status
+                   FROM edges_v1""")
+    con.execute("DROP TABLE edges_v1")
+
+def _migrate(con):
+    # meta must exist before the future-version guard can read the version, but
+    # CREATE TABLE IF NOT EXISTS on an already-present meta is a pure no-op.
+    con.execute("CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT)")
+    row = con.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()
+    ver = int(row["value"]) if row else 0
+    # Future-version guard FIRST — before ANY DDL/migration — so newer-than-code
+    # code never mutates (and, via executescript's implicit commit, persists a
+    # partial migration of) a DB it does not understand.
+    if ver > SCHEMA_VERSION:
+        sys.stderr.write("chat-graph: db schema_version %d newer than code %d "
+                         "— upgrade chat-graph or use a fresh DB\n" % (ver, SCHEMA_VERSION))
+        sys.exit(3)
+    con.executescript("""
+      CREATE TABLE IF NOT EXISTS sessions(
+        id TEXT PRIMARY KEY, provider TEXT, title TEXT, repo TEXT,
+        first_prompt TEXT, last_activity TEXT,
+        closeout_seen INTEGER DEFAULT 0, open_end_count INTEGER DEFAULT 0,
+        first_seen_at INTEGER);
+      CREATE TABLE IF NOT EXISTS edges(
+        src TEXT, dst TEXT, type TEXT, source TEXT,
+        confidence REAL, evidence TEXT, note TEXT,
+        status TEXT DEFAULT 'active',
+        UNIQUE(src, dst, type, source));
+      CREATE TABLE IF NOT EXISTS suppressions(
+        src TEXT, dst TEXT, type TEXT, PRIMARY KEY(src, dst, type));
+      CREATE TABLE IF NOT EXISTS session_topics(
+        session_id TEXT, code TEXT, UNIQUE(session_id, code));
+      CREATE TABLE IF NOT EXISTS open_ends(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        session_id TEXT, kind TEXT, text TEXT, text_hash TEXT,
+        resolved_at INTEGER, UNIQUE(session_id, text_hash));
+      CREATE TABLE IF NOT EXISTS collector_state(
+        collector TEXT PRIMARY KEY, cursor TEXT, last_run INTEGER,
+        row_count INTEGER DEFAULT 0);
+      CREATE TABLE IF NOT EXISTS file_cursors(
+        path TEXT PRIMARY KEY, mtime INTEGER, size INTEGER);
+    """)
+    # additive columns (idempotent; ALTER has no IF NOT EXISTS pre-3.35)
+    for col, decl in (("first_msg_uuid", "TEXT"), ("enriched_at", "INTEGER")):
+        try:
+            con.execute("ALTER TABLE sessions ADD COLUMN %s %s" % (col, decl))
+        except sqlite3.OperationalError:
+            pass
+    # v1->v2: edges uniqueness gained `source` so a strong (e.g. delegations) and a
+    # weak (e.g. titles) edge for the same (src,dst,type) coexist. A pre-existing v1
+    # edges table keeps its old UNIQUE(src,dst,type) until rebuilt here. Detect via
+    # the unique index columns (formatting-proof; whitespace in the DDL doesn't lie).
+    if not _edge_unique_has_source(con):
+        _rebuild_edges_v2(con)
+    # v2->v3: the suppressions table is now the SOURCE-INDEPENDENT authority for
+    # unlink (a per-row status='suppressed' sentinel could not block a later
+    # collector inserting the same (src,dst,type) under a different source). Backfill
+    # from every existing suppressed row — all of which trace to _apply_unlink.
+    if ver < 3:
+        con.execute("INSERT OR IGNORE INTO suppressions(src, dst, type) "
+                    "SELECT src, dst, type FROM edges WHERE status='suppressed'")
+    # linear idempotent forward migrations would chain here as versions grow.
+    if ver < SCHEMA_VERSION:
+        con.execute("INSERT OR REPLACE INTO meta VALUES('schema_version', ?)",
+                    (str(SCHEMA_VERSION),))
+    con.commit()
+
+# ---- session nodes --------------------------------------------------------
+def touch_session(con, sid, provider=None, title=None, first_prompt=None):
+    if not sid:
+        return
+    now = int(time.time())
+    con.execute("INSERT OR IGNORE INTO sessions(id, first_seen_at) VALUES(?, ?)", (sid, now))
+    for col, val in (("provider", provider), ("title", title), ("first_prompt", first_prompt)):
+        if val:
+            con.execute("UPDATE sessions SET %s=? WHERE id=? AND (%s IS NULL OR %s='')"
+                        % (col, col, col), (val, sid))
+
+def display_title(row):
+    """Untitled fallback chain: title -> first_prompt(60) -> (untitled) <id8>."""
+    t = (row["title"] or "").strip()
+    if t:
+        return redact(t)
+    fp = (row["first_prompt"] or "").strip()
+    if fp:
+        return redact(fp[:60])
+    return "(untitled) %s" % (row["id"] or "")[:8]
+
+# ---- edge write primitives (upsert NEVER writes status) -------------------
+def upsert_edge(con, src, dst, etype, source, confidence, evidence, note=None):
+    s, d = canon(src, dst, etype)
+    con.execute("""INSERT INTO edges(src, dst, type, source, confidence, evidence, note, status)
+       VALUES(?,?,?,?,?,?,?, 'active')
+       ON CONFLICT(src, dst, type, source) DO UPDATE SET
+         confidence=max(edges.confidence, excluded.confidence),
+         evidence=excluded.evidence, note=excluded.note""",
+       (s, d, etype, source, confidence, json.dumps(evidence, sort_keys=True), note))
+
+def _apply_link(con, a, b, etype, note):
+    # re-linking clears any standing suppression for this exact pair/type so the
+    # edge is authoritative again (collector rows under any source reappear).
+    s, d = canon(a, b, etype)
+    con.execute("DELETE FROM suppressions WHERE src=? AND dst=? AND type=?", (s, d, etype))
+    upsert_edge(con, a, b, etype, "manual", 1.0, {"manual": True}, note)
+
+def _apply_unlink(con, a, b, etype):
+    types = [etype] if etype else [r["type"] for r in con.execute(
+        "SELECT DISTINCT type FROM edges WHERE (src=? AND dst=?) OR (src=? AND dst=?)",
+        (a, b, b, a))]
+    if not types:
+        types = ["related_manual"]  # sentinel needs a type
+    for t in types:
+        s, d = canon(a, b, t)
+        # suppressions is the SOURCE-INDEPENDENT authority: one row hides this
+        # (src,dst,type) regardless of which collector/source (re)inserts it.
+        con.execute("INSERT OR IGNORE INTO suppressions(src, dst, type) VALUES(?,?,?)",
+                    (s, d, t))
+        # keep the per-row status='suppressed' belt-and-suspenders too.
+        cur = con.execute("UPDATE edges SET status='suppressed' "
+                          "WHERE src=? AND dst=? AND type=?", (s, d, t))
+        if cur.rowcount == 0:
+            # pre-insert a suppressed sentinel so future collectors land on the
+            # conflict key (src,dst,type) and cannot resurrect it.
+            con.execute("INSERT OR IGNORE INTO edges(src, dst, type, source, confidence, "
+                        "evidence, status) VALUES(?,?,?, 'manual', 0.0, '{}', 'suppressed')",
+                        (s, d, t))
+
+def _apply_resolve(con, sid, text_hash):
+    con.execute("UPDATE open_ends SET resolved_at=? WHERE session_id=? AND text_hash=?",
+                (int(time.time()), sid, text_hash))
+
+# ---- manual journal (durability keystone) ---------------------------------
+def journal_append(rec):
+    ensure_dir(os.path.dirname(journal_path()))
+    rec = dict(rec, ts=int(time.time()))
+    with open(journal_path(), "a") as f:
+        f.write(json.dumps(rec, sort_keys=True) + "\n")
+        f.flush()
+        os.fsync(f.fileno())
+
+def journal_replay(con):
+    if not os.path.exists(journal_path()):
+        return
+    with open(journal_path()) as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                r = json.loads(line)
+            except ValueError:
+                continue
+            op = r.get("op")
+            if op == "link":
+                _apply_link(con, r["a"], r["b"], r["type"], r.get("note"))
+            elif op == "unlink":
+                _apply_unlink(con, r["a"], r["b"], r.get("type"))
+            elif op == "resolve":
+                _apply_resolve(con, r["a"], r["b"])
+    con.commit()
+
+# ---- chat-source bridge (best-effort, degraded never fatal) ---------------
+_STALE_PROVIDERS = set()
+
+def chat_source(*args, timeout=8):
+    exe = CHAT_SOURCE()
+    if not (exe and os.path.exists(exe)):
+        return None
+    try:
+        out = subprocess.run([exe] + list(args), capture_output=True, text=True,
+                             timeout=timeout)
+        if out.returncode != 0:
+            return None
+        return out.stdout
+    except Exception:
+        return None
+
+def describe(sid):
+    """Return dict of chat-source describe fields, or None (degraded)."""
+    out = chat_source("describe", sid)
+    if out is None:
+        _STALE_PROVIDERS.add("chat-source")
+        return None
+    meta = {}
+    for ln in out.splitlines():
+        if ":" in ln:
+            k, _, v = ln.partition(":")
+            meta[k.strip()] = v.strip()
+    return meta
+
+# ---- collectors -----------------------------------------------------------
+def _iter_json(paths):
+    for p in paths:
+        try:
+            with open(p) as f:
+                yield p, json.load(f)
+        except Exception:
+            continue  # tolerate malformed/absent — never fatal
+
+def collect_delegations(con):
+    import glob
+    n = 0
+    root = os.path.join(CROSS_AGENT(), "delegations")
+    for path, data in _iter_json(sorted(glob.glob(os.path.join(root, "*", "state.json")))):
+        gov = (data.get("governor") or {}).get("id")
+        worker = data.get("worker_child_id")
+        if not (gov and worker):
+            continue
+        hv = data.get("handshake_verified")
+        conf = 1.0 if hv == "yes" else 0.8
+        touch_session(con, gov, provider=(data.get("governor") or {}).get("provider"))
+        touch_session(con, worker, provider=data.get("to"))
+        upsert_edge(con, gov, worker, "spawned", "delegations", conf,
+                    {"path": path, "handshake": data.get("handshake")})
+        n += 1
+    return n
+
+def collect_mailbox(con):
+    import glob
+    n = 0
+    root = os.path.join(CROSS_AGENT(), "mailbox")
+    pats = [os.path.join(root, "*", box, "*.json") for box in ("inbox", "read")]
+    files = sorted(f for pat in pats for f in glob.glob(pat))
+    for path, data in _iter_json(files):
+        frm, to = data.get("from"), data.get("to")
+        if not frm or frm == "unknown" or not to:
+            continue
+        touch_session(con, frm, provider=data.get("from_provider"))
+        touch_session(con, to)
+        upsert_edge(con, frm, to, "signaled", "mailbox", 1.0,
+                    {"path": path, "schema": data.get("schema")})
+        n += 1
+    return n
+
+_AUDIT_RE  = re.compile(r"^audit:\s*(.+)$", re.IGNORECASE)
+_WORKER_RE = re.compile(r"^worker:\s*(.+?)\s+-\s+", re.IGNORECASE)
+
+def _norm_title(t):
+    """Normalize a title for drift-tolerant matching: drop a trailing parenthetical
+    (e.g. ' (fork)') and a trailing ' - <suffix>' dash-suffix. Real titles drift like
+    'Where was I?' -> 'Where was I? - Chronicle'."""
+    t = (t or "").strip()
+    t = re.sub(r"\s*\([^)]*\)\s*$", "", t)   # trailing (...) incl (fork)
+    t = re.sub(r"\s+-\s+.+$", "", t)          # trailing ' - <suffix>'
+    return t.strip()
+
+def _title_index(con):
+    """Matcher struct over session titles: exact(lower)->[(id,seen)],
+    norm(lower)->[(id,seen)], and rows [(id,title,seen)] for prefix scans."""
+    exact, norm, rows = {}, {}, []
+    for r in con.execute("SELECT id, title, first_seen_at FROM sessions WHERE title IS NOT NULL AND title != ''"):
+        title = r["title"].strip(); seen = r["first_seen_at"] or 0
+        exact.setdefault(title.lower(), []).append((r["id"], seen))
+        norm.setdefault(_norm_title(title).lower(), []).append((r["id"], seen))
+        rows.append((r["id"], title, seen))
+    return {"exact": exact, "norm": norm, "rows": rows}
+
+def collect_titles(con):
+    # 1. load id -> title from the session index JSONL, plus best-effort `list`.
+    titles = {}
+    idx = SESSION_INDEX()
+    if os.path.exists(idx):
+        with open(idx) as f:
+            for ln in f:
+                try:
+                    r = json.loads(ln)
+                except ValueError:
+                    continue
+                if r.get("id") and r.get("thread_name"):
+                    titles[r["id"]] = r["thread_name"]
+    for sid, title in titles.items():
+        touch_session(con, sid, title=title)
+    # carry-over fix: NEVER call the >2-min `chat-source list`. Lazily enrich a
+    # small batch of sessions missing title/repo via per-session `describe`.
+    _enrich_sessions(con)
+    # 2. match title-drift patterns against the title index.
+    tindex = _title_index(con)
+    n = 0
+    for sid, title in titles.items():
+        m = _AUDIT_RE.match(title.strip())
+        if m:
+            n += _match_and_link(con, sid, m.group(1), tindex, "audits", "auditor")
+            continue
+        m = _WORKER_RE.match(title.strip())
+        if m:
+            n += _match_and_link(con, sid, m.group(1), tindex, "spawned", "worker")
+    return n
+
+def _match_and_link(con, this_id, name, tindex, etype, role):
+    """Match an audited/parent NAME against session titles with graded confidence:
+    exact 0.7 -> normalized 0.7 -> unique prefix 0.6; multiple candidates at any
+    tier collapse to most-recent 0.5 'ambiguous title'; no match -> no edge."""
+    key = name.strip().lower()
+    def others(cands):
+        return [c for c in cands if c[0] != this_id]
+    cands, conf, note = others(tindex["exact"].get(key, [])), 0.7, None
+    if not cands:
+        cands, note = others(tindex["norm"].get(_norm_title(name).lower(), [])), "normalized"
+    if not cands:
+        # prefix: NAME is a prefix of a session title (title >= 8 chars guards noise).
+        cands = [(sid, seen) for (sid, title, seen) in tindex["rows"]
+                 if sid != this_id and len(title) >= 8 and title.lower().startswith(key)]
+        conf, note = 0.6, "prefix"
+    if not cands:
+        return 0
+    if len(cands) == 1:
+        target = cands[0][0]
+    else:
+        target = max(cands, key=lambda c: c[1])[0]  # most-recent
+        conf, note = 0.5, "ambiguous title"
+    # audits: auditor(this)->audited(target); spawned via worker: source(target)->worker(this)
+    if role == "auditor":
+        src, dst = this_id, target
+    else:
+        src, dst = target, this_id
+    upsert_edge(con, src, dst, etype, "titles", conf,
+                {"matched_title": name}, note)
+    return 1
+
+_RESOLVABLE_ID_RE = re.compile(
+    r"(^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-)"          # 8-4-... UUID (Claude/Copilot)
+    r"|(^019[0-9a-f]{5})"                          # Codex/Cursor 019... thread ids
+    r"|(^\d{8}_\d{6}_[0-9a-f]{6}$)")               # Hermes YYYYMMDD_HHMMSS_hex
+def _looks_resolvable(sid):
+    """True if `sid` has the shape of a real provider session id chat-source can
+    resolve. Synthetic ids (workflow 'agent-*', test 'x:1') return False so they
+    never re-enter the enrichment retry pool (sweep FIX 4)."""
+    return bool(sid and _RESOLVABLE_ID_RE.match(sid))
+
+def _enrich_sessions(con, limit=50):
+    """Lazy per-session `chat-source describe` enrichment (carry-over fix for the
+    dead `list` bridge). ≤`limit` newest sessions missing title/repo, refreshed at
+    most weekly; abort after 3 consecutive describe failures -> degraded."""
+    now = int(time.time())
+    week_ago = now - 7 * 24 * 3600
+    rows = con.execute(
+        "SELECT id FROM sessions "
+        "WHERE ((title IS NULL OR title='') OR (repo IS NULL OR repo='')) "
+        "AND (enriched_at IS NULL OR enriched_at < ?) "
+        "ORDER BY first_seen_at DESC LIMIT ?", (week_ago, limit)).fetchall()
+    fails = 0
+    for r in rows:
+        # sweep FIX 4: synthetic / non-resolvable ids (e.g. workflow 'agent-*' ids)
+        # will NEVER resolve via chat-source -> without this they re-enter the pool
+        # every run and 3 of them trip the 'degraded' banner on EVERY ingest. Stamp
+        # them enriched (no metadata) so they leave the pool and don't count as fails.
+        if not _looks_resolvable(r["id"]):
+            con.execute("UPDATE sessions SET enriched_at=? WHERE id=?", (now, r["id"]))
+            continue
+        meta = describe(r["id"])
+        if meta is None:
+            fails += 1
+            # backoff: stamp enriched_at so a persistently-unresolvable REAL id is not
+            # retried EVERY run (weekly cadence via the enriched_at<week_ago filter) —
+            # otherwise the same failures re-trip 'degraded' on every ingest (sweep FIX 4).
+            con.execute("UPDATE sessions SET enriched_at=? WHERE id=?", (now, r["id"]))
+            if fails >= 3:
+                _STALE_PROVIDERS.add("chat-source")
+                break
+            continue
+        fails = 0
+        con.execute(
+            "UPDATE sessions SET title=COALESCE(NULLIF(title,''),?), "
+            "repo=COALESCE(NULLIF(repo,''),?), provider=COALESCE(NULLIF(provider,''),?), "
+            "enriched_at=? WHERE id=?",
+            (meta.get("title"), meta.get("repo"), meta.get("provider"), now, r["id"]))
+    con.commit()
+
+COLLECTORS = {
+    "delegations": collect_delegations,
+    "mailbox": collect_mailbox,
+    "titles": collect_titles,
+}
+
+# ---- transcript scanner ---------------------------------------------------
+CLAUDE_ROOT = lambda: _env("CHAT_GRAPH_CLAUDE_ROOT", "~/.claude/projects")
+CODEX_ROOT  = lambda: _env("CHAT_GRAPH_CODEX_ROOT", "~/.codex/sessions")
+REGISTER    = lambda: _env("CHAT_GRAPH_REGISTER", os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "ENFORCEMENT_REQUESTS.md"))
+
+MAX_FILE_BYTES = 200 * 1024 * 1024
+TOPIC_CAP = 8
+
+_UUID_RE = re.compile(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
+_CODE_RE = re.compile(r"\b(?:ER|GR|HB|HR)-\d{3}\b")
+_SPAWNED_BY_RE    = re.compile(r"Spawned-by:\s*parent_provider=(\S+)\s+parent_id=(\S+)")
+_SPAWNED_CHILD_RE = re.compile(r"Spawned-child:\s*provider=(\S+)\s+child_id=(\S+)")
+_HANDOFF_RE = re.compile(r"Handoff:\s*(.+)")
+# line prefilter: skip json.loads unless the raw line could carry a signal.
+_PREFILTER = ("Spawned-", "Session Closeout", "ER-", "GR-")
+
+def _prefilter(line):
+    for s in _PREFILTER:
+        if s in line:
+            return True
+    return bool(_UUID_RE.search(line))
+
+def _sha1(s):
+    return hashlib.sha1((s or "").encode("utf-8", "replace")).hexdigest()
+
+def _msg_text(rec):
+    """Text of a user/assistant message ONLY. None for tool_result/system/other —
+    hook/tool text must never feed signal extraction."""
+    if not isinstance(rec, dict):
+        return None
+    msg, payload = rec.get("message"), rec.get("payload")
+    role, typ, content = rec.get("role"), rec.get("type"), None
+    if isinstance(msg, dict):
+        role = role or msg.get("role"); content = msg.get("content")
+    elif isinstance(payload, dict):
+        role = role or payload.get("role"); content = payload.get("content")
+    elif "content" in rec:
+        content = rec.get("content")
+    if role not in ("user", "assistant") and typ not in ("user", "assistant"):
+        return None
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = []
+        for b in content:
+            if isinstance(b, dict) and b.get("type") in ("text", "input_text", "output_text"):
+                parts.append(b.get("text") or "")
+            elif isinstance(b, str):
+                parts.append(b)
+        return "\n".join(parts)
+    return None
+
+def _rec_uuid(rec):
+    for k in ("uuid", "id", "message_id"):
+        if rec.get(k):
+            return rec[k]
+    p = rec.get("payload")
+    return p.get("id") if isinstance(p, dict) else None
+
+_REGISTER_CACHE = {}
+def _register_status(code):
+    """'verified' / 'unverified' / None(no row). Register file parsed once."""
+    rows = _REGISTER_CACHE.get("rows")
+    if rows is None:
+        rows = {}
+        try:
+            with open(REGISTER()) as f:
+                for ln in f:
+                    for m in _CODE_RE.finditer(ln):
+                        c = m.group(0)
+                        v = bool(re.search(r"verified", ln, re.I))
+                        if c not in rows or v:
+                            rows[c] = "verified" if v else "unverified"
+        except OSError:
+            pass
+        _REGISTER_CACHE["rows"] = rows
+    return rows.get(code)
+
+def _log_scan_error(path, lineno, reason):
+    ensure_dir(os.path.dirname(scanlog_path()))
+    with open(scanlog_path(), "a") as f:
+        f.write("%d %s:%d: %s\n" % (int(time.time()), path, lineno, reason))
+
+def _set_meta(con, k, v):
+    con.execute("INSERT OR REPLACE INTO meta VALUES(?,?)", (k, str(v)))
+
+def _get_meta(con, k, default=None):
+    r = con.execute("SELECT value FROM meta WHERE key=?", (k,)).fetchone()
+    return r["value"] if r else default
+
+def _enumerate_files():
+    """(path, provider, sid, mtime_ns, size), newest-first."""
+    out = []
+    for path in glob.glob(os.path.join(CLAUDE_ROOT(), "**", "*.jsonl"), recursive=True):
+        try:
+            st = os.stat(path)
+        except OSError:
+            continue
+        out.append((path, "claude", os.path.basename(path)[:-6], st.st_mtime_ns, st.st_size))
+    for path in glob.glob(os.path.join(CODEX_ROOT(), "**", "rollout-*.jsonl"), recursive=True):
+        try:
+            st = os.stat(path)
+        except OSError:
+            continue
+        name = os.path.basename(path)
+        m = _UUID_RE.search(name)
+        sid = m.group(0) if m else name[len("rollout-"):-6]
+        out.append((path, "codex", sid, st.st_mtime_ns, st.st_size))
+    out.sort(key=lambda t: t[3], reverse=True)
+    return out
+
+def _scan_one(con, path, provider, sid, known, mtime_s):
+    """Scan one transcript file into the DB. Returns (n_signals, n_line_errors)."""
+    blob_parts, spawn_targets, first_uuid = [], set(), None
+    n_lerr, got_first = 0, False
+    with open(path, errors="strict") as f:
+        for lineno, raw in enumerate(f, 1):
+            passed = _prefilter(raw)
+            if got_first and not passed:
+                continue
+            s = raw.strip()
+            if not s:
+                continue
+            try:
+                rec = json.loads(s)
+            except ValueError:
+                if passed:
+                    n_lerr += 1
+                    _log_scan_error(path, lineno, "json decode error")
+                continue
+            txt = _msg_text(rec)
+            if txt is None:
+                continue
+            if not got_first:
+                u = _rec_uuid(rec)
+                if u:
+                    first_uuid, got_first = u, True
+            if passed:
+                blob_parts.append(txt)
+    blob = "\n".join(blob_parts)
+    n_sig, open_now, topic_counts = 0, {}, {}
+    for m in _SPAWNED_BY_RE.finditer(blob):
+        parent = m.group(2); spawn_targets.add(parent)
+        touch_session(con, parent, provider=m.group(1))
+        upsert_edge(con, parent, sid, "spawned", "spawn_header", 1.0, {"path": path}); n_sig += 1
+    for m in _SPAWNED_CHILD_RE.finditer(blob):
+        child = m.group(2); spawn_targets.add(child)
+        touch_session(con, child, provider=m.group(1))
+        upsert_edge(con, sid, child, "spawned", "spawn_header", 0.95, {"path": path}); n_sig += 1
+    for tok in set(_UUID_RE.findall(blob)):
+        if tok != sid and tok in known and tok not in spawn_targets:
+            upsert_edge(con, sid, tok, "references", "scan", 0.9, {"path": path}); n_sig += 1
+    for m in _CODE_RE.finditer(blob):
+        c = m.group(0); topic_counts[c] = topic_counts.get(c, 0) + 1
+    for c in sorted(topic_counts, key=lambda k: (-topic_counts[k], k))[:TOPIC_CAP]:
+        con.execute("INSERT OR IGNORE INTO session_topics(session_id, code) VALUES(?,?)", (sid, c))
+        n_sig += 1
+        if _register_status(c) == "unverified":
+            open_now[_sha1("register:" + c)] = ("register_unverified", c)
+    if "Session Closeout" in blob:
+        m = _HANDOFF_RE.search(blob)
+        if m:
+            txt = m.group(1).strip()
+            if len(txt) > 3 and txt.lower() not in ("none", "n/a", "na", "-"):
+                open_now[_sha1(txt)] = ("closeout_handoff", txt)
+                con.execute("UPDATE sessions SET closeout_seen=1 WHERE id=?", (sid,))
+    now = int(time.time())
+    for h, (kind, text) in open_now.items():
+        con.execute("INSERT OR IGNORE INTO open_ends(session_id, kind, text, text_hash) "
+                    "VALUES(?,?,?,?)", (sid, kind, text, h))
+        con.execute("UPDATE open_ends SET resolved_at=NULL, kind=?, text=? "
+                    "WHERE session_id=? AND text_hash=?", (kind, text, sid, h))
+        n_sig += 1
+    # auto-resolve: open_ends whose signal disappeared this pass
+    if open_now:
+        qs = ",".join("?" * len(open_now))
+        con.execute("UPDATE open_ends SET resolved_at=? WHERE session_id=? AND resolved_at IS NULL "
+                    "AND text_hash NOT IN (%s)" % qs, [now, sid] + list(open_now))
+    else:
+        con.execute("UPDATE open_ends SET resolved_at=? WHERE session_id=? AND resolved_at IS NULL",
+                    (now, sid))
+    con.execute("UPDATE sessions SET provider=COALESCE(NULLIF(provider,''),?), "
+                "last_activity=?, first_msg_uuid=COALESCE(first_msg_uuid,?) WHERE id=?",
+                (provider, str(mtime_s), first_uuid, sid))
+    return n_sig, n_lerr
+
+def _resume_fork(con):
+    """Sessions sharing a first-message uuid -> continues (later->earlier) 1.0;
+    dedupe unresolved open_ends across the fork group by text_hash."""
+    now = int(time.time())
+    groups = {}
+    for r in con.execute("SELECT id, first_msg_uuid, last_activity FROM sessions "
+                        "WHERE first_msg_uuid IS NOT NULL AND first_msg_uuid != ''"):
+        try:
+            la = int(r["last_activity"] or 0)
+        except (TypeError, ValueError):
+            la = 0
+        groups.setdefault(r["first_msg_uuid"], []).append((r["id"], la))
+    for members in groups.values():
+        if len(members) < 2:
+            continue
+        members.sort(key=lambda m: m[1])  # earliest first
+        earliest = members[0][0]
+        for mid, _ in members[1:]:
+            upsert_edge(con, mid, earliest, "continues", "resume-fork", 1.0, {})
+        seen = set()
+        for mid, _ in members:
+            for o in con.execute("SELECT text_hash FROM open_ends WHERE session_id=? "
+                                "AND resolved_at IS NULL", (mid,)).fetchall():
+                th = o["text_hash"]
+                if th in seen:
+                    con.execute("UPDATE open_ends SET resolved_at=? WHERE session_id=? "
+                                "AND text_hash=?", (now, mid, th))
+                else:
+                    seen.add(th)
+
+def _progress(i, total, errors, elapsed, tty):
+    pct = int(100 * i / total) if total else 100
+    eta = "?"
+    if i and total:
+        rem = (elapsed / i) * (total - i)
+        eta = "%dm%02ds" % (int(rem) // 60, int(rem) % 60)
+    msg = "[scan] %d/%d · %d%% · ETA %s · errors %d" % (i, total, pct, eta, errors)
+    sys.stderr.write(("\r" + msg) if tty else (msg + "\n"))
+    sys.stderr.flush()
+
+def scan_transcripts(con, full=False, limit_files=None):
+    """One incremental pass. Returns (files_errored, files_considered)."""
+    ensure_dir(os.path.dirname(scanlog_path()))
+    files = _enumerate_files()
+    if limit_files is not None:
+        files = files[:limit_files]
+    cur = {r["path"]: (r["mtime"], r["size"])
+           for r in con.execute("SELECT path, mtime, size FROM file_cursors")}
+    todo = [t for t in files if full or cur.get(t[0]) != (t[3], t[4])]
+    if not todo:
+        sys.stderr.write("[scan] 0 new/changed files\n")
+    known = set(t[2] for t in files)
+    for r in con.execute("SELECT id FROM sessions"):
+        known.add(r["id"])
+    known.discard(None)
+    total, ferr, scanned, yield_n = len(todo), 0, 0, 0
+    start, t_last, tty = time.time(), time.time(), sys.stderr.isatty()
+    for i, (path, provider, sid, mtime, size) in enumerate(todo, 1):
+        if size > MAX_FILE_BYTES:
+            sys.stderr.write("[scan] skip >200MB: %s\n" % path)
+            _log_scan_error(path, 0, "file >200MB skipped")
+            continue
+        touch_session(con, sid, provider=provider)
+        try:
+            n_sig, _ = _scan_one(con, path, provider, sid, known, mtime // 1_000_000_000)
+        except (OSError, UnicodeDecodeError) as e:
+            ferr += 1
+            _log_scan_error(path, 0, "file error: %s" % e)
+            con.rollback()
+            continue
+        con.execute("INSERT INTO file_cursors(path, mtime, size) VALUES(?,?,?) "
+                    "ON CONFLICT(path) DO UPDATE SET mtime=excluded.mtime, size=excluded.size",
+                    (path, mtime, size))
+        con.commit()  # ONE transaction per file -> Ctrl-C-safe, resumable
+        scanned += 1
+        if n_sig > 0:
+            yield_n += 1
+        if time.time() - t_last >= 2 or i == total:
+            _progress(i, total, ferr, time.time() - start, tty)
+            t_last = time.time()
+    _resume_fork(con)
+    _set_meta(con, "scan_files_scanned", scanned)
+    _set_meta(con, "scan_files_yield", yield_n)
+    con.commit()
+    return ferr, total
+
+# ---- export + validate ----------------------------------------------------
+def _resume_cmd(provider, sid):
+    if provider == "codex":
+        return "codex resume %s" % sid
+    if provider == "claude":
+        return "claude --resume %s" % sid
+    return "chat-source full %s" % sid
+
+def _repo_annotations():
+    """From `scan-unfinished-work --json` (env CHAT_GRAPH_SCAN_CMD override).
+    Returns (annotations_list, notes_list)."""
+    cmd = os.environ.get("CHAT_GRAPH_SCAN_CMD")
+    exe = cmd.split() if cmd else None
+    if not exe:
+        default = os.path.join(os.path.dirname(os.path.abspath(__file__)), "scan-unfinished-work")
+        if os.path.exists(default):
+            exe = [default, "--json"]
+    if not exe:
+        return [], ["scan-unfinished-work absent"]
+    try:
+        out = subprocess.run(exe, capture_output=True, text=True, timeout=120)
+        if out.returncode != 0:
+            return [], ["scan-unfinished-work exit %d" % out.returncode]
+        data = json.loads(out.stdout)
+        if isinstance(data, dict):
+            data = data.get("repos") or data.get("data") or []
+        return (data if isinstance(data, list) else []), []
+    except Exception as e:
+        return [], ["scan-unfinished-work failed: %s" % e]
+
+def _scan_errors_24h():
+    p = scanlog_path()
+    if not os.path.exists(p):
+        return 0
+    cut, n = time.time() - 24 * 3600, 0
+    with open(p) as f:
+        for ln in f:
+            try:
+                if int(ln.split(" ", 1)[0]) >= cut:
+                    n += 1
+            except (ValueError, IndexError):
+                continue
+    return n
+
+def _build_export(con):
+    now = int(time.time())
+    prov_of = {r["id"]: (r["provider"] or "unknown")
+               for r in con.execute("SELECT id, provider FROM sessions")}
+    nodes = []
+    for r in con.execute("SELECT * FROM sessions"):
+        opens = [{"kind": o["kind"], "text": redact(o["text"] or ""), "text_hash": o["text_hash"]}
+                 for o in con.execute("SELECT kind, text, text_hash FROM open_ends "
+                                      "WHERE session_id=? AND resolved_at IS NULL", (r["id"],))]
+        try:
+            la = int(r["last_activity"])
+        except (TypeError, ValueError):
+            la = None
+        prov = r["provider"] or "unknown"
+        nodes.append({
+            "provider": prov, "id": r["id"], "title": display_title(r),
+            "repo": r["repo"] or "",
+            "last_activity": (time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(la)) if la else ""),
+            "first_seen_at": r["first_seen_at"],
+            "live": la is not None and (now - la) < 30 * 60,
+            "closeout_seen": bool(r["closeout_seen"]),
+            "open_ends": opens,
+            "resume_cmd": _resume_cmd(prov, r["id"]),
+            "view_cmd": "chat-source full %s" % r["id"],
+        })
+    edges = []
+    # suppressions is source-independent: hide any (src,dst,type) an unlink
+    # suppressed, regardless of which source's row is currently active.
+    for e in con.execute(
+            "SELECT e.* FROM edges e WHERE e.status='active' "
+            "AND NOT EXISTS(SELECT 1 FROM suppressions s "
+            "WHERE s.src=e.src AND s.dst=e.dst AND s.type=e.type)"):
+        edge = {"src": "%s:%s" % (prov_of.get(e["src"], "unknown"), e["src"]),
+                "dst": "%s:%s" % (prov_of.get(e["dst"], "unknown"), e["dst"]),
+                "type": e["type"], "source": e["source"],
+                "confidence": e["confidence"], "note": e["note"]}
+        if e["confidence"] is not None and e["confidence"] < 0.7:
+            edge["unlink_cmd"] = "chat-graph unlink %s %s --type %s" % (e["src"], e["dst"], e["type"])
+        edges.append(edge)
+    tmap = {}
+    for r in con.execute("SELECT code, session_id FROM session_topics"):
+        tmap.setdefault(r["code"], []).append(r["session_id"])
+    topics = [{"code": c, "sessions": sorted(m)} for c, m in sorted(tmap.items()) if len(m) >= 2]
+    repo_annotations, notes = _repo_annotations()
+    scanned = int(_get_meta(con, "scan_files_scanned", 0) or 0)
+    yld = int(_get_meta(con, "scan_files_yield", 0) or 0)
+    lt = time.localtime(now)
+    midnight = now - (lt.tm_hour * 3600 + lt.tm_min * 60 + lt.tm_sec)
+    counts = {
+        "new_today": con.execute("SELECT COUNT(*) c FROM sessions WHERE first_seen_at >= ?",
+                                 (midnight,)).fetchone()["c"],
+        "scan_errors_24h": _scan_errors_24h(),
+        "signal_yield": "%d/%d" % (yld, scanned),
+    }
+    return {
+        "schema": 1, "feed": "chats",
+        "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now)),
+        "generated_epoch": now, "cadence_s": 1800, "ok": True, "error": None,
+        "data": {"nodes": nodes, "edges": edges, "topics": topics,
+                 "repo_annotations": repo_annotations,
+                 "stale_providers": sorted(_STALE_PROVIDERS), "notes": notes, "counts": counts},
+    }
+
+def cmd_export(args):
+    out = args[args.index("--out") + 1] if "--out" in args else None
+    # --catchup-limit N (default 1500): a stale export triggers a catch-up ingest;
+    # bound its file scan with --limit-files so export ALWAYS reaches os.rename within
+    # a feed timeout. Cursors let successive ticker fires extend coverage. 0 = unbounded.
+    catchup = int(args[args.index("--catchup-limit") + 1]) if "--catchup-limit" in args else 1500
+    age = _ingest_age()
+    if age is None or age > STALE_INGEST_S:  # ONLY catch-up-on-query entry point
+        cmd_ingest(["--limit-files", str(catchup)] if catchup > 0 else [])
+    con = connect()
+    data = _build_export(con)
+    con.close()
+    dest = out or os.path.join(HOME_DIR(), "export", "graph.json")
+    ensure_dir(os.path.dirname(dest))
+    tmp = "%s.tmp.%d" % (dest, os.getpid())
+    with open(tmp, "w") as f:
+        json.dump(data, f, ensure_ascii=True, indent=2)  # ascii escapes emoji/U+2028
+        f.flush(); os.fsync(f.fileno())
+    os.rename(tmp, dest)  # atomic: readers never see a partial file
+    print("exported %s" % dest)
+    return 0
+
+def cmd_validate_export(args):
+    if not args:
+        sys.stderr.write("usage: chat-graph validate-export <file>\n"); return 1
+    try:
+        with open(args[0]) as f:
+            d = json.load(f)
+    except Exception as e:
+        print("FAIL: cannot read/parse: %s" % e); return 1
+    errs = []
+    for k in ("schema", "feed", "generated_at", "generated_epoch", "cadence_s", "ok", "data"):
+        if k not in d:
+            errs.append("missing envelope key: %s" % k)
+    if d.get("schema") != 1:
+        errs.append("schema != 1")
+    data = d.get("data") or {}
+    for k in ("nodes", "edges", "topics", "counts"):
+        if k not in data:
+            errs.append("missing data key: %s" % k)
+    for n in data.get("nodes", []):
+        if not n.get("id"):
+            errs.append("node missing id")
+        if not (n.get("title") or "").strip():
+            errs.append("node %s has empty title" % n.get("id"))
+    for e in data.get("edges", []):
+        if any(k not in e for k in ("src", "dst", "type", "source", "confidence")):
+            errs.append("edge missing required field: %r" % e); continue
+        c = e.get("confidence")
+        if not isinstance(c, (int, float)) or not (0.0 <= c <= 1.0):
+            errs.append("edge confidence out of range: %r" % c)
+    if errs:
+        for e in errs:
+            print("FAIL: %s" % e)
+        return 1
+    print("ok: %s valid (%d nodes, %d edges)" % (args[0], len(data.get("nodes", [])),
+                                                 len(data.get("edges", []))))
+    return 0
+
+# ---- ingest (mkdir-locked) ------------------------------------------------
+def cmd_ingest(args):
+    only = args[args.index("--collector") + 1] if "--collector" in args else None
+    full = "--full" in args
+    limit = int(args[args.index("--limit-files") + 1]) if "--limit-files" in args else None
+    ensure_dir(HOME_DIR())
+    ensure_dir(os.path.dirname(journal_path()))  # healthy home always has journal/ + logs/
+    ensure_dir(os.path.dirname(scanlog_path()))
+    try:
+        os.mkdir(lock_path())
+    except FileExistsError:
+        print("chat-graph: ingest lock held — another ingest is running, skipping")
+        return 0
+    try:
+        con = connect()
+        # structured collectors run before the scan so `stats` shows edges fast.
+        if only != "scan":
+            names = [only] if only else list(COLLECTORS)
+            for name in names:
+                fn = COLLECTORS.get(name)
+                if not fn:
+                    sys.stderr.write("chat-graph: unknown collector %r\n" % name)
+                    return 2
+                rows = fn(con)
+                con.execute("INSERT INTO collector_state(collector, cursor, last_run, row_count) "
+                            "VALUES(?, NULL, ?, ?) ON CONFLICT(collector) DO UPDATE SET "
+                            "last_run=excluded.last_run, row_count=excluded.row_count",
+                            (name, int(time.time()), rows))
+            con.commit()
+        if only is None or only == "scan":
+            ferr, total = scan_transcripts(con, full=full, limit_files=limit)
+            if total and ferr > 0.2 * total:
+                con.close()
+                sys.stderr.write("chat-graph: scan aborted — >20%% of files errored (%d/%d)\n"
+                                 % (ferr, total))
+                return 1
+        con.close()
+        # --limit-files caps a partial pass: cursors written, but NO completion marker.
+        if limit is None:
+            with open(marker_path(), "w") as f:
+                f.write(str(int(time.time())))
+        if _STALE_PROVIDERS:
+            print("chat-graph: ingested (degraded providers: %s)" % ",".join(sorted(_STALE_PROVIDERS)))
+        else:
+            print("chat-graph: ingest complete")
+        return 0
+    finally:
+        try:
+            os.rmdir(lock_path())
+        except OSError:
+            pass
+
+# ---- id resolution --------------------------------------------------------
+def known_ids(con):
+    ids = set()
+    for r in con.execute("SELECT id FROM sessions"):
+        ids.add(r["id"])
+    for r in con.execute("SELECT src FROM edges UNION SELECT dst FROM edges"):
+        ids.add(r["src"])
+    ids.discard(None)
+    return ids
+
+def resolve_id(con, needle):
+    ids = known_ids(con)
+    if needle in ids:
+        return needle
+    hits = sorted(i for i in ids if i.startswith(needle))
+    if len(hits) == 1:
+        return hits[0]
+    if len(hits) > 1:
+        sys.stderr.write("chat-graph: ambiguous id %r, candidates:\n  %s\n"
+                         % (needle, "\n  ".join(hits[:5])))
+        sys.exit(2)
+    # unknown but usable (e.g. manual link to a not-yet-ingested id) — warn so a
+    # mistyped prefix isn't silently written as a wrong key.
+    sys.stderr.write("note: %r not found in graph; using as-is\n" % needle)
+    return needle
+
+# ---- manual commands ------------------------------------------------------
+def cmd_link(args):
+    a, b = args[0], args[1]
+    etype = args[args.index("--type") + 1] if "--type" in args else "related_manual"
+    note = args[args.index("--note") + 1] if "--note" in args else None
+    if etype not in EDGE_TYPES:
+        sys.stderr.write("chat-graph: unknown edge type %r (%s)\n" % (etype, ", ".join(EDGE_TYPES)))
+        return 2
+    con = connect()
+    a, b = resolve_id(con, a), resolve_id(con, b)  # canonicalize BEFORE journal/db
+    journal_append({"op": "link", "a": a, "b": b, "type": etype, "note": note})
+    _apply_link(con, a, b, etype, note)
+    con.commit(); con.close()
+    print("linked %s %s %s" % (a, b, etype))
+    return 0
+
+def cmd_unlink(args):
+    a, b = args[0], args[1]
+    etype = args[args.index("--type") + 1] if "--type" in args else None
+    con = connect()
+    a, b = resolve_id(con, a), resolve_id(con, b)  # canonicalize BEFORE journal/db
+    journal_append({"op": "unlink", "a": a, "b": b, "type": etype})
+    _apply_unlink(con, a, b, etype)
+    con.commit(); con.close()
+    print("unlinked %s %s %s" % (a, b, etype or "(all types)"))
+    return 0
+
+def cmd_resolve(args):
+    sid, text_hash = args[0], args[1]
+    con = connect()
+    sid = resolve_id(con, sid)  # canonicalize BEFORE journal/db (text_hash stays literal)
+    journal_append({"op": "resolve", "a": sid, "b": text_hash})
+    _apply_resolve(con, sid, text_hash)
+    con.commit(); con.close()
+    print("resolved open-end %s on %s" % (text_hash, sid))
+    return 0
+
+# ---- read commands --------------------------------------------------------
+def _ingest_age():
+    try:
+        return time.time() - os.path.getmtime(marker_path())
+    except OSError:
+        return None
+
+def cmd_show(args):
+    con = connect()
+    sid = resolve_id(con, args[0])
+    row = con.execute("SELECT * FROM sessions WHERE id=?", (sid,)).fetchone()
+    print("=== %s ===" % sid[:8])
+    if row:
+        print("  id:      %s" % sid)
+        print("  provider: %s" % (row["provider"] or "-"))
+        print("  title:   %s" % display_title(row))
+        print("  repo:    %s" % (row["repo"] or "-"))
+    else:
+        print("  id:      %s" % sid)
+        print("  (no cached session metadata)")
+    print("  neighbors:")
+    neigh = con.execute(
+        "SELECT e.src, e.dst, e.type, e.source, e.confidence, e.status, e.note FROM edges e "
+        "WHERE (e.src=? OR e.dst=?) AND e.status='active' "
+        "AND NOT EXISTS(SELECT 1 FROM suppressions s "
+        "WHERE s.src=e.src AND s.dst=e.dst AND s.type=e.type) "
+        "ORDER BY e.type", (sid, sid)).fetchall()
+    if not neigh:
+        print("    (none)")
+    last_type = None
+    for e in neigh:
+        if e["type"] != last_type:
+            print("    [%s]" % e["type"]); last_type = e["type"]
+        other = e["dst"] if e["src"] == sid else e["src"]
+        arrow = "->" if e["src"] == sid else "<-"
+        tag = " (%s)" % e["note"] if e["note"] else ""
+        print("      %s %s  conf=%.2f src=%s%s" % (arrow, other[:8], e["confidence"], e["source"], tag))
+    opens = con.execute("SELECT kind, text, text_hash FROM open_ends "
+                        "WHERE session_id=? AND resolved_at IS NULL", (sid,)).fetchall()
+    print("  open ends:")
+    if not opens:
+        print("    (none)")
+    for o in opens:
+        print("    [%s] %s (%s)" % (o["kind"] or "?", redact(o["text"] or ""), o["text_hash"]))
+    con.close()
+    age = _ingest_age()
+    if age is not None and age > STALE_INGEST_S:
+        print("warning: last ingest %d min ago — run 'chat-graph ingest' to refresh" % int(age // 60))
+    return 0
+
+def cmd_stats(args):
+    con = connect()
+    print("collectors:")
+    for r in con.execute("SELECT collector, cursor, last_run, row_count FROM collector_state ORDER BY collector"):
+        when = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(r["last_run"])) if r["last_run"] else "never"
+        print("  %-12s rows=%-4d cursor=%s last_run=%s" % (r["collector"], r["row_count"], r["cursor"] or "-", when))
+    for label, sql in (("sessions", "SELECT COUNT(*) c FROM sessions"),
+                       ("edges (active)", "SELECT COUNT(*) c FROM edges WHERE status='active'"),
+                       ("edges (suppressed)", "SELECT COUNT(*) c FROM edges WHERE status='suppressed'"),
+                       ("topics", "SELECT COUNT(*) c FROM session_topics"),
+                       ("open_ends", "SELECT COUNT(*) c FROM open_ends")):
+        print("  %-20s %d" % (label, con.execute(sql).fetchone()["c"]))
+    scanned = int(_get_meta(con, "scan_files_scanned", 0) or 0)
+    yld = int(_get_meta(con, "scan_files_yield", 0) or 0)
+    print("  %-20s %d/%d" % ("signal_yield", yld, scanned))
+    print("  %-20s %d" % ("scan_errors_24h", _scan_errors_24h()))
+    if scanned > 100 and yld == 0:
+        print("  warning: %d files scanned, 0 signals — scanner may be blind" % scanned)
+    if _STALE_PROVIDERS:
+        print("  stale_providers: %s" % ",".join(sorted(_STALE_PROVIDERS)))
+    con.close()
+    return 0
+
+def cmd_doctor(args):
+    problems = 0
+    def check(ok, msg):
+        nonlocal problems
+        print(("ok:   " if ok else "FAIL: ") + msg)
+        if not ok:
+            problems += 1
+    def warn(ok, msg):  # advisory: prints but never fails doctor (sweep FIX 7)
+        print(("ok:   " if ok else "WARN: ") + msg)
+    home = HOME_DIR()
+    check(os.path.isdir(home), "home dir exists: %s" % home)
+    if os.path.isdir(home):
+        mode = os.stat(home).st_mode & 0o777
+        check(mode == 0o700, "home dir perms 700 (got %o)" % mode)
+    jdir = os.path.dirname(journal_path())
+    check(os.path.isdir(jdir), "journal dir exists: %s" % jdir)
+    if os.path.exists(journal_path()):
+        check(os.access(journal_path(), os.R_OK), "journal readable")
+    exe = CHAT_SOURCE()
+    check(bool(exe and os.path.exists(exe)), "chat-source present: %s" % exe)
+    try:
+        con = connect()
+        qc = con.execute("PRAGMA quick_check").fetchone()[0]
+        check(qc == "ok", "db quick_check: %s" % qc)
+        con.close()
+    except Exception as e:
+        check(False, "db open: %s" % e)
+    age = _ingest_age()
+    check(age is None or age <= STALE_INGEST_S,
+          "last-ingest age: %s" % ("never" if age is None else "%dm" % int(age // 60)))
+    try:
+        free_gb = shutil.disk_usage(home).free / 1e9
+        check(free_gb > 1.0, "free disk > 1 GB (%.1f GB)" % free_gb)
+    except Exception as e:
+        check(False, "disk usage: %s" % e)
+    errs = 0
+    if os.path.exists(scanlog_path()):
+        with open(scanlog_path()) as f:
+            errs = sum(1 for _ in f)
+    # sweep FIX 7: transient scan-error log lines (e.g. one malformed transcript, or a
+    # /tmp test file) must NOT fail doctor — the scanner already skips bad lines by
+    # design. WARN for a modest count; FAIL only when it's large enough to signal a
+    # structural scan problem (matches the scanner's >20-file abort posture).
+    if errs > 20:
+        check(False, "scan-error count: %d (large — likely a structural scan problem)" % errs)
+    else:
+        warn(errs == 0, "scan-error count: %d (transient; run reindex to clear the log)" % errs)
+    return 1 if problems else 0
+
+def cmd_rebuild(args):
+    # fresh schema + collectors + replay journal in recorded order.
+    try:
+        os.remove(db_path())
+    except OSError:
+        pass
+    for wal in (db_path() + "-wal", db_path() + "-shm"):
+        try:
+            os.remove(wal)
+        except OSError:
+            pass
+    rc = cmd_ingest([])
+    if rc not in (0,):
+        return rc
+    con = connect()
+    journal_replay(con)
+    con.close()
+    print("chat-graph: rebuild complete")
+    return 0
+
+def cmd_self_test(args):
+    here = os.path.dirname(os.path.abspath(__file__))
+    test = os.path.join(here, "chat-graph.test.sh")
+    print("self-test: %s" % test)
+    return subprocess.call(["bash", test])
+
+# ---- dispatch -------------------------------------------------------------
+USAGE = ("usage: chat-graph {ingest|export|validate-export|link|unlink|resolve|show|stats|doctor|rebuild|--self-test}\n"
+         "  ingest [--collector NAME] [--full] [--limit-files N]\n"
+         "  export --json [--out PATH] [--catchup-limit N]   validate-export <file>\n"
+         "  link A B --type T [--note ..]   unlink A B [--type T]   resolve <id> <text-hash>\n"
+         "  show <id>   stats   doctor   rebuild   --self-test")
+
+def main(argv):
+    if not argv:
+        print(USAGE); return 1
+    cmd, args = argv[0], argv[1:]
+    table = {
+        "ingest": cmd_ingest, "export": cmd_export, "validate-export": cmd_validate_export,
+        "link": cmd_link, "unlink": cmd_unlink,
+        "resolve": cmd_resolve, "show": cmd_show, "stats": cmd_stats,
+        "doctor": cmd_doctor, "rebuild": cmd_rebuild,
+        "--self-test": cmd_self_test, "self-test": cmd_self_test,
+    }
+    fn = table.get(cmd)
+    if not fn:
+        print(USAGE); return 1
+    return fn(args) or 0
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

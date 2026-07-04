@@ -1,0 +1,203 @@
+#!/usr/bin/env bash
+# scan-unfinished-work — find unfinished work, stale branches, dirty trees,
+# unpushed commits, and dangling WIP across all Coding Projects repos.
+#
+# Serves ER-031 sub-ask: "a routine that searches for things that need
+# unfinished work or improvements that can be made in our coding, or things
+# that were left off that didn't get finished."
+#
+# Zero-quota: pure git/shell, no model calls. Safe to run on a schedule.
+# Reusable: reads the repo list from the filesystem; skip-list is a grep pattern.
+#
+# Usage:
+#   scan-unfinished-work                 # human report to stdout
+#   scan-unfinished-work --json          # machine-parseable (one JSON object)
+#   scan-unfinished-work --stale-days 14 # branches older than 14 days (default 21)
+#   scan-unfinished-work --self-test     # run the built-in self-test
+#
+# Exit codes: 0 = clean/no findings (or --self-test); 1 = findings present
+# present (by design, like morning-health-brief); 2 = usage error.
+
+set -euo pipefail
+
+STALE_DAYS_DEFAULT=21
+CODING_ROOT="${CODING_ROOT:-/Users/gillettes/Coding Projects}"
+# Directories to skip (worktree pools, deliverables, archives, dot-prefixed).
+# Env-overridable so self-tests can disable skipping.
+SKIP_RE="${SKIP_RE:-worktree|_deliverables|_worktrees|Archived|aca-usage-burst|_worker-handoffs|^\.}"
+SELF_TEST=0
+JSON=0
+STALE_DAYS="$STALE_DAYS_DEFAULT"
+
+usage() {
+  sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'
+  exit 2
+}
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --json) JSON=1; shift ;;
+    --self-test) SELF_TEST=1; shift ;;
+    --stale-days) STALE_DAYS="${2:?--stale-days needs a number}"; shift 2 ;;
+    -h|--help) usage ;;
+    *) echo "unknown arg: $1" >&2; usage ;;
+  esac
+done
+
+# ─── helpers ─────────────────────────────────────────────────────────────
+
+is_git_repo() { [ -d "$1/.git" ] || [ "$(git -C "$1" rev-parse --is-inside-work-tree 2>/dev/null || true)" = "true" ]; }
+
+repo_short() { basename "$1"; }
+
+# days since last commit on a branch (arg: repo, ref); empty if unresolvable
+days_since() {
+  local repo="$1" ref="$2" ts
+  ts=$(git -C "$repo" log -1 --format=%ct "$ref" 2>/dev/null || true)
+  [ -z "$ts" ] && { echo ""; return; }
+  echo $(( ( $(date +%s) - ts ) / 86400 ))
+}
+
+# ─── self-test ────────────────────────────────────────────────────────────
+if [ "$SELF_TEST" = 1 ]; then
+  TMP=$(mktemp -d)
+  trap 'rm -rf "$TMP"' EXIT
+  UP="$TMP/upstream"; mkdir -p "$UP"
+  git -C "$UP" init -q -b main .
+  git -C "$UP" config user.email t@t; git -C "$UP" config user.name t
+  echo hi > "$UP/f"; git -C "$UP" add f; git -C "$UP" commit -qm "init"
+  # clone, make dirty + unpushed + stale branch
+  git clone -q "$UP" "$TMP/work"
+  echo dirty >> "$TMP/work/f"                          # dirty tree
+  git -C "$TMP/work" checkout -q -b feature-stale
+  git -C "$TMP/work" commit -qm "stale work" --allow-empty
+  git -C "$TMP/work" checkout -q main
+  # run the scanner against the temp pool by calling it with overridden env.
+  # The script reads CODING_ROOT/STALE_DAYS from env; SKIP_RE and JSON are
+  # internal constants, so we exercise the real paths instead.
+  FIND=$(CODING_ROOT="$TMP" SKIP_RE='^$' "$0" --json --stale-days 0 2>/dev/null || true)
+  printf '%s' "$FIND" | python3 -c '
+import json,sys
+d=json.load(sys.stdin)
+r=[x for x in d["repos"] if x["repo"].endswith("work")]
+assert r, "work repo not found in scan output"
+r=r[0]
+assert r["dirty"], "dirty not detected"
+# stale branch detection requires SKIP_RE to not exclude it; the default
+# SKIP_RE would exclude "work" only if it matched worktree|_ etc — it does not,
+# but the upstream clone is under $TMP which has no skip-match. Verify branches:
+brs=[b["name"] for b in r.get("branches",[])]
+assert "feature-stale" in brs, f"stale branch not detected, got: {brs}"
+print("SELF-TEST PASS")' || { echo "SELF-TEST FAIL"; exit 1; }
+  exit 0
+fi
+
+# ─── main ─────────────────────────────────────────────────────────────────
+
+repos=()
+while IFS= read -r d; do
+  short=$(basename "$d")
+  printf '%s' "$short" | grep -qiE "$SKIP_RE" && continue
+  is_git_repo "$d" && repos+=("$d")
+done < <(find "$CODING_ROOT" -maxdepth 1 -mindepth 1 -type d 2>/dev/null | sort)
+
+findings_total=0
+# JSON mode: accumulate one JSONL line per repo, build final JSON at the end.
+JSONL_FILE=""; [ "$JSON" = 1 ] && JSONL_FILE=$(mktemp)
+trap '[ -n "$JSONL_FILE" ] && rm -f "$JSONL_FILE"' EXIT
+
+if [ "${#repos[@]}" -gt 0 ]; then
+for repo in "${repos[@]}"; do
+  short=$(repo_short "$repo")
+  dirty_lines=$(git -C "$repo" status --porcelain 2>/dev/null | wc -l | tr -d ' ')
+  dirty=0; [ "$dirty_lines" -gt 0 ] && dirty=1
+  upstream=$(git -C "$repo" rev-parse --abbrev-ref @{upstream} 2>/dev/null || echo "")
+  ahead=0
+  if [ -n "$upstream" ]; then
+    ahead=$(git -C "$repo" rev-list --count @{upstream}..HEAD 2>/dev/null || echo 0)
+  fi
+  detached=0
+  git -C "$repo" symbolic-ref -q HEAD >/dev/null 2>&1 || detached=1
+
+  # stale unmerged branches (not HEAD's branch, not main/master, older than STALE_DAYS)
+  stale_branches=""
+  cur_branch=$(git -C "$repo" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
+  # emit each stale branch as a TSV record for later JSON assembly
+  stale_records=""
+  while IFS= read -r br; do
+    [ -z "$br" ] && continue
+    case "$br" in main|master) continue ;; esac
+    [ "$br" = "$cur_branch" ] && continue
+    # is it merged into main/master?
+    merged=0
+    for mb in main master; do
+      if git -C "$repo" rev-parse --verify "$mb" >/dev/null 2>&1; then
+        if git -C "$repo" merge-base --is-ancestor "$br" "$mb" 2>/dev/null; then merged=1; break; fi
+      fi
+    done
+    [ "$merged" = 1 ] && continue
+    age=$(days_since "$repo" "$br")
+    [ -z "$age" ] && continue
+    if [ "$age" -ge "$STALE_DAYS" ]; then
+      stale_branches+=$(printf '\n    %s — %sd old' "$br" "$age")
+      # NOT $(printf ...\n): command substitution strips the trailing newline, so
+      # records run together into one line and the JSON parser gets >2 tab fields
+      # and crashes (ValueError: too many values to unpack). Append newline directly.
+      stale_records+="$br"$'\t'"$age"$'\n'
+    fi
+  done < <(git -C "$repo" branch --format='%(refname:short)' 2>/dev/null)
+
+  repo_findings=0
+  [ "$dirty" = 1 ] && repo_findings=$((repo_findings+1))
+  [ "$ahead" -gt 0 ] && repo_findings=$((repo_findings+1))
+  [ "$detached" = 1 ] && repo_findings=$((repo_findings+1))
+  [ -n "$stale_branches" ] && repo_findings=$((repo_findings+1))
+  findings_total=$((findings_total + repo_findings))
+
+  if [ "$JSON" = 1 ]; then
+    # Emit one JSONL line per repo: python builds the object, TSV feeds branches.
+    printf '%s' "$stale_records" | python3 -c '
+import json, sys
+short, dirty, dirty_files, ahead, detached = sys.argv[1:6]
+branches = []
+for line in sys.stdin:
+    line = line.rstrip("\n")
+    if not line: continue
+    name, age = line.split("\t")
+    branches.append({"name": name, "age_days": int(age)})
+print(json.dumps({"repo": short, "dirty": dirty == "1", "dirty_files": int(dirty_files),
+                  "ahead": int(ahead), "detached": detached == "1", "branches": branches}))
+' "$short" "$dirty" "$dirty_lines" "$ahead" "$detached" >> "$JSONL_FILE"
+  elif [ "$repo_findings" -gt 0 ]; then
+    printf '## %s\n' "$short"
+    [ "$dirty" = 1 ] && printf '  ⚠ dirty tree: %s uncommitted file(s)\n' "$dirty_lines"
+    [ "$ahead" -gt 0 ] && printf '  ⚠ %s unpushed commit(s) on %s\n' "$ahead" "$cur_branch"
+    [ "$detached" = 1 ] && printf '  ⚠ detached HEAD\n'
+    [ -n "$stale_branches" ] && printf '  ⚠ stale unmerged branches:%s\n' "$stale_branches"
+    echo
+  fi
+done
+fi
+
+if [ "$JSON" = 1 ]; then
+  python3 -c '
+import json, sys, datetime
+repos = []
+with open(sys.argv[1]) as fh:
+    for line in fh:
+        line = line.strip()
+        if line: repos.append(json.loads(line))
+print(json.dumps({"generated": datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
+                  "stale_days": int(sys.argv[2]), "findings_total": int(sys.argv[3]),
+                  "repos": repos}))
+' "$JSONL_FILE" "$STALE_DAYS" "$findings_total"
+  [ "$findings_total" -gt 0 ] && exit 1 || exit 0
+fi
+
+echo "=== unfinished-work scan — $(date +%F) ==="
+echo "repos scanned: ${#repos[@]} | stale threshold: ${STALE_DAYS}d | findings: $findings_total"
+echo
+if [ "$findings_total" -eq 0 ]; then
+  echo "clean — no unfinished work detected."
+fi
+[ "$findings_total" -gt 0 ] && exit 1 || exit 0

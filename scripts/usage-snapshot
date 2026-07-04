@@ -1,0 +1,257 @@
+#!/bin/bash
+# usage-snapshot — one command → JSON of every paid AI surface's usage headroom + resets.
+# ER-078 primitive. Zero-LLM at runtime (descent rung: full script). Confidence is
+# honest per row: live | estimated | stale | unknown — percentages are never invented.
+#
+#   usage-snapshot                 # JSON to stdout
+#   usage-snapshot --history       # also append ~/.usage-snapshot/history.jsonl + roll waste.tsv
+#   usage-snapshot --html          # also render ~/.usage-snapshot/dashboard.html
+#   usage-snapshot --no-ccusage    # skip the (slower) Claude ccusage source
+#
+# Env overrides (used by tests): USAGE_SNAPSHOT_DIR, CODEX_SESSIONS_DIR, CLAUDE_GLM_BIN,
+# COPILOT_DB, HERMES_BIN, SKIP_CCUSAGE=1, CCUSAGE_BLOCKS_JSON/CCUSAGE_WEEKLY_JSON (fixture files).
+set -u
+umask 077
+
+STATE_DIR="${USAGE_SNAPSHOT_DIR:-$HOME/.usage-snapshot}"
+CODEX_SESSIONS="${CODEX_SESSIONS_DIR:-$HOME/.codex/sessions}"
+GLM_BIN="${CLAUDE_GLM_BIN:-claude-glm}"
+COPILOT_DB_PATH="${COPILOT_DB:-$HOME/.copilot/session-store.db}"
+HERMES="${HERMES_BIN:-hermes}"
+NOW_EPOCH=$(date +%s)
+NOW_ISO=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+DO_HISTORY=0; DO_HTML=0; NO_CCUSAGE="${SKIP_CCUSAGE:-0}"
+for a in "$@"; do
+  case "$a" in
+    --history) DO_HISTORY=1 ;;
+    --html) DO_HTML=1 ;;
+    --no-ccusage) NO_CCUSAGE=1 ;;
+    -h|--help) sed -n '2,14p' "$0"; exit 0 ;;
+    *) echo "usage-snapshot: unknown arg: $a" >&2; exit 64 ;;
+  esac
+done
+
+mkdir -p "$STATE_DIR"
+ROWS_TMP=$(mktemp "${TMPDIR:-/tmp}/usage-snapshot.XXXXXX") || exit 1
+trap 'rm -f "$ROWS_TMP"' EXIT
+
+emit() { printf '%s\n' "$1" >> "$ROWS_TMP"; }
+
+# row helper: all fields explicit, null allowed
+row() { # provider window used_pct resets_at_epoch confidence health source notes extra_json
+  local extra="${9:-}"
+  [ -z "$extra" ] && extra='{}'
+  jq -cn --arg p "$1" --arg w "$2" --argjson up "${3:-null}" --argjson ra "${4:-null}" \
+        --arg c "$5" --arg h "$6" --arg s "$7" --arg n "$8" --argjson x "$extra" --argjson now "$NOW_EPOCH" '
+    {provider:$p, window:$w, used_pct:$up,
+     resets_at:(if $ra==null then null else ($ra|todate) end),
+     resets_in_min:(if $ra==null then null else ((($ra-$now)/60)|floor) end),
+     confidence:$c, health:$h, source:$s, notes:$n} + $x'
+}
+
+# ---------- codex: newest rollout carries real rate_limits (both windows) ----------
+codex_rows() {
+  local newest="" mtime=0 age_h line
+  newest=$(find "$CODEX_SESSIONS" -type f -name 'rollout-*.jsonl' 2>/dev/null -print0 \
+    | xargs -0 stat -f '%m %N' 2>/dev/null | sort -rn | head -1 | cut -d' ' -f2-)
+  if [ -z "$newest" ]; then
+    emit "$(row codex 5h null null unknown unknown none 'no rollout files found')"
+    return
+  fi
+  mtime=$(stat -f %m "$newest" 2>/dev/null || echo 0)
+  age_h=$(( (NOW_EPOCH - mtime) / 3600 ))
+  line=$(tail -n 400 "$newest" | jq -c '.. | objects
+          | select(has("primary") and has("secondary"))
+          | select((.primary|type=="object") and (.primary|has("used_percent")))' 2>/dev/null | tail -1)
+  if [ -z "$line" ]; then
+    emit "$(row codex 5h null null unknown unknown "$newest" 'rollout has no rate_limits events')"
+    return
+  fi
+  local conf=live; [ "$age_h" -ge 6 ] && conf=stale
+  local pup pra sup sra plan
+  pup=$(printf '%s' "$line" | jq '.primary.used_percent // "null"')
+  pra=$(printf '%s' "$line" | jq '.primary.resets_at // "null"')
+  sup=$(printf '%s' "$line" | jq '.secondary.used_percent // "null"')
+  sra=$(printf '%s' "$line" | jq '.secondary.resets_at // "null"')
+  plan=$(printf '%s' "$line" | jq -r '.plan_type // "?"')
+  # a reset that already passed means the number is from a closed window
+  [ "$pra" != "null" ] && [ "$pra" -le "$NOW_EPOCH" ] 2>/dev/null && conf=stale
+  emit "$(row codex 5h "$pup" "$pra" "$conf" ok rollout-rate_limits "plan=$plan; rollout age ${age_h}h; refresh: run any tiny codex exec")"
+  emit "$(row codex weekly "$sup" "$sra" "$conf" ok rollout-rate_limits "plan=$plan")"
+}
+
+# ---------- claude: ccusage local-JSONL estimates (limits undisclosed → never a %) ----------
+claude_rows() {
+  if [ "$NO_CCUSAGE" = "1" ]; then
+    emit "$(row claude session-5h null null unknown ok skipped 'ccusage skipped (--no-ccusage)')"
+    return
+  fi
+  local bj wj
+  if [ -n "${CCUSAGE_BLOCKS_JSON:-}" ]; then bj=$(cat "$CCUSAGE_BLOCKS_JSON" 2>/dev/null)
+  else bj=$(npx -y ccusage@latest blocks --json --active 2>/dev/null); fi
+  if [ -n "${CCUSAGE_WEEKLY_JSON:-}" ]; then wj=$(cat "$CCUSAGE_WEEKLY_JSON" 2>/dev/null)
+  else wj=$(npx -y ccusage@latest weekly --json 2>/dev/null); fi
+
+  if printf '%s' "$bj" | jq -e '.blocks[0].isActive==true' >/dev/null 2>&1; then
+    local tokens end_iso end_epoch burn cost models
+    tokens=$(printf '%s' "$bj" | jq '.blocks[0].totalTokens')
+    end_iso=$(printf '%s' "$bj" | jq -r '.blocks[0].endTime')
+    end_epoch=$(date -j -u -f '%Y-%m-%dT%H:%M:%S' "$(printf '%s' "$end_iso" | cut -c1-19)" +%s 2>/dev/null || echo null)
+    burn=$(printf '%s' "$bj" | jq '.blocks[0].burnRate.tokensPerMinuteForIndicator // 0 | floor')
+    cost=$(printf '%s' "$bj" | jq '.blocks[0].costUSD // 0 | floor')
+    models=$(printf '%s' "$bj" | jq -r '[.blocks[0].models[]] | join(",")' 2>/dev/null || echo '?')
+    # extra JSON built by jq, not string-interpolation: bash 3.2 mangles \" inside $()
+    local extra_s
+    extra_s=$(jq -cn --argjson t "$tokens" --argjson b "$burn" --argjson c "$cost" --arg m "$models" \
+      '{tokens_used:$t,burn_tpm:$b,est_cost_usd:$c,models:$m}')
+    emit "$(row claude session-5h null "$end_epoch" estimated ok ccusage-blocks \
+      'limits undisclosed; burn+reset only' "$extra_s")"
+  else
+    emit "$(row claude session-5h null null estimated ok ccusage-blocks 'no active block (idle)')"
+  fi
+  if printf '%s' "$wj" | jq -e '.weekly | length > 0' >/dev/null 2>&1; then
+    local wt wc
+    wt=$(printf '%s' "$wj" | jq '.weekly[-1].totalTokens // (.weekly[-1] | (.inputTokens+.outputTokens+.cacheCreationTokens+.cacheReadTokens)) // 0')
+    wc=$(printf '%s' "$wj" | jq '.weekly[-1].totalCost // 0 | floor' 2>/dev/null || echo 0)
+    local extra_w wd add now_hm wr
+    extra_w=$(jq -cn --argjson t "$wt" --argjson c "$wc" '{tokens_used:$t,est_cost_usd:$c}')
+    # weekly window resets Wednesdays 5:00 PM local time (from Trevor's plan screen)
+    wd=$(date +%u); add=$(( (3 - wd + 7) % 7 )); now_hm=$(date +%H%M)
+    [ "$add" -eq 0 ] && [ "$now_hm" -ge 1700 ] && add=7
+    wr=$(date -j -v+"${add}"d -v17H -v0M -v0S +%s 2>/dev/null || echo null)
+    emit "$(row claude weekly null "$wr" estimated ok ccusage-weekly 'resets Wed 5:00 PM PT (known schedule); limits undisclosed' "$extra_w")"
+  else
+    emit "$(row claude weekly null null unknown ok ccusage-weekly 'no weekly data')"
+  fi
+}
+
+# ---------- glm / copilot / hermes / cursor ----------
+glm_row() {
+  if command -v "$GLM_BIN" >/dev/null 2>&1; then
+    if "$GLM_BIN" --doctor >/dev/null 2>&1; then
+      emit "$(row glm plan null null unknown ok claude-glm-doctor 'quota API not wired; treat abundant while healthy')"
+    else
+      emit "$(row glm plan null null unknown down claude-glm-doctor 'doctor failed — do not route')"
+    fi
+  else
+    emit "$(row glm plan null null unknown absent none 'claude-glm not installed')"
+  fi
+}
+copilot_row() {
+  if [ -f "$COPILOT_DB_PATH" ]; then
+    local mr; mr=$(date -j -v+1m -v1d -v0H -v0M -v0S +%s 2>/dev/null || echo null)
+    emit "$(row copilot monthly null "$mr" estimated present session-store 'premium quota resets 1st of month (schedule-derived); usage API not wired')"
+  else
+    emit "$(row copilot monthly null null unknown absent none 'no local copilot store')"
+  fi
+}
+hermes_row() {
+  if command -v "$HERMES" >/dev/null 2>&1; then
+    emit "$(row hermes plan null null unknown present binary 'credits exhausted until news cycle — do not route by default')"
+  else
+    emit "$(row hermes plan null null unknown absent none 'hermes not installed')"
+  fi
+}
+cursor_row() {
+  emit "$(row cursor plan null null unknown skipped none 'no headless usage source; dashboard-only (documented gap, not silent)')"
+}
+
+# ---------- purchased credits (e.g. Codex weekly-reset packs, 30-day expiry) ----------
+CREDITS_FILE="${USAGE_CREDITS_FILE:-$STATE_DIR/credits.json}"
+credit_rows() {
+  [ -f "$CREDITS_FILE" ] || return 0
+  local wk
+  # numbers only — a string used_pct from a corrupt rollout must never reach advice text.
+  # `first` on empty → bare `null` (NOT the quoted string "null", which jq ranks > any number).
+  wk=$(jq -s '[.[] | select(.provider=="codex" and .window=="weekly") | .used_pct] | map(select(type=="number")) | first' "$ROWS_TMP" 2>/dev/null)
+  [ -z "$wk" ] && wk=null
+  jq -c '.credits[]?' "$CREDITS_FILE" 2>/dev/null | while IFS= read -r c; do
+    local prov kind cnt exp exp_epoch days advice note stamp
+    prov=$(printf '%s' "$c" | jq -r '.provider // "codex"')
+    kind=$(printf '%s' "$c" | jq -r '.kind // "credit"')
+    cnt=$(printf '%s' "$c" | jq -r '.count // 1')
+    exp=$(printf '%s' "$c" | jq -r '.expires // empty')
+    exp_epoch=null
+    # local end-of-day: a credit is good through its stated day (UTC-midnight parse was a day early in PT)
+    [ -n "$exp" ] && exp_epoch=$(date -j -f '%Y-%m-%d %H:%M' "$exp 23:59" +%s 2>/dev/null || echo null)
+    advice=""
+    if [ "$exp_epoch" != "null" ]; then
+      days=$(( (exp_epoch - NOW_EPOCH) / 86400 ))
+      if [ "$days" -lt 0 ]; then advice="EXPIRED $(( -days ))d ago — check if still redeemable"
+      elif [ "$days" -le 7 ]; then advice="USE IT OR LOSE IT — expires in ${days}d, redeem now"; fi
+    fi
+    if [ -z "$advice" ] && [ "$wk" != "null" ] \
+       && [ "$(printf '%s' "$wk" | jq 'type=="number" and . >= 85' 2>/dev/null)" = "true" ]; then
+      advice="weekly at ${wk}% — good time to redeem one"
+    fi
+    note="count=$cnt; expires ${exp:-unknown}${advice:+; $advice}"
+    emit "$(row "$prov" "credit:$kind" null "$exp_epoch" manual held credits.json "$note")"
+    if [ -n "$advice" ] && [ -n "${USAGE_NOTIFY_CMD:-}" ]; then
+      stamp="$STATE_DIR/.credit-alert-$(date +%Y%m%d)"
+      # atomic claim (noclobber) so concurrent runs send at most one ping/day;
+      # message passed as $1, never interpolated into the command string
+      if ( set -C; : > "$stamp" ) 2>/dev/null; then
+        # cmd must end in the flag that takes the message (e.g. mobile-connect's `... notify
+        # --session usage-snapshot --text`) — a bare `mobile-connect.sh notify` exits 1 on usage
+        sh -c "$USAGE_NOTIFY_CMD \"\$1\"" _ "AI credits: $advice" >/dev/null 2>&1 \
+          || { rm -f "$stamp"; echo "usage-snapshot: notify failed — stamp released, retry next run" >&2; }
+      fi
+    fi
+  done
+  return 0
+}
+
+codex_rows; claude_rows; glm_row; copilot_row; hermes_row; cursor_row; credit_rows
+
+SNAPSHOT=$(jq -s --arg ts "$NOW_ISO" '{fetched_at:$ts, providers:.}' "$ROWS_TMP")
+
+# ---------- history + wasted-at-reset ----------
+if [ "$DO_HISTORY" = "1" ]; then
+  # mkdir lock: concurrent --history runs would double-append waste rows (check-then-act)
+  LOCK="$STATE_DIR/.history.lock"
+  if ! mkdir "$LOCK" 2>/dev/null; then
+    echo "usage-snapshot: another --history writer is active — skipping history this run (next run heals)" >&2
+    DO_HISTORY=0
+  else
+    trap 'rm -f "$ROWS_TMP"; rmdir "$LOCK" 2>/dev/null' EXIT
+  fi
+fi
+if [ "$DO_HISTORY" = "1" ]; then
+  HIST="$STATE_DIR/history.jsonl"; WASTE="$STATE_DIR/waste.tsv"
+  if [ -s "$HIST" ]; then
+    # window closed since last run → record final observed used_pct as the waste sample
+    prev=$(tail -n 1 "$HIST")
+    printf '%s' "$prev" | jq -c --argjson now "$NOW_EPOCH" '
+        .providers[] | select(.used_pct != null and .resets_at != null)
+        | select((.resets_at | fromdate) <= $now)
+        | {provider, window, closed:.resets_at, final_used_pct:.used_pct, waste_pct:(100-.used_pct)}' 2>/dev/null \
+    | while IFS= read -r w; do
+        key=$(printf '%s' "$w" | jq -r '"\(.provider)\t\(.window)\t\(.closed)"')
+        grep -qF "$key" "$WASTE" 2>/dev/null && continue
+        printf '%s\t%s\n' "$key" "$(printf '%s' "$w" | jq -r '"\(.final_used_pct)\t\(.waste_pct)"')" >> "$WASTE"
+      done
+  fi
+  printf '%s\n' "$SNAPSHOT" | jq -c . >> "$HIST"
+fi
+
+# ---------- dashboard ----------
+if [ "$DO_HTML" = "1" ]; then
+  OUT="$STATE_DIR/dashboard.html"
+  {
+    printf '<!doctype html><meta charset="utf-8"><title>AI usage</title>\n'
+    printf '<style>body{font:14px -apple-system,sans-serif;margin:2em;max-width:820px}h1{font-size:20px}.bar{background:#eee;border-radius:4px;height:18px;width:320px;display:inline-block;vertical-align:middle}.fill{background:#e8a33d;height:18px;border-radius:4px}.ok{color:#2a7}.bad{color:#c33}.dim{color:#888}td,th{padding:4px 10px;text-align:left;border-bottom:1px solid #eee}</style>\n'
+    printf '<h1>AI usage — %s</h1><table><tr><th>provider</th><th>window</th><th>used</th><th>resets in</th><th>health</th><th>confidence</th><th>notes</th></tr>\n' "$NOW_ISO"
+    # @html only on .notes (free text) — @html on the whole row escaped the bar <span>s into literal text
+    printf '%s' "$SNAPSHOT" | jq -r '.providers[] | "<tr><td><b>\(.provider)</b></td><td>\(.window)</td><td>\(if .used_pct!=null then "<span class=bar><span class=fill style=width:\(.used_pct*3.2|floor)px></span></span> \(.used_pct)%" elif .tokens_used?!=null then "\(.tokens_used) tok" else "—" end)</td><td>\(if .resets_in_min!=null then "\(.resets_in_min) min" else "—" end)</td><td class=\(if .health=="ok" or .health=="present" then "ok" else "bad" end)>\(.health)</td><td class=dim>\(.confidence)</td><td class=dim>\(.notes|@html)</td></tr>"'
+    printf '</table><h1>Wasted at reset (goal: near 0)</h1><table><tr><th>closed</th><th>provider</th><th>window</th><th>final used %%</th><th>wasted %%</th></tr>\n'
+    if [ -s "$STATE_DIR/waste.tsv" ]; then
+      awk -F'\t' '{printf "<tr><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td><b>%s</b></td></tr>\n",$3,$1,$2,$4,$5}' "$STATE_DIR/waste.tsv" | tail -30
+    else
+      printf '<tr><td colspan=5 class=dim>no closed windows observed yet</td></tr>\n'
+    fi
+    printf '</table>\n'
+  } > "$OUT"
+fi
+
+printf '%s\n' "$SNAPSHOT"

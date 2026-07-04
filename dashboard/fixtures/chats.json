@@ -1,0 +1,245 @@
+{
+  "cadence_s": 1800,
+  "data": {
+    "counts": {
+      "new_today": 4,
+      "scan_errors_24h": 2,
+      "signal_yield": "3/7"
+    },
+    "edges": [
+      {
+        "confidence": 1.0,
+        "dst": "codex:bbbbbbbb-2222-0002",
+        "source": "delegations",
+        "src": "claude:aaaaaaaa-1111-0001",
+        "type": "spawned"
+      },
+      {
+        "confidence": 0.7,
+        "dst": "hermes:cccccccc-3333-0003",
+        "source": "titles",
+        "src": "codex:bbbbbbbb-2222-0002",
+        "type": "audits"
+      },
+      {
+        "confidence": 1.0,
+        "dst": "claude:aaaaaaaa-1111-0001",
+        "source": "mailbox",
+        "src": "codex:dddddddd-4444-0004",
+        "type": "signaled"
+      },
+      {
+        "confidence": 0.9,
+        "dst": "codex:dddddddd-4444-0004",
+        "source": "scan",
+        "src": "hermes:cccccccc-3333-0003",
+        "type": "references"
+      },
+      {
+        "confidence": 1.0,
+        "dst": "codex:ffffffff-6666-0006",
+        "source": "resume-fork",
+        "src": "claude:eeeeeeee-5555-0005",
+        "type": "continues"
+      },
+      {
+        "confidence": 0.85,
+        "dst": "claude:hhhhhhhh-8888-0008",
+        "source": "scan",
+        "src": "codex:ffffffff-6666-0006",
+        "type": "references"
+      },
+      {
+        "confidence": 0.5,
+        "dst": "codex:iiiiiiii-9999-0009",
+        "source": "titles",
+        "src": "codex:gggggggg-7777-0007",
+        "type": "audits"
+      },
+      {
+        "confidence": 0.8,
+        "dst": "claude:eeeeeeee-5555-0005",
+        "source": "delegations",
+        "src": "codex:iiiiiiii-9999-0009",
+        "type": "spawned"
+      },
+      {
+        "confidence": 0.6,
+        "dst": "codex:gggggggg-7777-0007",
+        "source": "manual",
+        "src": "codex:hhhhhhhh-8888-0008",
+        "type": "related_manual",
+        "unlink_cmd": "chat-graph unlink codex:hhhhhhhh-8888-0008 codex:gggggggg-7777-0007 --type related_manual"
+      }
+    ],
+    "nodes": [
+      {
+        "closeout_seen": false,
+        "first_seen_at": "2026-07-02T10:40:00Z",
+        "id": "aaaaaaaa-1111-0001",
+        "last_activity": "2026-07-02T11:58:00Z",
+        "live": true,
+        "open_ends": [],
+        "provider": "claude",
+        "repo": "global-implementations",
+        "resume_cmd": "claude --resume claude:aaaaaaaa-1111-0001",
+        "title": "ER-087 synthetic coordinator",
+        "view_cmd": "chat-source full claude:aaaaaaaa-1111-0001"
+      },
+      {
+        "closeout_seen": true,
+        "first_seen_at": "2026-07-01T09:12:00Z",
+        "id": "bbbbbbbb-2222-0002",
+        "last_activity": "2026-07-01T23:58:00Z",
+        "live": false,
+        "open_ends": [],
+        "provider": "codex",
+        "repo": "global-implementations",
+        "resume_cmd": "codex resume codex:bbbbbbbb-2222-0002",
+        "title": "O'Brien review queue \ud83d\ude80",
+        "view_cmd": "chat-source full codex:bbbbbbbb-2222-0002"
+      },
+      {
+        "closeout_seen": false,
+        "first_seen_at": "2026-06-30T14:00:00Z",
+        "id": "cccccccc-3333-0003",
+        "last_activity": "2026-06-30T14:22:00Z",
+        "live": false,
+        "open_ends": [],
+        "provider": "hermes",
+        "repo": "hermes",
+        "resume_cmd": "hermes open hermes:cccccccc-3333-0003",
+        "title": "Hermes synthetic relay",
+        "view_cmd": "chat-source full hermes:cccccccc-3333-0003"
+      },
+      {
+        "closeout_seen": false,
+        "first_seen_at": "2026-07-01T19:58:00Z",
+        "id": "dddddddd-4444-0004",
+        "last_activity": "2026-07-01T20:10:00Z",
+        "live": false,
+        "open_ends": [],
+        "provider": "codex",
+        "repo": "bible-ai",
+        "resume_cmd": "codex resume codex:dddddddd-4444-0004",
+        "title": "Audit scaffold validator",
+        "view_cmd": "chat-source full codex:dddddddd-4444-0004"
+      },
+      {
+        "closeout_seen": false,
+        "first_seen_at": "2026-07-02T11:00:00Z",
+        "id": "eeeeeeee-5555-0005",
+        "last_activity": "2026-07-02T11:45:00Z",
+        "live": false,
+        "open_ends": [
+          {
+            "kind": "closeout_handoff",
+            "text": "Handoff: wire closeout card into demo renderer",
+            "text_hash": "f1a4e1"
+          },
+          {
+            "kind": "register_unverified",
+            "text": "ER-087 register entry for chat graph fixture",
+            "text_hash": "f1a4e2"
+          }
+        ],
+        "provider": "claude",
+        "repo": "signal-intake",
+        "resume_cmd": "claude --resume claude:eeeeeeee-5555-0005",
+        "title": "Synthesis handoff cluster",
+        "view_cmd": "chat-source full claude:eeeeeeee-5555-0005"
+      },
+      {
+        "closeout_seen": false,
+        "first_seen_at": "2026-07-01T17:00:00Z",
+        "id": "ffffffff-6666-0006",
+        "last_activity": "2026-07-01T18:15:00Z",
+        "live": false,
+        "open_ends": [],
+        "provider": "codex",
+        "repo": "global-implementations",
+        "resume_cmd": "codex resume codex:ffffffff-6666-0006",
+        "title": "Runner sidecar fixture",
+        "view_cmd": "chat-source full codex:ffffffff-6666-0006"
+      },
+      {
+        "closeout_seen": false,
+        "first_seen_at": "2026-07-01T16:10:00Z",
+        "id": "gggggggg-7777-0007",
+        "last_activity": "2026-07-01T16:40:00Z",
+        "live": false,
+        "open_ends": [],
+        "provider": "codex",
+        "repo": "gillette-estimator",
+        "resume_cmd": "codex resume codex:gggggggg-7777-0007",
+        "title": "Repository drift sync test",
+        "view_cmd": "chat-source full codex:gggggggg-7777-0007"
+      },
+      {
+        "closeout_seen": false,
+        "first_seen_at": "2026-07-01T14:58:00Z",
+        "id": "hhhhhhhh-8888-0008",
+        "last_activity": "2026-07-01T15:12:00Z",
+        "live": false,
+        "open_ends": [],
+        "provider": "claude",
+        "repo": "signal-intake",
+        "resume_cmd": "claude --resume claude:hhhhhhhh-8888-0008",
+        "title": "Dashboard render sanity check",
+        "view_cmd": "chat-source full claude:hhhhhhhh-8888-0008"
+      },
+      {
+        "closeout_seen": false,
+        "first_seen_at": "2026-07-01T13:44:00Z",
+        "id": "iiiiiiii-9999-0009",
+        "last_activity": "2026-07-01T14:00:00Z",
+        "live": false,
+        "open_ends": [],
+        "provider": "codex",
+        "repo": "bible-ai",
+        "resume_cmd": "codex resume codex:iiiiiiii-9999-0009",
+        "title": "Manual graph verifier",
+        "view_cmd": "chat-source full codex:iiiiiiii-9999-0009"
+      }
+    ],
+    "notes": [],
+    "repo_annotations": [
+      {
+        "repo": "global-implementations",
+        "status": "green"
+      },
+      {
+        "repo": "bible-ai",
+        "status": "amber"
+      }
+    ],
+    "stale_providers": [
+      "hermes"
+    ],
+    "topics": [
+      {
+        "code": "ER-087",
+        "sessions": [
+          "claude:aaaaaaaa-1111-0001",
+          "codex:bbbbbbbb-2222-0002",
+          "hermes:cccccccc-3333-0003"
+        ]
+      },
+      {
+        "code": "ER-091",
+        "sessions": [
+          "claude:eeeeeeee-5555-0005",
+          "codex:ffffffff-6666-0006",
+          "codex:gggggggg-7777-0007",
+          "claude:hhhhhhhh-8888-0008"
+        ]
+      }
+    ]
+  },
+  "error": null,
+  "feed": "chats",
+  "generated_at": "2026-07-02T12:00:00Z",
+  "generated_epoch": 1751467200,
+  "ok": true,
+  "schema": 1
+}
