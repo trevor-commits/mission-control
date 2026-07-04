@@ -11,6 +11,8 @@
 <script src="data/git.js"></script>
 <script src="data/chats.js"></script>
 <script src="data/automation.js"></script>
+<!-- vendored graph engine (local, offline, no CDN) for the connection Map -->
+<script src="vendor/cytoscape.min.js"></script>
 
 <style>
 /* === TOKENS === */
@@ -357,6 +359,42 @@ body {
 }
 .mc-cluster-list { margin: 0; }
 
+.mc-row-click { cursor: pointer; }
+/* --- connection map (cytoscape) --- */
+.mc-map-legend { display: flex; flex-wrap: wrap; gap: var(--mc-sp-3); margin: var(--mc-sp-3) 0; }
+.mc-legend-item { display: inline-flex; align-items: center; gap: var(--mc-sp-2); font-size: var(--mc-fs-1); color: var(--mc-fg-muted); }
+.mc-legend-line { width: 20px; height: 0; border-top: 3px solid var(--mc-fg-dim); flex: none; }
+.mc-map-wrap { display: grid; grid-template-columns: 1fr 300px; gap: var(--mc-sp-3); }
+@media (max-width: 860px) { .mc-map-wrap { grid-template-columns: 1fr; } }
+.mc-graph {
+  height: 68vh; min-height: 460px;
+  background:
+    radial-gradient(circle at 20px 20px, var(--mc-border) 1px, transparent 1px) 0 0 / 32px 32px,
+    var(--mc-surface-1);
+  border: 1px solid var(--mc-border); border-radius: var(--mc-r-3);
+  box-shadow: var(--mc-shadow); overflow: hidden;
+}
+.mc-map-side {
+  background: var(--mc-surface-1); border: 1px solid var(--mc-border);
+  border-radius: var(--mc-r-3); box-shadow: var(--mc-shadow);
+  padding: var(--mc-sp-4); align-self: start; max-height: 68vh; overflow: auto;
+}
+.mc-side-title { font-size: var(--mc-fs-3); font-weight: 650; letter-spacing: -0.01em; margin-bottom: var(--mc-sp-1); }
+.mc-side-meta { color: var(--mc-fg-muted); font-size: var(--mc-fs-1); margin-bottom: var(--mc-sp-3); }
+.mc-side-section { font-size: var(--mc-fs-1); color: var(--mc-fg-dim); text-transform: none; margin: var(--mc-sp-3) 0 var(--mc-sp-1); }
+.mc-side-conn { display: flex; align-items: center; gap: var(--mc-sp-2); font-size: var(--mc-fs-2); padding: var(--mc-sp-1) 0; color: var(--mc-fg-muted); cursor: pointer; }
+.mc-side-conn:hover { color: var(--mc-fg); }
+.mc-btn {
+  display: inline-flex; align-items: center; gap: var(--mc-sp-1); cursor: pointer;
+  background: var(--mc-surface-2); border: 1px solid var(--mc-border-2); color: var(--mc-fg);
+  border-radius: var(--mc-r-2); padding: var(--mc-sp-2) var(--mc-sp-3); font-size: var(--mc-fs-2); font-weight: 500;
+  margin: var(--mc-sp-1) var(--mc-sp-1) 0 0; font-family: var(--mc-font);
+  transition: background var(--mc-dur) var(--mc-ease), border-color var(--mc-dur) var(--mc-ease);
+}
+.mc-btn:hover { background: var(--mc-surface-3); border-color: var(--mc-accent-bd); }
+.mc-btn-primary { background: var(--mc-accent-bg); border-color: var(--mc-accent-bd); color: var(--mc-accent); }
+.mc-map-note { color: var(--mc-fg-dim); font-size: var(--mc-fs-1); margin-top: var(--mc-sp-2); }
+
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; animation: none !important; }
 }
@@ -524,7 +562,8 @@ body {
       gc.data.nodes.forEach(function (n) {
         var oe = Array.isArray(n.open_ends) ? n.open_ends : [];
         if (oe.length) {
-          out.push({ state: "amber", seen: n.first_seen_at || "", tab: "chats",
+          var fkey = String(n.id).indexOf((n.provider || "") + ":") === 0 ? n.id : (n.provider || "") + ":" + n.id;
+          out.push({ state: "amber", seen: n.first_seen_at || "", tab: "map", focus: fkey,
                      problem: (n.title || n.id) + " — " + oe.length + " unfinished item" + (oe.length > 1 ? "s" : ""),
                      action: openEndHuman(oe[0]) });
         }
@@ -730,12 +769,14 @@ body {
     } else {
       var shown = exc.slice(0, 7);
       shown.forEach(function (e) {
-        attn.appendChild(h("div", { class: "mc-row" },
+        var goTo = function () { if (e.focus) FOCUS_CHAT = e.focus; location.hash = "#" + e.tab; if (e.focus) rerender(); };
+        var row = h("div", { class: "mc-row mc-row-click", onclick: goTo },
           glyphSpan(e.state),
           h("div", { class: "mc-row-body" },
             h("div", { class: "mc-row-problem mc-ellipsis" }, e.problem),
             h("div", { class: "mc-row-action mc-ellipsis" }, e.action)),
-          h("a", { class: "mc-jump", onclick: function () { location.hash = "#" + e.tab; } }, "go →")));
+          h("span", { class: "mc-jump" }, (e.focus ? "show on map" : "go") + " →"));
+        attn.appendChild(row);
       });
       if (exc.length > 7) attn.appendChild(h("div", { class: "mc-card-foot" }, "+" + (exc.length - 7) + " more across the tabs"));
     }
@@ -823,6 +864,210 @@ body {
       [(ex ? ex + " need attention" : "all " + jobs.length + " healthy"),
        unreg ? unreg + " not tracked yet" : null], g.epoch);
   }
+
+  // ===========================================================================
+  //  MAP TAB — the connection diagram (chats = dots, lines = how they connect)
+  // ===========================================================================
+  var FOCUS_CHAT = null;                 // set by a "go" deep-link; focuses one chat's neighbourhood
+  var mapRepo = "";                      // repo filter
+  var _cy = null;
+
+  var PROVIDER_COLOR = { claude: "#7c8cff", codex: "#35b98a", cursor: "#e0a534",
+    copilot: "#5aa9d6", hermes: "#b07cff", chatgpt: "#9aa0ab" };
+  // type -> [colour, dash?, plain phrasing "<this> <verb> <other>"]
+  var EDGE_INFO = {
+    spawned:        ["#7c8cff", false, "started"],
+    audits:         ["#e0a534", false, "audited"],
+    references:     ["#5b6272", false, "mentions"],
+    continues:      ["#35b98a", true,  "continued from"],
+    signaled:       ["#5aa9d6", false, "messaged"],
+    same_issue:     ["#5b6272", true,  "shares a topic with"],
+    related_manual: ["#b07cff", false, "you linked to"],
+    governs:        ["#c98adf", false, "governs"]
+  };
+  function provColor(p) { return PROVIDER_COLOR[p] || "#8a92a3"; }
+  function edgeColor(t) { return (EDGE_INFO[t] || ["#5b6272"])[0]; }
+  function edgeVerb(t)  { return (EDGE_INFO[t] || [null, null, t])[2]; }
+
+  function renderMap(main) {
+    var g = guard("chats");
+    var head = h("div", { class: "mc-section-head" }, h("h2", { text: "Connection map" }));
+    if (g.ok) head.appendChild(ageSpan(g.epoch));
+    main.appendChild(head);
+    if (!g.ok) { main.appendChild(h("div", { class: "mc-banner mc-banner-red" }, g.reason)); return; }
+
+    var data = g.data || {}, nodes = data.nodes || [], edges = data.edges || [];
+    var byKey = {};
+    nodes.forEach(function (n) {
+      n.key = String(n.id).indexOf((n.provider || "") + ":") === 0 ? n.id : (n.provider || "") + ":" + n.id;
+      byKey[n.key] = n;
+    });
+
+    main.appendChild(h("div", { class: "mc-card-secondary" },
+      "Each dot is a chat. Lines show how they connect — one chat that started another, an audit of another, a shared topic. Click a dot to see it and reopen it."));
+
+    if (typeof cytoscape === "undefined") {
+      main.appendChild(h("div", { class: "mc-banner mc-banner-amber" },
+        "The map needs the installed dashboard — open it with the Mission Control app (or run: dashboard open)."));
+      return;
+    }
+
+    // legend
+    var legend = h("div", { class: "mc-map-legend" });
+    Object.keys(EDGE_INFO).forEach(function (t) {
+      legend.appendChild(h("span", { class: "mc-legend-item" },
+        h("span", { class: "mc-legend-line", style: "border-top-style:" + (EDGE_INFO[t][1] ? "dashed" : "solid") + ";border-top-color:" + EDGE_INFO[t][0] }),
+        edgeVerb(t)));
+    });
+    main.appendChild(legend);
+
+    // controls: repo filter + reset-focus
+    var repos = uniq(nodes.map(function (n) { return n.repo; }).filter(Boolean)).sort();
+    var controls = h("div", { class: "mc-filters" });
+    var sel = h("select", { class: "mc-chip", onchange: function () { mapRepo = sel.value; FOCUS_CHAT = null; rerender(); } });
+    sel.appendChild(h("option", { value: "" }, "all repos"));
+    repos.forEach(function (r) { var o = h("option", { value: r }, r); if (r === mapRepo) o.selected = true; sel.appendChild(o); });
+    controls.appendChild(sel);
+    if (FOCUS_CHAT) controls.appendChild(h("span", { class: "mc-chip mc-chip-btn mc-chip-on",
+      onclick: function () { FOCUS_CHAT = null; rerender(); } }, "showing one chat's connections — show all ✕"));
+    main.appendChild(controls);
+
+    // scope the graph (perf: never dump 7,500 nodes into the engine)
+    var scoped = scopeGraph(nodes, edges, byKey);
+    var wrap = h("div", { class: "mc-map-wrap" });
+    var cont = h("div", { class: "mc-graph", id: "mc-graph" });
+    var side = h("div", { class: "mc-map-side", id: "mc-map-side" },
+      h("div", { class: "mc-card-foot" }, "Click a dot to see the chat, who it connects to, and reopen it."));
+    wrap.appendChild(cont); wrap.appendChild(side);
+    main.appendChild(wrap);
+    main.appendChild(h("div", { class: "mc-map-note" }, scoped.note));
+
+    // build after layout so the container has real dimensions
+    setTimeout(function () { buildCy(cont, scoped, byKey, side); }, 0);
+  }
+
+  function scopeGraph(nodes, edges, byKey) {
+    var inRepo = function (k) { return !mapRepo || (byKey[k] && byKey[k].repo === mapRepo); };
+    var adj = {};
+    edges.forEach(function (e) {
+      if (!byKey[e.src] || !byKey[e.dst]) return;
+      (adj[e.src] = adj[e.src] || []).push(e.dst);
+      (adj[e.dst] = adj[e.dst] || []).push(e.src);
+    });
+    var keep = {};
+    if (FOCUS_CHAT && byKey[FOCUS_CHAT]) {
+      // breadth-first neighbourhood, depth 2, capped
+      var seen = {}, frontier = [FOCUS_CHAT], depth = 0;
+      seen[FOCUS_CHAT] = true;
+      while (frontier.length && depth < 2 && Object.keys(seen).length < 120) {
+        var next = [];
+        frontier.forEach(function (k) { (adj[k] || []).forEach(function (nb) { if (!seen[nb]) { seen[nb] = true; next.push(nb); } }); });
+        frontier = next; depth++;
+      }
+      keep = seen;
+      return { keys: keep, note: "Showing this chat and what it connects to. Pick a repo or click another dot to explore." };
+    }
+    // default: the most-connected chats in scope, capped for readability
+    var CAP = 260;
+    var deg = Object.keys(adj).filter(inRepo).map(function (k) { return { k: k, d: adj[k].length }; })
+      .sort(function (a, b) { return b.d - a.d; });
+    deg.slice(0, CAP).forEach(function (x) { keep[x.k] = true; });
+    var total = deg.length;
+    var note = total > CAP
+      ? "Showing the " + CAP + " most-connected chats" + (mapRepo ? " in " + mapRepo : "") + " of " + total + " with connections — filter by repo or click a chat to focus its web."
+      : (total ? "Showing all " + total + " connected chats" + (mapRepo ? " in " + mapRepo : "") + "." : "No connections to show" + (mapRepo ? " in " + mapRepo : "") + " yet.");
+    return { keys: keep, note: note };
+  }
+
+  function buildCy(container, scoped, byKey, side) {
+    var els = [];
+    Object.keys(scoped.keys).forEach(function (k) {
+      var n = byKey[k]; if (!n) return;
+      els.push({ data: { id: k, label: shortLabel(n.title || n.id), prov: n.provider || "?",
+        live: n.live ? 1 : 0, owe: (n.open_ends || []).length } });
+    });
+    var seenEdge = {};
+    (window.MC.feeds.chats.data.edges || []).forEach(function (e) {
+      if (!scoped.keys[e.src] || !scoped.keys[e.dst]) return;
+      var id = e.src + ">" + e.dst + ">" + e.type;
+      if (seenEdge[id]) return; seenEdge[id] = true;
+      els.push({ data: { id: id, source: e.src, target: e.dst, type: e.type, col: edgeColor(e.type) } });
+    });
+    if (_cy) { try { _cy.destroy(); } catch (e) {} _cy = null; }
+    _cy = cytoscape({
+      container: container, elements: els, wheelSensitivity: 0.2,
+      style: [
+        { selector: "node", style: {
+            "background-color": function (n) { return provColor(n.data("prov")); },
+            "width": function (n) { return 16 + Math.min(28, n.degree(true) * 3); },
+            "height": function (n) { return 16 + Math.min(28, n.degree(true) * 3); },
+            "label": "data(label)", "color": "#c9cdd6", "font-size": 9,
+            "text-margin-y": 4, "text-valign": "bottom", "text-halign": "center",
+            "text-max-width": 110, "text-wrap": "ellipsis",
+            "border-width": function (n) { return n.data("live") ? 3 : 0; }, "border-color": "#35b98a",
+            "transition-property": "background-color", "min-zoomed-font-size": 7 } },
+        { selector: "edge", style: {
+            "width": 1.5, "line-color": "data(col)", "opacity": 0.55,
+            "curve-style": "bezier", "target-arrow-color": "data(col)",
+            "target-arrow-shape": "triangle", "arrow-scale": 0.7,
+            "line-style": function (e) { return (EDGE_INFO[e.data("type")] || [0, false])[1] ? "dashed" : "solid"; } } },
+        { selector: "node:selected", style: { "border-width": 4, "border-color": "#7c8cff" } },
+        { selector: ".mc-dim", style: { "opacity": 0.12 } }
+      ],
+      layout: FOCUS_CHAT
+        ? { name: "concentric", concentric: function (n) { return n.id() === FOCUS_CHAT ? 10 : n.degree(true); }, levelWidth: function () { return 2; }, minNodeSpacing: 40, animate: false }
+        : { name: "cose", animate: false, nodeRepulsion: 6000, idealEdgeLength: 90, padding: 24, randomize: true }
+    });
+    _cy.on("tap", "node", function (evt) { mapSide(side, evt.target.id(), byKey); });
+    _cy.on("tap", function (evt) { if (evt.target === _cy) { side.textContent = ""; side.appendChild(h("div", { class: "mc-card-foot" }, "Click a dot to see the chat.")); } });
+    if (FOCUS_CHAT && byKey[FOCUS_CHAT]) { _cy.$("#" + cssEsc(FOCUS_CHAT)).select(); mapSide(side, FOCUS_CHAT, byKey); }
+  }
+
+  function mapSide(side, key, byKey) {
+    var n = byKey[key]; if (!n) return;
+    side.textContent = "";
+    side.appendChild(h("div", { class: "mc-side-title" }, n.title || n.id));
+    side.appendChild(h("div", { class: "mc-side-meta" },
+      (n.provider || "?") + (n.repo ? " · " + n.repo : "") + (n.live ? " · active recently" : "")));
+    // reopen / read buttons
+    if (n.resume_cmd) side.appendChild(cmdBtn("Reopen this chat", n.resume_cmd, true));
+    if (n.view_cmd) side.appendChild(cmdBtn("Read it", n.view_cmd, false));
+    // open ends
+    var oe = n.open_ends || [];
+    if (oe.length) {
+      side.appendChild(h("div", { class: "mc-side-section" }, "Unfinished (" + oe.length + ")"));
+      oe.slice(0, 5).forEach(function (o) { side.appendChild(h("div", { class: "mc-card-secondary" }, "• " + openEndHuman(o))); });
+    }
+    // connections in plain words
+    var edges = (window.MC.feeds.chats.data.edges || []);
+    var conns = edges.filter(function (e) { return e.src === key || e.dst === key; });
+    if (conns.length) {
+      side.appendChild(h("div", { class: "mc-side-section" }, "Connects to (" + conns.length + ")"));
+      conns.slice(0, 12).forEach(function (e) {
+        var otherKey = e.src === key ? e.dst : e.src;
+        var other = byKey[otherKey]; var out = e.src === key;
+        var phrase = out ? "this " + edgeVerb(e.type) + " → " : "← " + edgeVerb(e.type) + " this";
+        var row = h("div", { class: "mc-side-conn", onclick: function () { FOCUS_CHAT = otherKey; rerender(); } },
+          h("span", { class: "mc-dot", style: "background:" + provColor(other && other.provider) }),
+          h("span", { class: "mc-ellipsis" }, (other ? (other.title || other.id) : otherKey)));
+        row.title = phrase;
+        side.appendChild(row);
+      });
+    }
+    side.appendChild(h("div", { class: "mc-side-section" }, ""));
+    side.appendChild(h("span", { class: "mc-chip mc-chip-btn", onclick: function () { FOCUS_CHAT = key; rerender(); } }, "focus this chat's web"));
+  }
+
+  function cmdBtn(label, cmd, primary) {
+    return h("button", { class: "mc-btn" + (primary ? " mc-btn-primary" : ""),
+      title: cmd, onclick: function (ev) {
+        try { if (navigator.clipboard) navigator.clipboard.writeText(cmd); } catch (e) {}
+        var b = ev.target; var old = b.textContent; b.textContent = "copied — paste in a terminal";
+        setTimeout(function () { b.textContent = old; }, 1400);
+      } }, label);
+  }
+  function shortLabel(s) { s = String(s || ""); return s.length > 26 ? s.slice(0, 24) + "…" : s; }
+  function cssEsc(s) { return String(s).replace(/[^a-zA-Z0-9_-]/g, "\\$&"); }
 
   // ===========================================================================
   //  CHATS TAB
@@ -1222,10 +1467,11 @@ body {
   // ===========================================================================
   //  ROUTER + lifecycle
   // ===========================================================================
-  var TABS = [["home", "Home"], ["chats", "Chats"], ["git", "Git"], ["usage", "Usage"], ["automation", "Automation"]];
+  var TABS = [["home", "Home"], ["map", "Map"], ["chats", "Chats"], ["git", "Git"], ["usage", "Usage"], ["automation", "Automation"]];
   // pure render functions, spec shape render.<tab>(feed, el) reading window.MC.feeds.*
   var render = {
     home:       function (feed, el) { renderHome(el); },
+    map:        function (feed, el) { renderMap(el); },
     chats:      function (feed, el) { renderChats(el); },
     git:        function (feed, el) { renderGit(el); },
     usage:      function (feed, el) { renderUsage(el); },

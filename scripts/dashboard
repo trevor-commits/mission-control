@@ -359,6 +359,11 @@ do_install() {
   echo "installed runtime -> $MISSION_CONTROL_HOME/bin/dashboard (REPO_ROOT=$REPO_ROOT)"
   if [ -f "$REPO_ROOT/dashboard/index.html" ]; then
     cp "$REPO_ROOT/dashboard/index.html" "$MISSION_CONTROL_HOME/index.html"
+    # vendored graph engine for the connection Map (local, offline; loaded via relative src)
+    if [ -d "$REPO_ROOT/dashboard/vendor" ]; then
+      mkdir -p "$MISSION_CONTROL_HOME/vendor"
+      cp "$REPO_ROOT/dashboard/vendor/"* "$MISSION_CONTROL_HOME/vendor/" 2>/dev/null || true
+    fi
     echo "installed shell -> $MISSION_CONTROL_HOME/index.html"
   else
     echo "skip: dashboard/index.html not present yet"

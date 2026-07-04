@@ -90,7 +90,9 @@ const markers = {
 };
 
 // --- run the IIFE once per tab ---------------------------------------------
-const TABS = ['home', 'chats', 'git', 'usage', 'automation'];
+// 'map' renders the cytoscape graph in a real browser; under the node shim the
+// lib is absent, so renderMap must degrade to a non-empty banner (never throw).
+const TABS = ['home', 'map', 'chats', 'git', 'usage', 'automation'];
 let fails = 0;
 for (const tab of TABS) {
   resetDom();
