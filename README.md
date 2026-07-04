@@ -22,12 +22,19 @@ The page lives at `~/.mission-control/index.html` (installed copy), refreshes it
 | `dashboard/index.html` | The page — one self-contained file (design tokens + layout CSS + renderers). |
 | `dashboard/fixtures/*.json` | Synthetic sample feeds for `demo` + the render tests. No real chat ids or transcript text. |
 
+## Repo notes
+
+Start with `AGENTS.md`. The local governance files are intentionally present in
+this repo now: `PROJECT_INTENT.md`, `todo.md`, `CONTINUITY.md`, `COHERENCE.md`,
+`LINEAR.md`, and `CLAUDE.md`.
+
 ## Tests
 
 ```bash
 bash scripts/chat-graph.test.sh
 bash scripts/automation-status.test.sh
 bash scripts/dashboard.test.sh --require-shell   # includes the node render smoke test
+node scripts/dashboard-render-smoke.js .         # direct renderer smoke
 ```
 
 ## Safety

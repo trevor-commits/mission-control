@@ -307,16 +307,6 @@ body {
   color: var(--mc-fg-muted); max-width: 320px;
 }
 .mc-copy { cursor: pointer; color: var(--mc-accent); border: none; background: none; font-size: var(--mc-fs-1); padding: 0; font-weight: 500; }
-.mc-cluster {
-  background: var(--mc-surface-1); border: 1px solid var(--mc-border);
-  border-radius: var(--mc-r-3); padding: var(--mc-sp-4); margin-bottom: var(--mc-sp-3);
-  box-shadow: var(--mc-shadow);
-}
-.mc-cluster-root { font-size: var(--mc-fs-3); font-weight: 650; margin-bottom: var(--mc-sp-1); }
-.mc-cluster-member {
-  display: flex; align-items: center; gap: var(--mc-sp-2);
-  padding: var(--mc-sp-1) 0; font-size: var(--mc-fs-2); color: var(--mc-fg-muted);
-}
 .mc-edge-label {
   color: var(--mc-fg-dim); font-size: var(--mc-fs-1); font-weight: 500;
   border: 1px solid var(--mc-border); border-radius: var(--mc-r-pill);
@@ -357,7 +347,6 @@ body {
   white-space: pre-wrap; word-break: break-word;
   background: var(--mc-red-bg); border-radius: var(--mc-r-1); padding: var(--mc-sp-2);
 }
-.mc-cluster-list { margin: 0; }
 
 .mc-row-click { cursor: pointer; }
 /* --- connection map (cytoscape) --- */
@@ -517,17 +506,19 @@ body {
       wrap.appendChild(h("div", { class: "mc-banner mc-banner-red" }, g.reason));
       return { wrap: wrap, body: null };
     }
-    if (g.feedError) wrap.appendChild(h("div", { class: "mc-banner mc-banner-red" }, "feed error: " + g.feedError + " — showing last good data"));
+    if (g.feedError) wrap.appendChild(h("div", { class: "mc-banner mc-banner-red" }, "Data refresh problem: " + g.feedError + " — showing last good data"));
     if (g.flag === "skew") wrap.appendChild(h("div", { class: "mc-banner mc-banner-amber" }, "clock skew: this feed's timestamp is in the future"));
-    else if (g.flag === "stale") wrap.appendChild(h("div", { class: "mc-banner mc-banner-amber" }, "stale: data older than 2× its refresh window — treat with suspicion"));
+    else if (g.flag === "stale") wrap.appendChild(h("div", { class: "mc-banner mc-banner-amber" }, "Data is older than expected — treat this tab as a warning, not the latest truth."));
     var body = h("div", { class: g.flag === "stale" ? "mc-desaturated" : "" });
     wrap.appendChild(body);
     return { wrap: wrap, body: body };
   }
 
   // --- clipboard affordance (file:// tolerant) -------------------------------
-  function copyable(cmd) {
-    var code = h("code", { class: "mc-ellipsis" }, cmd);
+  function copyable(cmd, label) {
+    var code = label
+      ? h("span", { class: "mc-ellipsis" }, label)
+      : h("code", { class: "mc-ellipsis" }, cmd);
     var btn = h("button", { class: "mc-copy", title: "copy", onclick: function () {
       try {
         if (navigator.clipboard) navigator.clipboard.writeText(cmd);
@@ -535,13 +526,21 @@ body {
         setTimeout(function () { btn.textContent = "copy"; }, 1200);
       } catch (e) { btn.textContent = "select"; }
     } }, "copy");
-    return h("span", { class: "mc-cmd" }, code, btn);
+    return h("span", { class: "mc-cmd", title: cmd }, code, btn);
   }
 
   // --- plain-words helpers ---------------------------------------------------
   function humanJobState(s) {
     return { red: "stopped or failing", degraded: "running rough", yellow: "running late",
              "offline-media": "waiting on the external drive" }[s] || s;
+  }
+  function providerLabel(p) {
+    return { claude: "Claude", codex: "Codex", cursor: "Cursor", copilot: "Copilot",
+             hermes: "Hermes", chatgpt: "ChatGPT", glm: "GLM", unknown: "AI unknown" }[String(p || "").toLowerCase()] || String(p || "AI unknown");
+  }
+  function confidenceLabel(c) {
+    return { live: "fresh reading", stale: "old reading", estimated: "estimated", manual: "manual",
+             unknown: "unknown", absent: "not connected" }[String(c || "").toLowerCase()] || String(c || "estimated");
   }
   function openEndHuman(oe) {
     if (!oe) return "one item left to finish";
@@ -617,17 +616,19 @@ body {
   function gitAction(r) {
     // remote relationship: synced/ahead/behind/diverged/no-remote
     var rel = r.remote || (r.no_remote ? "no-remote" : (r.ahead > 0 && r.behind > 0 ? "diverged" : (r.ahead > 0 ? "ahead" : (r.behind > 0 ? "behind" : "synced"))));
-    if (r.dirty) return { state: "amber", verb: "needs commit", summary: (r.dirty_files || "?") + " uncommitted", rel: rel };
-    if (rel === "diverged") return { state: "red", verb: "needs rebase", summary: "diverged from remote", rel: rel };
-    if (rel === "ahead") return { state: "amber", verb: "needs push", summary: (r.ahead || "?") + " unpushed", rel: rel };
-    if (rel === "behind") return { state: "amber", verb: "needs pull", summary: (r.behind || "?") + " behind", rel: rel };
-    if (rel === "no-remote") return { state: "amber", verb: "no remote", summary: "no upstream", rel: rel };
-    if (r.detached) return { state: "amber", verb: "detached HEAD", summary: "not on a branch", rel: rel };
-    if (Array.isArray(r.branches) && r.branches.length) return { state: "amber", verb: "stale branches", summary: r.branches.length + " unmerged", rel: rel };
-    return { state: "green", verb: "clean", summary: "clean", rel: rel };
+    if (r.dirty) return { state: "amber", verb: "Save changes to Git", summary: (r.dirty_files || "?") + " files changed", rel: rel };
+    if (rel === "diverged") return { state: "red", verb: "Reconcile with GitHub", summary: "local and GitHub both changed", rel: rel };
+    if (rel === "ahead") return { state: "amber", verb: "Send branch to GitHub", summary: (r.ahead || "?") + " local commits not on GitHub", rel: rel };
+    if (rel === "behind") return { state: "amber", verb: "Get GitHub updates", summary: (r.behind || "?") + " commits behind GitHub", rel: rel };
+    if (rel === "no-remote") return { state: "amber", verb: "Set up remote or ignore", summary: "not connected to GitHub", rel: rel };
+    if (r.detached) return { state: "amber", verb: "Check branch", summary: "not on a named branch", rel: rel };
+    if (Array.isArray(r.branches) && r.branches.length) return { state: "amber", verb: "Review old branches", summary: r.branches.length + " old branches", rel: rel };
+    return { state: "green", verb: "Nothing to do", summary: "clean", rel: rel };
   }
   var REL_CLASS = { synced: "mc-state-green", ahead: "mc-state-amber", behind: "mc-state-amber",
                     diverged: "mc-state-red", "no-remote": "mc-state-grey" };
+  var REL_TEXT = { synced: "matches GitHub", ahead: "not sent to GitHub", behind: "GitHub has updates",
+                   diverged: "local and GitHub differ", "no-remote": "not on GitHub" };
 
   // ===========================================================================
   //  USAGE helpers
@@ -689,7 +690,9 @@ body {
     var gc = guard("chats");
     if (gc.ok && gc.data && Array.isArray(gc.data.nodes)) {
       var owe = gc.data.nodes.filter(function (n) { return (n.open_ends || []).length; }).length;
-      s.chats = { state: owe ? "amber" : "green", count: owe };
+      var cnt = gc.data.counts || {};
+      var staleIngest = "last_full_ingest_age_s" in cnt && (cnt.last_full_ingest_age_s == null || +cnt.last_full_ingest_age_s > 1800);
+      s.chats = { state: (owe || staleIngest) ? "amber" : "green", count: owe };
     } else s.chats = { state: "grey", count: 0 };
 
     var gg = guard("git");
@@ -719,7 +722,7 @@ body {
     var strip = document.getElementById("mc-strip");
     strip.textContent = "";
     var sum = feedSummary();
-    var segs = [["chats", "Chats"], ["git", "Git"], ["usage", "Usage"], ["automation", "Autom"]];
+    var segs = [["chats", "Chats"], ["git", "Git"], ["usage", "Usage"], ["automation", "Jobs"]];
     segs.forEach(function (pair) {
       var k = pair[0], label = pair[1], d = sum[k];
       strip.appendChild(h("span", { class: "mc-strip-seg", title: "jump to " + label,
@@ -737,6 +740,8 @@ body {
     ["usage", "git", "chats", "automation"].forEach(function (n) {
       var g = guard(n);
       var st = !g.ok ? "grey" : (g.feedError || g.flag === "stale" ? "red" : (g.flag === "skew" ? "amber" : "green"));
+      if (n === "chats" && g.ok && g.data && g.data.counts && "last_full_ingest_age_s" in g.data.counts &&
+          (g.data.counts.last_full_ingest_age_s == null || +g.data.counts.last_full_ingest_age_s > 1800)) st = "red";
       dots.appendChild(h("span", { title: n + (g.ok ? " · " + fmtAge(g.epoch) : " · " + g.reason) }, dot(st)));
     });
     meta.appendChild(dots);
@@ -746,12 +751,12 @@ body {
 
   function collectorHealth() {
     var ga = guard("automation");
-    var st = "grey", label = "collector ?";
+    var st = "grey", label = "dashboard refresher ?";
     if (ga.ok && ga.data && Array.isArray(ga.data.jobs)) {
       var mc = ga.data.jobs.filter(function (j) { return (j.name || "") === "com.gillettes.mission-control"; })[0];
-      if (mc) { st = mc.state === "offline-media" ? "blue" : mc.state; label = "collector " + mc.state; }
+      if (mc) { st = mc.state === "offline-media" ? "blue" : mc.state; label = "dashboard refresher " + mc.state; }
     }
-    return h("span", { title: label }, dot(st), h("span", { class: "mc-strip-seg-label" }, " collector"));
+    return h("span", { title: label }, dot(st), h("span", { class: "mc-strip-seg-label" }, " refresher"));
   }
 
   // ===========================================================================
@@ -775,7 +780,7 @@ body {
           h("div", { class: "mc-row-body" },
             h("div", { class: "mc-row-problem mc-ellipsis" }, e.problem),
             h("div", { class: "mc-row-action mc-ellipsis" }, e.action)),
-          h("span", { class: "mc-jump" }, (e.focus ? "show on map" : "go") + " →"));
+          h("span", { class: "mc-jump" }, (e.focus ? "Show chat" : "Open tab") + " →"));
         attn.appendChild(row);
       });
       if (exc.length > 7) attn.appendChild(h("div", { class: "mc-card-foot" }, "+" + (exc.length - 7) + " more across the tabs"));
@@ -794,7 +799,7 @@ body {
   function changedSinceText() {
     var gc = guard("chats");
     if (gc.ok && gc.data && gc.data.counts && gc.data.counts.new_today != null)
-      return gc.data.counts.new_today + " new chats today.";
+      return gc.data.counts.new_today + " chats recorded today.";
     return "";
   }
 
@@ -818,13 +823,15 @@ body {
     var nodes = g.data.nodes || [];
     var owe = nodes.filter(function (n) { return (n.open_ends || []).length; }).length;
     var cnt = g.data.counts || {};
-    var pulse = cnt.new_today ? h("span", { class: "mc-pulse" }, cnt.new_today + " new today") : null;
+    var pulse = cnt.new_today ? h("span", { class: "mc-pulse" }, cnt.new_today + " chats recorded today") : null;
     // sweep FIX 5: scan_errors_24h was computed in the feed but never surfaced. Show it
     // (amber card + a line) so a silently-degrading transcript scan is visible.
     var scanErr = +cnt.scan_errors_24h || 0;
+    var staleIngest = "last_full_ingest_age_s" in cnt && (cnt.last_full_ingest_age_s == null || +cnt.last_full_ingest_age_s > 1800);
     var lines = [owe + " with unfinished work"];
     if (scanErr > 0) lines.push(scanErr + " chat" + (scanErr > 1 ? "s" : "") + " couldn't be read today");
-    return summaryCard("Chats", (owe || scanErr) ? "amber" : "green", nodes.length,
+    if (staleIngest) lines.push("full chat scan is stale");
+    return summaryCard("Chats", (owe || scanErr || staleIngest) ? "amber" : "green", nodes.length,
       lines, g.epoch, pulse);
   }
   function cardGit() {
@@ -835,8 +842,8 @@ body {
     var bad = acts.filter(function (a) { return a.state !== "green"; });
     var st = bad.some(function (a) { return a.state === "red"; }) ? "red" : (bad.length ? "amber" : "green");
     var clean = repos.length - bad.length;
-    return summaryCard("Repositories", st, bad.length,
-      [bad.length === 1 ? "1 repo needs a hand" : bad.length + " repos need a hand",
+    return summaryCard("Git", st, bad.length,
+      [bad.length === 1 ? "1 project needs a hand" : bad.length + " projects need a hand",
        clean + " of " + repos.length + " are clean"], g.epoch);
   }
   function cardUsage() {
@@ -849,7 +856,7 @@ body {
     var head = worst ? (worst.pct + "%") : "OK";
     var hot = ps.filter(function (p) { return p.pace; }).map(function (p) { return p.name + " " + p.pace; })[0];
     return summaryCard("Usage", st, head,
-      [worst ? "busiest: " + worst.p.name : ps.length + " providers tracked",
+      [worst ? "most used: " + worst.p.name : ps.length + " AI sources tracked",
        hot ? "running hot: " + hot : "nothing running hot"], g.epoch);
   }
   function cardAutomation() {
@@ -861,8 +868,8 @@ body {
     var st = jobs.some(function (j) { return j.state === "red"; }) ? "red" : (ex ? "amber" : "green");
     var unreg = (g.data.unregistered || []).length;
     return summaryCard("Automation", st, green,
-      [(ex ? ex + " need attention" : "all " + jobs.length + " healthy"),
-       unreg ? unreg + " not tracked yet" : null], g.epoch);
+      [(ex ? ex + " need attention" : "all " + jobs.length + " watched jobs healthy"),
+       unreg ? unreg + " running but not watched yet" : null], g.epoch);
   }
 
   // ===========================================================================
@@ -925,7 +932,7 @@ body {
     var repos = uniq(nodes.map(function (n) { return n.repo; }).filter(Boolean)).sort();
     var controls = h("div", { class: "mc-filters" });
     var sel = h("select", { class: "mc-chip", onchange: function () { mapRepo = sel.value; FOCUS_CHAT = null; rerender(); } });
-    sel.appendChild(h("option", { value: "" }, "all repos"));
+    sel.appendChild(h("option", { value: "" }, "All repos"));
     repos.forEach(function (r) { var o = h("option", { value: r }, r); if (r === mapRepo) o.selected = true; sel.appendChild(o); });
     controls.appendChild(sel);
     if (FOCUS_CHAT) controls.appendChild(h("span", { class: "mc-chip mc-chip-btn mc-chip-on",
@@ -974,7 +981,7 @@ body {
     deg.slice(0, CAP).forEach(function (x) { keep[x.k] = true; });
     var total = deg.length;
     var note = total > CAP
-      ? "Showing the " + CAP + " most-connected chats" + (mapRepo ? " in " + mapRepo : "") + " of " + total + " with connections — filter by repo or click a chat to focus its web."
+      ? "Showing the " + CAP + " most-connected chats" + (mapRepo ? " in " + mapRepo : "") + " of " + total + " with connections — filter by repo or click a chat to focus its connections."
       : (total ? "Showing all " + total + " connected chats" + (mapRepo ? " in " + mapRepo : "") + "." : "No connections to show" + (mapRepo ? " in " + mapRepo : "") + " yet.");
     return { keys: keep, note: note };
   }
@@ -1001,7 +1008,7 @@ body {
             "background-color": function (n) { return provColor(n.data("prov")); },
             "width": function (n) { return 16 + Math.min(28, n.degree(true) * 3); },
             "height": function (n) { return 16 + Math.min(28, n.degree(true) * 3); },
-            "label": "data(label)", "color": "#c9cdd6", "font-size": 9,
+            "label": "", "color": "#c9cdd6", "font-size": 9,
             "text-margin-y": 4, "text-valign": "bottom", "text-halign": "center",
             "text-max-width": 110, "text-wrap": "ellipsis",
             "border-width": function (n) { return n.data("live") ? 3 : 0; }, "border-color": "#35b98a",
@@ -1011,7 +1018,7 @@ body {
             "curve-style": "bezier", "target-arrow-color": "data(col)",
             "target-arrow-shape": "triangle", "arrow-scale": 0.7,
             "line-style": function (e) { return (EDGE_INFO[e.data("type")] || [0, false])[1] ? "dashed" : "solid"; } } },
-        { selector: "node:selected", style: { "border-width": 4, "border-color": "#7c8cff" } },
+        { selector: "node:selected", style: { "border-width": 4, "border-color": "#7c8cff", "label": "data(label)" } },
         { selector: ".mc-dim", style: { "opacity": 0.12 } }
       ],
       layout: FOCUS_CHAT
@@ -1028,7 +1035,7 @@ body {
     side.textContent = "";
     side.appendChild(h("div", { class: "mc-side-title" }, n.title || n.id));
     side.appendChild(h("div", { class: "mc-side-meta" },
-      (n.provider || "?") + (n.repo ? " · " + n.repo : "") + (n.live ? " · active recently" : "")));
+      "AI: " + providerLabel(n.provider) + (n.repo ? " · repo: " + n.repo : "") + (n.live ? " · active in last 30 min" : "")));
     // reopen / read buttons
     if (n.resume_cmd) side.appendChild(cmdBtn("Reopen this chat", n.resume_cmd, true));
     if (n.view_cmd) side.appendChild(cmdBtn("Read it", n.view_cmd, false));
@@ -1055,7 +1062,7 @@ body {
       });
     }
     side.appendChild(h("div", { class: "mc-side-section" }, ""));
-    side.appendChild(h("span", { class: "mc-chip mc-chip-btn", onclick: function () { FOCUS_CHAT = key; rerender(); } }, "focus this chat's web"));
+    side.appendChild(h("span", { class: "mc-chip mc-chip-btn", onclick: function () { FOCUS_CHAT = key; rerender(); } }, "Show only this chat's connections"));
   }
 
   function cmdBtn(label, cmd, primary) {
@@ -1076,7 +1083,7 @@ body {
 
   function renderChats(main) {
     var g = guard("chats");
-    var p = panel(g, "Chat map + open work");
+    var p = panel(g, "Chats and unfinished work");
     main.appendChild(p.wrap);
     if (!p.body) return;
     var data = g.data || {};
@@ -1094,11 +1101,11 @@ body {
     var providers = uniq(nodes.map(function (n) { return n.provider; }).filter(Boolean)).sort();
     var filters = h("div", { class: "mc-filters" });
     var sel = h("select", { class: "mc-chip", onchange: function () { chatFilter.repo = sel.value; rerender(); } });
-    sel.appendChild(h("option", { value: "" }, "all repos"));
+    sel.appendChild(h("option", { value: "" }, "All repos"));
     repos.forEach(function (r) { var o = h("option", { value: r }, r); if (r === chatFilter.repo) o.selected = true; sel.appendChild(o); });
     filters.appendChild(sel);
     filters.appendChild(h("span", { class: "mc-chip mc-chip-btn" + (chatFilter.openOnly ? " mc-chip-on" : ""),
-      onclick: function () { chatFilter.openOnly = !chatFilter.openOnly; rerender(); } }, "has open work"));
+      onclick: function () { chatFilter.openOnly = !chatFilter.openOnly; rerender(); } }, "Only chats with unfinished work"));
     providers.forEach(function (pr) {
       var on = !chatFilter.providers[pr];
       filters.appendChild(h("span", { class: "mc-chip mc-chip-btn" + (on ? " mc-chip-on" : ""),
@@ -1114,101 +1121,47 @@ body {
     });
 
     if (data.counts && data.counts.new_today)
-      p.body.appendChild(h("div", { class: "mc-card-foot" }, h("span", { class: "mc-pulse" }, data.counts.new_today + " new chats today")));
+      p.body.appendChild(h("div", { class: "mc-card-foot" }, h("span", { class: "mc-pulse" }, data.counts.new_today + " chats recorded today")));
 
     // flat rows — size-tiered (live fix 2026-07-03: 7.5k sessions rendered 92k
     // DOM nodes; design rule: >50 sessions = capped table, expand via filters)
-    var ROW_CAP = 100, CLUSTER_CAP = 30;
+    var ROW_CAP = 100;
     visible.sort(function (a, b) { return String(b.last_activity || "") < String(a.last_activity || "") ? -1 : 1; });
-    p.body.appendChild(h("div", { class: "mc-section-head" }, h("h2", { text: "Sessions" })));
+    p.body.appendChild(h("div", { class: "mc-section-head" }, h("h2", { text: "Chats" })));
     var list = h("div", { class: "mc-list" });
     var byId = {}; nodes.forEach(function (n) { byId[n.key] = n; });
     visible.slice(0, ROW_CAP).forEach(function (n) { list.appendChild(chatRow(n, edges, byId)); });
-    if (!visible.length) list.appendChild(h("div", { class: "mc-card-foot" }, "no sessions match these filters"));
+    if (!visible.length) list.appendChild(h("div", { class: "mc-card-foot" }, "no chats match these filters"));
     if (visible.length > ROW_CAP)
-      list.appendChild(h("div", { class: "mc-card-foot" }, "showing newest " + ROW_CAP + " of " + visible.length + " sessions — use the filters to narrow"));
+      list.appendChild(h("div", { class: "mc-card-foot" }, "showing newest " + ROW_CAP + " of " + visible.length + " chats — use the filters to narrow"));
     p.body.appendChild(list);
-
-    // clustered cards by connected component — ≥2 members, newest first, capped
-    p.body.appendChild(h("div", { class: "mc-section-head" }, h("h2", { text: "Clusters" })));
-    var comps = components(nodes.map(function (n) { return { id: n.key }; }), edges).filter(function (c) { return c.length >= 2; });
-    comps.sort(function (a, b) {
-      var la = a.map(function (id) { return String((byId[id] || {}).last_activity || ""); }).sort().pop() || "";
-      var lb = b.map(function (id) { return String((byId[id] || {}).last_activity || ""); }).sort().pop() || "";
-      return lb < la ? -1 : 1;
-    });
-    comps.slice(0, CLUSTER_CAP).forEach(function (comp) { p.body.appendChild(clusterCard(comp, byId, edges)); });
-    if (comps.length > CLUSTER_CAP)
-      p.body.appendChild(h("div", { class: "mc-card-foot" }, "showing " + CLUSTER_CAP + " most recent of " + comps.length + " clusters"));
   }
 
   function chatRow(n, edges, byId) {
     var row = h("div", { class: "mc-chatrow" });
     row.appendChild(h("span", { class: "mc-chatrow-title mc-ellipsis", title: n.title || n.id }, n.title || n.id));
-    row.appendChild(h("span", { class: "mc-provider" }, n.provider || "?"));
-    if (n.repo) row.appendChild(h("span", { class: "mc-repo" }, n.repo));
+    row.appendChild(h("span", { class: "mc-provider" }, "AI: " + providerLabel(n.provider)));
+    if (n.repo) row.appendChild(h("span", { class: "mc-repo" }, "Repo: " + n.repo));
     // lineage badges from incoming edges + one-line parent (composite keys)
     var inc = edges.filter(function (e) { return e.dst === n.key; });
     inc.forEach(function (e) {
       var kind = e.type === "audits" ? "audit" : (e.type === "spawned" || e.type === "continues" ? "worker" : null);
       if (kind) {
         var parent = byId[e.src];
+        var lead = e.type === "audits" ? "audited by " : (e.type === "continues" ? "continued from " : "started by ");
         row.appendChild(h("span", { class: "mc-badge mc-badge-" + kind, title: (parent ? parent.title : e.src) }, kind));
-        row.appendChild(h("span", { class: "mc-repo mc-ellipsis", title: e.src }, "← " + (parent ? (parent.title || parent.id) : e.src)));
+        row.appendChild(h("span", { class: "mc-repo mc-ellipsis", title: e.src }, lead + (parent ? (parent.title || parent.id) : e.src)));
       }
     });
     // live badge <30 min
-    if (n.live && isRecent(n.last_activity, 1800)) row.appendChild(h("span", { class: "mc-badge mc-badge-live" }, "live"));
+    if (n.live && isRecent(n.last_activity, 1800)) row.appendChild(h("span", { class: "mc-badge mc-badge-live" }, "active <30m"));
     // open-ends: >21d collapse to a stale chip, the rest counted live
     var split = splitOpenEnds(n.open_ends);
-    if (split.live) row.appendChild(h("span", { class: "mc-badge" }, split.live + " open"));
-    if (split.stale) row.appendChild(h("span", { class: "mc-badge mc-badge-stale" }, split.stale + " stale"));
-    if (n.resume_cmd) row.appendChild(copyable(n.resume_cmd));
-    if (n.view_cmd) row.appendChild(copyable(n.view_cmd));
+    if (split.live) row.appendChild(h("span", { class: "mc-badge" }, split.live + " unfinished"));
+    if (split.stale) row.appendChild(h("span", { class: "mc-badge mc-badge-stale" }, split.stale + " old unfinished"));
+    if (n.resume_cmd) row.appendChild(copyable(n.resume_cmd, "Reopen this chat"));
+    if (n.view_cmd) row.appendChild(copyable(n.view_cmd, "Read it"));
     return row;
-  }
-
-  function clusterCard(comp, byId, edges) {
-    var card = h("div", { class: "mc-cluster" });
-    // root = node with no incoming edge inside the component, else largest out-degree
-    var ids = {}; comp.forEach(function (id) { ids[id] = true; });
-    var internal = edges.filter(function (e) { return ids[e.src] && ids[e.dst]; });
-    var indeg = {}; comp.forEach(function (id) { indeg[id] = 0; });
-    internal.forEach(function (e) { indeg[e.dst] = (indeg[e.dst] || 0) + 1; });
-    var roots = comp.filter(function (id) { return !indeg[id]; });
-    var root = roots.length ? roots[0] : comp[0];
-    var rootN = byId[root];
-    card.appendChild(h("div", { class: "mc-cluster-root mc-ellipsis", title: rootN ? rootN.title : root },
-      glyphSpan(rootN && (rootN.open_ends || []).length ? "amber" : "green"), " ", rootN ? (rootN.title || root) : root));
-    // members grouped by edge type (audits / workers / same-issue), indented
-    var EDGE_ORDER = { audits: 0, spawned: 1, continues: 1, signaled: 2, references: 3, related_manual: 4 };
-    internal = internal.slice().sort(function (a, b) {
-      var ra = EDGE_ORDER[a.type] == null ? 9 : EDGE_ORDER[a.type];
-      var rb = EDGE_ORDER[b.type] == null ? 9 : EDGE_ORDER[b.type];
-      return ra - rb;
-    });
-    var seen = {}; seen[root] = true;
-    internal.forEach(function (e) {
-      var m = byId[e.dst];
-      if (!m) return;
-      var weak = (e.confidence != null && e.confidence < 0.7);
-      var line = h("div", { class: "mc-cluster-member mc-indent-1" + (weak ? " mc-edge-weak" : "") },
-        h("span", { class: "mc-edge-label" }, e.type),
-        h("span", { class: "mc-ellipsis", title: m.title || m.id, style: "max-width:300px" }, m.title || m.id),
-        h("span", { class: "mc-provider" }, m.provider || ""));
-      // stale open-ends >21d collapse to a chip; live ones counted
-      var msplit = splitOpenEnds(m.open_ends);
-      if (msplit.live) line.appendChild(h("span", { class: "mc-badge" }, msplit.live + " owes"));
-      if (msplit.stale) line.appendChild(h("span", { class: "mc-badge mc-badge-stale" }, msplit.stale + " stale"));
-      // sub-0.7 edges: dashed + copyable unlink_cmd
-      if (weak) {
-        var unlink = e.unlink_cmd || ("chat-graph unlink " + e.src + " " + e.dst + " --type " + (e.type || ""));
-        line.appendChild(copyable(unlink));
-      }
-      card.appendChild(line);
-      seen[e.dst] = true;
-    });
-    return card;
   }
 
   // ===========================================================================
@@ -1216,7 +1169,7 @@ body {
   // ===========================================================================
   function renderGit(main) {
     var g = guard("git");
-    var p = panel(g, "Git health");
+    var p = panel(g, "Git: work to commit, push, or clean up");
     main.appendChild(p.wrap);
     if (!p.body) return;
     var data = g.data || {};
@@ -1228,42 +1181,42 @@ body {
 
     // summary strip
     p.body.appendChild(h("div", { class: "mc-filters" },
-      h("span", { class: "mc-chip" }, "findings " + (data.findings_total != null ? data.findings_total : "?")),
-      h("span", { class: "mc-chip" }, dirty + " dirty"),
-      h("span", { class: "mc-chip" }, unpushed + " unpushed"),
-      h("span", { class: "mc-chip" }, flags.length + " watcher flags")));
+      h("span", { class: "mc-chip" }, (data.findings_total != null ? data.findings_total : "?") + " items found"),
+      h("span", { class: "mc-chip" }, dirty + " with local changes"),
+      h("span", { class: "mc-chip" }, unpushed + " not sent to GitHub"),
+      h("span", { class: "mc-chip" }, flags.length + " watcher notes")));
 
     // scan-unfinished-work table (unfinished repos only; clean collapse)
     var bad = acts.filter(function (x) { return x.a.state !== "green"; });
     var clean = acts.filter(function (x) { return x.a.state === "green"; });
     var table = h("table", { class: "mc-table" });
     table.appendChild(h("tr", null,
-      h("th", null, "Repo"), h("th", null, "Branch"), h("th", null, "Remote"),
-      h("th", null, "State"), h("th", null, "Action")));
+      h("th", null, "Project"), h("th", null, "Branch"), h("th", null, "GitHub"),
+      h("th", null, "Problem"), h("th", null, "Next action")));
     bad.forEach(function (x) {
       var relCls = REL_CLASS[x.a.rel] || "mc-state-grey";
       table.appendChild(h("tr", null,
         h("td", { class: "mc-ellipsis", title: x.r.repo, style: "max-width:220px" }, x.r.repo),
         h("td", { class: relCls }, x.r.branch || "?"),
-        h("td", { class: relCls }, relSymbol(x.a.rel) + " " + x.a.rel),
+        h("td", { class: relCls }, relSymbol(x.a.rel) + " " + (REL_TEXT[x.a.rel] || x.a.rel)),
         h("td", null, glyphSpan(x.a.state), " ", x.a.summary),
         h("td", { class: "mc-action-verb" }, x.a.verb)));
     });
     p.body.appendChild(table);
     if (clean.length) {
       var expanded = { on: false };
-      var line = h("div", { class: "mc-collapse" }, glyphSpan("green"), " " + clean.length + " repos clean ✓ (click to expand)");
+      var line = h("div", { class: "mc-collapse" }, glyphSpan("green"), " " + clean.length + " projects are clean (click to show)");
       var sub = h("div", { style: "display:none" });
-      clean.forEach(function (x) { sub.appendChild(h("div", { class: "mc-card-secondary" }, x.r.repo + " — " + (x.r.branch || "") + " synced")); });
+      clean.forEach(function (x) { sub.appendChild(h("div", { class: "mc-card-secondary" }, x.r.repo + " - " + (x.r.branch || "") + " matches GitHub")); });
       line.addEventListener("click", function () { expanded.on = !expanded.on; sub.style.display = expanded.on ? "block" : "none"; });
       p.body.appendChild(line); p.body.appendChild(sub);
     }
 
     // separate watcher-flags list
     if (flags.length) {
-      p.body.appendChild(h("div", { class: "mc-section-head" }, h("h2", { text: "Watcher flags" })));
+      p.body.appendChild(h("div", { class: "mc-section-head" }, h("h2", { text: "Watcher notes" })));
       var ft = h("table", { class: "mc-table" });
-      ft.appendChild(h("tr", null, h("th", null, "Repo"), h("th", null, "Flag"), h("th", null, "Detail")));
+      ft.appendChild(h("tr", null, h("th", null, "Project"), h("th", null, "Problem"), h("th", null, "Detail")));
       flags.forEach(function (f) {
         ft.appendChild(h("tr", null,
           h("td", null, f.repo || "?"),
@@ -1278,15 +1231,15 @@ body {
     if (groom) {
       var decide = (groom.decide || []);
       var strip = h("div", { class: "mc-card" });
-      strip.appendChild(h("div", { class: "mc-card-title" }, "Auto-groom"));
+      strip.appendChild(h("div", { class: "mc-card-title" }, "Automatic cleanup"));
       strip.appendChild(h("div", { class: "mc-card-secondary mc-num" },
         "last run " + (groom.last_run ? groom.last_run : "?") + " · " +
         (groom.done != null ? groom.done : "?") + " done · " + (groom.failed != null ? groom.failed : "?") + " failed"));
       if (decide.length) {
-        strip.appendChild(h("div", { class: "mc-card-secondary" }, "you decide:"));
+        strip.appendChild(h("div", { class: "mc-card-secondary" }, "Needs your decision:"));
         decide.forEach(function (d) { strip.appendChild(h("div", { class: "mc-card-foot mc-ellipsis", title: d }, "• " + d)); });
       }
-      p.body.appendChild(h("div", { class: "mc-section-head" }, h("h2", { text: "Groom" })));
+      p.body.appendChild(h("div", { class: "mc-section-head" }, h("h2", { text: "Cleanup" })));
       p.body.appendChild(strip);
     }
   }
@@ -1301,7 +1254,7 @@ body {
   function renderUsage(main) {
     countdowns = [];
     var g = guard("usage");
-    var p = panel(g, "Usage + spend");
+    var p = panel(g, "Usage: which AI has room");
     main.appendChild(p.wrap);
     if (!p.body) return;
     var data = g.data || {};
@@ -1309,14 +1262,14 @@ body {
     nu.rows.forEach(function (pr) {
       var st = usageState(pr);
       var row = h("div", { class: "mc-usage-row" });
-      row.appendChild(h("span", { class: "mc-usage-name" }, glyphSpan(st), " ", pr.name || "?"));
+      row.appendChild(h("span", { class: "mc-usage-name" }, glyphSpan(st), " ", pr.name || providerLabel(pr.provider)));
       var pct = +pr.pct;
       var track = h("div", { class: "mc-bar-track" },
         h("div", { class: "mc-bar-fill " + (STATE_CLASS[st] || ""), style: "--mc-w:" + (isFinite(pct) ? Math.max(0, Math.min(100, pct)) : 0) + "%" }));
       row.appendChild(track);
       row.appendChild(h("span", { class: "mc-num" }, isFinite(pct) ? pct + "%" : (pr.used != null ? pr.used + (pr.unit ? " " + pr.unit : "") : "—")));
       // confidence chip
-      row.appendChild(h("span", { class: "mc-chip", title: "data confidence" }, pr.confidence || "estimated"));
+      row.appendChild(h("span", { class: "mc-chip", title: "how trustworthy this usage number is" }, confidenceLabel(pr.confidence)));
       // reset countdown (client-side tick)
       if (pr.resets_in_min != null) {
         var cd = h("span", { class: "mc-countdown" });
@@ -1334,7 +1287,7 @@ body {
 
     // credit rows
     if (nu.credits.length) {
-      p.body.appendChild(h("div", { class: "mc-section-head" }, h("h2", { text: "Credits" })));
+      p.body.appendChild(h("div", { class: "mc-section-head" }, h("h2", { text: "Credit balances" })));
       nu.credits.forEach(function (c) {
         var line = h("div", { class: "mc-card-secondary mc-num" }, (c.name || "?") + ": " + (c.remaining != null ? c.remaining : "?") + (c.unit ? " " + c.unit : ""));
         if (c.resets_in_min != null) {
@@ -1347,9 +1300,9 @@ body {
     }
     // waste table
     if ((nu.waste || []).length) {
-      p.body.appendChild(h("div", { class: "mc-section-head" }, h("h2", { text: "Waste" })));
+      p.body.appendChild(h("div", { class: "mc-section-head" }, h("h2", { text: "Unused capacity" })));
       var wt = h("table", { class: "mc-table" });
-      wt.appendChild(h("tr", null, h("th", null, "What"), h("th", null, "Detail"), h("th", null, "Cost")));
+      wt.appendChild(h("tr", null, h("th", null, "AI"), h("th", null, "Window"), h("th", null, "Unused")));
       nu.waste.forEach(function (w) {
         wt.appendChild(h("tr", null,
           h("td", null, w.label || "?"),
@@ -1361,7 +1314,7 @@ body {
     // explicit no-data rows (Cursor)
     nu.no_data.forEach(function (nd) {
       p.body.appendChild(h("div", { class: "mc-banner mc-banner-blue" },
-        glyphSpan("blue"), " " + (nd.name || "provider") + " — no data source (" + (nd.reason || "not wired") + ")"));
+        glyphSpan("blue"), " " + (nd.name || "provider") + " is not connected to a usage feed yet (" + (nd.reason || "not wired") + ")"));
     });
     tickCountdowns();
   }
@@ -1369,7 +1322,7 @@ body {
   function tickCountdowns() {
     countdowns.forEach(function (c) {
       var rem = c.target - nowS();
-      if (rem < 0) { c.el.textContent = "reset passed — awaiting refresh"; c.el.className = "mc-countdown mc-state-amber"; }
+      if (rem < 0) { c.el.textContent = "reset time passed; waiting for next refresh"; c.el.className = "mc-countdown mc-state-amber"; }
       else {
         var hh = Math.floor(rem / 3600), mm = Math.floor((rem % 3600) / 60), ss = rem % 60;
         c.el.textContent = "resets in " + hh + "h" + pad(mm) + "m" + pad(ss) + "s";
@@ -1384,7 +1337,7 @@ body {
   // ===========================================================================
   function renderAutomation(main) {
     var g = guard("automation");
-    var p = panel(g, "Automation health");
+    var p = panel(g, "Background jobs");
     main.appendChild(p.wrap);
     if (!p.body) return;
     var data = g.data || {};
@@ -1396,15 +1349,15 @@ body {
       var head = h("div", { class: "mc-svc-head" },
         glyphSpan(jb.state),
         h("span", { class: "mc-svc-name mc-ellipsis", title: jb.name || "" }, jb.label || jb.name || "?"),
-        h("span", { class: "mc-provider" }, jb.kind || ""));
+        h("span", { class: "mc-provider" }, jb.kind ? "schedule: " + jb.kind : ""));
       card.appendChild(head);
       var age = jb.evidence_age_s != null ? fmtAgeS(jb.evidence_age_s) : "never ran";
-      card.appendChild(h("div", { class: "mc-card-secondary mc-num" }, "last run " + age + " · " + (jb.schedule || "")));
+      card.appendChild(h("div", { class: "mc-card-secondary mc-num" }, "last evidence " + age + " · " + (jb.schedule || "")));
       if (jb.err_log_tail) {
         var d = { on: false };
-        var toggle = h("div", { class: "mc-collapse" }, "▸ last error");
+        var toggle = h("div", { class: "mc-collapse" }, "Show last error");
         var drawer = h("div", { class: "mc-drawer", style: "display:none" }, String(jb.err_log_tail));
-        toggle.addEventListener("click", function () { d.on = !d.on; drawer.style.display = d.on ? "block" : "none"; toggle.textContent = (d.on ? "▾" : "▸") + " last error"; });
+        toggle.addEventListener("click", function () { d.on = !d.on; drawer.style.display = d.on ? "block" : "none"; toggle.textContent = (d.on ? "Hide last error" : "Show last error"); });
         card.appendChild(toggle); card.appendChild(drawer);
       }
       grid.appendChild(card);
@@ -1414,8 +1367,8 @@ body {
     // unregistered bucket
     var unreg = data.unregistered || [];
     if (unreg.length) {
-      p.body.appendChild(h("div", { class: "mc-section-head" }, h("h2", { text: "Running but not tracked yet" })));
-      p.body.appendChild(h("div", { class: "mc-card-foot" }, "Background jobs found running that aren't in the watch list — add them when you want them monitored."));
+      p.body.appendChild(h("div", { class: "mc-section-head" }, h("h2", { text: "Running jobs not watched yet" })));
+      p.body.appendChild(h("div", { class: "mc-card-foot" }, "These background jobs are running, but Mission Control is not watching them yet."));
       unreg.forEach(function (u) { p.body.appendChild(h("div", { class: "mc-card-secondary mc-mono mc-ellipsis", title: u }, "○ " + u)); });
     }
   }
@@ -1427,30 +1380,6 @@ body {
     return Math.floor(s / 86400) + "d ago";
   }
 
-  // ===========================================================================
-  //  graph utilities (connected components, undirected)
-  // ===========================================================================
-  function components(nodes, edges) {
-    var adj = {}; var ids = [];
-    nodes.forEach(function (n) { adj[n.id] = adj[n.id] || []; ids.push(n.id); });
-    edges.forEach(function (e) {
-      if (!adj[e.src] || !adj[e.dst]) return;
-      adj[e.src].push(e.dst); adj[e.dst].push(e.src);
-    });
-    var seen = {}, comps = [];
-    ids.forEach(function (id) {
-      if (seen[id]) return;
-      var stack = [id], comp = [];
-      seen[id] = true;
-      while (stack.length) {
-        var cur = stack.pop(); comp.push(cur);
-        (adj[cur] || []).forEach(function (nb) { if (!seen[nb]) { seen[nb] = true; stack.push(nb); } });
-      }
-      comps.push(comp);
-    });
-    // biggest first
-    return comps.sort(function (a, b) { return b.length - a.length; });
-  }
   function uniq(a) { var s = {}, o = []; a.forEach(function (x) { if (!s[x]) { s[x] = 1; o.push(x); } }); return o; }
   function isRecent(iso, sec) { if (!iso) return false; var t = Date.parse(iso) / 1000; return isFinite(t) && (nowS() - t) < sec; }
   function splitOpenEnds(oe) {

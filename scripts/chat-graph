@@ -780,8 +780,18 @@ def _scan_errors_24h():
                 continue
     return n
 
+def _last_full_ingest_epoch():
+    p = marker_path()
+    if not os.path.exists(p):
+        return None
+    try:
+        return int(os.path.getmtime(p))
+    except OSError:
+        return None
+
 def _build_export(con):
     now = int(time.time())
+    last_full = _last_full_ingest_epoch()
     prov_of = {r["id"]: (r["provider"] or "unknown")
                for r in con.execute("SELECT id, provider FROM sessions")}
     nodes = []
@@ -833,6 +843,8 @@ def _build_export(con):
                                  (midnight,)).fetchone()["c"],
         "scan_errors_24h": _scan_errors_24h(),
         "signal_yield": "%d/%d" % (yld, scanned),
+        "last_full_ingest_epoch": last_full,
+        "last_full_ingest_age_s": (now - last_full if last_full is not None else None),
     }
     return {
         "schema": 1, "feed": "chats",

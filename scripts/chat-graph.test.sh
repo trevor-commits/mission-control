@@ -579,6 +579,17 @@ else fail "cold export --catchup-limit wrote no snapshot"; fi
 ok 2 "$(q "SELECT COUNT(*) FROM file_cursors")" "catch-up bounded to 2 of 5 files (not full scan)"
 if [ ! -f "$CHAT_GRAPH_HOME/last-ingest" ]; then pass "bounded catch-up writes NO completion marker"
 else fail "bounded catch-up wrote a completion marker"; fi
+if python3 - "$EXP27" <<'PYEOF'
+import json, sys
+d = json.load(open(sys.argv[1]))
+c = d["data"]["counts"]
+assert "last_full_ingest_epoch" in c
+assert "last_full_ingest_age_s" in c
+assert c["last_full_ingest_epoch"] is None
+assert c["last_full_ingest_age_s"] is None
+PYEOF
+then pass "bounded export surfaces missing full-ingest marker in counts"
+else fail "bounded export missing full-ingest freshness counts"; fi
 
 echo "----"
 if [ "$FAILS" -eq 0 ]; then echo "ALL PASS"; exit 0; else echo "$FAILS FAILED"; exit 1; fi

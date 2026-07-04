@@ -90,19 +90,29 @@ const markers = {
 };
 
 // --- run the IIFE once per tab ---------------------------------------------
-// 'map' renders the cytoscape graph in a real browser; under the node shim the
-// lib is absent, so renderMap must degrade to a non-empty banner (never throw).
+// The map tab uses Cytoscape in the browser. A tiny stub is enough to prove the
+// real graph path builds elements and wires handlers without loading the vendor.
 const TABS = ['home', 'map', 'chats', 'git', 'usage', 'automation'];
 let fails = 0;
 for (const tab of TABS) {
   resetDom();
   locationShim.hash = '#' + tab;
+  const cyCalls = [];
+  function cytoscapeStub(opts) {
+    cyCalls.push(opts || {});
+    return {
+      on() {},
+      destroy() {},
+      $(selector) { return { selector, select() { return this; } }; },
+    };
+  }
   const sandbox = {
     window: { MC: { feeds: JSON.parse(JSON.stringify(feeds)) }, addEventListener() {}, removeEventListener() {} },
     document: documentShim, location: locationShim,
-    setInterval() { return 0; }, clearInterval() {}, setTimeout() { return 0; }, clearTimeout() {},
+    setInterval() { return 0; }, clearInterval() {}, setTimeout(fn) { if (typeof fn === 'function') fn(); return 0; }, clearTimeout() {},
     Math: Math, Date: Date, JSON: JSON, console: { log() {}, warn() {}, error() {} },
     Array: Array, Object: Object, String: String, Number: Number, isFinite: isFinite, parseInt: parseInt, parseFloat: parseFloat,
+    cytoscape: cytoscapeStub,
   };
   sandbox.window.window = sandbox.window;
   sandbox.globalThis = sandbox;
@@ -115,6 +125,15 @@ for (const tab of TABS) {
   const main = byId['mc-main'];
   const txt = (main && main.textContent) || '';
   if (!txt.trim()) { console.error('FAIL: #' + tab + ' rendered EMPTY mc-main'); fails++; continue; }
+  if (tab === 'map') {
+    const els = (cyCalls[0] && cyCalls[0].elements) || [];
+    const hasNode = els.some(e => e && e.data && !e.data.source && e.data.id);
+    const hasEdge = els.some(e => e && e.data && e.data.source && e.data.target);
+    if (!cyCalls.length || !hasNode || !hasEdge) {
+      console.error('FAIL: #map did not build Cytoscape node+edge elements');
+      fails++; continue;
+    }
+  }
   const marker = markers[tab];
   if (marker && txt.indexOf(marker) === -1) {
     console.error('FAIL: #' + tab + ' output missing expected fixture content "' + marker + '"');

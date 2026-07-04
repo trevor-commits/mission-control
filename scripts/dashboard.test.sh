@@ -261,6 +261,27 @@ c8() { # git feeder exit-1-with-findings is a VALID result (scan-unfinished-work
     ok "git feeder exit 1 (findings) accepted as valid"
   else
     no "git feeder exit 1 wrongly treated as failure"
+fi
+}
+
+c8b() { # chats feed can be fresh while the full graph scan is stale
+  local mch; mch="$(mktemp -d)"
+  mkdir -p "$mch/data"
+  python3 - "$mch/data/chats.json" <<'PYEOF'
+import json, sys, time
+now = int(time.time())
+env = {"schema": 1, "feed": "chats", "generated_at": "now", "generated_epoch": now,
+       "cadence_s": 1800, "ok": True, "error": None,
+       "data": {"nodes": [], "edges": [], "topics": [],
+                "counts": {"last_full_ingest_epoch": None,
+                           "last_full_ingest_age_s": None}}}
+json.dump(env, open(sys.argv[1], "w"))
+PYEOF
+  local out; out="$(MISSION_CONTROL_HOME="$mch" bash "$DASH" status 2>/dev/null || true)"
+  if printf '%s\n' "$out" | grep -q "stale full ingest"; then
+    ok "status: fresh chats feed still surfaces stale full graph ingest"
+  else
+    no "status: stale full graph ingest hidden behind fresh chats feed"
   fi
 }
 
@@ -356,7 +377,7 @@ c13() { # FIX 6: the data/ dir must be 0700, not world-readable
   [ "$p" = "700" ] && ok "data dir perms 700 (got $p)" || no "data dir world-readable (got $p, want 700)"
 }
 
-c1; c2; c3; c4; c5; c6; c7; c8; c9; c10; c11; c12; c13
+c1; c2; c3; c4; c5; c6; c7; c8; c8b; c9; c10; c11; c12; c13
 shell_contract
 echo "----"
 echo "PASS=$PASS FAIL=$FAIL"

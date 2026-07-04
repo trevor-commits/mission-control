@@ -229,6 +229,18 @@ def _automation_red(env):
     return any(isinstance(j, dict) and j.get("state") == "red" for j in jobs)
 
 
+def _chats_stale_ingest(env, cadence):
+    if not env or not isinstance(env.get("data"), dict):
+        return False
+    counts = env["data"].get("counts") or {}
+    if "last_full_ingest_age_s" not in counts:
+        return False
+    age = counts.get("last_full_ingest_age_s")
+    # The feed can be freshly generated from a bounded catch-up while the last
+    # completed transcript scan is stale. Surface that separately.
+    return age is None or int(age) > cadence
+
+
 def cmd_status(argv):
     ensure_state()
     now = _now()
@@ -240,6 +252,9 @@ def cmd_status(argv):
         if name == "automation" and _automation_red(env):
             is_red = True
             verdict += " (red job)"
+        if name == "chats" and _chats_stale_ingest(env, cadence):
+            is_red = True
+            verdict += " (stale full ingest)"
         if env is None:
             age, oks = "-", "-"
         else:
