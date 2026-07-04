@@ -159,6 +159,20 @@ cursor_row() {
 
 # ---------- purchased credits (e.g. Codex weekly-reset packs, 30-day expiry) ----------
 CREDITS_FILE="${USAGE_CREDITS_FILE:-$STATE_DIR/credits.json}"
+notify_credit_advice() {
+  local advice="$1"
+  local -a notify_argv
+  case "$USAGE_NOTIFY_CMD" in
+    *";"*|*"|"*|*"&"*|*'`'*|*'$'*|*"<"*|*">"*)
+      echo "usage-snapshot: notify command contains forbidden shell characters" >&2
+      return 1
+      ;;
+  esac
+  IFS=' ' read -r -a notify_argv <<< "$USAGE_NOTIFY_CMD"
+  [ "${#notify_argv[@]}" -gt 0 ] || return 1
+  "${notify_argv[@]}" "AI credits: $advice"
+}
+
 credit_rows() {
   [ -f "$CREDITS_FILE" ] || return 0
   local wk
@@ -192,9 +206,8 @@ credit_rows() {
       # atomic claim (noclobber) so concurrent runs send at most one ping/day;
       # message passed as $1, never interpolated into the command string
       if ( set -C; : > "$stamp" ) 2>/dev/null; then
-        # cmd must end in the flag that takes the message (e.g. mobile-connect's `... notify
-        # --session usage-snapshot --text`) — a bare `mobile-connect.sh notify` exits 1 on usage
-        sh -c "$USAGE_NOTIFY_CMD \"\$1\"" _ "AI credits: $advice" >/dev/null 2>&1 \
+        # argv exec only — no sh -c; USAGE_NOTIFY_CMD = executable + fixed args
+        notify_credit_advice "$advice" >/dev/null 2>&1 \
           || { rm -f "$stamp"; echo "usage-snapshot: notify failed — stamp released, retry next run" >&2; }
       fi
     fi

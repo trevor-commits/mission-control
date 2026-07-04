@@ -30,11 +30,13 @@ export MISSION_CONTROL_HOME REPO_ROOT
 # subcommand + args arrive as argv.
 engine() {
   python3 /dev/stdin "$@" <<'PYEOF'
-import json, os, shlex, shutil, subprocess, sys, time
+import json, os, re, shlex, shutil, subprocess, sys, time
 
 HOME = os.environ["MISSION_CONTROL_HOME"]
 REPO = os.environ.get("REPO_ROOT", ".")
 DATA = os.path.join(HOME, "data")
+
+_SHELL_FORBIDDEN = re.compile(r'[;|&`$<>]')
 
 
 def _repo_script(name):
@@ -60,7 +62,7 @@ FEEDS = [
     # ~/.chat-graph; successive ticker fires extend coverage via file cursors.
     # On timeout the feed keeps last-good + a stale banner, so the tab never blanks.
     # LAST by design so its slow scan never delays the other three tabs.
-    ("chats",      1800, _repo_script("chat-graph") + ' export --json --catchup-limit 1500 >/dev/null && cat "${CHAT_GRAPH_HOME:-$HOME/.chat-graph}/export/graph.json"', "DASHBOARD_CMD_CHATS", 150),
+    ("chats",      1800, "", "DASHBOARD_CMD_CHATS", 150),
 ]
 FEED_CADENCE = dict((n, c) for n, c, _, _, _ in FEEDS)
 
@@ -135,27 +137,66 @@ def _write_error(name, cadence, msg):
     _atomic_write(os.path.join(DATA, name + ".error.json"), _dumps(env))
 
 
-def _collect_one(name, cadence, cmd, timeout_s):
+def _run_builtin_chats(timeout_s):
+    cg = os.path.join(REPO, "scripts", "chat-graph")
+    try:
+        p = subprocess.run([cg, "export", "--json", "--catchup-limit", "1500"],
+                           capture_output=True, text=True, timeout=timeout_s)
+    except subprocess.TimeoutExpired:
+        return None, "feeder timed out after %ds" % timeout_s
+    if p.returncode != 0:
+        return None, "chat-graph export exit %d: %s" % (p.returncode, (p.stderr or "").strip()[:200])
+    graph_home = os.environ.get("CHAT_GRAPH_HOME",
+                                os.path.join(os.environ.get("HOME", ""), ".chat-graph"))
+    graph_path = os.path.join(graph_home, "export", "graph.json")
+    try:
+        with open(graph_path) as f:
+            return json.load(f), None
+    except Exception as e:
+        return None, "cannot read graph export: %s" % e
+
+
+def _run_feeder(name, defcmd, envvar, timeout_s):
+    override = os.environ.get(envvar)
+    if override:
+        if _SHELL_FORBIDDEN.search(override):
+            return None, "feeder override contains forbidden shell characters"
+        argv = shlex.split(override)
+        try:
+            p = subprocess.run(argv, capture_output=True, text=True, timeout=timeout_s)
+        except subprocess.TimeoutExpired:
+            return None, "feeder timed out after %ds" % timeout_s
+        if p.returncode not in OK_EXITS.get(name, (0,)):
+            return None, "feeder exit %d: %s" % (p.returncode, (p.stderr or "").strip()[:200])
+        try:
+            return json.loads(p.stdout), None
+        except Exception as e:
+            return None, "feeder output not JSON: %s" % e
+    if name == "chats":
+        return _run_builtin_chats(timeout_s)
+    argv = shlex.split(defcmd)
+    try:
+        p = subprocess.run(argv, capture_output=True, text=True, timeout=timeout_s)
+    except subprocess.TimeoutExpired:
+        return None, "feeder timed out after %ds" % timeout_s
+    if p.returncode not in OK_EXITS.get(name, (0,)):
+        return None, "feeder exit %d: %s" % (p.returncode, (p.stderr or "").strip()[:200])
+    try:
+        return json.loads(p.stdout), None
+    except Exception as e:
+        return None, "feeder output not JSON: %s" % e
+
+
+def _collect_one(name, cadence, defcmd, envvar, timeout_s):
     lock = os.path.join(DATA, "." + name + ".lock")
     try:
         os.mkdir(lock)  # mkdir-lock: another collect owns this feed
     except OSError:
         return "locked"
     try:
-        try:
-            p = subprocess.run(cmd, shell=True, capture_output=True,
-                               text=True, timeout=timeout_s)
-        except subprocess.TimeoutExpired:
-            _write_error(name, cadence, "feeder timed out after %ds" % timeout_s)
-            return "error"
-        if p.returncode not in OK_EXITS.get(name, (0,)):
-            _write_error(name, cadence, "feeder exit %d: %s"
-                         % (p.returncode, (p.stderr or "").strip()[:200]))
-            return "error"
-        try:
-            obj = json.loads(p.stdout)
-        except Exception as e:
-            _write_error(name, cadence, "feeder output not JSON: %s" % e)
+        obj, err = _run_feeder(name, defcmd, envvar, timeout_s)
+        if err:
+            _write_error(name, cadence, err)
             return "error"
         _write_feed(name, _wrap(name, cadence, obj))
         return "ok"
@@ -171,7 +212,8 @@ def _is_due(name, cadence):
     if not os.path.exists(p):
         return True
     try:
-        env = json.load(open(p))
+        with open(p) as f:
+            env = json.load(f)
         return (_now() - int(env.get("generated_epoch", 0))) >= cadence
     except Exception:
         return True
@@ -187,8 +229,7 @@ def cmd_collect(argv):
             continue
         if due and not force and not _is_due(name, cadence):
             continue
-        cmd = os.environ.get(envvar, defcmd)
-        _collect_one(name, cadence, cmd, tmo)  # feeds fail independently
+        _collect_one(name, cadence, defcmd, envvar, tmo)  # feeds fail independently
     return 0
 
 
@@ -197,7 +238,8 @@ def _load(name):
     if not os.path.exists(p):
         return None
     try:
-        return json.load(open(p))
+        with open(p) as f:
+            return json.load(f)
     except Exception:
         return None
 
@@ -233,6 +275,8 @@ def _chats_stale_ingest(env, cadence):
     if not env or not isinstance(env.get("data"), dict):
         return False
     counts = env["data"].get("counts") or {}
+    if counts.get("ingest_skipped"):
+        return True
     if "last_full_ingest_age_s" not in counts:
         return False
     age = counts.get("last_full_ingest_age_s")

@@ -68,6 +68,15 @@ for (const name of ['usage', 'git', 'chats', 'automation']) {
   if (!fs.existsSync(p)) { console.error('FAIL: missing fixture ' + p); process.exit(1); }
   feeds[name] = JSON.parse(fs.readFileSync(p, 'utf8'));
 }
+if (feeds.chats && feeds.chats.data && feeds.chats.data.counts) {
+  feeds.chats.data.counts.ingest_skipped = true;
+}
+if (feeds.automation && feeds.automation.data && Array.isArray(feeds.automation.data.jobs)) {
+  feeds.automation.data.jobs.forEach(j => {
+    if (j.label === 'Usage Snapshot') j.state = 'yellow';
+    else if (j.state === 'red' || j.state === 'degraded') j.state = 'green';
+  });
+}
 
 // expected content markers pulled from the ACTUAL fixtures (robust to fixture edits)
 function firstStr(obj, keys) {
@@ -132,6 +141,11 @@ for (const tab of TABS) {
   const main = byId['mc-main'];
   const txt = (main && main.textContent) || '';
   if (!txt.trim()) { console.error('FAIL: #' + tab + ' rendered EMPTY mc-main'); fails++; continue; }
+  const stripTxt = (byId['mc-strip'] && byId['mc-strip'].textContent) || '';
+  if (tab === 'home' && !/Usage\s*2/.test(stripTxt)) {
+    console.error('FAIL: strip does not count normalized usage used_pct rows (strip="' + stripTxt + '")');
+    fails++; continue;
+  }
   if (tab === 'map') {
     const els = (cyCalls[0] && cyCalls[0].elements) || [];
     const hasNode = els.some(e => e && e.data && !e.data.source && e.data.id);
@@ -153,6 +167,14 @@ for (const tab of TABS) {
     var readMiss = txt.indexOf("couldn't be read") !== -1 || txt.indexOf('couldn’t be read') !== -1;
     if (se > 0 && !readMiss) {
       console.error('FAIL: #home does not surface scan_errors_24h (' + se + ') from the chats feed');
+      fails++; continue;
+    }
+    if (txt.indexOf('chat refresh skipped') === -1) {
+      console.error('FAIL: #home does not surface ingest_skipped=true from the chats feed');
+      fails++; continue;
+    }
+    if (txt.indexOf('Usage Snapshot') === -1) {
+      console.error('FAIL: #home does not surface yellow automation jobs');
       fails++; continue;
     }
   }

@@ -165,6 +165,20 @@ if [ "$RC" -eq 0 ] && echo "$OUT" | grep -qi "lock held"; then
   pass "second ingest while lock held exits 0 with skip notice"
 else fail "concurrent ingest lock (rc=$RC out=$OUT)"; fi
 
+# --- 9b. crashed ingest: stale lock is cleared instead of wedging forever ---
+new_env
+mkdir -p "$CHAT_GRAPH_HOME/ingest.lock"
+python3 - "$CHAT_GRAPH_HOME/ingest.lock" <<'PY'
+import os, sys, time
+old = time.time() - 31 * 60
+os.utime(sys.argv[1], (old, old))
+PY
+OUT="$("$CG" ingest 2>&1)"; RC=$?
+if [ "$RC" -eq 0 ] && echo "$OUT" | grep -qi "removed stale ingest lock" \
+   && [ ! -d "$CHAT_GRAPH_HOME/ingest.lock" ]; then
+  pass "stale ingest lock is cleared and ingest continues"
+else fail "stale ingest lock recovery failed (rc=$RC out=$OUT)"; fi
+
 # --- 10. migration guard: schema_version=99 -> plain abort, nonzero exit ----
 new_env
 "$CG" ingest >/dev/null
@@ -590,6 +604,20 @@ assert c["last_full_ingest_age_s"] is None
 PYEOF
 then pass "bounded export surfaces missing full-ingest marker in counts"
 else fail "bounded export missing full-ingest freshness counts"; fi
+
+# --- 28. lock-held catch-up export stays honest via ingest_skipped ----------
+new_env
+mkdir -p "$CHAT_GRAPH_HOME/ingest.lock"
+EXP28="$CHAT_GRAPH_HOME/export/graph.json"
+"$CG" export --json --catchup-limit 0 >/dev/null 2>&1
+if python3 - "$EXP28" <<'PYEOF'
+import json, sys
+d = json.load(open(sys.argv[1]))
+assert d["data"]["counts"].get("ingest_skipped") is True
+PYEOF
+then pass "export marks ingest_skipped=true when catch-up lock is held"
+else fail "export missing ingest_skipped=true while catch-up lock held"; fi
+rmdir "$CHAT_GRAPH_HOME/ingest.lock" 2>/dev/null || true
 
 echo "----"
 if [ "$FAILS" -eq 0 ]; then echo "ALL PASS"; exit 0; else echo "$FAILS FAILED"; exit 1; fi

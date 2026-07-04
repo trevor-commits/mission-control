@@ -595,7 +595,7 @@ body {
     var ga = guard("automation");
     if (ga.ok && ga.data && Array.isArray(ga.data.jobs)) {
       ga.data.jobs.forEach(function (jb) {
-        if (jb.state === "red" || jb.state === "degraded") {
+        if (jb.state === "red" || jb.state === "degraded" || jb.state === "yellow") {
           out.push({ state: jb.state === "red" ? "red" : "amber", seen: jb.label || jb.name || "", tab: "automation",
                      problem: (jb.label || jb.name) + " — " + humanJobState(jb.state),
                      action: jb.err_log_tail ? String(jb.err_log_tail).split("\n")[0].slice(0, 120) : "last run didn't finish cleanly" });
@@ -692,7 +692,8 @@ body {
       var owe = gc.data.nodes.filter(function (n) { return (n.open_ends || []).length; }).length;
       var cnt = gc.data.counts || {};
       var staleIngest = "last_full_ingest_age_s" in cnt && (cnt.last_full_ingest_age_s == null || +cnt.last_full_ingest_age_s > 1800);
-      s.chats = { state: (owe || staleIngest) ? "amber" : "green", count: owe };
+      var ingestSkipped = cnt.ingest_skipped === true;
+      s.chats = { state: (owe || staleIngest || ingestSkipped) ? "amber" : "green", count: owe };
     } else s.chats = { state: "grey", count: 0 };
 
     var gg = guard("git");
@@ -704,7 +705,7 @@ body {
 
     var gu = guard("usage");
     if (gu.ok && gu.data && Array.isArray(gu.data.providers)) {
-      var states = gu.data.providers.map(usageState);
+      var states = normUsageProviders(gu.data).rows.map(usageState);
       var w = states.indexOf("red") >= 0 ? "red" : (states.indexOf("amber") >= 0 ? "amber" : "green");
       s.usage = { state: w, count: states.filter(function (x) { return x === "red" || x === "amber"; }).length };
     } else s.usage = { state: "grey", count: 0 };
@@ -740,8 +741,10 @@ body {
     ["usage", "git", "chats", "automation"].forEach(function (n) {
       var g = guard(n);
       var st = !g.ok ? "grey" : (g.feedError || g.flag === "stale" ? "red" : (g.flag === "skew" ? "amber" : "green"));
-      if (n === "chats" && g.ok && g.data && g.data.counts && "last_full_ingest_age_s" in g.data.counts &&
-          (g.data.counts.last_full_ingest_age_s == null || +g.data.counts.last_full_ingest_age_s > 1800)) st = "red";
+      if (n === "chats" && g.ok && g.data && g.data.counts &&
+          (g.data.counts.ingest_skipped === true ||
+           ("last_full_ingest_age_s" in g.data.counts &&
+            (g.data.counts.last_full_ingest_age_s == null || +g.data.counts.last_full_ingest_age_s > 1800)))) st = "red";
       dots.appendChild(h("span", { title: n + (g.ok ? " · " + fmtAge(g.epoch) : " · " + g.reason) }, dot(st)));
     });
     meta.appendChild(dots);
@@ -828,10 +831,12 @@ body {
     // (amber card + a line) so a silently-degrading transcript scan is visible.
     var scanErr = +cnt.scan_errors_24h || 0;
     var staleIngest = "last_full_ingest_age_s" in cnt && (cnt.last_full_ingest_age_s == null || +cnt.last_full_ingest_age_s > 1800);
+    var ingestSkipped = cnt.ingest_skipped === true;
     var lines = [owe + " with unfinished work"];
     if (scanErr > 0) lines.push(scanErr + " chat" + (scanErr > 1 ? "s" : "") + " couldn't be read today");
     if (staleIngest) lines.push("full chat scan is stale");
-    return summaryCard("Chats", (owe || scanErr || staleIngest) ? "amber" : "green", nodes.length,
+    if (ingestSkipped) lines.push("chat refresh skipped — another scan is running");
+    return summaryCard("Chats", (owe || scanErr || staleIngest || ingestSkipped) ? "amber" : "green", nodes.length,
       lines, g.epoch, pulse);
   }
   function cardGit() {
@@ -980,7 +985,7 @@ body {
     main.appendChild(h("div", { class: "mc-map-note" }, scoped.note));
 
     // build after layout so the container has real dimensions
-    setTimeout(function () { buildCy(cont, scoped, byKey, side); }, 0);
+    setTimeout(function () { buildCy(cont, scoped, byKey, side, edges); }, 0);
   }
 
   function scopeGraph(nodes, edges, byKey) {
@@ -1016,15 +1021,16 @@ body {
     return { keys: keep, note: note };
   }
 
-  function buildCy(container, scoped, byKey, side) {
+  function buildCy(container, scoped, byKey, side, edges) {
     var els = [];
+    edges = edges || [];
     Object.keys(scoped.keys).forEach(function (k) {
       var n = byKey[k]; if (!n) return;
       els.push({ data: { id: k, label: shortLabel(n.title || n.id), prov: n.provider || "?",
         live: n.live ? 1 : 0, owe: (n.open_ends || []).length } });
     });
     var seenEdge = {};
-    (window.MC.feeds.chats.data.edges || []).forEach(function (e) {
+    edges.forEach(function (e) {
       if (!scoped.keys[e.src] || !scoped.keys[e.dst]) return;
       var id = e.src + ">" + e.dst + ">" + e.type;
       if (seenEdge[id]) return; seenEdge[id] = true;
@@ -1055,12 +1061,12 @@ body {
         ? { name: "concentric", concentric: function (n) { return n.id() === FOCUS_CHAT ? 10 : n.degree(true); }, levelWidth: function () { return 2; }, minNodeSpacing: 40, animate: false }
         : { name: "cose", animate: false, nodeRepulsion: 6000, idealEdgeLength: 90, padding: 24, randomize: true }
     });
-    _cy.on("tap", "node", function (evt) { mapSide(side, evt.target.id(), byKey); });
+    _cy.on("tap", "node", function (evt) { mapSide(side, evt.target.id(), byKey, edges); });
     _cy.on("tap", function (evt) { if (evt.target === _cy) { side.textContent = ""; side.appendChild(h("div", { class: "mc-card-foot" }, "Click a dot to see the chat.")); } });
-    if (FOCUS_CHAT && byKey[FOCUS_CHAT]) { _cy.$("#" + cssEsc(FOCUS_CHAT)).select(); mapSide(side, FOCUS_CHAT, byKey); }
+    if (FOCUS_CHAT && byKey[FOCUS_CHAT]) { _cy.$("#" + cssEsc(FOCUS_CHAT)).select(); mapSide(side, FOCUS_CHAT, byKey, edges); }
   }
 
-  function mapSide(side, key, byKey) {
+  function mapSide(side, key, byKey, edges) {
     var n = byKey[key]; if (!n) return;
     side.textContent = "";
     side.appendChild(h("div", { class: "mc-side-title" }, n.title || n.id));
@@ -1076,7 +1082,7 @@ body {
       oe.slice(0, 5).forEach(function (o) { side.appendChild(h("div", { class: "mc-card-secondary" }, "• " + openEndHuman(o))); });
     }
     // connections in plain words
-    var edges = (window.MC.feeds.chats.data.edges || []);
+    edges = edges || [];
     var conns = edges.filter(function (e) { return e.src === key || e.dst === key; });
     if (conns.length) {
       side.appendChild(h("div", { class: "mc-side-section" }, "Connects to (" + conns.length + ")"));
@@ -1303,7 +1309,7 @@ body {
       // reset countdown (client-side tick)
       if (pr.resets_in_min != null) {
         var cd = h("span", { class: "mc-countdown" });
-        countdowns.push({ el: cd, target: LOAD_EPOCH + (+pr.resets_in_min) * 60 });
+        countdowns.push({ el: cd, target: g.epoch + (+pr.resets_in_min) * 60 });
         row.appendChild(cd);
       }
       p.body.appendChild(row);
@@ -1322,7 +1328,7 @@ body {
         var line = h("div", { class: "mc-card-secondary mc-num" }, (c.name || "?") + ": " + (c.remaining != null ? c.remaining : "?") + (c.unit ? " " + c.unit : ""));
         if (c.resets_in_min != null) {
           var ccd = h("span", { class: "mc-countdown" });
-          countdowns.push({ el: ccd, target: LOAD_EPOCH + (+c.resets_in_min) * 60 });
+          countdowns.push({ el: ccd, target: g.epoch + (+c.resets_in_min) * 60 });
           line.appendChild(ccd);
         }
         p.body.appendChild(line);

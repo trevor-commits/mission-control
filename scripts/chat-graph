@@ -13,6 +13,8 @@ import glob, hashlib, json, os, re, shutil, sqlite3, subprocess, sys, time
 
 SCHEMA_VERSION = 3
 STALE_INGEST_S = 30 * 60  # show/doctor staleness threshold
+LOCK_STALE_S = 30 * 60      # ingest.lock older than this is treated as crashed
+_INGEST_SKIPPED = False     # set when export's catch-up ingest could not acquire lock
 
 # ---- env resolution -------------------------------------------------------
 def _env(name, default):
@@ -72,8 +74,11 @@ def _edge_unique_has_source(con):
     """True if the edges UNIQUE index already includes `source` (v2 shape)."""
     for idx in con.execute("PRAGMA index_list('edges')").fetchall():
         if idx["unique"]:
+            idx_name = idx["name"]
+            if not re.match(r'^[A-Za-z0-9_]+$', idx_name or ""):
+                continue
             cols = [r["name"] for r in con.execute(
-                "PRAGMA index_info('%s')" % idx["name"]).fetchall()]
+                "PRAGMA index_info(%s)" % (idx_name,)).fetchall()]
             if "source" in cols:
                 return True
     return False
@@ -466,8 +471,14 @@ COLLECTORS = {
 # ---- transcript scanner ---------------------------------------------------
 CLAUDE_ROOT = lambda: _env("CHAT_GRAPH_CLAUDE_ROOT", "~/.claude/projects")
 CODEX_ROOT  = lambda: _env("CHAT_GRAPH_CODEX_ROOT", "~/.codex/sessions")
-REGISTER    = lambda: _env("CHAT_GRAPH_REGISTER", os.path.join(
-    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "ENFORCEMENT_REQUESTS.md"))
+def _default_register():
+    gi = os.path.expanduser("~/Coding Projects/global-implementations/ENFORCEMENT_REQUESTS.md")
+    if os.path.isfile(gi):
+        return gi
+    return os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                        "ENFORCEMENT_REQUESTS.md")
+
+REGISTER    = lambda: _env("CHAT_GRAPH_REGISTER", _default_register())
 
 MAX_FILE_BYTES = 200 * 1024 * 1024
 TOPIC_CAP = 8
@@ -582,8 +593,6 @@ def _scan_one(con, path, provider, sid, known, mtime_s):
     with open(path, errors="strict") as f:
         for lineno, raw in enumerate(f, 1):
             passed = _prefilter(raw)
-            if got_first and not passed:
-                continue
             s = raw.strip()
             if not s:
                 continue
@@ -637,14 +646,21 @@ def _scan_one(con, path, provider, sid, known, mtime_s):
         con.execute("UPDATE open_ends SET resolved_at=NULL, kind=?, text=? "
                     "WHERE session_id=? AND text_hash=?", (kind, text, sid, h))
         n_sig += 1
-    # auto-resolve: open_ends whose signal disappeared this pass
+    # auto-resolve: only close/register kinds whose signal disappeared this pass
     if open_now:
         qs = ",".join("?" * len(open_now))
         con.execute("UPDATE open_ends SET resolved_at=? WHERE session_id=? AND resolved_at IS NULL "
                     "AND text_hash NOT IN (%s)" % qs, [now, sid] + list(open_now))
     else:
-        con.execute("UPDATE open_ends SET resolved_at=? WHERE session_id=? AND resolved_at IS NULL",
-                    (now, sid))
+        row = con.execute("SELECT closeout_seen FROM sessions WHERE id=?", (sid,)).fetchone()
+        if row and row["closeout_seen"]:
+            con.execute("UPDATE open_ends SET resolved_at=? WHERE session_id=? AND resolved_at IS NULL "
+                        "AND kind='closeout_handoff'", (now, sid))
+        for o in con.execute("SELECT text_hash, text FROM open_ends WHERE session_id=? "
+                             "AND resolved_at IS NULL AND kind='register_unverified'", (sid,)):
+            if o["text"] not in blob:
+                con.execute("UPDATE open_ends SET resolved_at=? WHERE session_id=? AND text_hash=?",
+                            (now, sid, o["text_hash"]))
     con.execute("UPDATE sessions SET provider=COALESCE(NULLIF(provider,''),?), "
                 "last_activity=?, first_msg_uuid=COALESCE(first_msg_uuid,?) WHERE id=?",
                 (provider, str(mtime_s), first_uuid, sid))
@@ -789,7 +805,7 @@ def _last_full_ingest_epoch():
     except OSError:
         return None
 
-def _build_export(con):
+def _build_export(con, ingest_skipped=False):
     now = int(time.time())
     last_full = _last_full_ingest_epoch()
     prov_of = {r["id"]: (r["provider"] or "unknown")
@@ -845,6 +861,7 @@ def _build_export(con):
         "signal_yield": "%d/%d" % (yld, scanned),
         "last_full_ingest_epoch": last_full,
         "last_full_ingest_age_s": (now - last_full if last_full is not None else None),
+        "ingest_skipped": bool(ingest_skipped),
     }
     return {
         "schema": 1, "feed": "chats",
@@ -856,16 +873,19 @@ def _build_export(con):
     }
 
 def cmd_export(args):
+    global _INGEST_SKIPPED
     out = args[args.index("--out") + 1] if "--out" in args else None
     # --catchup-limit N (default 1500): a stale export triggers a catch-up ingest;
     # bound its file scan with --limit-files so export ALWAYS reaches os.rename within
     # a feed timeout. Cursors let successive ticker fires extend coverage. 0 = unbounded.
     catchup = int(args[args.index("--catchup-limit") + 1]) if "--catchup-limit" in args else 1500
     age = _ingest_age()
+    ingest_skipped = False
     if age is None or age > STALE_INGEST_S:  # ONLY catch-up-on-query entry point
         cmd_ingest(["--limit-files", str(catchup)] if catchup > 0 else [])
+        ingest_skipped = _INGEST_SKIPPED
     con = connect()
-    data = _build_export(con)
+    data = _build_export(con, ingest_skipped=ingest_skipped)
     con.close()
     dest = out or os.path.join(HOME_DIR(), "export", "graph.json")
     ensure_dir(os.path.dirname(dest))
@@ -915,17 +935,37 @@ def cmd_validate_export(args):
     return 0
 
 # ---- ingest (mkdir-locked) ------------------------------------------------
+def _acquire_ingest_lock():
+    """mkdir lock; stale locks (>LOCK_STALE_S) from a crashed ingest are removed."""
+    lp = lock_path()
+    try:
+        os.mkdir(lp)
+        return True
+    except FileExistsError:
+        try:
+            age = time.time() - os.path.getmtime(lp)
+            if age > LOCK_STALE_S:
+                os.rmdir(lp)
+                os.mkdir(lp)
+                sys.stderr.write("chat-graph: removed stale ingest lock (%.0f min old)\n"
+                                 % (age / 60))
+                return True
+        except OSError:
+            pass
+        print("chat-graph: ingest lock held — another ingest is running, skipping")
+        return False
+
 def cmd_ingest(args):
+    global _INGEST_SKIPPED
+    _INGEST_SKIPPED = False
     only = args[args.index("--collector") + 1] if "--collector" in args else None
     full = "--full" in args
     limit = int(args[args.index("--limit-files") + 1]) if "--limit-files" in args else None
     ensure_dir(HOME_DIR())
     ensure_dir(os.path.dirname(journal_path()))  # healthy home always has journal/ + logs/
     ensure_dir(os.path.dirname(scanlog_path()))
-    try:
-        os.mkdir(lock_path())
-    except FileExistsError:
-        print("chat-graph: ingest lock held — another ingest is running, skipping")
+    if not _acquire_ingest_lock():
+        _INGEST_SKIPPED = True
         return 0
     try:
         con = connect()

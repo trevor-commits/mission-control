@@ -253,8 +253,15 @@ c7() { # defaults must resolve repo-sibling feeders WITHOUT env overrides (live 
 
 
 c8() { # git feeder exit-1-with-findings is a VALID result (scan-unfinished-work contract)
-  local mch; mch="$(mktemp -d)"
-  if DASHBOARD_CMD_GIT='echo "{\"findings\": 3}"; exit 1' \
+  local mch stub; mch="$(mktemp -d)"
+  stub="$ROOT/git-exit1-stub"
+  cat > "$stub" <<'EOF'
+#!/bin/sh
+printf '%s\n' '{"findings": 3}'
+exit 1
+EOF
+  chmod +x "$stub"
+  if DASHBOARD_CMD_GIT="$stub" \
      DASHBOARD_CMD_USAGE='echo {}' DASHBOARD_CMD_CHATS='echo {}' DASHBOARD_CMD_AUTOMATION='echo {}' \
      MISSION_CONTROL_HOME="$mch" bash "$DASH" collect --force >/dev/null 2>&1 \
      && [ -f "$mch/data/git.json" ] && [ ! -f "$mch/data/git.error.json" ]; then
@@ -262,6 +269,19 @@ c8() { # git feeder exit-1-with-findings is a VALID result (scan-unfinished-work
   else
     no "git feeder exit 1 wrongly treated as failure"
 fi
+}
+
+c8a() { # env feeder overrides are argv-only; shell metacharacters are rejected
+  local mch marker; mch="$(mktemp -d)"; marker="$ROOT/override-pwned"
+  DASHBOARD_CMD_USAGE="echo {}; touch $marker" \
+    MISSION_CONTROL_HOME="$mch" bash "$DASH" collect --force usage >/dev/null 2>&1
+  if [ ! -e "$marker" ] \
+     && [ -f "$mch/data/usage.error.json" ] \
+     && grep -q "forbidden shell characters" "$mch/data/usage.error.json"; then
+    ok "feeder override shell metacharacters are rejected"
+  else
+    no "feeder override shell metacharacters were not rejected"
+  fi
 }
 
 c8b() { # chats feed can be fresh while the full graph scan is stale
@@ -377,7 +397,7 @@ c13() { # FIX 6: the data/ dir must be 0700, not world-readable
   [ "$p" = "700" ] && ok "data dir perms 700 (got $p)" || no "data dir world-readable (got $p, want 700)"
 }
 
-c1; c2; c3; c4; c5; c6; c7; c8; c8b; c9; c10; c11; c12; c13
+c1; c2; c3; c4; c5; c6; c7; c8; c8a; c8b; c9; c10; c11; c12; c13
 shell_contract
 echo "----"
 echo "PASS=$PASS FAIL=$FAIL"
