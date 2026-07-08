@@ -145,7 +145,6 @@
         ],
         "provider": "claude",
         "repo": "signal-intake",
-        "resume_cmd": "claude --resume claude:eeeeeeee-5555-0005",
         "title": "Synthesis handoff cluster",
         "view_cmd": "chat-source full claude:eeeeeeee-5555-0005"
       },

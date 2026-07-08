@@ -1267,7 +1267,7 @@ body {
         h("td", null, glyphSpan(row.st.tone), " ", row.st.label),
         h("td", { class: "mc-ellipsis", title: row.st.detail, style: "max-width:300px" }, row.st.detail),
         h("td", null, row.n.last_activity ? journalWhen(row.n.last_activity) : "unknown"),
-        h("td", null, row.n.resume_cmd ? copyable(row.n.resume_cmd, "Reopen") : (row.n.view_cmd ? copyable(row.n.view_cmd, "Read") : "—"))));
+        h("td", null, row.n.resume_cmd ? copyable(row.n.resume_cmd, "Reopen this chat") : (row.n.view_cmd ? copyable(row.n.view_cmd, "Read transcript") : "—"))));
     });
     main.appendChild(table);
   }
@@ -1353,7 +1353,10 @@ body {
         h("span", { class: "mc-provider" }, journalWhen(n.last_activity)),
         h("span", { class: "mc-chatrow-title mc-ellipsis", title: titleLabel(n.title, n.id) }, titleLabel(n.title, n.id)),
         h("span", { class: "mc-provider" }, "AI: " + providerLabel(n.provider)),
-        n.repo ? h("span", { class: "mc-repo" }, "Repo: " + n.repo) : null));
+        n.repo ? h("span", { class: "mc-repo" }, "Repo: " + n.repo) : null,
+        h("span", { class: "mc-chip mc-chip-btn", onclick: function () {
+          FOCUS_CHAT = n.key; rerender();
+        } }, "Show connections")));
     });
     main.appendChild(list);
   }

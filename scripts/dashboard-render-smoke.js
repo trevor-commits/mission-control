@@ -181,6 +181,10 @@ for (const tab of TABS) {
       console.error('FAIL: #home is missing the session monitor or activity heatmap sections');
       fails++; continue;
     }
+    if (txt.indexOf('Reopen this chat') === -1 || txt.indexOf('Read transcript') === -1) {
+      console.error('FAIL: #home session monitor is missing a plain action label');
+      fails++; continue;
+    }
   }
   if (tab === 'map' && txt.indexOf('Why you are seeing this') === -1) {
     console.error('FAIL: #map is missing the side-panel scope explanation');
@@ -190,8 +194,12 @@ for (const tab of TABS) {
     console.error('FAIL: #map is missing the recent chat journal');
     fails++; continue;
   }
-  if (tab === 'chats' && (txt.indexOf('Open work') === -1 || txt.indexOf('Hide until refresh') === -1)) {
-    console.error('FAIL: #chats is missing the Open work list or temporary-hide action');
+  if (tab === 'map' && txt.indexOf('Show connections') === -1) {
+    console.error('FAIL: #map recent chat journal is missing the connection action');
+    fails++; continue;
+  }
+  if (tab === 'chats' && (txt.indexOf('Open work') === -1 || txt.indexOf('Hide until refresh') === -1 || txt.indexOf('Reopen this chat') === -1 || txt.indexOf('Read transcript') === -1)) {
+    console.error('FAIL: #chats is missing the Open work list, temporary-hide action, or plain chat action labels');
     fails++; continue;
   }
   if (tab === 'usage' && txt.indexOf('Decision cards') === -1) {
