@@ -177,6 +177,26 @@ for (const tab of TABS) {
       console.error('FAIL: #home does not surface yellow automation jobs');
       fails++; continue;
     }
+    if (txt.indexOf('Session monitor') === -1 || txt.indexOf('Recent activity') === -1) {
+      console.error('FAIL: #home is missing the session monitor or activity heatmap sections');
+      fails++; continue;
+    }
+  }
+  if (tab === 'map' && txt.indexOf('Why you are seeing this') === -1) {
+    console.error('FAIL: #map is missing the side-panel scope explanation');
+    fails++; continue;
+  }
+  if (tab === 'map' && txt.indexOf('Recent chat journal') === -1) {
+    console.error('FAIL: #map is missing the recent chat journal');
+    fails++; continue;
+  }
+  if (tab === 'chats' && (txt.indexOf('Open work') === -1 || txt.indexOf('Dismiss this item') === -1)) {
+    console.error('FAIL: #chats is missing the Open work list or item-dismiss action');
+    fails++; continue;
+  }
+  if (tab === 'usage' && txt.indexOf('Decision cards') === -1) {
+    console.error('FAIL: #usage is missing the decision-card section');
+    fails++; continue;
   }
   console.log('PASS: #' + tab + ' renders (' + txt.length + ' chars' + (marker ? ', contains "' + marker.slice(0, 30) + '"' : '') + ')');
 }

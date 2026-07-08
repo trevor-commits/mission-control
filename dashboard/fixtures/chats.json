@@ -202,6 +202,92 @@
         "view_cmd": "chat-source full codex:iiiiiiii-9999-0009"
       }
     ],
+    "loose_ends": [
+      {
+        "action_hint": "finish the handoff or connect the next chat",
+        "age_days": 5,
+        "first_seen_at": 1782955200,
+        "id": "eeeeeeee-5555-0005:f1a4e1",
+        "kind": "closeout_handoff",
+        "repo": "signal-intake",
+        "resolve_cmd": "chat-graph resolve eeeeeeee-5555-0005 f1a4e1",
+        "severity": "amber",
+        "source_node": "claude:eeeeeeee-5555-0005",
+        "text": "Handoff: wire closeout card into demo renderer",
+        "text_hash": "f1a4e1",
+        "title": "Synthesis handoff cluster"
+      },
+      {
+        "action_hint": "verify the tracked change",
+        "age_days": 5,
+        "first_seen_at": 1782955200,
+        "id": "eeeeeeee-5555-0005:f1a4e2",
+        "kind": "register_unverified",
+        "repo": "signal-intake",
+        "resolve_cmd": "chat-graph resolve eeeeeeee-5555-0005 f1a4e2",
+        "severity": "amber",
+        "source_node": "claude:eeeeeeee-5555-0005",
+        "text": "ER-087 register entry for chat graph fixture",
+        "text_hash": "f1a4e2",
+        "title": "Synthesis handoff cluster"
+      },
+      {
+        "action_hint": "check the repo todo item or mark it done",
+        "age_days": 2,
+        "first_seen_at": 1783214400,
+        "id": "repo:mission-control:t1",
+        "kind": "todo_open",
+        "repo": "mission-control",
+        "resolve_cmd": "chat-graph resolve repo:mission-control t1",
+        "severity": "amber",
+        "source_node": "repo:mission-control",
+        "text": "mission-control: finish usage-aware routing wiring",
+        "text_hash": "t1",
+        "title": "Repo: mission-control"
+      },
+      {
+        "action_hint": "open Git and decide whether to commit, push, merge, or ignore",
+        "age_days": 1,
+        "first_seen_at": 1783300800,
+        "id": "repo:global-implementations:g1",
+        "kind": "repo_dirty",
+        "repo": "global-implementations",
+        "resolve_cmd": "chat-graph resolve repo:global-implementations g1",
+        "severity": "red",
+        "source_node": "repo:global-implementations",
+        "text": "global-implementations: 3 files uncommitted",
+        "text_hash": "g1",
+        "title": "Repo: global-implementations"
+      },
+      {
+        "action_hint": "land or verify the tracked request",
+        "age_days": 0,
+        "first_seen_at": 1783387200,
+        "id": "repo:global-implementations:r1",
+        "kind": "register_open",
+        "repo": "global-implementations",
+        "resolve_cmd": "chat-graph resolve repo:global-implementations r1",
+        "severity": "amber",
+        "source_node": "repo:global-implementations",
+        "text": "ER-091 Technical Co-Founder mode needs Phase 4 verification",
+        "text_hash": "r1",
+        "title": "Repo: global-implementations"
+      },
+      {
+        "action_hint": "review the nightly note and either fix or dismiss it",
+        "age_days": 0,
+        "first_seen_at": 1783387200,
+        "id": "repo:nightly-review:n1",
+        "kind": "nightly_finding",
+        "repo": "nightly-review",
+        "resolve_cmd": "chat-graph resolve repo:nightly-review n1",
+        "severity": "red",
+        "source_node": "repo:nightly-review",
+        "text": "mission-control needs a follow-up after a failed dashboard smoke check",
+        "text_hash": "n1",
+        "title": "Repo: nightly-review"
+      }
+    ],
     "notes": [],
     "repo_annotations": [
       {

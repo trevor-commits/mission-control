@@ -28,6 +28,8 @@ chat without being visible from one place.
 ## In-Scope Outcomes
 - Static offline dashboard installed under `~/.mission-control`.
 - `scripts/chat-graph` SQLite relationship store under `~/.chat-graph`.
+- One exported Open work ledger (`data.loose_ends`) that reflects chat
+  handoffs, repo todo files, Git state, nightly notes, and tracked requests.
 - `scripts/dashboard` collector/install/open/status CLI.
 - `scripts/automation-status` job registry health feed.
 - Vendored `scripts/usage-snapshot` and `scripts/scan-unfinished-work` feeds.
@@ -40,8 +42,9 @@ chat without being visible from one place.
   started, audited, referenced, or continued each other.
 - Map includes a very short recent-chat journal so Trevor can remember what he
   touched yesterday without reading transcripts.
-- Chats lists individual chats with plain labels: AI, repo, active in last
-  30 minutes, unfinished work, Reopen this chat, and Read it.
+- Chats starts with one Open work list, then shows recent chats with plain
+  labels: AI, repo, active in last 30 minutes, unfinished work, Reopen this
+  chat, and Read transcript.
 - Git, Usage, and Automation use operator language before implementation labels.
 
 ### V2 - make the dashboard practical
@@ -72,7 +75,7 @@ chat without being visible from one place.
 1. Open the Desktop "Mission Control" app, scan Home for exceptions, then click
    a row to the exact tab or chat map focus.
 2. Use Map/Chats to understand chat lineage, copy the reopen/read command, and
-   close the loop in the right AI surface.
+   close the loop in the right AI surface or repo.
 3. Use Git, Usage, and Automation tabs to decide whether the next action is a
    commit/push, model-route change, or local job repair.
 

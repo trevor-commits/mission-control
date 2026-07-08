@@ -28,6 +28,10 @@ new_env() {
   # scanner roots + register MUST be mktemp — never the real ~/.claude corpus.
   export CHAT_GRAPH_CLAUDE_ROOT="$(mktemp -d)"
   export CHAT_GRAPH_CODEX_ROOT="$(mktemp -d)"
+  export CHAT_GRAPH_CODING_ROOT="$(mktemp -d)"
+  export CHAT_GRAPH_REPO_ROOTS="$(mktemp -d)"
+  export CHAT_GRAPH_NIGHTLY_REPORT_GLOB="$(mktemp -d)/*.md"
+  export CHAT_GRAPH_SCAN_CMD="/bin/echo []"
   export CHAT_GRAPH_REGISTER="$(mktemp -d)/register.md"; : > "$CHAT_GRAPH_REGISTER"
   # stub chat-source: 'present' checks pass; describe returns provider only (no
   # title) so untitled-fallback cases survive enrichment; list writes a marker so
@@ -483,8 +487,8 @@ con.execute("INSERT INTO edges VALUES('C','D','audits','titles',0.5,'{}','x','su
 con.commit(); con.close()
 PY
 "$CG" stats >/dev/null 2>&1              # any DB open triggers _migrate
-ok 3 "$(q "SELECT value FROM meta WHERE key='schema_version'")" \
-   "v1 DB open migrates meta.schema_version to 3"
+ok 4 "$(q "SELECT value FROM meta WHERE key='schema_version'")" \
+   "v1 DB open migrates meta.schema_version to 4"
 ok 2 "$(q "SELECT COUNT(*) FROM edges")" \
    "migration preserves all rows"
 ok suppressed "$(q "SELECT status FROM edges WHERE src='C' AND dst='D' AND type='audits'")" \
@@ -618,6 +622,114 @@ PYEOF
 then pass "export marks ingest_skipped=true when catch-up lock is held"
 else fail "export missing ingest_skipped=true while catch-up lock held"; fi
 rmdir "$CHAT_GRAPH_HOME/ingest.lock" 2>/dev/null || true
+
+# --- 29. loose-ends: todo.md source inserts, exports, and auto-resolves ----
+new_env
+R29="$CHAT_GRAPH_HOME/repo-alpha"; mkdir -p "$R29"
+export CHAT_GRAPH_REPO_ROOTS="$R29"
+cat > "$R29/todo.md" <<'MD'
+## Active Work
+- [ ] Wire the usage routing pointer into the dashboard
+MD
+"$CG" ingest --collector todo_open >/dev/null
+ok 1 "$(q "SELECT COUNT(*) FROM open_ends WHERE kind='todo_open' AND resolved_at IS NULL")" \
+   "todo_open collector inserts unchecked repo todo item"
+EXP29="$CHAT_GRAPH_HOME/export/graph.json"
+"$CG" export --json --catchup-limit 0 >/dev/null 2>&1
+if python3 - "$EXP29" <<'PYEOF'
+import json, sys
+d = json.load(open(sys.argv[1]))
+items = d["data"]["loose_ends"]
+assert any(x["kind"] == "todo_open" and x["source_node"] == "repo:repo-alpha" for x in items)
+assert all("action_hint" in x and "resolve_cmd" in x for x in items)
+PYEOF
+then pass "export includes flat loose_ends from todo_open"
+else fail "export missing todo_open loose_ends shape"; fi
+cat > "$R29/todo.md" <<'MD'
+## Active Work
+- [x] Wire the usage routing pointer into the dashboard
+MD
+"$CG" ingest --collector todo_open >/dev/null
+ok 0 "$(q "SELECT COUNT(*) FROM open_ends WHERE kind='todo_open' AND resolved_at IS NULL")" \
+   "todo_open auto-resolves after the todo item is checked off"
+
+# --- 30. loose-ends: repo_dirty accepts scanner rc=1 and resolves clean -----
+new_env
+SCAN30="$(mktemp -d)/scan"
+cat > "$SCAN30" <<'SH'
+#!/usr/bin/env bash
+cat <<'JSON'
+[
+  {"repo":"repo-beta","dirty":true,"dirty_files":2,"ahead":1,
+   "branches":[{"name":"old-work","age_days":12}]}
+]
+JSON
+exit 1
+SH
+chmod +x "$SCAN30"
+export CHAT_GRAPH_SCAN_CMD="$SCAN30"
+"$CG" ingest --collector repo_dirty >/dev/null
+ok 3 "$(q "SELECT COUNT(*) FROM open_ends WHERE kind='repo_dirty' AND resolved_at IS NULL")" \
+   "repo_dirty collector accepts scan-unfinished-work rc=1 findings"
+cat > "$SCAN30" <<'SH'
+#!/usr/bin/env bash
+echo '[]'
+exit 0
+SH
+"$CG" ingest --collector repo_dirty >/dev/null
+ok 0 "$(q "SELECT COUNT(*) FROM open_ends WHERE kind='repo_dirty' AND resolved_at IS NULL")" \
+   "repo_dirty auto-resolves when scanner returns clean"
+
+# --- 31. loose-ends: register rows insert and resolve after verification ----
+new_env
+cat > "$CHAT_GRAPH_REGISTER" <<'MD'
+| ER-999 | test requested behavior | open |
+MD
+"$CG" ingest --collector register_open >/dev/null
+ok 1 "$(q "SELECT COUNT(*) FROM open_ends WHERE kind='register_open' AND resolved_at IS NULL")" \
+   "register_open collector inserts open enforcement row"
+cat > "$CHAT_GRAPH_REGISTER" <<'MD'
+| ER-999 | test requested behavior | verified |
+MD
+"$CG" ingest --collector register_open >/dev/null
+ok 0 "$(q "SELECT COUNT(*) FROM open_ends WHERE kind='register_open' AND resolved_at IS NULL")" \
+   "register_open auto-resolves after verified status"
+
+# --- 32. loose-ends: latest nightly report inserts and resolves -------------
+new_env
+N32="$(mktemp -d)"
+export CHAT_GRAPH_NIGHTLY_REPORT_GLOB="$N32/*.md"
+cat > "$N32/old.md" <<'MD'
+- mission-control needs a follow-up after failed smoke test
+MD
+touch -t 202607080100 "$N32/old.md"
+"$CG" ingest --collector nightly_finding >/dev/null
+ok 1 "$(q "SELECT COUNT(*) FROM open_ends WHERE kind='nightly_finding' AND resolved_at IS NULL")" \
+   "nightly_finding collector inserts latest report finding"
+cat > "$N32/new.md" <<'MD'
+- all watched jobs green
+MD
+touch -t 202607080200 "$N32/new.md"
+"$CG" ingest --collector nightly_finding >/dev/null
+ok 0 "$(q "SELECT COUNT(*) FROM open_ends WHERE kind='nightly_finding' AND resolved_at IS NULL")" \
+   "nightly_finding auto-resolves when newer report omits it"
+
+# --- 33. validate-export requires the loose_ends contract -------------------
+new_env
+EXP33="$CHAT_GRAPH_HOME/export/graph.json"
+"$CG" export --json --catchup-limit 0 >/dev/null 2>&1
+"$CG" validate-export "$EXP33" >/dev/null 2>&1
+ok 0 "$?" "validate-export accepts snapshot with loose_ends"
+BAD33="$CHAT_GRAPH_HOME/export/bad.json"
+python3 - "$EXP33" "$BAD33" <<'PYEOF'
+import json, sys
+d = json.load(open(sys.argv[1]))
+d["data"].pop("loose_ends", None)
+json.dump(d, open(sys.argv[2], "w"))
+PYEOF
+"$CG" validate-export "$BAD33" >/dev/null 2>&1; RC33=$?
+if [ "$RC33" -ne 0 ]; then pass "validate-export rejects snapshot missing loose_ends"
+else fail "validate-export accepted snapshot missing loose_ends"; fi
 
 echo "----"
 if [ "$FAILS" -eq 0 ]; then echo "ALL PASS"; exit 0; else echo "$FAILS FAILED"; exit 1; fi

@@ -13,7 +13,7 @@
         "provider": "codex",
         "resets_at": "2026-07-03T10:00:00Z",
         "resets_in_min": 172,
-        "source": "rollout",
+        "source": "rollout-rate_limits",
         "tokens_used": 123000,
         "used_pct": 62.0,
         "window": "5h"
@@ -28,7 +28,7 @@
         "provider": "codex",
         "resets_at": "2026-07-08T00:00:00Z",
         "resets_in_min": 6600,
-        "source": "rollout",
+        "source": "rollout-rate_limits",
         "tokens_used": 0,
         "used_pct": 91.5,
         "window": "weekly"
@@ -43,7 +43,7 @@
         "provider": "claude",
         "resets_at": "2026-07-03T09:30:00Z",
         "resets_in_min": 150,
-        "source": "ccusage",
+        "source": "ccusage-blocks",
         "tokens_used": 88000,
         "used_pct": 34.0,
         "window": "5h"
@@ -58,7 +58,7 @@
         "provider": "glm",
         "resets_at": null,
         "resets_in_min": null,
-        "source": "doctor",
+        "source": "claude-glm-doctor",
         "tokens_used": null,
         "used_pct": null,
         "window": "plan"
@@ -73,7 +73,7 @@
         "provider": "hermes",
         "resets_at": "2026-08-01T00:00:00Z",
         "resets_in_min": 41400,
-        "source": "manual",
+        "source": "credits.json",
         "tokens_used": null,
         "used_pct": null,
         "window": "credit:monthly"
@@ -103,7 +103,7 @@
         "provider": "claude",
         "resets_at": "2026-07-03T08:10:00Z",
         "resets_in_min": -15,
-        "source": "ccusage",
+        "source": "ccusage-weekly",
         "tokens_used": 0,
         "used_pct": 97.0,
         "window": "5h"

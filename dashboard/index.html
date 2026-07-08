@@ -212,6 +212,12 @@ body {
   border: 1px solid var(--mc-accent-bd); border-radius: var(--mc-r-pill);
   padding: 1px var(--mc-sp-2); font-size: var(--mc-fs-1); font-weight: 500; margin-left: var(--mc-sp-2);
 }
+.mc-provenance {
+  display: flex; flex-wrap: wrap; gap: var(--mc-sp-2);
+  margin: 0 0 var(--mc-sp-3);
+}
+.mc-provenance .mc-chip { background: var(--mc-surface-1); }
+.mc-provenance-label { color: var(--mc-fg-dim); }
 
 /* --- needs-attention list --- */
 .mc-attention { display: flex; flex-direction: column; gap: var(--mc-sp-2); margin: var(--mc-sp-2) 0 var(--mc-sp-6); }
@@ -226,6 +232,7 @@ body {
 .mc-row-body { flex: 1 1 auto; min-width: 0; }
 .mc-row-problem { font-size: var(--mc-fs-3); font-weight: 500; }
 .mc-row-action { color: var(--mc-fg-muted); font-size: var(--mc-fs-2); margin-top: 1px; }
+.mc-row-meta { color: var(--mc-fg-dim); font-size: var(--mc-fs-1); margin-top: 2px; }
 .mc-jump {
   color: var(--mc-accent); cursor: pointer; text-decoration: none;
   font-size: var(--mc-fs-2); font-weight: 500; white-space: nowrap; flex: none;
@@ -329,6 +336,37 @@ body {
 .mc-usage-name { width: 140px; flex: none; font-size: var(--mc-fs-2); }
 .mc-pace { color: var(--mc-amber); font-size: var(--mc-fs-2); }
 .mc-countdown { font-family: var(--mc-mono); font-size: var(--mc-fs-1); color: var(--mc-fg-muted); }
+.mc-decision-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(255px, 1fr)); gap: var(--mc-sp-3); }
+.mc-decision-top { display: flex; align-items: flex-start; gap: var(--mc-sp-2); }
+.mc-decision-title { font-size: var(--mc-fs-3); font-weight: 650; }
+.mc-decision-state { margin-left: auto; white-space: nowrap; }
+.mc-kpi { font-size: var(--mc-fs-5); font-weight: 650; letter-spacing: -0.02em; margin: var(--mc-sp-2) 0 0; }
+.mc-next-action { color: var(--mc-fg); font-size: var(--mc-fs-2); margin-top: var(--mc-sp-2); }
+.mc-mini-stack { display: flex; flex-direction: column; gap: 2px; margin-top: var(--mc-sp-2); }
+
+/* --- session monitor + heatmap --- */
+.mc-session-table td:last-child, .mc-session-table th:last-child { text-align: right; }
+.mc-heat-wrap { display: flex; flex-direction: column; gap: var(--mc-sp-2); }
+.mc-heatframe { display: grid; grid-template-columns: auto 1fr; gap: var(--mc-sp-2); align-items: start; }
+.mc-heatmap {
+  display: grid;
+  grid-auto-flow: column;
+  grid-template-rows: repeat(7, 14px);
+  gap: 4px;
+  align-content: start;
+}
+.mc-heat-cell {
+  width: 14px; height: 14px; border-radius: 4px;
+  background: var(--mc-surface-3); border: 1px solid transparent;
+}
+.mc-heat-l1 { background: #173427; }
+.mc-heat-l2 { background: #20523b; }
+.mc-heat-l3 { background: #2b7a58; }
+.mc-heat-l4 { background: #35b98a; }
+.mc-heat-open { border-color: var(--mc-amber); }
+.mc-heat-empty { background: transparent; border-color: transparent; }
+.mc-weekdays { display: grid; grid-template-rows: repeat(7, 14px); gap: 4px; }
+.mc-weekdays span { color: var(--mc-fg-dim); font-size: 10px; line-height: 14px; text-align: right; padding-right: 2px; }
 
 /* --- automation service cards --- */
 .mc-svc-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: var(--mc-sp-3); }
@@ -368,11 +406,14 @@ body {
   border-radius: var(--mc-r-3); box-shadow: var(--mc-shadow);
   padding: var(--mc-sp-4); align-self: start; max-height: 68vh; overflow: auto;
 }
+.mc-map-summary { background: var(--mc-surface-2); border: 1px solid var(--mc-border); border-radius: var(--mc-r-2); padding: var(--mc-sp-3); margin-bottom: var(--mc-sp-3); }
 .mc-side-title { font-size: var(--mc-fs-3); font-weight: 650; letter-spacing: -0.01em; margin-bottom: var(--mc-sp-1); }
 .mc-side-meta { color: var(--mc-fg-muted); font-size: var(--mc-fs-1); margin-bottom: var(--mc-sp-3); }
 .mc-side-section { font-size: var(--mc-fs-1); color: var(--mc-fg-dim); text-transform: none; margin: var(--mc-sp-3) 0 var(--mc-sp-1); }
-.mc-side-conn { display: flex; align-items: center; gap: var(--mc-sp-2); font-size: var(--mc-fs-2); padding: var(--mc-sp-1) 0; color: var(--mc-fg-muted); cursor: pointer; }
+.mc-side-conn { display: flex; align-items: flex-start; gap: var(--mc-sp-2); font-size: var(--mc-fs-2); padding: var(--mc-sp-1) 0; color: var(--mc-fg-muted); cursor: pointer; }
 .mc-side-conn:hover { color: var(--mc-fg); }
+.mc-side-conn-body { min-width: 0; flex: 1 1 auto; }
+.mc-side-conn-meta { display: flex; flex-wrap: wrap; gap: var(--mc-sp-1); margin-top: 2px; }
 .mc-btn {
   display: inline-flex; align-items: center; gap: var(--mc-sp-1); cursor: pointer;
   background: var(--mc-surface-2); border: 1px solid var(--mc-border-2); color: var(--mc-fg);
@@ -536,18 +577,198 @@ body {
   }
   function providerLabel(p) {
     return { claude: "Claude", codex: "Codex", cursor: "Cursor", copilot: "Copilot",
-             hermes: "Hermes", chatgpt: "ChatGPT", glm: "GLM", unknown: "AI unknown" }[String(p || "").toLowerCase()] || String(p || "AI unknown");
+             hermes: "Hermes", chatgpt: "ChatGPT", glm: "GLM", repo: "Repo", unknown: "AI unknown" }[providerGroup(p)] || "AI unknown";
+  }
+  function providerGroup(p) {
+    var key = String(p || "").toLowerCase();
+    return { claude: 1, codex: 1, cursor: 1, copilot: 1, hermes: 1,
+             chatgpt: 1, glm: 1, repo: 1 }[key] ? key : "unknown";
+  }
+  function titleLabel(title, id) {
+    var s = String(title || "").trim();
+    if (/^Spawned-by:/i.test(s)) return "Worker chat";
+    if (/^Codex Companion Task/i.test(s)) return "Codex review task";
+    if (/^USAGE-BURST-CODEX-PREFLIGHT-CHECK/i.test(s)) return "Usage preflight check";
+    if (!s) return id ? "(untitled) " + String(id).slice(0, 8) : "(untitled)";
+    return s;
   }
   function confidenceLabel(c) {
     return { live: "fresh reading", stale: "old reading", estimated: "estimated", manual: "manual",
              unknown: "unknown", absent: "not connected" }[String(c || "").toLowerCase()] || String(c || "estimated");
   }
+  function sourceLabel(s) {
+    var key = String(s || "").toLowerCase();
+    if (key.indexOf("rollout-rate_limits") === 0) return "local rate-limit log";
+    if (key.indexOf("ccusage-blocks") === 0) return "Claude local block estimate";
+    if (key.indexOf("ccusage-weekly") === 0) return "Claude weekly estimate";
+    if (key.indexOf("claude-glm-doctor") === 0) return "GLM doctor health check";
+    if (key.indexOf("session-store") === 0) return "local Copilot store";
+    if (key.indexOf("binary") === 0) return "local binary check";
+    if (key.indexOf("credits.json") === 0) return "held credits file";
+    if (key.indexOf("spawn_header") === 0) return "spawn header";
+    return { rollout: "local tally", ccusage: "local estimate", doctor: "health check", manual: "manual note",
+             none: "not captured", delegations: "delegation log", mailbox: "mailbox log", scan: "transcript scan",
+             titles: "title inference", "resume-fork": "resume history" }[key] || String(s || "local feed");
+  }
   function openEndHuman(oe) {
     if (!oe) return "one item left to finish";
     if (oe.kind === "register_unverified") return "waiting to confirm a tracked change";
+    if (oe.kind === "todo_open") return "todo item: " + String(oe.text || "").replace(/^[^:]+:\s*/, "");
+    if (oe.kind === "repo_dirty") return "Git needs a decision";
+    if (oe.kind === "register_open") return "tracked request still open";
+    if (oe.kind === "nightly_finding") return "nightly note needs review";
     var t = String(oe.text || "").replace(/^\s*(ER|GR|HB|HR)-\d{3}[:\s-]*/i, "").trim();
     if (oe.kind === "closeout_handoff") return t ? "handoff: " + t : "handoff wasn't finished";
     return t || "one item left to finish";
+  }
+  function nodeKey(n) {
+    return String(n.id || "").indexOf((n.provider || "") + ":") === 0 ? n.id : (n.provider || "") + ":" + n.id;
+  }
+  function looseKindLabel(k) {
+    return {
+      closeout_handoff: "unfinished handoff",
+      register_unverified: "needs verification",
+      todo_open: "todo item",
+      nightly_finding: "nightly note",
+      repo_dirty: "Git decision",
+      register_open: "tracked request"
+    }[k] || "open item";
+  }
+  function looseSeverityState(s) {
+    return { red: "red", amber: "amber", yellow: "amber", grey: "grey", green: "green" }[String(s || "").toLowerCase()] || "amber";
+  }
+  function looseEnds(data) {
+    data = data || {};
+    var nodes = data.nodes || [], byKey = {};
+    nodes.forEach(function (n) { byKey[nodeKey(n)] = n; });
+    if (Array.isArray(data.loose_ends)) {
+      return data.loose_ends.map(function (x) {
+        var item = Object.assign({}, x || {});
+        var n = byKey[item.source_node || ""];
+        if (n) {
+          item.title = titleLabel(item.title || (n && n.title), n && n.id);
+          item.repo = item.repo || n.repo || "";
+          item.provider = item.provider || n.provider || "";
+        }
+        item.id = item.id || ((item.source_node || "unknown") + ":" + (item.text_hash || item.text || ""));
+        item.action_hint = item.action_hint || openEndHuman(item);
+        item.severity = looseSeverityState(item.severity);
+        return item;
+      });
+    }
+    var out = [];
+    nodes.forEach(function (n) {
+      (n.open_ends || []).forEach(function (oe) {
+        var key = nodeKey(n);
+        out.push({
+          id: key + ":" + (oe.text_hash || oe.text || ""),
+          kind: oe.kind || "open",
+          source_node: key,
+          title: titleLabel(n.title, n.id),
+          repo: n.repo || "",
+          provider: n.provider || "",
+          text: oe.text || "",
+          action_hint: openEndHuman(oe),
+          age_days: oe.age_days,
+          severity: "amber",
+          resolve_cmd: oe.text_hash ? "chat-graph resolve " + n.id + " " + oe.text_hash : ""
+        });
+      });
+    });
+    return out;
+  }
+  function uniqNonEmpty(arr) {
+    var seen = {}, out = [];
+    (arr || []).forEach(function (x) {
+      if (x == null || x === "") return;
+      if (!seen[x]) { seen[x] = 1; out.push(x); }
+    });
+    return out;
+  }
+  function chipsLine(items) {
+    var wrap = h("div", { class: "mc-provenance" });
+    (items || []).forEach(function (it) {
+      if (!it || !it.value) return;
+      wrap.appendChild(h("span", { class: "mc-chip", title: it.title || "" },
+        h("span", { class: "mc-provenance-label" }, it.label + ": "),
+        h("span", null, it.value)));
+    });
+    return wrap;
+  }
+  function providerStateHealth(data) {
+    var staleProviders = uniqNonEmpty((data && data.stale_providers) || []);
+    var counts = (data && data.counts) || {};
+    if (counts.ingest_skipped) return "partial — chat refresh skipped";
+    if (+counts.scan_errors_24h > 0) return "partial — scan errors noted";
+    if (staleProviders.length) return "partial — stale provider: " + staleProviders.join(", ");
+    return "local graph";
+  }
+  function usageTrustSummary(data) {
+    var order = { "old reading": 0, unknown: 1, estimated: 2, manual: 3, "fresh reading": 4, "not connected": 5 };
+    var vals = uniqNonEmpty(((data && data.providers) || []).map(function (p) { return confidenceLabel(p.confidence); }))
+      .sort(function (a, b) { return (order[a] != null ? order[a] : 99) - (order[b] != null ? order[b] : 99); });
+    if (!vals.length) return "no provider readings";
+    return vals.slice(0, 3).join(" + ") + (vals.length > 3 ? " +" + (vals.length - 3) + " more" : "");
+  }
+  function panelSourceName(name) {
+    return {
+      home: "combined local feeds",
+      map: "chat-graph export",
+      chats: "chat-graph export",
+      git: "scan-unfinished-work + watcher notes",
+      usage: "usage snapshot + local adapters",
+      automation: "automation-status + launchctl evidence"
+    }[name] || "local feed";
+  }
+  function panelTrustText(name, g) {
+    if (!g || !g.ok) return "not available";
+    if (name === "usage") return usageTrustSummary(g.data);
+    if (name === "map" || name === "chats") return providerStateHealth(g.data);
+    if (name === "git") return "local scan";
+    if (name === "automation") return "local launchd evidence";
+    return "mixed by feed";
+  }
+  function panelStatusText(name, g) {
+    if (!g || !g.ok) return "missing";
+    if (g.feedError) return "last refresh had a problem";
+    if (g.flag === "stale") return "stale";
+    if (g.flag === "skew") return "clock skew";
+    if (name === "usage") {
+      var providers = (g.data && g.data.providers) || [];
+      if (providers.some(function (p) { return p.source === "none" || p.health === "absent"; })) return "partial — some providers not captured";
+      if (providers.some(function (p) { return p.confidence === "stale"; })) return "partial — stale readings present";
+      return "fresh";
+    }
+    if (name === "map" || name === "chats") {
+      var counts = (g.data && g.data.counts) || {};
+      if (counts.ingest_skipped) return "partial — scan still running";
+      if ((g.data && g.data.stale_providers || []).length) return "partial — some providers stale";
+      return "fresh";
+    }
+    if (name === "automation") {
+      var jobs = (g.data && g.data.jobs) || [];
+      if (jobs.some(function (j) { return j.state === "red"; })) return "attention";
+      if (jobs.some(function (j) { return j.state === "yellow" || j.state === "degraded"; })) return "warning";
+      return "fresh";
+    }
+    if (name === "git") {
+      var repos = (g.data && g.data.repos) || [];
+      if (repos.some(function (r) { return gitAction(r).state === "red"; })) return "attention";
+      if (repos.some(function (r) { return gitAction(r).state === "amber"; })) return "warning";
+      return "fresh";
+    }
+    return "fresh";
+  }
+  function appendPanelProvenance(container, name, g, extra) {
+    if (!container) return;
+    var epoch = g && g.ok ? g.epoch : 0;
+    var items = [
+      { label: "Source", value: panelSourceName(name) },
+      { label: "Trust", value: panelTrustText(name, g) },
+      { label: "Last checked", value: epoch ? fmtAge(epoch) : "no data" },
+      { label: "Status", value: extra || panelStatusText(name, g) }
+    ];
+    container.appendChild(chipsLine(items));
   }
 
   // ===========================================================================
@@ -557,48 +778,60 @@ body {
     var out = [];
     // chats: sessions carrying open work
     var gc = guard("chats");
-    if (gc.ok && gc.data && Array.isArray(gc.data.nodes)) {
-      gc.data.nodes.forEach(function (n) {
-        var oe = Array.isArray(n.open_ends) ? n.open_ends : [];
-        if (oe.length) {
-          var fkey = String(n.id).indexOf((n.provider || "") + ":") === 0 ? n.id : (n.provider || "") + ":" + n.id;
-          out.push({ state: "amber", seen: n.first_seen_at || "", tab: "map", focus: fkey,
-                     problem: (n.title || n.id) + " — " + oe.length + " unfinished item" + (oe.length > 1 ? "s" : ""),
-                     action: openEndHuman(oe[0]) });
-        }
+    if (gc.ok && gc.data) {
+      looseEnds(gc.data).slice(0, 3).forEach(function (o) {
+          out.push({ state: looseSeverityState(o.severity), seen: o.first_seen_at || "", tab: "chats",
+                     focus: o.source_node || "", openId: o.id || "",
+                     problem: titleLabel(o.title, "") + " — " + looseKindLabel(o.kind),
+                     impact: "Mission Control found one item not closed yet.",
+                     action: o.action_hint || openEndHuman(o),
+                     sourceAge: fmtAge(gc.epoch),
+                     sourceName: "chat-graph export" });
       });
     }
     // git: repos needing a push/commit or stale branches
     var gg = guard("git");
     if (gg.ok && gg.data && Array.isArray(gg.data.repos)) {
-      gg.data.repos.forEach(function (r) {
-        var act = gitAction(r);
-        if (act.state !== "green") {
+      gg.data.repos.map(function (r) { return { r: r, act: gitAction(r) }; })
+        .filter(function (x) { return x.act.state !== "green"; }).slice(0, 2).forEach(function (x) {
+          var r = x.r, act = x.act;
           out.push({ state: act.state, seen: gg.env.generated_at || "", tab: "git",
-                     problem: r.repo + " — " + act.summary, action: act.verb });
-        }
-      });
+                     problem: r.repo + " — " + act.summary,
+                     impact: "The repo state can block landing or trusting current work.",
+                     action: act.verb,
+                     sourceAge: fmtAge(gg.epoch),
+                     sourceName: "scan-unfinished-work + watcher notes" });
+        });
     }
     // usage: providers hot / stale
     var gu = guard("usage");
     if (gu.ok && gu.data && Array.isArray(gu.data.providers)) {
-      normUsageProviders(gu.data).rows.forEach(function (p) {
+      normUsageProviders(gu.data).rows.filter(function (p) {
         var st = usageState(p);
-        if (st === "red" || st === "amber") {
+        return st === "red" || st === "amber";
+      }).slice(0, 1).forEach(function (p) {
+        var st = usageState(p);
           out.push({ state: st, seen: p.name || "", tab: "usage",
                      problem: (p.name || "provider") + " — " + usagePctText(p),
-                     action: p.pace ? ("pace " + p.pace) : "watch the burn rate" });
-        }
+                     impact: "You could pick the wrong model or hit a limit mid-task.",
+                     action: p.pace ? ("watch pace " + p.pace) : "watch the burn rate",
+                     sourceAge: fmtAge(gu.epoch),
+                     sourceName: "usage snapshot" });
       });
     }
     // automation: red / degraded / offline jobs
     var ga = guard("automation");
     if (ga.ok && ga.data && Array.isArray(ga.data.jobs)) {
-      ga.data.jobs.forEach(function (jb) {
+      ga.data.jobs.filter(function (jb) {
+        return jb.state === "red" || jb.state === "degraded" || jb.state === "yellow";
+      }).slice(0, 2).forEach(function (jb) {
         if (jb.state === "red" || jb.state === "degraded" || jb.state === "yellow") {
           out.push({ state: jb.state === "red" ? "red" : "amber", seen: jb.label || jb.name || "", tab: "automation",
                      problem: (jb.label || jb.name) + " — " + humanJobState(jb.state),
-                     action: jb.err_log_tail ? String(jb.err_log_tail).split("\n")[0].slice(0, 120) : "last run didn't finish cleanly" });
+                     impact: "Background evidence may be stale or missing until this recovers.",
+                     action: jb.err_log_tail ? String(jb.err_log_tail).split("\n")[0].slice(0, 120) : "last run didn't finish cleanly",
+                     sourceAge: fmtAge(ga.epoch),
+                     sourceName: "automation-status" });
         }
       });
     }
@@ -634,8 +867,8 @@ body {
   //  USAGE helpers
   // ===========================================================================
   function usageState(p) {
+    var pct = numericPct(p.pct);
     if (p.confidence === "stale") return "amber";
-    var pct = +p.pct;
     if (isFinite(pct)) {
       if (pct >= 90) return "red";
       if (pct >= 75) return "amber";
@@ -643,10 +876,98 @@ body {
     }
     return "blue";
   }
+  function numericPct(value) {
+    if (value == null || value === "") return NaN;
+    return +value;
+  }
+  function isCreditWindow(item) {
+    return String(item && item.window || "").indexOf("credit") === 0;
+  }
   function usagePctText(p) {
-    if (isFinite(+p.pct)) return (+p.pct) + "% used";
+    if (isCreditWindow(p) && p.notes) return p.notes;
+    var pct = numericPct(p.pct);
+    if (isFinite(pct)) return pct + "% used";
     if (p.used != null) return p.used + (p.unit ? " " + p.unit : "");
     return "no numeric read";
+  }
+  function usageItems(data) {
+    return ((data && data.providers) || []).map(function (pr) {
+      if (pr.name != null || pr.pct != null) {
+        return { title: pr.name || "provider", pct: pr.pct, confidence: pr.confidence || "unknown",
+                 source: pr.source || "local", used: pr.used, unit: pr.unit, resets_in_min: pr.resets_in_min,
+                 notes: pr.notes || "", models: pr.models || "", window: pr.window || "", health: pr.health || "" };
+      }
+      return {
+        title: providerLabel(pr.provider) + (pr.window ? " · " + pr.window : ""),
+        provider: pr.provider || "",
+        pct: pr.used_pct,
+        confidence: pr.confidence || "unknown",
+        source: pr.source || "local",
+        used: pr.tokens_used,
+        unit: pr.tokens_used != null ? "tok" : "",
+        resets_in_min: pr.resets_in_min,
+        notes: pr.notes || "",
+        models: pr.models || "",
+        window: pr.window || "",
+        health: pr.health || ""
+      };
+    });
+  }
+  function usageDecision(item) {
+    var pct = numericPct(item.pct);
+    if (isCreditWindow(item)) {
+      return { label: item.confidence === "manual" ? "Watch" : "Can use",
+               state: item.confidence === "manual" ? "amber" : "green",
+               next: "Use this credit balance, but top it up before it gets tight." };
+    }
+    if (item.source === "none" || item.health === "absent") {
+      return { label: "Not captured", state: "blue", next: "Import or connect a source before routing real work." };
+    }
+    if (item.confidence === "stale") {
+      return { label: "Wait", state: "amber", next: "Refresh this source before trusting it for a long run." };
+    }
+    if (isFinite(pct) && pct >= 90) {
+      return { label: "Wait", state: "red", next: item.resets_in_min != null ? "Wait for the reset or switch tools." : "Switch tools for heavy work." };
+    }
+    if (isFinite(pct) && pct >= 75) {
+      return { label: "Watch", state: "amber", next: "Use lightly or switch tools for a bigger task." };
+    }
+    if (item.health === "present" && !isFinite(pct)) {
+      return { label: "Watch", state: "amber", next: "Health looks present, but this source does not expose a real usage number." };
+    }
+    if (item.confidence === "estimated" || item.confidence === "manual" || item.confidence === "unknown") {
+      return { label: "Watch", state: "amber", next: "Okay for routine work, but verify before committing to a long run." };
+    }
+    return { label: "Can use", state: "green", next: "Best current choice for routine work." };
+  }
+  function renderUsageDecisionCard(item, epoch) {
+    var card = h("div", { class: "mc-card" });
+    var decision = usageDecision(item);
+    var pct = numericPct(item.pct);
+    card.appendChild(h("div", { class: "mc-decision-top" },
+      h("div", null,
+        h("div", { class: "mc-decision-title" }, item.title),
+        h("div", { class: "mc-card-foot" }, item.models ? "Models: " + item.models : (item.window ? "Window: " + item.window : "Local source"))),
+      h("span", { class: "mc-chip mc-decision-state " + (decision.state === "green" ? "mc-badge-live" : "") }, decision.label)));
+    card.appendChild(h("div", { class: "mc-kpi mc-num " + (STATE_CLASS[decision.state] || "") }, usagePctText(item)));
+    if (isFinite(pct)) {
+      card.appendChild(h("div", { class: "mc-bar-track" },
+        h("div", { class: "mc-bar-fill " + (STATE_CLASS[decision.state] || ""), style: "--mc-w:" + Math.max(0, Math.min(100, pct)) + "%" })));
+    }
+    var meta = h("div", { class: "mc-mini-stack" });
+    meta.appendChild(chipsLine([
+      { label: "Trust", value: confidenceLabel(item.confidence) },
+      { label: "Source", value: sourceLabel(item.source) }
+    ]));
+    if (item.resets_in_min != null) {
+      var cd = h("span", { class: "mc-countdown" });
+      countdowns.push({ el: cd, target: epoch + (+item.resets_in_min) * 60 });
+      meta.appendChild(cd);
+    }
+    if (item.notes && !isCreditWindow(item)) meta.appendChild(h("div", { class: "mc-card-secondary mc-ellipsis", title: item.notes }, item.notes));
+    meta.appendChild(h("div", { class: "mc-next-action" }, "Next: " + decision.next));
+    card.appendChild(meta);
+    return card;
   }
 
   // Real usage-snapshot shape -> renderer shape (live fix 2026-07-03: the real
@@ -689,7 +1010,7 @@ body {
     var s = {};
     var gc = guard("chats");
     if (gc.ok && gc.data && Array.isArray(gc.data.nodes)) {
-      var owe = gc.data.nodes.filter(function (n) { return (n.open_ends || []).length; }).length;
+      var owe = looseEnds(gc.data).length;
       var cnt = gc.data.counts || {};
       var staleIngest = "last_full_ingest_age_s" in cnt && (cnt.last_full_ingest_age_s == null || +cnt.last_full_ingest_age_s > 1800);
       var ingestSkipped = cnt.ingest_skipped === true;
@@ -723,7 +1044,7 @@ body {
     var strip = document.getElementById("mc-strip");
     strip.textContent = "";
     var sum = feedSummary();
-    var segs = [["chats", "Chats"], ["git", "Git"], ["usage", "Usage"], ["automation", "Jobs"]];
+    var segs = [["chats", "Open work"], ["git", "Git"], ["usage", "Usage"], ["automation", "Jobs"]];
     segs.forEach(function (pair) {
       var k = pair[0], label = pair[1], d = sum[k];
       strip.appendChild(h("span", { class: "mc-strip-seg", title: "jump to " + label,
@@ -766,6 +1087,11 @@ body {
   //  HOME
   // ===========================================================================
   function renderHome(main) {
+    var home = combinedHomeState();
+    var homeHead = h("div", { class: "mc-section-head" }, h("h2", { text: "Home" }));
+    if (home.epoch) homeHead.appendChild(ageSpan(home.epoch));
+    main.appendChild(homeHead);
+    appendPanelProvenance(main, "home", { ok: true, epoch: home.epoch }, home.status);
     // needs-attention (merged, max 7, stable-sorted)
     var exc = harvestExceptions();
     var attn = h("section", { class: "mc-attention" });
@@ -777,13 +1103,19 @@ body {
     } else {
       var shown = exc.slice(0, 7);
       shown.forEach(function (e) {
-        var goTo = function () { if (e.focus) FOCUS_CHAT = e.focus; location.hash = "#" + e.tab; if (e.focus) rerender(); };
+        var goTo = function () {
+          if (e.tab === "map" && e.focus) FOCUS_CHAT = e.focus;
+          if (e.openId) FOCUS_OPEN_END = e.openId;
+          location.hash = "#" + e.tab;
+          if (e.focus || e.openId) rerender();
+        };
         var row = h("div", { class: "mc-row mc-row-click", onclick: goTo },
           glyphSpan(e.state),
           h("div", { class: "mc-row-body" },
             h("div", { class: "mc-row-problem mc-ellipsis" }, e.problem),
-            h("div", { class: "mc-row-action mc-ellipsis" }, e.action)),
-          h("span", { class: "mc-jump" }, (e.focus ? "Show chat" : "Open tab") + " →"));
+            h("div", { class: "mc-row-action mc-ellipsis" }, e.impact + " Next: " + e.action),
+            h("div", { class: "mc-row-meta mc-ellipsis" }, "Source age: " + (e.sourceAge || "unknown") + (e.sourceName ? " - " + e.sourceName : ""))),
+          h("span", { class: "mc-jump" }, (e.openId ? "Show item" : (e.focus ? "Show chat" : "Open tab")) + " →"));
         attn.appendChild(row);
       });
       if (exc.length > 7) attn.appendChild(h("div", { class: "mc-card-foot" }, "+" + (exc.length - 7) + " more across the tabs"));
@@ -797,12 +1129,26 @@ body {
     cards.appendChild(cardUsage());
     cards.appendChild(cardAutomation());
     main.appendChild(cards);
+    renderSessionMonitor(main);
+    renderActivityHeatmap(main);
   }
 
+  function combinedHomeState() {
+    var names = ["chats", "git", "usage", "automation"];
+    var epochs = [];
+    var status = "fresh";
+    names.forEach(function (name) {
+      var g = guard(name);
+      if (g.ok && g.epoch) epochs.push(g.epoch);
+      if (!g.ok || g.feedError || g.flag === "stale") status = "attention";
+      else if (status !== "attention" && panelStatusText(name, g) !== "fresh") status = "partial";
+    });
+    return { epoch: epochs.length ? Math.min.apply(null, epochs) : null, status: epochs.length ? status : "no data" };
+  }
   function changedSinceText() {
     var gc = guard("chats");
     if (gc.ok && gc.data && gc.data.counts && gc.data.counts.new_today != null)
-      return gc.data.counts.new_today + " chats recorded today.";
+      return gc.data.counts.new_today + " conversations found today.";
     return "";
   }
 
@@ -824,15 +1170,15 @@ body {
     var g = guard("chats");
     if (!g.ok) return summaryCard("Chats", "grey", "—", [g.reason], null);
     var nodes = g.data.nodes || [];
-    var owe = nodes.filter(function (n) { return (n.open_ends || []).length; }).length;
+    var owe = looseEnds(g.data).length;
     var cnt = g.data.counts || {};
-    var pulse = cnt.new_today ? h("span", { class: "mc-pulse" }, cnt.new_today + " chats recorded today") : null;
+    var pulse = cnt.new_today ? h("span", { class: "mc-pulse" }, cnt.new_today + " conversations found today") : null;
     // sweep FIX 5: scan_errors_24h was computed in the feed but never surfaced. Show it
     // (amber card + a line) so a silently-degrading transcript scan is visible.
     var scanErr = +cnt.scan_errors_24h || 0;
     var staleIngest = "last_full_ingest_age_s" in cnt && (cnt.last_full_ingest_age_s == null || +cnt.last_full_ingest_age_s > 1800);
     var ingestSkipped = cnt.ingest_skipped === true;
-    var lines = [owe + " with unfinished work"];
+    var lines = [owe + " open work item" + (owe === 1 ? "" : "s")];
     if (scanErr > 0) lines.push(scanErr + " chat" + (scanErr > 1 ? "s" : "") + " couldn't be read today");
     if (staleIngest) lines.push("full chat scan is stale");
     if (ingestSkipped) lines.push("chat refresh skipped — another scan is running");
@@ -855,8 +1201,8 @@ body {
     var g = guard("usage");
     if (!g.ok) return summaryCard("Usage", "grey", "—", [g.reason], null);
     var ps = normUsageProviders(g.data).rows;   // real feed shape (fixes "peak undefined")
-    var withPct = ps.filter(function (p) { return isFinite(+p.pct); });
-    var worst = withPct.map(function (p) { return { p: p, pct: +p.pct }; }).sort(function (a, b) { return b.pct - a.pct; })[0];
+    var withPct = ps.filter(function (p) { return isFinite(numericPct(p.pct)); });
+    var worst = withPct.map(function (p) { return { p: p, pct: numericPct(p.pct) }; }).sort(function (a, b) { return b.pct - a.pct; })[0];
     var st = ps.map(usageState).indexOf("red") >= 0 ? "red" : (ps.map(usageState).indexOf("amber") >= 0 ? "amber" : "green");
     var head = worst ? (worst.pct + "%") : "OK";
     var hot = ps.filter(function (p) { return p.pace; }).map(function (p) { return p.name + " " + p.pace; })[0];
@@ -875,6 +1221,98 @@ body {
     return summaryCard("Automation", st, green,
       [(ex ? ex + " need attention" : "all " + jobs.length + " watched jobs healthy"),
        unreg ? unreg + " running but not watched yet" : null], g.epoch);
+  }
+
+  function sessionMonitorState(n, gitByRepo) {
+    var repoState = n.repo && gitByRepo[normRepoKey(n.repo)] ? gitAction(gitByRepo[normRepoKey(n.repo)]) : null;
+    if ((n.open_ends || []).length) return { label: "Needs you", tone: "amber", detail: openEndHuman((n.open_ends || [])[0]) };
+    if (n.live && isRecent(n.last_activity, 1800)) return { label: "Working", tone: "green", detail: "used in the last 30 minutes" };
+    if (n.closeout_seen) return { label: "Done", tone: "grey", detail: "closeout recorded" };
+    if (repoState && isRecent(n.last_activity, 86400) && repoState.state === "red") return { label: "Blocked", tone: "red", detail: repoState.summary };
+    if (repoState && isRecent(n.last_activity, 86400) && repoState.state === "amber") return { label: "Waiting", tone: "amber", detail: repoState.summary };
+    if (!isRecent(n.last_activity, 86400)) return { label: "Stale", tone: "grey", detail: "no recent activity" };
+    return { label: "Idle", tone: "blue", detail: "quiet, with no action recorded" };
+  }
+  function sessionRank(st) {
+    var ranks = { "Needs you": 0, Blocked: 1, Working: 2, Waiting: 3, Stale: 4, Idle: 5, Done: 6 };
+    return Object.prototype.hasOwnProperty.call(ranks, st.label) ? ranks[st.label] : 9;
+  }
+  function renderSessionMonitor(main) {
+    var gc = guard("chats");
+    if (!gc.ok) return;
+    var gg = guard("git");
+    var gitByRepo = {};
+    if (gg.ok && gg.data && Array.isArray(gg.data.repos)) gg.data.repos.forEach(function (r) { gitByRepo[normRepoKey(r.repo)] = r; });
+    var rows = (gc.data.nodes || []).map(function (n) {
+      return { n: n, st: sessionMonitorState(n, gitByRepo) };
+    }).sort(function (a, b) {
+      var ra = sessionRank(a.st), rb = sessionRank(b.st);
+      if (ra !== rb) return ra - rb;
+      return String(b.n.last_activity || "") < String(a.n.last_activity || "") ? -1 : 1;
+    }).slice(0, 8);
+    main.appendChild(h("div", { class: "mc-section-head" }, h("h2", { text: "Session monitor" })));
+    main.appendChild(h("div", { class: "mc-card-foot" }, "Working, blocked, stale, or waiting sessions from the current local feeds."));
+    var table = h("table", { class: "mc-table mc-panel-table mc-session-table" });
+    table.appendChild(h("tr", null,
+      h("th", null, "Chat"),
+      h("th", null, "AI / repo"),
+      h("th", null, "State"),
+      h("th", null, "Why"),
+      h("th", null, "Last activity"),
+      h("th", null, "Action")));
+    rows.forEach(function (row) {
+      table.appendChild(h("tr", null,
+        h("td", { class: "mc-ellipsis", title: titleLabel(row.n.title, row.n.id), style: "max-width:240px" }, titleLabel(row.n.title, row.n.id)),
+        h("td", { class: "mc-ellipsis", title: row.n.repo || "" }, providerLabel(row.n.provider) + (row.n.repo ? " / " + row.n.repo : "")),
+        h("td", null, glyphSpan(row.st.tone), " ", row.st.label),
+        h("td", { class: "mc-ellipsis", title: row.st.detail, style: "max-width:300px" }, row.st.detail),
+        h("td", null, row.n.last_activity ? journalWhen(row.n.last_activity) : "unknown"),
+        h("td", null, row.n.resume_cmd ? copyable(row.n.resume_cmd, "Reopen") : (row.n.view_cmd ? copyable(row.n.view_cmd, "Read") : "—"))));
+    });
+    main.appendChild(table);
+  }
+  function normRepoKey(s) {
+    return String(s || "").toLowerCase().replace(/[^a-z0-9]+/g, "");
+  }
+  function renderActivityHeatmap(main) {
+    var gc = guard("chats");
+    if (!gc.ok) return;
+    var nodes = gc.data.nodes || [];
+    var days = 42, today = new Date();
+    today = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+    var counts = {}, openCounts = {};
+    nodes.forEach(function (n) {
+      var t = Date.parse(n.last_activity || "");
+      if (!isFinite(t)) return;
+      var d = new Date(t);
+      var key = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+      counts[key] = (counts[key] || 0) + 1;
+      if ((n.open_ends || []).length) openCounts[key] = (openCounts[key] || 0) + (n.open_ends || []).length;
+    });
+    main.appendChild(h("div", { class: "mc-section-head" }, h("h2", { text: "Recent activity" })));
+    main.appendChild(h("div", { class: "mc-card-foot" }, "Darker cells mean more chat activity. Amber outlines mean unfinished work touched that day."));
+    var wrap = h("div", { class: "mc-heat-wrap mc-panel-table" });
+    var frame = h("div", { class: "mc-heatframe" });
+    frame.appendChild(h("div", { class: "mc-weekdays" },
+      h("span", null, "S"), h("span", null, "M"), h("span", null, "T"), h("span", null, "W"), h("span", null, "T"), h("span", null, "F"), h("span", null, "S")));
+    var grid = h("div", { class: "mc-heatmap", title: "Last six weeks of chat activity" });
+    var firstDate = new Date(today.getFullYear(), today.getMonth(), today.getDate() - (days - 1));
+    var leading = firstDate.getDay();
+    for (var pad = 0; pad < leading; pad++) grid.appendChild(h("div", { class: "mc-heat-cell mc-heat-empty", title: "padding" }));
+    for (var i = days - 1; i >= 0; i--) {
+      var date = new Date(today.getFullYear(), today.getMonth(), today.getDate() - i);
+      var stamp = date.getTime();
+      var c = counts[stamp] || 0;
+      var oc = openCounts[stamp] || 0;
+      var level = c >= 4 ? 4 : (c >= 3 ? 3 : (c >= 2 ? 2 : (c >= 1 ? 1 : 0)));
+      grid.appendChild(h("div", {
+        class: "mc-heat-cell mc-heat-l" + level + (oc ? " mc-heat-open" : ""),
+        title: date.toLocaleDateString([], { month: "short", day: "numeric" }) + ": " + c + " chats" + (oc ? ", " + oc + " unfinished item(s)" : "")
+      }));
+    }
+    frame.appendChild(grid);
+    wrap.appendChild(frame);
+    main.appendChild(wrap);
   }
 
   // ===========================================================================
@@ -913,7 +1351,7 @@ body {
     recent.forEach(function (n) {
       list.appendChild(h("div", { class: "mc-chatrow" },
         h("span", { class: "mc-provider" }, journalWhen(n.last_activity)),
-        h("span", { class: "mc-chatrow-title mc-ellipsis", title: n.title || n.id }, n.title || n.id),
+        h("span", { class: "mc-chatrow-title mc-ellipsis", title: titleLabel(n.title, n.id) }, titleLabel(n.title, n.id)),
         h("span", { class: "mc-provider" }, "AI: " + providerLabel(n.provider)),
         n.repo ? h("span", { class: "mc-repo" }, "Repo: " + n.repo) : null));
     });
@@ -936,6 +1374,7 @@ body {
     if (g.ok) head.appendChild(ageSpan(g.epoch));
     main.appendChild(head);
     if (!g.ok) { main.appendChild(h("div", { class: "mc-banner mc-banner-red" }, g.reason)); return; }
+    appendPanelProvenance(main, "map", g);
 
     var data = g.data || {}, nodes = data.nodes || [], edges = data.edges || [];
     var byKey = {};
@@ -979,13 +1418,15 @@ body {
     var wrap = h("div", { class: "mc-map-wrap" });
     var cont = h("div", { class: "mc-graph", id: "mc-graph" });
     var side = h("div", { class: "mc-map-side", id: "mc-map-side" },
-      h("div", { class: "mc-card-foot" }, "Click a dot to see the chat, who it connects to, and reopen it."));
+      h("div", { class: "mc-card-foot" }, "Click a dot to see the chat, who it connects to, and reopen it."),
+      h("div", { class: "mc-map-summary" },
+        h("div", { class: "mc-side-section" }, "Why you are seeing this"),
+        h("div", { class: "mc-card-secondary" }, scoped.note)));
     wrap.appendChild(cont); wrap.appendChild(side);
     main.appendChild(wrap);
-    main.appendChild(h("div", { class: "mc-map-note" }, scoped.note));
 
     // build after layout so the container has real dimensions
-    setTimeout(function () { buildCy(cont, scoped, byKey, side, edges); }, 0);
+    setTimeout(function () { buildCy(cont, scoped, byKey, side, edges, data); }, 0);
   }
 
   function scopeGraph(nodes, edges, byKey) {
@@ -1021,12 +1462,12 @@ body {
     return { keys: keep, note: note };
   }
 
-  function buildCy(container, scoped, byKey, side, edges) {
+  function buildCy(container, scoped, byKey, side, edges, data) {
     var els = [];
     edges = edges || [];
     Object.keys(scoped.keys).forEach(function (k) {
       var n = byKey[k]; if (!n) return;
-      els.push({ data: { id: k, label: shortLabel(n.title || n.id), prov: n.provider || "?",
+      els.push({ data: { id: k, label: shortLabel(titleLabel(n.title, n.id)), prov: n.provider || "?",
         live: n.live ? 1 : 0, owe: (n.open_ends || []).length } });
     });
     var seenEdge = {};
@@ -1061,20 +1502,57 @@ body {
         ? { name: "concentric", concentric: function (n) { return n.id() === FOCUS_CHAT ? 10 : n.degree(true); }, levelWidth: function () { return 2; }, minNodeSpacing: 40, animate: false }
         : { name: "cose", animate: false, nodeRepulsion: 6000, idealEdgeLength: 90, padding: 24, randomize: true }
     });
-    _cy.on("tap", "node", function (evt) { mapSide(side, evt.target.id(), byKey, edges); });
-    _cy.on("tap", function (evt) { if (evt.target === _cy) { side.textContent = ""; side.appendChild(h("div", { class: "mc-card-foot" }, "Click a dot to see the chat.")); } });
-    if (FOCUS_CHAT && byKey[FOCUS_CHAT]) { _cy.$("#" + cssEsc(FOCUS_CHAT)).select(); mapSide(side, FOCUS_CHAT, byKey, edges); }
+    _cy.on("tap", "node", function (evt) { mapSide(side, evt.target.id(), byKey, edges, data, scoped.note); });
+    _cy.on("tap", function (evt) {
+      if (evt.target === _cy) {
+        side.textContent = "";
+        side.appendChild(h("div", { class: "mc-card-foot" }, "Click a dot to see the chat."));
+        side.appendChild(h("div", { class: "mc-map-summary" },
+          h("div", { class: "mc-side-section" }, "Why you are seeing this"),
+          h("div", { class: "mc-card-secondary" }, scoped.note)));
+      }
+    });
+    if (FOCUS_CHAT && byKey[FOCUS_CHAT]) { _cy.$("#" + cssEsc(FOCUS_CHAT)).select(); mapSide(side, FOCUS_CHAT, byKey, edges, data, scoped.note); }
   }
 
-  function mapSide(side, key, byKey, edges) {
+  function mapWhyShown(note, node) {
+    if (FOCUS_CHAT) return "Focused on one chat's neighbourhood. Repo filtering is suspended so you can see the full connection path.";
+    if (node && node.repo && mapRepo) return "Filtered to " + mapRepo + ".";
+    return note;
+  }
+  function mapSourceHealth(node, data) {
+    var staleProviders = (data && data.stale_providers) || [];
+    if (staleProviders.indexOf(node.provider) >= 0) return "provider data is stale";
+    if ((data && data.counts && data.counts.ingest_skipped) === true) return "chat refresh skipped during the last read";
+    return "graph source looked healthy on the last refresh";
+  }
+  function connectionGroupTitle(edge, key) {
+    var incoming = edge.dst === key;
+    if (edge.type === "spawned") return incoming ? "Started this chat" : "This chat started";
+    if (edge.type === "audits") return incoming ? "Audited this chat" : "This chat audited";
+    if (edge.type === "references") return incoming ? "Mentioned this chat" : "This chat mentioned";
+    if (edge.type === "continues") return incoming ? "Continued into this chat" : "This chat continued from";
+    if (edge.type === "signaled") return incoming ? "Messaged this chat" : "This chat messaged";
+    if (edge.type === "related_manual") return "You linked manually";
+    return incoming ? "Points to this chat" : "This chat points to";
+  }
+  function mapSide(side, key, byKey, edges, data, note) {
     var n = byKey[key]; if (!n) return;
     side.textContent = "";
-    side.appendChild(h("div", { class: "mc-side-title" }, n.title || n.id));
-    side.appendChild(h("div", { class: "mc-side-meta" },
-      "AI: " + providerLabel(n.provider) + (n.repo ? " · repo: " + n.repo : "") + (n.live ? " · active in last 30 min" : "")));
+    side.appendChild(h("div", { class: "mc-map-summary" },
+      h("div", { class: "mc-side-title" }, titleLabel(n.title, n.id)),
+      h("div", { class: "mc-side-meta" },
+        "AI: " + providerLabel(n.provider) + (n.repo ? " · repo: " + n.repo : "") + (n.live ? " · working now" : "")),
+      chipsLine([
+        { label: "Last activity", value: n.last_activity ? journalWhen(n.last_activity) : "unknown" },
+        { label: "Unfinished", value: String((n.open_ends || []).length) },
+        { label: "Source health", value: mapSourceHealth(n, data) }
+      ])));
+    side.appendChild(h("div", { class: "mc-side-section" }, "Why you are seeing this"));
+    side.appendChild(h("div", { class: "mc-card-secondary" }, mapWhyShown(note, n)));
     // reopen / read buttons
     if (n.resume_cmd) side.appendChild(cmdBtn("Reopen this chat", n.resume_cmd, true));
-    if (n.view_cmd) side.appendChild(cmdBtn("Read it", n.view_cmd, false));
+    if (n.view_cmd) side.appendChild(cmdBtn("Read transcript", n.view_cmd, false));
     // open ends
     var oe = n.open_ends || [];
     if (oe.length) {
@@ -1085,16 +1563,27 @@ body {
     edges = edges || [];
     var conns = edges.filter(function (e) { return e.src === key || e.dst === key; });
     if (conns.length) {
-      side.appendChild(h("div", { class: "mc-side-section" }, "Connects to (" + conns.length + ")"));
-      conns.slice(0, 12).forEach(function (e) {
-        var otherKey = e.src === key ? e.dst : e.src;
-        var other = byKey[otherKey]; var out = e.src === key;
-        var phrase = out ? "this " + edgeVerb(e.type) + " → " : "← " + edgeVerb(e.type) + " this";
-        var row = h("div", { class: "mc-side-conn", onclick: function () { FOCUS_CHAT = otherKey; rerender(); } },
-          h("span", { class: "mc-dot", style: "background:" + provColor(other && other.provider) }),
-          h("span", { class: "mc-ellipsis" }, (other ? (other.title || other.id) : otherKey)));
-        row.title = phrase;
-        side.appendChild(row);
+      var groups = {}, GROUP_ROW_CAP = 3;
+      conns.forEach(function (e) {
+        var title = connectionGroupTitle(e, key);
+        (groups[title] = groups[title] || []).push(e);
+      });
+      Object.keys(groups).forEach(function (groupTitle) {
+        var groupEdges = groups[groupTitle];
+        side.appendChild(h("div", { class: "mc-side-section" }, groupTitle + " (" + groupEdges.length + ")"));
+        groupEdges.slice(0, GROUP_ROW_CAP).forEach(function (e) {
+          var otherKey = e.src === key ? e.dst : e.src;
+          var other = byKey[otherKey];
+          var row = h("div", { class: "mc-side-conn", onclick: function () { FOCUS_CHAT = otherKey; rerender(); } },
+            h("span", { class: "mc-dot", style: "background:" + provColor(other && other.provider) }),
+            h("div", { class: "mc-side-conn-body" },
+              h("div", { class: "mc-ellipsis", title: other ? titleLabel(other.title, other.id) : otherKey }, other ? titleLabel(other.title, other.id) : otherKey),
+              h("div", { class: "mc-side-conn-meta" },
+                h("span", { class: "mc-chip" }, "source: " + sourceLabel(e.source)),
+                h("span", { class: "mc-chip" }, "confidence: " + Math.round((+e.confidence || 0) * 100) + "%"))));
+          side.appendChild(row);
+        });
+        if (groupEdges.length > GROUP_ROW_CAP) side.appendChild(h("div", { class: "mc-card-foot" }, "Showing " + GROUP_ROW_CAP + " of " + groupEdges.length + " in this group."));
       });
     }
     side.appendChild(h("div", { class: "mc-side-section" }, ""));
@@ -1116,25 +1605,27 @@ body {
   //  CHATS TAB
   // ===========================================================================
   var chatFilter = { repo: "", openOnly: false, providers: {} };
+  var FOCUS_OPEN_END = null;
 
   function renderChats(main) {
     var g = guard("chats");
     var p = panel(g, "Chats and unfinished work");
     main.appendChild(p.wrap);
     if (!p.body) return;
+    appendPanelProvenance(p.body, "chats", g);
     var data = g.data || {};
     var nodes = data.nodes || [];
     var edges = data.edges || [];
     // export contract: edge endpoints are "provider:id"; nodes carry bare id
     // (live fix 2026-07-03: mismatch made every badge/cluster silently vanish)
-    nodes.forEach(function (n) {
-      var pfx = (n.provider || "") + ":";
-      n.key = String(n.id).indexOf(pfx) === 0 ? n.id : pfx + n.id;
-    });
+    nodes.forEach(function (n) { n.key = nodeKey(n); });
+    var openItems = looseEnds(data);
+    var openCountByNode = {};
+    openItems.forEach(function (o) { if (o.source_node) openCountByNode[o.source_node] = (openCountByNode[o.source_node] || 0) + 1; });
 
     // filters: repo dropdown, has-open-ends toggle, provider chips
     var repos = uniq(nodes.map(function (n) { return n.repo; }).filter(Boolean)).sort();
-    var providers = uniq(nodes.map(function (n) { return n.provider; }).filter(Boolean)).sort();
+    var providers = uniq(nodes.map(function (n) { return providerGroup(n.provider); }).filter(Boolean)).sort();
     var filters = h("div", { class: "mc-filters" });
     var sel = h("select", { class: "mc-chip", onchange: function () { chatFilter.repo = sel.value; rerender(); } });
     sel.appendChild(h("option", { value: "" }, "All repos"));
@@ -1145,25 +1636,30 @@ body {
     providers.forEach(function (pr) {
       var on = !chatFilter.providers[pr];
       filters.appendChild(h("span", { class: "mc-chip mc-chip-btn" + (on ? " mc-chip-on" : ""),
-        onclick: function () { chatFilter.providers[pr] = !chatFilter.providers[pr]; rerender(); } }, pr));
+        onclick: function () { chatFilter.providers[pr] = !chatFilter.providers[pr]; rerender(); } }, providerLabel(pr)));
     });
     p.body.appendChild(filters);
 
+    if (FOCUS_OPEN_END) p.body.appendChild(h("span", { class: "mc-chip mc-chip-btn mc-chip-on",
+      onclick: function () { FOCUS_OPEN_END = null; rerender(); } }, "showing one open item — show all"));
+
+    renderOpenWork(p.body, openItems, nodes, edges);
+
     var visible = nodes.filter(function (n) {
       if (chatFilter.repo && n.repo !== chatFilter.repo) return false;
-      if (chatFilter.openOnly && !(n.open_ends || []).length) return false;
-      if (chatFilter.providers[n.provider]) return false; // toggled off
+      if (chatFilter.openOnly && !openCountByNode[n.key] && !(n.open_ends || []).length) return false;
+      if (chatFilter.providers[providerGroup(n.provider)]) return false; // toggled off
       return true;
     });
 
     if (data.counts && data.counts.new_today)
-      p.body.appendChild(h("div", { class: "mc-card-foot" }, h("span", { class: "mc-pulse" }, data.counts.new_today + " chats recorded today")));
+      p.body.appendChild(h("div", { class: "mc-card-foot" }, h("span", { class: "mc-pulse" }, data.counts.new_today + " conversations found today")));
 
     // flat rows — size-tiered (live fix 2026-07-03: 7.5k sessions rendered 92k
     // DOM nodes; design rule: >50 sessions = capped table, expand via filters)
     var ROW_CAP = 100;
     visible.sort(function (a, b) { return String(b.last_activity || "") < String(a.last_activity || "") ? -1 : 1; });
-    p.body.appendChild(h("div", { class: "mc-section-head" }, h("h2", { text: "Chats" })));
+    p.body.appendChild(h("div", { class: "mc-section-head" }, h("h2", { text: "Recent chats" })));
     var list = h("div", { class: "mc-list" });
     var byId = {}; nodes.forEach(function (n) { byId[n.key] = n; });
     visible.slice(0, ROW_CAP).forEach(function (n) { list.appendChild(chatRow(n, edges, byId)); });
@@ -1173,9 +1669,50 @@ body {
     p.body.appendChild(list);
   }
 
+  function renderOpenWork(parent, openItems, nodes, edges) {
+    var byKey = {}; (nodes || []).forEach(function (n) { byKey[n.key || nodeKey(n)] = n; });
+    var items = (openItems || []).filter(function (o) {
+      var n = byKey[o.source_node || ""];
+      if (chatFilter.repo && (o.repo || (n && n.repo) || "") !== chatFilter.repo) return false;
+      if (n && chatFilter.providers[providerGroup(n.provider)]) return false;
+      return true;
+    }).sort(function (a, b) {
+      if (FOCUS_OPEN_END && a.id === FOCUS_OPEN_END) return -1;
+      if (FOCUS_OPEN_END && b.id === FOCUS_OPEN_END) return 1;
+      var sr = { red: 0, amber: 1, grey: 2, green: 3 };
+      var as = sr[looseSeverityState(a.severity)], bs = sr[looseSeverityState(b.severity)];
+      if (as !== bs) return as - bs;
+      return (+b.age_days || 0) - (+a.age_days || 0);
+    });
+    parent.appendChild(h("div", { class: "mc-section-head" }, h("h2", { text: "Open work" })));
+    parent.appendChild(h("div", { class: "mc-card-foot" }, "One list of unfinished items from chats, repo todo files, nightly notes, Git state, and the request register."));
+    var list = h("div", { class: "mc-list" });
+    if (!items.length) list.appendChild(h("div", { class: "mc-card-foot" }, "No open work found in the chat graph."));
+    items.slice(0, 50).forEach(function (item) { list.appendChild(openWorkRow(item, byKey, edges)); });
+    if (items.length > 50) list.appendChild(h("div", { class: "mc-card-foot" }, "showing highest priority 50 of " + items.length + " open items"));
+    parent.appendChild(list);
+  }
+
+  function openWorkRow(item, byKey, edges) {
+    var n = byKey[item.source_node || ""];
+    var title = titleLabel(item.title || (n && n.title), n && n.id) || "Open work";
+    var row = h("div", { class: "mc-row" + (FOCUS_OPEN_END && item.id === FOCUS_OPEN_END ? " mc-chip-on" : "") },
+      glyphSpan(looseSeverityState(item.severity)),
+      h("div", { class: "mc-row-body" },
+        h("div", { class: "mc-row-problem mc-ellipsis", title: title }, title + " — " + looseKindLabel(item.kind)),
+        h("div", { class: "mc-row-action mc-ellipsis", title: item.text || "" }, item.action_hint || openEndHuman(item)),
+        h("div", { class: "mc-row-meta mc-ellipsis" },
+          (item.repo ? "Repo: " + item.repo + " · " : "") + ((item.age_days || 0) ? item.age_days + "d old" : "new"))));
+    if (item.source_node && n) row.appendChild(h("span", { class: "mc-chip mc-chip-btn", onclick: function () {
+      FOCUS_CHAT = item.source_node; location.hash = "#map"; rerender();
+    } }, "Show chat"));
+    if (item.resolve_cmd) row.appendChild(copyable(item.resolve_cmd, "Dismiss this item"));
+    return row;
+  }
+
   function chatRow(n, edges, byId) {
     var row = h("div", { class: "mc-chatrow" });
-    row.appendChild(h("span", { class: "mc-chatrow-title mc-ellipsis", title: n.title || n.id }, n.title || n.id));
+    row.appendChild(h("span", { class: "mc-chatrow-title mc-ellipsis", title: titleLabel(n.title, n.id) }, titleLabel(n.title, n.id)));
     row.appendChild(h("span", { class: "mc-provider" }, "AI: " + providerLabel(n.provider)));
     if (n.repo) row.appendChild(h("span", { class: "mc-repo" }, "Repo: " + n.repo));
     // lineage badges from incoming edges + one-line parent (composite keys)
@@ -1185,18 +1722,18 @@ body {
       if (kind) {
         var parent = byId[e.src];
         var lead = e.type === "audits" ? "audited by " : (e.type === "continues" ? "continued from " : "started by ");
-        row.appendChild(h("span", { class: "mc-badge mc-badge-" + kind, title: (parent ? parent.title : e.src) }, kind));
-        row.appendChild(h("span", { class: "mc-repo mc-ellipsis", title: e.src }, lead + (parent ? (parent.title || parent.id) : e.src)));
+        row.appendChild(h("span", { class: "mc-badge mc-badge-" + kind, title: (parent ? titleLabel(parent.title, parent.id) : e.src) }, kind));
+        row.appendChild(h("span", { class: "mc-repo mc-ellipsis", title: e.src }, lead + (parent ? titleLabel(parent.title, parent.id) : e.src)));
       }
     });
-    // live badge <30 min
-    if (n.live && isRecent(n.last_activity, 1800)) row.appendChild(h("span", { class: "mc-badge mc-badge-live" }, "active <30m"));
+    // recent activity badge (<30 min)
+    if (n.live && isRecent(n.last_activity, 1800)) row.appendChild(h("span", { class: "mc-badge mc-badge-live" }, "working now"));
     // open-ends: >21d collapse to a stale chip, the rest counted live
     var split = splitOpenEnds(n.open_ends);
     if (split.live) row.appendChild(h("span", { class: "mc-badge" }, split.live + " unfinished"));
     if (split.stale) row.appendChild(h("span", { class: "mc-badge mc-badge-stale" }, split.stale + " old unfinished"));
     if (n.resume_cmd) row.appendChild(copyable(n.resume_cmd, "Reopen this chat"));
-    if (n.view_cmd) row.appendChild(copyable(n.view_cmd, "Read it"));
+    if (n.view_cmd) row.appendChild(copyable(n.view_cmd, "Read transcript"));
     return row;
   }
 
@@ -1208,6 +1745,7 @@ body {
     var p = panel(g, "Git: work to commit, push, or clean up");
     main.appendChild(p.wrap);
     if (!p.body) return;
+    appendPanelProvenance(p.body, "git", g);
     var data = g.data || {};
     var repos = data.repos || [];
     var acts = repos.map(function (r) { return { r: r, a: gitAction(r) }; });
@@ -1293,47 +1831,15 @@ body {
     var p = panel(g, "Usage: which AI has room");
     main.appendChild(p.wrap);
     if (!p.body) return;
+    appendPanelProvenance(p.body, "usage", g);
     var data = g.data || {};
     var nu = normUsageProviders(data);
-    nu.rows.forEach(function (pr) {
-      var st = usageState(pr);
-      var row = h("div", { class: "mc-usage-row" });
-      row.appendChild(h("span", { class: "mc-usage-name" }, glyphSpan(st), " ", pr.name || providerLabel(pr.provider)));
-      var pct = +pr.pct;
-      var track = h("div", { class: "mc-bar-track" },
-        h("div", { class: "mc-bar-fill " + (STATE_CLASS[st] || ""), style: "--mc-w:" + (isFinite(pct) ? Math.max(0, Math.min(100, pct)) : 0) + "%" }));
-      row.appendChild(track);
-      row.appendChild(h("span", { class: "mc-num" }, isFinite(pct) ? pct + "%" : (pr.used != null ? pr.used + (pr.unit ? " " + pr.unit : "") : "—")));
-      // confidence chip
-      row.appendChild(h("span", { class: "mc-chip", title: "how trustworthy this usage number is" }, confidenceLabel(pr.confidence)));
-      // reset countdown (client-side tick)
-      if (pr.resets_in_min != null) {
-        var cd = h("span", { class: "mc-countdown" });
-        countdowns.push({ el: cd, target: g.epoch + (+pr.resets_in_min) * 60 });
-        row.appendChild(cd);
-      }
-      p.body.appendChild(row);
-      // pace line when window data present
-      if (pr.pace || pr.window_pct != null) {
-        var paceTxt = pr.pace ? pr.pace : "";
-        var wt = pr.window_pct != null ? (pct + "% used, " + pr.window_pct + "% of window gone" + (paceTxt ? " — " + paceTxt : "")) : paceTxt;
-        p.body.appendChild(h("div", { class: "mc-pace mc-ellipsis", title: wt }, wt));
-      }
-    });
+    p.body.appendChild(h("div", { class: "mc-section-head" }, h("h2", { text: "Decision cards" })));
+    p.body.appendChild(h("div", { class: "mc-card-foot" }, "Each card answers whether you can use that source now, how trustworthy the reading is, and what to do next."));
+    var grid = h("div", { class: "mc-decision-grid" });
+    usageItems(data).forEach(function (item) { grid.appendChild(renderUsageDecisionCard(item, g.epoch)); });
+    p.body.appendChild(grid);
 
-    // credit rows
-    if (nu.credits.length) {
-      p.body.appendChild(h("div", { class: "mc-section-head" }, h("h2", { text: "Credit balances" })));
-      nu.credits.forEach(function (c) {
-        var line = h("div", { class: "mc-card-secondary mc-num" }, (c.name || "?") + ": " + (c.remaining != null ? c.remaining : "?") + (c.unit ? " " + c.unit : ""));
-        if (c.resets_in_min != null) {
-          var ccd = h("span", { class: "mc-countdown" });
-          countdowns.push({ el: ccd, target: g.epoch + (+c.resets_in_min) * 60 });
-          line.appendChild(ccd);
-        }
-        p.body.appendChild(line);
-      });
-    }
     // waste table
     if ((nu.waste || []).length) {
       p.body.appendChild(h("div", { class: "mc-section-head" }, h("h2", { text: "Unused capacity" })));
@@ -1347,11 +1853,6 @@ body {
       });
       p.body.appendChild(wt);
     }
-    // explicit no-data rows (Cursor)
-    nu.no_data.forEach(function (nd) {
-      p.body.appendChild(h("div", { class: "mc-banner mc-banner-blue" },
-        glyphSpan("blue"), " " + (nd.name || "provider") + " is not connected to a usage feed yet (" + (nd.reason || "not wired") + ")"));
-    });
     tickCountdowns();
   }
 
@@ -1376,6 +1877,7 @@ body {
     var p = panel(g, "Background jobs");
     main.appendChild(p.wrap);
     if (!p.body) return;
+    appendPanelProvenance(p.body, "automation", g);
     var data = g.data || {};
     if (data.launchctl_note) p.body.appendChild(h("div", { class: "mc-banner mc-banner-amber" }, data.launchctl_note));
     if (data.t7_mounted === false) p.body.appendChild(h("div", { class: "mc-banner mc-banner-blue" }, "T7 offload drive not mounted — media-backed evidence shows offline, not failed"));

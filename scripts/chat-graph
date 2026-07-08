@@ -11,7 +11,7 @@ runs write-sandboxed and its tests use mktemp dirs. See docs/MISSION_CONTROL_PLA
 """
 import glob, hashlib, json, os, re, shutil, sqlite3, subprocess, sys, time
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 STALE_INGEST_S = 30 * 60  # show/doctor staleness threshold
 LOCK_STALE_S = 30 * 60      # ingest.lock older than this is treated as crashed
 _INGEST_SKIPPED = False     # set when export's catch-up ingest could not acquire lock
@@ -24,6 +24,8 @@ HOME_DIR      = lambda: _env("CHAT_GRAPH_HOME", "~/.chat-graph")
 CROSS_AGENT   = lambda: _env("CHAT_GRAPH_CROSS_AGENT_ROOT", "~/.cross-agent")
 SESSION_INDEX = lambda: _env("CHAT_GRAPH_SESSION_INDEX", "~/.codex/session_index.jsonl")
 CHAT_SOURCE   = lambda: _env("CHAT_GRAPH_CHAT_SOURCE", "~/.codex/scripts/chat-source")
+CODING_ROOT   = lambda: _env("CHAT_GRAPH_CODING_ROOT", "/Users/gillettes/Coding Projects")
+NIGHTLY_GLOB  = lambda: _env("CHAT_GRAPH_NIGHTLY_REPORT_GLOB", "~/.claude/nightly-review/reports/*.md")
 
 def db_path():      return os.path.join(HOME_DIR(), "graph.db")
 def journal_path(): return os.path.join(HOME_DIR(), "journal", "manual.jsonl")
@@ -129,7 +131,7 @@ def _migrate(con):
       CREATE TABLE IF NOT EXISTS open_ends(
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         session_id TEXT, kind TEXT, text TEXT, text_hash TEXT,
-        resolved_at INTEGER, UNIQUE(session_id, text_hash));
+        resolved_at INTEGER, first_seen_at INTEGER, UNIQUE(session_id, text_hash));
       CREATE TABLE IF NOT EXISTS collector_state(
         collector TEXT PRIMARY KEY, cursor TEXT, last_run INTEGER,
         row_count INTEGER DEFAULT 0);
@@ -142,6 +144,11 @@ def _migrate(con):
             con.execute("ALTER TABLE sessions ADD COLUMN %s %s" % (col, decl))
         except sqlite3.OperationalError:
             pass
+    try:
+        con.execute("ALTER TABLE open_ends ADD COLUMN first_seen_at INTEGER")
+    except sqlite3.OperationalError:
+        pass
+    con.execute("UPDATE open_ends SET first_seen_at=COALESCE(first_seen_at, ?)", (int(time.time()),))
     # v1->v2: edges uniqueness gained `source` so a strong (e.g. delegations) and a
     # weak (e.g. titles) edge for the same (src,dst,type) coexist. A pre-existing v1
     # edges table keeps its old UNIQUE(src,dst,type) until rebuilt here. Detect via
@@ -500,6 +507,54 @@ def _prefilter(line):
 def _sha1(s):
     return hashlib.sha1((s or "").encode("utf-8", "replace")).hexdigest()
 
+def _open_hash(kind, source_key, text):
+    return _sha1("%s:%s:%s" % (kind, source_key, text))
+
+def _upsert_open_end(con, sid, kind, text, text_hash=None):
+    now = int(time.time())
+    h = text_hash or _open_hash(kind, sid, text)
+    con.execute("INSERT OR IGNORE INTO open_ends(session_id, kind, text, text_hash, first_seen_at) "
+                "VALUES(?,?,?,?,?)", (sid, kind, text, h, now))
+    con.execute("UPDATE open_ends SET resolved_at=NULL, kind=?, text=?, "
+                "first_seen_at=COALESCE(first_seen_at, ?) "
+                "WHERE session_id=? AND text_hash=?", (kind, text, now, sid, h))
+    return h
+
+def _reconcile_open_kind(con, kind, active):
+    """active maps (session_id, text_hash) -> text. Missing active signals resolve."""
+    now = int(time.time())
+    for sid, h in active:
+        _upsert_open_end(con, sid, kind, active[(sid, h)], h)
+    for o in con.execute("SELECT session_id, text_hash FROM open_ends "
+                         "WHERE kind=? AND resolved_at IS NULL", (kind,)).fetchall():
+        if (o["session_id"], o["text_hash"]) not in active:
+            con.execute("UPDATE open_ends SET resolved_at=? WHERE session_id=? AND text_hash=?",
+                        (now, o["session_id"], o["text_hash"]))
+
+def _loose_action(kind):
+    return {
+        "closeout_handoff": "finish the handoff or connect the next chat",
+        "register_unverified": "verify the tracked change",
+        "todo_open": "check the repo todo item or mark it done",
+        "nightly_finding": "review the nightly note and either fix or dismiss it",
+        "repo_dirty": "open Git and decide whether to commit, push, merge, or ignore",
+        "register_open": "land or verify the tracked request",
+    }.get(kind or "", "decide whether this is still real work")
+
+def _loose_severity(kind, text, age_days):
+    low = (text or "").lower()
+    if kind == "repo_dirty" and ("detached" in low or "unpushed" in low):
+        return "red"
+    if kind == "nightly_finding" and re.search(r"fail|failed|failure|blocked", low):
+        return "red"
+    if age_days is not None and age_days >= 21:
+        return "amber"
+    return "amber"
+
+def _provider_key(provider, sid):
+    pfx = "%s:" % (provider or "unknown")
+    return sid if str(sid).startswith(pfx) else "%s%s" % (pfx, sid)
+
 def _msg_text(rec):
     """Text of a user/assistant message ONLY. None for tool_result/system/other —
     hook/tool text must never feed signal extraction."""
@@ -641,10 +696,11 @@ def _scan_one(con, path, provider, sid, known, mtime_s):
                 con.execute("UPDATE sessions SET closeout_seen=1 WHERE id=?", (sid,))
     now = int(time.time())
     for h, (kind, text) in open_now.items():
-        con.execute("INSERT OR IGNORE INTO open_ends(session_id, kind, text, text_hash) "
-                    "VALUES(?,?,?,?)", (sid, kind, text, h))
-        con.execute("UPDATE open_ends SET resolved_at=NULL, kind=?, text=? "
-                    "WHERE session_id=? AND text_hash=?", (kind, text, sid, h))
+        con.execute("INSERT OR IGNORE INTO open_ends(session_id, kind, text, text_hash, first_seen_at) "
+                    "VALUES(?,?,?,?,?)", (sid, kind, text, h, now))
+        con.execute("UPDATE open_ends SET resolved_at=NULL, kind=?, text=?, "
+                    "first_seen_at=COALESCE(first_seen_at, ?) "
+                    "WHERE session_id=? AND text_hash=?", (kind, text, now, sid, h))
         n_sig += 1
     # auto-resolve: only close/register kinds whose signal disappeared this pass
     if open_now:
@@ -758,11 +814,17 @@ def _resume_cmd(provider, sid):
         return "codex resume %s" % sid
     if provider == "claude":
         return "claude --resume %s" % sid
+    if provider == "repo":
+        return ""
     return "chat-source full %s" % sid
 
+_REPO_ANNOTATIONS_CACHE = None
 def _repo_annotations():
     """From `scan-unfinished-work --json` (env CHAT_GRAPH_SCAN_CMD override).
     Returns (annotations_list, notes_list)."""
+    global _REPO_ANNOTATIONS_CACHE
+    if _REPO_ANNOTATIONS_CACHE is not None:
+        return _REPO_ANNOTATIONS_CACHE
     cmd = os.environ.get("CHAT_GRAPH_SCAN_CMD")
     exe = cmd.split() if cmd else None
     if not exe:
@@ -773,14 +835,170 @@ def _repo_annotations():
         return [], ["scan-unfinished-work absent"]
     try:
         out = subprocess.run(exe, capture_output=True, text=True, timeout=120)
-        if out.returncode != 0:
-            return [], ["scan-unfinished-work exit %d" % out.returncode]
+        if out.returncode not in (0, 1):
+            _REPO_ANNOTATIONS_CACHE = ([], ["scan-unfinished-work exit %d" % out.returncode])
+            return _REPO_ANNOTATIONS_CACHE
         data = json.loads(out.stdout)
         if isinstance(data, dict):
             data = data.get("repos") or data.get("data") or []
-        return (data if isinstance(data, list) else []), []
+        _REPO_ANNOTATIONS_CACHE = (data if isinstance(data, list) else [], [])
+        return _REPO_ANNOTATIONS_CACHE
     except Exception as e:
-        return [], ["scan-unfinished-work failed: %s" % e]
+        _REPO_ANNOTATIONS_CACHE = ([], ["scan-unfinished-work failed: %s" % e])
+        return _REPO_ANNOTATIONS_CACHE
+
+def _repo_node(con, repo):
+    sid = "repo:%s" % repo
+    touch_session(con, sid, provider="repo", title="Repo: %s" % repo, first_prompt="Repository work ledger")
+    con.execute("UPDATE sessions SET repo=COALESCE(NULLIF(repo,''), ?) WHERE id=?", (repo, sid))
+    return sid
+
+def _repo_paths_from_env():
+    roots = os.environ.get("CHAT_GRAPH_REPO_ROOTS")
+    if not roots:
+        return None
+    return [p for p in roots.split(os.pathsep) if p]
+
+def _tracked_repo_paths():
+    env_paths = _repo_paths_from_env()
+    if env_paths is not None:
+        return env_paths
+    paths = set()
+    here_repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    for p in (here_repo, os.path.join(CODING_ROOT(), "global-implementations")):
+        if os.path.isdir(p):
+            paths.add(p)
+    repos, _ = _repo_annotations()
+    for r in repos:
+        name = r.get("repo") if isinstance(r, dict) else None
+        if name:
+            p = os.path.join(CODING_ROOT(), name)
+            if os.path.isdir(p):
+                paths.add(p)
+    return sorted(paths)
+
+def collect_todo_open(con):
+    active, n = {}, 0
+    for repo_path in _tracked_repo_paths():
+        todo = os.path.join(repo_path, "todo.md")
+        if not os.path.isfile(todo):
+            continue
+        repo = os.path.basename(repo_path)
+        sid = _repo_node(con, repo)
+        in_work, cap = False, 0
+        try:
+            with open(todo, errors="replace") as f:
+                for line in f:
+                    hm = re.match(r"^\s*##+\s+(.+?)\s*$", line)
+                    if hm:
+                        h = hm.group(1).lower()
+                        in_work = (("work" in h or "active" in h or "todo" in h)
+                                   and not re.search(r"completed|done|history|log|evidence|suggest|feedback|linear", h))
+                        continue
+                    if not in_work:
+                        continue
+                    m = re.match(r"^\s*-\s+\[\s\]\s+(.+?)\s*$", line)
+                    if not m:
+                        continue
+                    item = re.sub(r"\s+", " ", m.group(1)).strip()
+                    if not item:
+                        continue
+                    text = "%s: %s" % (repo, item[:220])
+                    h = _open_hash("todo_open", repo, item)
+                    active[(sid, h)] = text
+                    cap += 1
+                    if cap >= 50:
+                        break
+        except OSError:
+            continue
+    _reconcile_open_kind(con, "todo_open", active)
+    return len(active) + n
+
+def collect_nightly_findings(con):
+    files = sorted(glob.glob(os.path.expanduser(NIGHTLY_GLOB())),
+                   key=lambda p: os.path.getmtime(p) if os.path.exists(p) else 0,
+                   reverse=True)
+    active = {}
+    if files:
+        path = files[0]
+        sid = _repo_node(con, "nightly-review")
+        try:
+            with open(path, errors="replace") as f:
+                for line in f:
+                    s = line.strip()
+                    if not re.match(r"^[-*]\s+", s):
+                        continue
+                    if not re.search(r"loose end|fail|failed|failure|blocked|needs|open", s, re.I):
+                        continue
+                    repo_m = re.search(r"(?:Coding Projects/|repo[:=]\s*`?)([A-Za-z0-9_.-]+)", s)
+                    item_sid = _repo_node(con, repo_m.group(1)) if repo_m else sid
+                    text = re.sub(r"\s+", " ", re.sub(r"^[-*]\s+", "", s))[:240]
+                    h = _open_hash("nightly_finding", item_sid, text)
+                    active[(item_sid, h)] = text
+        except OSError:
+            pass
+    _reconcile_open_kind(con, "nightly_finding", active)
+    return len(active)
+
+def collect_repo_dirty(con):
+    repos, _ = _repo_annotations()
+    active = {}
+    for r in repos:
+        if not isinstance(r, dict):
+            continue
+        repo = r.get("repo") or ""
+        if not repo:
+            continue
+        sid = _repo_node(con, repo)
+        items = []
+        if r.get("dirty"):
+            items.append("%s: %s files uncommitted" % (repo, r.get("dirty_files", "?")))
+        if int(r.get("ahead") or 0) > 0:
+            items.append("%s: %s unpushed commits" % (repo, r.get("ahead")))
+        if r.get("detached"):
+            items.append("%s: detached HEAD needs a decision" % repo)
+        for b in r.get("branches") or []:
+            name = b.get("name") if isinstance(b, dict) else ""
+            age = b.get("age_days") if isinstance(b, dict) else None
+            if name:
+                items.append("%s: branch %s is %sd old and unmerged" % (repo, name, age if age is not None else "?"))
+        for text in items:
+            h = _open_hash("repo_dirty", repo, text)
+            active[(sid, h)] = text
+    _reconcile_open_kind(con, "repo_dirty", active)
+    return len(active)
+
+def collect_register_open(con):
+    active = {}
+    try:
+        with open(REGISTER(), errors="replace") as f:
+            for line in f:
+                if "ER-" not in line or not line.lstrip().startswith("|"):
+                    continue
+                codes = _CODE_RE.findall(line)
+                if not codes:
+                    continue
+                low = line.lower()
+                if re.search(r"\|\s*(verified|landed|done|closed)\s*\|", low):
+                    continue
+                sid = _repo_node(con, "global-implementations")
+                text = re.sub(r"\s+", " ", line.strip(" |\n"))[:240]
+                for code in codes[:1]:
+                    h = _open_hash("register_open", code, text)
+                    active[(sid, h)] = text
+    except OSError:
+        pass
+    _reconcile_open_kind(con, "register_open", active)
+    return len(active)
+
+# Every open-work source reconciles into open_ends. Collectors must not keep a
+# parallel list file; dashboard readers consume export.data.loose_ends only.
+COLLECTORS.update({
+    "todo_open": collect_todo_open,
+    "nightly_finding": collect_nightly_findings,
+    "repo_dirty": collect_repo_dirty,
+    "register_open": collect_register_open,
+})
 
 def _scan_errors_24h():
     p = scanlog_path()
@@ -810,18 +1028,25 @@ def _build_export(con, ingest_skipped=False):
     last_full = _last_full_ingest_epoch()
     prov_of = {r["id"]: (r["provider"] or "unknown")
                for r in con.execute("SELECT id, provider FROM sessions")}
+    node_meta = {}
     nodes = []
     for r in con.execute("SELECT * FROM sessions"):
-        opens = [{"kind": o["kind"], "text": redact(o["text"] or ""), "text_hash": o["text_hash"]}
-                 for o in con.execute("SELECT kind, text, text_hash FROM open_ends "
+        opens = [{"kind": o["kind"], "text": redact(o["text"] or ""), "text_hash": o["text_hash"],
+                  "first_seen_at": o["first_seen_at"]}
+                 for o in con.execute("SELECT kind, text, text_hash, first_seen_at FROM open_ends "
                                       "WHERE session_id=? AND resolved_at IS NULL", (r["id"],))]
         try:
             la = int(r["last_activity"])
         except (TypeError, ValueError):
             la = None
         prov = r["provider"] or "unknown"
+        node_meta[r["id"]] = {
+            "provider": prov,
+            "title": display_title(r),
+            "repo": r["repo"] or "",
+        }
         nodes.append({
-            "provider": prov, "id": r["id"], "title": display_title(r),
+            "provider": prov, "id": r["id"], "title": node_meta[r["id"]]["title"],
             "repo": r["repo"] or "",
             "last_activity": (time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(la)) if la else ""),
             "first_seen_at": r["first_seen_at"],
@@ -829,7 +1054,29 @@ def _build_export(con, ingest_skipped=False):
             "closeout_seen": bool(r["closeout_seen"]),
             "open_ends": opens,
             "resume_cmd": _resume_cmd(prov, r["id"]),
-            "view_cmd": "chat-source full %s" % r["id"],
+            "view_cmd": "" if prov == "repo" else "chat-source full %s" % r["id"],
+        })
+    loose_ends = []
+    for o in con.execute("SELECT session_id, kind, text, text_hash, first_seen_at FROM open_ends "
+                         "WHERE resolved_at IS NULL ORDER BY COALESCE(first_seen_at, 0), id"):
+        meta = node_meta.get(o["session_id"], {})
+        first_seen = o["first_seen_at"] or now
+        age_days = max(0, int((now - int(first_seen)) // 86400))
+        text = redact(o["text"] or "")
+        kind = o["kind"] or "open"
+        loose_ends.append({
+            "id": "%s:%s" % (o["session_id"], o["text_hash"]),
+            "kind": kind,
+            "source_node": _provider_key(meta.get("provider"), o["session_id"]),
+            "title": meta.get("title") or o["session_id"],
+            "repo": meta.get("repo") or "",
+            "text": text,
+            "text_hash": o["text_hash"],
+            "first_seen_at": first_seen,
+            "action_hint": _loose_action(kind),
+            "age_days": age_days,
+            "severity": _loose_severity(kind, text, age_days),
+            "resolve_cmd": "chat-graph resolve %s %s" % (o["session_id"], o["text_hash"]),
         })
     edges = []
     # suppressions is source-independent: hide any (src,dst,type) an unlink
@@ -868,6 +1115,7 @@ def _build_export(con, ingest_skipped=False):
         "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now)),
         "generated_epoch": now, "cadence_s": 1800, "ok": True, "error": None,
         "data": {"nodes": nodes, "edges": edges, "topics": topics,
+                 "loose_ends": loose_ends,
                  "repo_annotations": repo_annotations,
                  "stale_providers": sorted(_STALE_PROVIDERS), "notes": notes, "counts": counts},
     }
@@ -912,9 +1160,11 @@ def cmd_validate_export(args):
     if d.get("schema") != 1:
         errs.append("schema != 1")
     data = d.get("data") or {}
-    for k in ("nodes", "edges", "topics", "counts"):
+    for k in ("nodes", "edges", "topics", "loose_ends", "counts"):
         if k not in data:
             errs.append("missing data key: %s" % k)
+    if "loose_ends" in data and not isinstance(data.get("loose_ends"), list):
+        errs.append("data.loose_ends is not a list")
     for n in data.get("nodes", []):
         if not n.get("id"):
             errs.append("node missing id")
@@ -926,6 +1176,15 @@ def cmd_validate_export(args):
         c = e.get("confidence")
         if not isinstance(c, (int, float)) or not (0.0 <= c <= 1.0):
             errs.append("edge confidence out of range: %r" % c)
+    for o in data.get("loose_ends", []):
+        missing = [k for k in ("id", "kind", "source_node", "title", "text", "action_hint",
+                               "age_days", "severity", "resolve_cmd") if k not in o]
+        if missing:
+            errs.append("loose_end missing %s: %r" % (",".join(missing), o)); continue
+        if o.get("severity") not in ("red", "amber", "grey", "green"):
+            errs.append("loose_end severity out of range: %r" % o.get("severity"))
+        if not isinstance(o.get("age_days"), int):
+            errs.append("loose_end age_days is not an int: %r" % o.get("age_days"))
     if errs:
         for e in errs:
             print("FAIL: %s" % e)
