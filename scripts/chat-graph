@@ -543,12 +543,18 @@ def _loose_action(kind):
 
 def _loose_severity(kind, text, age_days):
     low = (text or "").lower()
-    if kind == "repo_dirty" and ("detached" in low or "unpushed" in low):
+    try:
+        age = int(age_days or 0)
+    except (TypeError, ValueError):
+        age = 0
+    if kind in ("register_open", "register_unverified") and re.search(r"\b(p0|security|secret|token)\b", low):
+        return "red"
+    if kind == "repo_dirty" and ("detached" in low or "diverged" in low or "merge conflict" in low):
         return "red"
     if kind == "nightly_finding" and re.search(r"fail|failed|failure|blocked", low):
         return "red"
-    if age_days is not None and age_days >= 21:
-        return "amber"
+    if kind == "closeout_handoff" and age >= 21:
+        return "grey"
     return "amber"
 
 def _provider_key(provider, sid):

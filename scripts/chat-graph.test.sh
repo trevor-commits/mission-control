@@ -702,7 +702,40 @@ MD
 ok 0 "$(q "SELECT COUNT(*) FROM open_ends WHERE kind='register_open' AND resolved_at IS NULL")" \
    "register_open auto-resolves after verified status"
 
-# --- 32. loose-ends: latest nightly report inserts and resolves -------------
+# --- 32. loose-ends: severity rules are computed from kind/text/age ---------
+new_env
+"$CG" ingest --collector todo_open >/dev/null
+python3 <<'PYEOF'
+import os, sqlite3, time
+db = os.path.join(os.environ["CHAT_GRAPH_HOME"], "graph.db")
+con = sqlite3.connect(db)
+now = int(time.time())
+rows = [
+    ("repo:global-implementations", "register_open", "ER-001 P0 security request still open", "sev-register", now),
+    ("CHAT-HANDOFF", "closeout_handoff", "finish the old handoff", "sev-handoff", now - 22 * 86400),
+    ("repo:repo-git", "repo_dirty", "repo-git: 2 unpushed commits", "sev-unpushed", now - 8 * 86400),
+    ("repo:repo-git", "repo_dirty", "repo-git: detached HEAD needs a decision", "sev-detached", now),
+]
+for sid, kind, text, h, first_seen in rows:
+    con.execute("INSERT INTO open_ends(session_id, kind, text, text_hash, first_seen_at) VALUES(?,?,?,?,?)",
+                (sid, kind, text, h, first_seen))
+con.commit()
+PYEOF
+EXP32="$CHAT_GRAPH_HOME/export/graph.json"
+"$CG" export --json --catchup-limit 0 >/dev/null 2>&1
+if python3 - "$EXP32" <<'PYEOF'
+import json, sys
+d = json.load(open(sys.argv[1]))
+sev = {x["text"]: x["severity"] for x in d["data"]["loose_ends"]}
+assert sev["ER-001 P0 security request still open"] == "red"
+assert sev["finish the old handoff"] == "grey"
+assert sev["repo-git: 2 unpushed commits"] == "amber"
+assert sev["repo-git: detached HEAD needs a decision"] == "red"
+PYEOF
+then pass "loose_end severity rules cover register, stale handoff, and repo_dirty cases"
+else fail "loose_end severity rules missing documented cases"; fi
+
+# --- 33. loose-ends: latest nightly report inserts and resolves -------------
 new_env
 N32="$(mktemp -d)"
 export CHAT_GRAPH_NIGHTLY_REPORT_GLOB="$N32/*.md"
@@ -721,7 +754,7 @@ touch -t 202607080200 "$N32/new.md"
 ok 0 "$(q "SELECT COUNT(*) FROM open_ends WHERE kind='nightly_finding' AND resolved_at IS NULL")" \
    "nightly_finding auto-resolves when newer report omits it"
 
-# --- 33. validate-export requires the loose_ends contract -------------------
+# --- 34. validate-export requires the loose_ends contract -------------------
 new_env
 EXP33="$CHAT_GRAPH_HOME/export/graph.json"
 "$CG" export --json --catchup-limit 0 >/dev/null 2>&1
