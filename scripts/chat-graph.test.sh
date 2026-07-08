@@ -634,6 +634,13 @@ MD
 "$CG" ingest --collector todo_open >/dev/null
 ok 1 "$(q "SELECT COUNT(*) FROM open_ends WHERE kind='todo_open' AND resolved_at IS NULL")" \
    "todo_open collector inserts unchecked repo todo item"
+HASH29="$(q "SELECT text_hash FROM open_ends WHERE kind='todo_open' AND resolved_at IS NULL LIMIT 1")"
+"$CG" resolve "repo:repo-alpha" "$HASH29" >/dev/null
+ok 0 "$(q "SELECT COUNT(*) FROM open_ends WHERE kind='todo_open' AND resolved_at IS NULL")" \
+   "manual resolve hides a source-backed todo_open item once"
+"$CG" ingest --collector todo_open >/dev/null
+ok 1 "$(q "SELECT COUNT(*) FROM open_ends WHERE kind='todo_open' AND resolved_at IS NULL")" \
+   "todo_open reappears after refresh when the source is still open"
 EXP29="$CHAT_GRAPH_HOME/export/graph.json"
 "$CG" export --json --catchup-limit 0 >/dev/null 2>&1
 if python3 - "$EXP29" <<'PYEOF'
