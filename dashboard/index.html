@@ -1706,7 +1706,7 @@ body {
     if (item.source_node && n) row.appendChild(h("span", { class: "mc-chip mc-chip-btn", onclick: function () {
       FOCUS_CHAT = item.source_node; location.hash = "#map"; rerender();
     } }, "Show chat"));
-    if (item.resolve_cmd) row.appendChild(copyable(item.resolve_cmd, "Dismiss this item"));
+    if (item.resolve_cmd) row.appendChild(copyable(item.resolve_cmd, "Hide until refresh"));
     return row;
   }
 
