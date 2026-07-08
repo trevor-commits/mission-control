@@ -190,8 +190,8 @@ for (const tab of TABS) {
     console.error('FAIL: #map is missing the recent chat journal');
     fails++; continue;
   }
-  if (tab === 'chats' && (txt.indexOf('Open work') === -1 || txt.indexOf('Dismiss this item') === -1)) {
-    console.error('FAIL: #chats is missing the Open work list or item-dismiss action');
+  if (tab === 'chats' && (txt.indexOf('Open work') === -1 || txt.indexOf('Hide until refresh') === -1)) {
+    console.error('FAIL: #chats is missing the Open work list or temporary-hide action');
     fails++; continue;
   }
   if (tab === 'usage' && txt.indexOf('Decision cards') === -1) {
