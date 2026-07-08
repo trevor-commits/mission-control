@@ -169,6 +169,54 @@ packet done unless its verify commands pass on the real machine.
 
 ---
 
+## P13 — One loose-ends ledger (the spine): every source writes into `open_ends`, nothing parallel
+
+**Why (Trevor's ask):** "I start a lot of chats and resolve a lot of issues, then move on and they stay open. I want one dedicated view of where things are, what's being worked on, what needs work, what loose ends exist." The store exists (`open_ends` table in `scripts/chat-graph`) but only catches 2 of ~6 real sources, so no single honest list exists. Do NOT build a new tool — extend this table so it's the ONE place. Anti-duplication is the whole point.
+
+**Current state (verified 2026-07-08):** `open_ends(session_id, kind, text, text_hash, resolved_at)` collects only `closeout_handoff` (a chat's "Handoff:" note with no follow-up edge) and `register_unverified` (a chat citing an unverified rule-code). Auto-resolve already works (signal disappears → `resolved_at` set). The design keystone is intact: every source must AUTO-RESOLVE when its underlying signal clears, or the ledger fills with zombies.
+
+**Changes — add collectors, each writing the SAME table with a distinct `kind` + a stable `text_hash`, each with its own auto-resolve rule:**
+1. **`todo_open`** — parse `todo.md` in each tracked repo (global-implementations + any repo the git scan sees) for unchecked `- [ ]` items under a `## Work`/`## Active`/`## Todo` heading. `session_id` for repo-scoped items = a synthetic `repo:<name>` node (add a lightweight non-chat node kind so the ledger holds repo items too — the schema already keys on a string id). Auto-resolve: item becomes `- [x]` or disappears. Cap per repo 50, skip archived/`## Completed` sections.
+2. **`nightly_finding`** — read the latest `~/.claude/nightly-review/reports/*.md`; each flagged item (the report already lists "loose ends" / failures) becomes an open end on the chat/repo it names (fall back to `repo:<name>`). Auto-resolve: absent from a newer report.
+3. **`repo_dirty`** — from `scan-unfinished-work --json`: uncommitted/unpushed/unmerged-branch per repo → one open end on `repo:<name>` with the plain action ("3 files uncommitted", "branch feat/x unpushed 12 days"). Auto-resolve: repo goes clean. (This is the same data the Git tab shows — the ledger just *also* counts it as a loose end so the daily view is complete; render reads one store.)
+4. **`register_open`** — register rows with status not `verified`/`landed` → open end on `repo:global-implementations`. Auto-resolve: status advances.
+5. **Age + owner metadata**: add `first_seen_at` (already have the pattern) + `age_days` in export; add a `severity` derived at export (repo_dirty on a repo with a remote + unpushed >7d = amber; register P0/security = red; stale chat handoff >21d = low). NO new "priority" column Trevor has to manage — severity is computed, never entered.
+6. **Export**: `chat-graph export` gains a top-level `loose_ends` array (flat, all kinds, each: id, kind, source_node, text, action_hint, age_days, severity, resolve_cmd) so the dashboard has ONE list to render — the "Open work" tab (P4) and Home triage (P5) both read `loose_ends`, not per-source feeds. This is what kills duplication: sources converge here, consumers diverge from here.
+
+**Explicit non-duplication rules (write in the code header):** collectors NEVER keep their own list file — they read their source live and reconcile into `open_ends` (insert-new + auto-resolve-gone) each ingest. The dashboard NEVER re-derives loose ends from raw sources — it reads `loose_ends` from the export. todo.md stays the human-editable source of truth for repo work; the ledger *reflects* it, never replaces it.
+
+**Acceptance:** on real data, `chat-graph export | python3 -c "…print len(loose_ends), Counter(kind)"` shows all five kinds populated; checking off a `todo.md` item then re-ingesting drops its `todo_open` row to resolved; a repo going clean resolves its `repo_dirty` rows. Tests (fixtures, env-overridden roots): each collector inserts on signal-present + resolves on signal-gone; repo:<name> synthetic node round-trips; export `loose_ends` shape.
+**Verify:** `bash scripts/chat-graph.test.sh` + live `chat-graph ingest && chat-graph export | jq '.loose_ends | group_by(.kind) | map({(.[0].kind): length})'`.
+**Recommended model:** Codex gpt-5.5 high (data plumbing + careful auto-resolve logic; the auto-resolve rules are the correctness-critical part).
+
+## P14 — End-of-day loose-ends robot: propose, auto-fix the safe class, escalate the rest
+
+**Why (Trevor's ask):** "The ultimate goal is these taken care of automatically — I start them in motion, then they resolve. Maybe an end-of-day automation that looks for loose ends and autonomously fixes everything we started but didn't finish." Boundaries he's set: auto-fix safe stuff, alert loudly for real decisions, never merge/push active work, never destructive. Build this AFTER P13 (it acts on the one ledger) and lean on the autonomy queue from P12.
+
+**Design — a nightly job `scripts/loose-end-runner` (own launchd, ~end of day), three tiers per loose end, decided by `kind` + `severity`, NOT by a model guessing:**
+1. **Auto-fix (safe, reversible, mechanically checkable) — do it, log it, no ask:**
+   - `repo_dirty` "unpushed" on a repo with a remote AND branch is NOT the currently-checked-out active branch AND no uncommitted changes → `git push` (the commit was a human's; pushing it isn't). NEVER push a branch with uncommitted work or the branch you're sitting on.
+   - `todo_open` items already satisfied (the thing is done but the box wasn't checked) — DETECT ONLY, propose the check-off; do not edit `todo.md` autonomously in phase 1 (editing someone's todo list is too personal to auto-do first cut).
+   - stale resolved-signal zombies → run the auto-resolve pass (already safe).
+   - Each auto-fix is one reversible git/file op, captured in a run log with the exact command + before/after, so any single action can be undone.
+2. **Delegate (bounded, has a clear finish + a test) — spawn a worker via the existing audit loop, land on an isolated branch, NEVER merge/push, leave it for Trevor:**
+   - a chat's `closeout_handoff` that names a concrete next step in a repo → spawn a cheap worker (`delegate-audit-loop.sh`, GLM/Codex-spark tier) scoped to that repo with the handoff text as the task; governor verifies; result sits on `improve/looseend-<id>` for review. This is "start it in motion → it gets worked" without crossing the merge line.
+   - Cap: N per night (start N=2), quota-preflight first, skip if the repo has uncommitted work (don't stack changes on a dirty tree).
+3. **Escalate (needs a human decision) — one loud, deduped alert + a pinned dashboard row, never touched automatically:**
+   - `register_open` P0/security, `repo_dirty` "diverged" (rebase/merge choice is a judgment call), unmerged branch >N days (keep or kill), anything the auto/delegate tiers refused. Route through P12's decision queue + one Telegram message per new item per 24h.
+
+**Boundaries (hard, in the code header — these are the "never overstep" guarantees):** never merge, never push an active/uncommitted branch, never force-push, never delete a branch/worktree/file, never edit `todo.md` or any human doc in phase 1, never act on a chat that was active in the last 6 hours (it's live work — leave it alone). Everything the robot does is either reversible-and-logged or proposal-only. A `~/.mission-control/loose-end-runner/DISABLE` file hard-stops it.
+
+**Report:** end-of-day summary (reuse the nightly-review/Telegram path, don't build a new channel): "Tonight: pushed 3 finished branches · started 2 handoffs (on branches for your review) · 4 need your call → dashboard." Dashboard Home shows the same summary + the pinned decisions.
+
+**Acceptance:** dry-run mode (`--dry-run`, default first) prints the planned action per loose end with its tier and reason, touching nothing; the push tier refuses a dirty/active/remote-less branch (tested); delegate tier respects the per-night cap + quota preflight + dirty-tree skip (tested with stubs); escalate tier produces exactly one alert per new item (dedupe file, tested). Live proof: one real dry-run over the actual ledger showing correct tiering, reviewed before `--dry-run` comes off.
+**Verify:** `bash scripts/loose-end-runner.test.sh` + `scripts/loose-end-runner --dry-run` reviewed on real data.
+**Recommended model:** Opus 4.8 high (boundary logic + delegation orchestration — highest blast radius in the whole plan; the auto-fix guards are the part to over-test).
+
+**Sequencing:** P13 → P14, and P14 builds on P12's decision queue. So the loose-ends spine slots into the plan as: P13 with wave 1 (data truth), then P14 last (after P12), because the robot should only ever act on a ledger that's already complete and a queue that already surfaces decisions.
+
+---
+
 ## Suggested assignment + order
 
 | Order | Packets | Model | Why |
