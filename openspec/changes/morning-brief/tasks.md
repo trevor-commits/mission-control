@@ -68,7 +68,7 @@
 - [x] 11.2 Install into an isolated then canonical local runtime, collect feeds, capture Home/Automation/Brief browser proof, and verify rollback (final installed code from `main` at `2432d6e`; LaunchAgent manifests unchanged).
 - [ ] 11.3 Complete one authorized manual delivery receipt and a safe deadman failure-path proof without exposing secrets.
 - [x] 11.4 Run independent post-implementation Codex audits against the actual diff/evidence, implement findings, and iterate until review-clean or explicit deferred risk (`records/morning-brief-independent-codex-audit.md`; Tier 2 iteration ledger `records/morning-brief-tier2-codex-audit.md`).
-- [x] 11.5 Commit and push every owning repo change with final dirty-state and multi-repo landing evidence (Mission Control `cf6b536` and global ER-107 `4a3e425` on `origin/main`; topic branch/worktree removed after merge).
+- [x] 11.5 Commit and push every owning repo change with final dirty-state and multi-repo landing evidence (original Mission Control convergence through `cf6b536`; bounded Tier 2 implementation `df991b4`; Tier 2 audit records `ef281a5`; global ER-107 `4a3e425`; all pushed on `origin/main`, with the prior topic branch/worktree removed after merge).
 
 ## 12. Elapsed live proof and convergence
 

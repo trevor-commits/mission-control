@@ -52,7 +52,7 @@ Preserve a durable completion trail for verified work instead of deleting it fro
 - Fix: added isolated high-value Tier 2 extraction with fixed Haiku/Sonnet routes, exact response schema, canonical code-only cache, strict production/sample/test config parity, hard caps, OAuth defer, private health/attempt state, Tier 1 fail-open, deterministic title/repo/lineage rendering, session-specific late updates, and a separate inferred/non-actionable follow-up lifecycle that preserves human dispositions and rolls back per session.
 - Self-audit:
   - method: full cold Mission Control matrix, Python/shell/JSON/plist/static checks, strict OpenSpec, HOTL lint, synthetic provider-shaped privacy/config/concurrency counterexamples, and iterative independent Codex/challenger re-audits.
-  - outcome: review-clean with no current P0–P3 findings; implementation commit `df991b4` is pushed to `origin/main`; dashboard `PASS=30 FAIL=0`, runner `PASS=32 FAIL=0`, and all seven tabs render.
+  - outcome: review-clean with no current P0–P3 findings; implementation `df991b4` and audit records `ef281a5` are pushed to `origin/main`; dashboard `PASS=30 FAIL=0`, runner `PASS=32 FAIL=0`, all seven tabs render, code-only install preserved every LaunchAgent hash, and the installed disabled extractor path made zero calls.
   - did not verify: real provider egress, observed token/latency calibration, Telegram receipt/deadman, LaunchAgent activation, or five natural mornings.
 - by: Codex thread `019f4963-1e75-7600-8a17-1e6f6f8e8ca6` with independent reviewers `/root/outcome_audit` and `/root/outcome_audit/tier2_challenger`.
 - triggered by: Trevor's request to thoroughly audit Fable, implement what survived audit, self-audit, and iterate with another Codex session until complete.

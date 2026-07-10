@@ -64,6 +64,7 @@ Accepted across the audit iterations. Current Tier 1 is persisted before any mod
 - `DO_NOT_TRACK=1 openspec validate morning-brief --strict` — valid.
 - HOTL document lint — pass.
 - Final reviewer verdict — `review-clean`; no current P0–P3 finding remained after the exact current-tree replay.
+- Landing/integration — implementation `df991b4` and audit records `ef281a5` are pushed on `origin/main`; the code-only installer preserved the complete LaunchAgent hash inventory and the installed disabled extractor path made zero model calls.
 
 No real provider sample, transcript egress, Telegram send, LaunchAgent install/bootstrap, or scheduled activation occurred during this audit.
 
