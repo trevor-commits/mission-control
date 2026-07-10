@@ -40,6 +40,8 @@ Focused final verdicts were review-clean for outcomes/coverage, decisions/dashbo
 
 The final holistic reviewer found one P2 durable-state contradiction: a generated HOTL run had been initialized but never used, so its tracked sidecar/report still represented every step as pending while the canonical workflow recorded manual progress. The finding was accepted. The HOTL runtime now marks that generated run blocked and superseded, without inventing per-step execution evidence; the workflow, OpenSpec tasks, `verify.md`, and `records/morning-brief-independent-codex-audit.md` are the implementation record.
 
+The post-merge installed-browser pass found two more scoped issues: substring redaction could leave a complete Anthropic token suffix after removing only its prefix, and a stale next-run timestamp could override awaiting-activation state. Commit `2432d6e` fixed both with adversarial render fixtures that retain the dangerous suffix and contradictory year-2099 timestamp. The same independent Codex reviewer returned review-clean after both fixes.
+
 ## Live evidence
 
 - Zero-call coverage found current provider-native sessions without invoking a model.
@@ -49,9 +51,9 @@ The final holistic reviewer found one P2 durable-state contradiction: a generate
   - `/tmp/morning-brief-runner-live-output.json`
   - `/tmp/morning-brief-runner-live-dry-run.jsonl`
   - `/tmp/morning-brief-runner-live-after.json`
-- Code-only installed runtime backup: `/private/tmp/mission-control-before-morning-brief-20260709-214023`
-- LaunchAgent hashes were identical before and after installation; no new job or Telegram schedule was installed.
-- Installed browser artifacts are under `tmp/playwright/`; Home, Brief, and Automation rendered nonblank. The first Home/Brief captures exposed the split-decision defect, and the corrected captures proved one coherent pinned decision.
+- Code-only installed runtime backup: `/private/tmp/mission-control-before-morning-brief-20260709-214023`; the pre-canonical implemented runtime is preserved at `/private/tmp/mission-control-implemented-pre-canonical-20260710T053440Z`.
+- The original backup was restored without a diff and canonical Mission Control `main` at `2432d6e` was reinstalled. LaunchAgent hashes were identical before and after; no new job or Telegram schedule was installed.
+- Final installed browser artifacts are `tmp/playwright/morning-brief-final-{home,brief,automation}.png`. Home, Brief, and Automation rendered nonblank; one coherent pinned decision remains, token-family source prose is absent, and both gated jobs explicitly say `awaiting activation`.
 
 ## Deliberately not done
 

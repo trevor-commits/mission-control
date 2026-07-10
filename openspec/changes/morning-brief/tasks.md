@@ -65,7 +65,7 @@
 ## 11. Integrated verification and audit
 
 - [x] 11.1 Run every existing and new suite, syntax/static/privacy checks, OpenSpec validation, and mutation/negative controls.
-- [ ] 11.2 Install into an isolated then canonical local runtime, collect feeds, capture Home/Automation/Brief browser proof, and verify rollback.
+- [x] 11.2 Install into an isolated then canonical local runtime, collect feeds, capture Home/Automation/Brief browser proof, and verify rollback (final installed code from `main` at `2432d6e`; LaunchAgent manifests unchanged).
 - [ ] 11.3 Complete one authorized manual delivery receipt and a safe deadman failure-path proof without exposing secrets.
 - [x] 11.4 Run an independent post-implementation Codex audit against the actual diff/evidence, implement findings, and iterate until review-clean or explicit deferred risk (`records/morning-brief-independent-codex-audit.md`; stale generated HOTL state corrected through the supported runtime).
 - [ ] 11.5 Commit and push every owning repo change with final dirty-state and multi-repo landing evidence.

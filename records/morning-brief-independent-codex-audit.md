@@ -3,7 +3,7 @@
 Date: 2026-07-09
 Audit scope: commits `2f3d38a`, `0523925`, `2da8c9b`; OpenSpec/HOTL contracts; cold verification; installed/browser proof; and the live 56-repository runner dry-run
 Reviewer: separate Codex agent `/root/decision_audit`
-Final state: material implementation review-clean after one P2 durable-state finding was corrected; external and elapsed gates remain open
+Final state: implementation review-clean after the durable-state finding and two final installed-UI/privacy findings were corrected; external and elapsed gates remain open
 
 ## Audited Chat
 
@@ -21,6 +21,16 @@ The tracked `.hotl` sidecar/report said the run was active at step 1 with every 
 
 Disposition: accepted and fixed. The generated run had only been initialized; its runtime transitions were never used while execution proceeded through the canonical workflow/OpenSpec records. The HOTL runtime's supported `step 1 block` transition now marks that generated run as superseded and explicitly points readers to the workflow checkboxes, OpenSpec tasks, `verify.md`, and this audit. No pending sidecar row is represented as execution evidence.
 
+### P1 — short-prefix redaction left a full token suffix visible
+
+The first display regex matched the documented Anthropic prefix before the generic full-token alternative, so substring replacement could leave a complete synthetic credential body visible. The fix consumes the whole optional suffix. The render smoke now injects both prefix-only documentation and a complete token with a unique suffix and proves neither survives.
+
+### P2 — awaiting activation could lose precedence to stale schedule data
+
+The first clarity patch checked `next_run_epoch` before activation state, allowing an uninstalled job with stale precomputed data to claim a concrete next run. The fix checks activation first. The smoke retains a contradictory year-2099 timestamp and proves only `Next run: available after activation` renders.
+
+Both fixes landed in `2432d6e`; the independent scoped recheck returned review-clean.
+
 ## Code verdict
 
 Review-clean for the implemented deterministic/Tier 1 slice:
@@ -37,7 +47,7 @@ Review-clean for the implemented deterministic/Tier 1 slice:
 - Runner suite: `PASS=32 FAIL=0`.
 - Strict OpenSpec validation and HOTL document lint passed.
 - All 23 real fleet candidates were correctly refused; every action argv was null and automatic push stayed disabled.
-- Code-only installation preserved all 38 LaunchAgent hash entries and recorded the private rollback backup.
+- Code-only rollback/reinstall preserved the complete LaunchAgent hash manifest; the final live inventory contained 55 unchanged entries and recorded both the original and implemented-runtime backups.
 - Home, Brief, and Automation browser captures were nonblank and consistent with the activation gates.
 
 ## Residual gates, not defects

@@ -355,10 +355,10 @@ gate: auto
 action: Run every existing/new suite, Python compile, bash syntax, JSON validation, privacy scan, diff check, OpenSpec strict validation, and relevant global/third-party validators.
 loop: until all task-caused failures are fixed
 max_iterations: 3
-verify: bash scripts/chat-graph.test.sh && bash scripts/automation-status.test.sh && REPO_ROOT="$PWD" bash scripts/dashboard.test.sh --require-shell && node scripts/dashboard-render-smoke.js . && bash scripts/usage-snapshot.test.sh && bash scripts/scan-unfinished-work --self-test && bash scripts/mission-control-common.test.sh && bash scripts/morning-brief.test.sh && bash scripts/morning-brief-deadman.test.sh && bash scripts/outcome-coverage.test.sh && bash scripts/outcome-extractor.test.sh && bash scripts/decision-alert.test.sh && bash scripts/loose-end-runner.test.sh && DO_NOT_TRACK=1 openspec validate morning-brief --strict && git diff --check
+verify: bash scripts/chat-graph.test.sh && bash scripts/automation-status.test.sh && REPO_ROOT="$PWD" bash scripts/dashboard.test.sh --require-shell && node scripts/dashboard-render-smoke.js . && bash scripts/usage-snapshot.test.sh && bash scripts/scan-unfinished-work --self-test && bash scripts/mission-control-common.test.sh && bash scripts/morning-brief.test.sh && bash scripts/morning-brief-deadman.test.sh && bash scripts/outcome-coverage.test.sh && bash scripts/decision-alert.test.sh && bash scripts/loose-end-runner.test.sh && DO_NOT_TRACK=1 openspec validate morning-brief --strict && git diff --check
 gate: auto
 
-- [ ] **Step 49: Capture installed runtime and browser evidence**
+- [x] **Step 49: Capture installed runtime and browser evidence**
 action: Install the reviewed bundle, collect live feeds, run scrubbed-environment entrypoints, capture Home/Automation/Brief views, and document rollback.
 loop: until installed and browser evidence are nonblank and current
 max_iterations: 3
@@ -390,7 +390,7 @@ verify: rg -n 'review-clean|Residual risk' records/morning-brief-independent-cod
 gate: auto
 
 - [x] **Step 53: Refresh durable records and implemented state**
-action: Update Mission Control Work/Test/Audit records, IMPROVEMENTS statuses, PROJECT_MEMORY, OpenSpec verify/retrospective, ER-107 lifecycle as implemented-pending-proof, branch ledger, and notification consolidation work item.
+action: Update Mission Control Work/Test/Audit records, OpenSpec verify/retrospective, the global ER-107 lifecycle, branch ledger, and notification consolidation work item.
 loop: until project/global validators pass
 max_iterations: 3
 verify: DO_NOT_TRACK=1 openspec validate morning-brief --strict && bash '/Users/gillettes/Coding Projects/global-implementations/scripts/verify.sh'

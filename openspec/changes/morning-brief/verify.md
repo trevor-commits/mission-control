@@ -52,15 +52,17 @@ There is intentionally no `outcome-extractor.test.sh`: the model-backed Tier 2 e
 - The zero-call live parser migration produced parser-v5 cards without model calls and retained prior observation history.
 - The live installed queue contains one coherent pinned decision rather than the fragmented fenced-procedure representation found during browser review.
 - The real loose-end dry-run inspected 56 repositories and emitted 23 correctly refused records in `/tmp/morning-brief-runner-live-dry-run.jsonl`; automatic push remains unavailable.
-- Code-only installation preserved LaunchAgent hashes and created a rollback backup at `/private/tmp/mission-control-before-morning-brief-20260709-214023`.
-- Browser proof under `tmp/playwright/` rendered Home, Brief, and Automation. Morning Brief and deadman appear as awaiting activation; the existing unrelated Morning Health attention state remains visible rather than being hidden.
+- Code-only installation created a rollback backup at `/private/tmp/mission-control-before-morning-brief-20260709-214023`. The backup was restored byte-for-byte, the implemented runtime was preserved at `/private/tmp/mission-control-implemented-pre-canonical-20260710T053440Z`, and canonical `main` was reinstalled from commit `2432d6e`.
+- LaunchAgent manifests were identical across rollback and both canonical installs; the final inventory contained 55 unchanged plist hashes. No Morning Brief job or Telegram schedule was installed.
+- Final browser proof under `tmp/playwright/morning-brief-final-{home,brief,automation}.png` rendered Home, Brief, and Automation. Morning Brief and deadman explicitly say `awaiting activation` and have no run command; the existing unrelated Morning Health attention state remains visible rather than being hidden.
+- A final installed-browser pass exposed a token-family prefix in source prose and ambiguous activation scheduling. Commit `2432d6e` now consumes the entire optional token suffix at both shared and display boundaries, makes activation state override stale next-run timestamps, and carries adversarial render regressions; independent recheck returned review-clean.
 
 ## Self-audit and ripple check
 
-- Privacy: no raw transcript or secret-bearing model egress was enabled. Synthetic fixtures cover narrative, action, errors, temporary data, sidecars, and notification chunks.
+- Privacy: no raw transcript or secret-bearing model egress was enabled. Synthetic fixtures cover narrative, action, errors, temporary data, sidecars, notification chunks, prefix-only token documentation, and complete synthetic token suffixes.
 - State changes: graph migrations are additive; outcome observations are immutable; decisions use WAL transactions; delivery receipts and cursors use locks and atomic replacement.
 - Scope: automatic push, model-backed Tier 2 extraction, live Telegram delivery, and scheduled activation remain outside this implementation closeout.
-- Human surface: browser inspection found and drove fixes for split decision text, inline section-boundary leakage, and activation-gated jobs falsely appearing failed.
+- Human surface: browser inspection found and drove fixes for split decision text, inline section-boundary leakage, activation-gated jobs falsely appearing failed or scheduled, and token-family prefixes leaking from source prose.
 - Rollback: restore the private runtime backup, reinstall the prior code, and preserve graph/decision archives rather than deleting state.
 - Coherence: the same outcome/decision feeds drive the dashboard and brief; no parallel tracker was introduced.
 

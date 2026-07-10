@@ -16,6 +16,7 @@ The implementation therefore shipped a deterministic, zero-call spine first. Tha
 - Installing code without installing LaunchAgents allowed realistic browser proof without authorizing delivery or schedules.
 - The real fleet dry-run demonstrated the runner's conservative boundary on actual messy repositories, not only fixtures.
 - Browser verification materially improved response clarity by catching fragmented operator procedures and misleading activation status that source tests alone had not exposed.
+- Reinstalling from canonical `main` after a real rollback proved the shipped runtime path and prevented worktree-only success from being mistaken for final installation.
 
 ## What needed correction
 
@@ -24,6 +25,7 @@ The implementation therefore shipped a deterministic, zero-call spine first. Tha
 - Decision trust needed a closed structured-origin registry and graph-backed resolution rather than caller assertions.
 - Git facts needed to fail closed on empty, malformed, and wrong-path worktree output, and human output needed the same privacy discipline as JSON logs.
 - An uninstalled scheduled job is not a failed job; the dashboard now distinguishes awaiting activation from runtime failure.
+- Prefix-only credential documentation still carries sensitive identity. The final UI review caught both partial token redaction and a stale next-run precedence bug; adversarial render fixtures now retain the dangerous suffix/timestamp so regressions cannot normalize the cases away.
 
 ## Durable lessons
 
