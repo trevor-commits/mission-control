@@ -36,6 +36,12 @@ for field in (NARRATIVE, ACTION, IDENTIFIER, ERROR, MODEL_INPUT, NOTIFICATION):
     out = safe("keep sk-abcdefghijklmnopqrstuvwxyz123456 end", field)
     assert out.dropped and out.value == "«REDACTED-SECRET»", (field, out)
 
+# Redact provider token-family prefixes even when documentation intentionally
+# omits the secret body. Those prefixes should not appear in briefs or alerts.
+for field in (NARRATIVE, ACTION, IDENTIFIER, ERROR, MODEL_INPUT, NOTIFICATION):
+    out = safe("setup token starts with sk-ant-oat01-", field)
+    assert out.dropped and out.value == "«REDACTED-SECRET»", (field, out)
+
 assert safe("email trevor@example.com", NARRATIVE).dropped
 assert safe("call +1 (415) 555-0199", ACTION).dropped
 assert safe("contains private-customer-x", NARRATIVE,
@@ -81,7 +87,7 @@ chunks = sanitize_chunks([
 assert chunks == ["safe first chunk"], chunks
 
 snapshot = counters.snapshot()
-assert snapshot["dropped_fields"] >= 9, snapshot
+assert snapshot["dropped_fields"] >= 15, snapshot
 assert snapshot["tool_outputs_skipped"] == 2, snapshot
 assert snapshot["path_redactions"] >= 2, snapshot
 

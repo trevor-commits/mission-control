@@ -59,6 +59,10 @@ const documentShim = {
   hidden: false, body: makeEl('body'),
 };
 const locationShim = { hash: '', reload() {}, href: 'file:///mc' };
+const ACTIVATION_EPOCH = Date.UTC(2099, 11, 31, 23, 59, 0) / 1000;
+const ACTIVATION_STALE_LABEL = new Date(ACTIVATION_EPOCH * 1000).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' });
+const TOKEN_PREFIX_ONLY = 'sk-ant-oat01-';
+const TOKEN_SECRET_SUFFIX = 'uniqueSyntheticBody987654321';
 
 // --- fixtures as window.MC.feeds -------------------------------------------
 const FIX = path.join(REPO, 'dashboard', 'fixtures');
@@ -74,6 +78,16 @@ if (feeds.chats && feeds.chats.data && feeds.chats.data.counts) {
 if (feeds.automation && feeds.automation.data && Array.isArray(feeds.automation.data.jobs)) {
   feeds.automation.data.jobs.forEach(j => {
     if (j.label === 'Usage Snapshot') j.state = 'yellow';
+    else if (j.label === 'Morning Brief') {
+      j.state = 'awaiting-activation';
+      j.loaded = false;
+      j.run_cmd = null;
+      // A stale precomputed timestamp must never override activation state.
+      j.next_run_epoch = ACTIVATION_EPOCH;
+      // Exercise display-time substring redaction for both documentation-only
+      // prefixes and full tokens; neither prefix nor suffix may survive.
+      j.err_log_tail = 'docs ' + TOKEN_PREFIX_ONLY + ' full ' + TOKEN_PREFIX_ONLY + TOKEN_SECRET_SUFFIX;
+    }
     else if (j.state === 'red' || j.state === 'degraded') j.state = 'green';
   });
 }
@@ -219,8 +233,13 @@ for (const tab of TABS) {
   }
   if (tab === 'automation' &&
       (txt.indexOf('Next run:') === -1 || txt.indexOf('Run history:') === -1 ||
-       txt.indexOf('failure streak 2') === -1 || txt.indexOf('Run now') === -1)) {
-    console.error('FAIL: #automation is missing next-run, distinct history, streak, or Run now fields');
+       txt.indexOf('failure streak 2') === -1 || txt.indexOf('Run now') === -1 ||
+       txt.indexOf('Status: awaiting activation') === -1 ||
+       txt.indexOf('Next run: available after activation') === -1 ||
+       txt.indexOf(ACTIVATION_STALE_LABEL) !== -1 ||
+       txt.indexOf(TOKEN_PREFIX_ONLY) !== -1 || txt.indexOf(TOKEN_SECRET_SUFFIX) !== -1 ||
+       txt.indexOf('«REDACTED-SECRET»') === -1)) {
+    console.error('FAIL: #automation is missing next-run, distinct history, streak, Run now, or activation fields');
     fails++; continue;
   }
   if (tab === 'brief' &&

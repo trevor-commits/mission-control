@@ -33,7 +33,8 @@ SENSITIVE_PLACEHOLDER = "«REDACTED-SENSITIVE-FIELD»"
 PATH_PLACEHOLDER = "«REDACTED-PATH»"
 
 _SECRET_RE = re.compile(
-    r"(sk-[A-Za-z0-9_-]{20,}"
+    r"(sk-ant-(?:api|oat)\d{2}-[A-Za-z0-9_-]*"
+    r"|sk-[A-Za-z0-9_-]{20,}"
     r"|AIza[0-9A-Za-z_-]{35}"
     r"|ya29\.[0-9A-Za-z._-]+"
     r"|ghp_[A-Za-z0-9]{20,}|gho_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}"

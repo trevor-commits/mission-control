@@ -460,7 +460,8 @@ body {
   // transcript-derived text (titles, open-end text, err-log tails) is untrusted;
   // strip secrets before display even though textContent already blocks injection.
   var SECRET_RE = new RegExp(
-    "(sk-[A-Za-z0-9_-]{20,}" +
+    "(sk-ant-(?:api|oat)\\d{2}-[A-Za-z0-9_-]*" +
+    "|sk-[A-Za-z0-9_-]{20,}" +
     "|AIza[0-9A-Za-z_-]{35}" +
     "|ya29\\.[0-9A-Za-z._-]+" +
     "|ghp_[A-Za-z0-9]{20,}|gho_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}" +
@@ -2021,9 +2022,15 @@ body {
         h("span", { class: "mc-svc-name mc-ellipsis", title: jb.name || "" }, jb.label || jb.name || "?"),
         h("span", { class: "mc-provider" }, jb.kind ? "schedule: " + jb.kind : ""));
       card.appendChild(head);
+      if (jb.state === "awaiting-activation") {
+        card.appendChild(h("div", { class: "mc-card-secondary" },
+          "Status: awaiting activation — this job is not installed or scheduled yet"));
+      }
       var age = jb.evidence_age_s != null ? fmtAgeS(jb.evidence_age_s) : "never ran";
       card.appendChild(h("div", { class: "mc-card-secondary mc-num" }, "last evidence " + age + " · " + (jb.schedule || "")));
-      if (jb.next_run_epoch != null) {
+      if (jb.state === "awaiting-activation") {
+        card.appendChild(h("div", { class: "mc-card-secondary" }, "Next run: available after activation"));
+      } else if (jb.next_run_epoch != null) {
         var nextLabel;
         try { nextLabel = new Date((+jb.next_run_epoch) * 1000).toLocaleString([], { dateStyle: "short", timeStyle: "short" }); }
         catch (e) { nextLabel = jb.next_run_estimate || String(jb.next_run_epoch); }
