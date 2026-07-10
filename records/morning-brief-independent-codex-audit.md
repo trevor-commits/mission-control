@@ -59,3 +59,11 @@ Review-clean for the implemented deterministic/Tier 1 slice:
 - The first screens still contain long/historical items; tune ranking from natural-morning evidence without weakening trust invariants.
 
 These gates permit merging the scoped zero-call/Tier 1 implementation but prevent claiming the overall Morning Brief/OpenSpec program verified or archived.
+
+## Tier 2 addendum — bounded outcome classification
+
+The later code-only Tier 2 slice was audited separately by `/root/outcome_audit` and its challenger against Fable's exact plan, the actual diff, synthetic provider-shaped inputs, and operator-facing output. The final verdict was `review-clean`, with no current P0–P3 finding. The full iteration ledger is `records/morning-brief-tier2-codex-audit.md`.
+
+The audit rejected a literal free-form “rewrite soup into prose” implementation because deterministic filters could not reliably prevent invented commands, identifiers, repositories, and authoritative-looking claims. The corrected design lets the model select only closed outcome codes; deterministic code validates the exact schema, stores a code-only cache, supplies title/repo/commit context, and uses allowlisted graph edges to say which chat an audit reviewed. Model-only follow-ups remain visibly inferred, non-actionable, separately rendered, and reversibly suppressed when Tier 2 rolls back.
+
+Code-only Tier 2 is implemented and covered without live egress. The remaining provider sample/calibration, Telegram/deadman receipt, LaunchAgent activation, five-morning comprehension proof, and consolidation decision are still external or elapsed gates; this addendum does not mark the overall program verified or archived.
