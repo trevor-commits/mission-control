@@ -435,6 +435,7 @@ def classify(entry, by_label, parse_ok, now=None):
         "next_run_epoch": None,
         "next_run_estimate": None,
         "run_cmd": None,
+        "activation_required": bool(entry.get("activation_required")),
         "_run_mtime_ns": None,
         "_err_mtime_ns": None,
     }
@@ -466,6 +467,11 @@ def classify(entry, by_label, parse_ok, now=None):
 
     if not parse_ok:
         result["state"] = "degraded"
+        return result
+
+    if entry.get("activation_required") and not result["loaded"]:
+        result["state"] = "awaiting-activation"
+        result["run_cmd"] = None
         return result
 
     details = evidence_details(entry.get("evidence"), now)
@@ -565,6 +571,7 @@ def _iso(epoch):
 _GLYPH = {
     "green": "✓", "yellow": "!", "red": "✕",
     "offline-media": "○", "retired": "·", "degraded": "?",
+    "awaiting-activation": "○",
 }
 
 

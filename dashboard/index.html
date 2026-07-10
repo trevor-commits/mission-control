@@ -11,11 +11,13 @@
 <script src="data/git.js"></script>
 <script src="data/chats.js"></script>
 <script src="data/automation.js"></script>
+<script src="data/decisions.js"></script>
 <script src="data/brief.js"></script>
 <script src="data/usage.error.js"></script>
 <script src="data/git.error.js"></script>
 <script src="data/chats.error.js"></script>
 <script src="data/automation.error.js"></script>
+<script src="data/decisions.error.js"></script>
 <script src="data/brief.error.js"></script>
 <!-- vendored graph engine (local, offline, no CDN) for the connection Map -->
 <script src="vendor/cytoscape.min.js"></script>
@@ -505,11 +507,13 @@ body {
 
   // --- state glyphs (never color alone) --------------------------------------
   var GLYPH = { green: "✓", amber: "!", yellow: "!", red: "✕", blue: "○",
-                grey: "○", never: "○", retired: "⏸", "offline-media": "◐", degraded: "◍" };
+                grey: "○", never: "○", retired: "⏸", "offline-media": "◐", degraded: "◍",
+                "awaiting-activation": "○" };
   var STATE_CLASS = { green: "mc-state-green", amber: "mc-state-amber", yellow: "mc-state-amber",
                       red: "mc-state-red", blue: "mc-state-blue", grey: "mc-state-grey",
                       never: "mc-state-grey", retired: "mc-state-grey",
-                      "offline-media": "mc-state-blue", degraded: "mc-state-amber" };
+                      "offline-media": "mc-state-blue", degraded: "mc-state-amber",
+                      "awaiting-activation": "mc-state-grey" };
   function glyphSpan(state) {
     return h("span", { class: "mc-glyph " + (STATE_CLASS[state] || "mc-state-grey"),
                        title: state }, GLYPH[state] || "○");
@@ -593,7 +597,8 @@ body {
   // --- plain-words helpers ---------------------------------------------------
   function humanJobState(s) {
     return { red: "stopped or failing", degraded: "running rough", yellow: "running late",
-             "offline-media": "waiting on the external drive" }[s] || s;
+             "offline-media": "waiting on the external drive",
+             "awaiting-activation": "awaiting activation" }[s] || s;
   }
   function providerLabel(p) {
     return { claude: "Claude", codex: "Codex", cursor: "Cursor", copilot: "Copilot",
@@ -738,6 +743,7 @@ body {
       git: "scan-unfinished-work + watcher notes",
       usage: "usage snapshot + local adapters",
       automation: "automation-status + launchctl evidence",
+      decisions: "transactional decision queue",
       brief: "deterministic Morning Brief sidecar"
     }[name] || "local feed";
   }
@@ -747,6 +753,7 @@ body {
     if (name === "map" || name === "chats") return providerStateHealth(g.data);
     if (name === "git") return "local scan";
     if (name === "automation") return "local launchd evidence";
+    if (name === "decisions") return "structured Tier-1 evidence only";
     if (name === "brief") return "deterministic local facts";
     return "mixed by feed";
   }
@@ -778,6 +785,9 @@ body {
       if (repos.some(function (r) { return gitAction(r).state === "red"; })) return "attention";
       if (repos.some(function (r) { return gitAction(r).state === "amber"; })) return "warning";
       return "fresh";
+    }
+    if (name === "decisions") {
+      return ((g.data && g.data.pinned) || []).length ? "attention" : "fresh";
     }
     if (name === "brief") {
       if ((g.data && g.data.stale_required_inputs || []).length) return "attention — stale inputs";
@@ -1153,6 +1163,30 @@ body {
     p.body.appendChild(list);
     p.body.appendChild(h("a", { class: "mc-jump", href: "#brief" }, "Read the full brief →"));
   }
+  function renderPinnedDecisions(main) {
+    var g = guard("decisions");
+    if (!g.ok || !g.data) return;
+    var pinned = Array.isArray(g.data.pinned) ? g.data.pinned : [];
+    if (!pinned.length) return;
+    var section = h("section", { class: "mc-attention" });
+    section.appendChild(h("div", { class: "mc-section-head" },
+      h("h2", { text: "Decisions waiting for you" }), ageSpan(g.epoch)));
+    appendPanelProvenance(section, "decisions", g,
+      pinned.length + " confirmed open decision(s)");
+    pinned.slice(0, 7).forEach(function (decision) {
+      var id = decision.id || "";
+      var row = h("div", { class: "mc-row" }, glyphSpan("red"),
+        h("div", { class: "mc-row-body" },
+          h("div", { class: "mc-row-problem" }, decision.text || "Decision needs review"),
+          h("div", { class: "mc-row-meta" }, "Confirmed · " +
+            (decision.provenance || decision.source_kind || "structured source"))));
+      if (id) row.appendChild(copyable("dashboard decide dismiss " + id, "Copy dismiss command"));
+      section.appendChild(row);
+    });
+    if (pinned.length > 7) section.appendChild(h("div", { class: "mc-card-foot" },
+      "+" + (pinned.length - 7) + " more confirmed decision(s)"));
+    main.appendChild(section);
+  }
   function renderHome(main) {
     var home = combinedHomeState();
     var homeHead = h("div", { class: "mc-section-head" }, h("h2", { text: "Home" }));
@@ -1160,6 +1194,7 @@ body {
     main.appendChild(homeHead);
     appendPanelProvenance(main, "home", { ok: true, epoch: home.epoch }, home.status);
     renderMorningBriefSummary(main);
+    renderPinnedDecisions(main);
     // needs-attention (merged, max 7, stable-sorted)
     var exc = harvestExceptions();
     var attn = h("section", { class: "mc-attention" });
@@ -1202,7 +1237,7 @@ body {
   }
 
   function combinedHomeState() {
-    var names = ["chats", "git", "usage", "automation", "brief"];
+    var names = ["chats", "git", "usage", "automation", "decisions", "brief"];
     var epochs = [];
     var status = "fresh";
     names.forEach(function (name) {

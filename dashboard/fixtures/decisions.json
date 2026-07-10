@@ -1,0 +1,46 @@
+{
+  "cadence_s": 300,
+  "data": {
+    "counts": {
+      "dismissed": 0,
+      "inferred": 1,
+      "open": 1,
+      "resolved": 0,
+      "structured_open": 1
+    },
+    "inferred": [
+      {
+        "id": "decision:222222222222222222222222",
+        "provenance": "tier2",
+        "source_kind": "model",
+        "state": "open",
+        "text": "Possible follow-up for later review",
+        "trust": "inferred"
+      }
+    ],
+    "pinned": [
+      {
+        "action_argv": null,
+        "id": "decision:111111111111111111111111",
+        "provenance": "chat-graph tier1",
+        "source_kind": "chat",
+        "state": "open",
+        "text": "Choose the rollout window",
+        "trust": "structured"
+      }
+    ],
+    "sync": {
+      "dropped": 0,
+      "omission_resolves": false,
+      "seen": 1,
+      "source": "chat-graph tier1 outcomes",
+      "stored": 1
+    }
+  },
+  "error": null,
+  "feed": "decisions",
+  "generated_at": "2026-07-10T03:00:00Z",
+  "generated_epoch": 1783652400,
+  "ok": true,
+  "schema": 1
+}

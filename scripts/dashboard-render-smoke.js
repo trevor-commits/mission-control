@@ -63,7 +63,7 @@ const locationShim = { hash: '', reload() {}, href: 'file:///mc' };
 // --- fixtures as window.MC.feeds -------------------------------------------
 const FIX = path.join(REPO, 'dashboard', 'fixtures');
 const feeds = {};
-for (const name of ['usage', 'git', 'chats', 'automation', 'brief']) {
+for (const name of ['usage', 'git', 'chats', 'automation', 'decisions', 'brief']) {
   const p = path.join(FIX, name + '.json');
   if (!fs.existsSync(p)) { console.error('FAIL: missing fixture ' + p); process.exit(1); }
   feeds[name] = JSON.parse(fs.readFileSync(p, 'utf8'));
@@ -180,6 +180,12 @@ for (const tab of TABS) {
     }
     if (txt.indexOf('Morning Brief') === -1 || txt.indexOf('Read the full brief') === -1) {
       console.error('FAIL: #home is missing the Morning Brief summary');
+      fails++; continue;
+    }
+    if (txt.indexOf('Decisions waiting for you') === -1 ||
+        txt.indexOf('Choose the rollout window') === -1 ||
+        txt.indexOf('Copy dismiss command') === -1) {
+      console.error('FAIL: #home is missing the pinned transactional decision queue');
       fails++; continue;
     }
     if (txt.indexOf('Session monitor') === -1 || txt.indexOf('Recent activity') === -1) {

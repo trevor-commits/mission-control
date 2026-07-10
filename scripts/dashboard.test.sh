@@ -55,31 +55,32 @@ export DASHBOARD_CMD_USAGE="cat '$STUB/usage.json'"
 export DASHBOARD_CMD_GIT="cat '$STUB/git.json'"
 export DASHBOARD_CMD_CHATS="cat '$STUB/chats.json'"
 export DASHBOARD_CMD_AUTOMATION="cat '$STUB/auto_green.json'"
+export DASHBOARD_CMD_DECISIONS="cat '$REPO/dashboard/fixtures/decisions.json'"
 export DASHBOARD_CMD_BRIEF="cat '$REPO/dashboard/fixtures/brief.json'"
 
 newhome() { mktemp -d "$ROOT/home.XXXXXX"; }
 
-# --- case 1: collect --force writes 10 files, every .json envelope-valid -------
+# --- case 1: collect --force writes 12 files, every .json envelope-valid -------
 c1() {
   local H; H="$(newhome)"
   MISSION_CONTROL_HOME="$H" bash "$DASH" collect --force >/dev/null 2>&1
   local f miss=0
-  for f in usage git chats automation brief; do
+  for f in usage git chats automation decisions brief; do
     [ -f "$H/data/$f.json" ] || miss=1
     [ -f "$H/data/$f.js" ] || miss=1
   done
-  if [ "$miss" != 0 ]; then no "collect --force writes 10 files (some missing)"; return; fi
+  if [ "$miss" != 0 ]; then no "collect --force writes 12 files (some missing)"; return; fi
   if python3 /dev/stdin "$H/data" <<'PYEOF'
 import json, os, sys
 d = sys.argv[1]
 keys = {"schema", "feed", "generated_at", "generated_epoch", "cadence_s", "ok", "error", "data"}
-for f in ("usage", "git", "chats", "automation", "brief"):
+for f in ("usage", "git", "chats", "automation", "decisions", "brief"):
     e = json.load(open(os.path.join(d, f + ".json")))
     assert keys <= set(e), (f, keys - set(e))
     assert e["schema"] == 1 and e["feed"] == f, f
     assert isinstance(e["generated_epoch"], int), f
 PYEOF
-  then ok "collect --force writes 10 files, all .json envelope-valid"
+  then ok "collect --force writes 12 files, all .json envelope-valid"
   else no "collect --force .json not envelope-valid"; fi
 }
 
@@ -90,7 +91,7 @@ c2() {
   if python3 /dev/stdin "$H/data" <<'PYEOF'
 import json, os, sys
 d = sys.argv[1]
-for f in ("usage", "git", "chats", "automation", "brief"):
+for f in ("usage", "git", "chats", "automation", "decisions", "brief"):
     jc = open(os.path.join(d, f + ".json")).read()
     js = open(os.path.join(d, f + ".js")).read()
     marker = "window.MC.feeds.%s = " % f
@@ -245,6 +246,11 @@ printf '%s\n' '{"schema":1,"brief_id":"stub","generated_epoch":1,"delivery":{"st
 printf '# stub\n' > "$MISSION_CONTROL_HOME/morning-brief/latest.md"
 EOF
   chmod +x "$fr/scripts/morning-brief"
+  cat > "$fr/scripts/decision-alert" <<'EOF'
+#!/bin/sh
+cat "$FIXTURE_DECISIONS"
+EOF
+  chmod +x "$fr/scripts/decision-alert"
   echo '{}' > "$fr/dashboard/jobs.json"
   local mch; mch="$(mktemp -d)"
   if env -u DASHBOARD_CMD_USAGE -u DASHBOARD_CMD_GIT -u DASHBOARD_CMD_CHATS -u DASHBOARD_CMD_AUTOMATION \
@@ -323,6 +329,11 @@ c9() { # install copies a RUNNABLE runtime with REPO_ROOT baked in (headless pli
   local cgh; cgh="$(mktemp -d)"
   printf '#!/bin/sh\nmkdir -p "${CHAT_GRAPH_HOME}/export"\necho "{\\"stub\\": \\"chats\\"}" > "${CHAT_GRAPH_HOME}/export/graph.json"\n' > "$fr/scripts/chat-graph"
   chmod +x "$fr/scripts/chat-graph"
+  cat > "$fr/scripts/decision-alert" <<'EOF'
+#!/bin/sh
+cat "$FIXTURE_DECISIONS"
+EOF
+  chmod +x "$fr/scripts/decision-alert"
   echo '{}' > "$fr/dashboard/jobs.json"
   # stub launchctl on PATH so any bootstrap no-ops (fixture has no plist template)
   local sbin; sbin="$(mktemp -d)"
@@ -339,11 +350,13 @@ c9() { # install copies a RUNNABLE runtime with REPO_ROOT baked in (headless pli
   # the copy runs headless — no DASHBOARD_CMD_* overrides, REPO_ROOT unset — and
   # resolves the baked repo's sibling feeders to write every feed.
   if env -u DASHBOARD_CMD_USAGE -u DASHBOARD_CMD_GIT -u DASHBOARD_CMD_CHATS \
-         -u DASHBOARD_CMD_AUTOMATION -u REPO_ROOT \
+         -u DASHBOARD_CMD_AUTOMATION -u DASHBOARD_CMD_DECISIONS -u REPO_ROOT \
+         FIXTURE_DECISIONS="$REPO/dashboard/fixtures/decisions.json" \
          MISSION_CONTROL_HOME="$mch" CHAT_GRAPH_HOME="$cgh" \
          bash "$mch/bin/dashboard" collect --force >/dev/null 2>&1 \
      && [ -f "$mch/data/usage.json" ] && [ -f "$mch/data/git.json" ] \
      && [ -f "$mch/data/chats.json" ] && [ -f "$mch/data/automation.json" ] \
+     && [ -f "$mch/data/decisions.json" ] \
      && [ -f "$mch/data/brief.json" ]; then
     ok "install: baked bin/dashboard resolves feeders headless + writes all feeds"
   else
@@ -391,17 +404,17 @@ c11() { # render layer EXECUTION coverage — runs the real renderers over fixtu
   rm -rf "$scratch"
 }
 
-c12() { # chats is slow; brief consumes it and therefore must be the only later feed
-  local order; order="$(grep -oE '\("(usage|git|chats|automation)"' "$DASH" | sed -E 's/[("]//g' | tr '\n' ' ')"
-  local full; full="$(grep -oE '\("(usage|git|chats|automation|brief)"' "$DASH" | sed -E 's/[("]//g' | tr '\n' ' ')"
+c12() { # chats is slow; decisions and brief consume it and must follow in order
+  local order; order="$(grep -oE '\("(usage|git|chats|automation|decisions)"' "$DASH" | sed -E 's/[("]//g' | tr '\n' ' ')"
+  local full; full="$(grep -oE '\("(usage|git|chats|automation|decisions|brief)"' "$DASH" | sed -E 's/[("]//g' | tr '\n' ' ')"
   case "$full" in
-    *chats\ brief\ ) ok "feed order: chats then dependent brief are last ($full)" ;;
-    *) no "feed order: brief does not immediately follow slow chats ($full)" ;;
+    *chats\ decisions\ brief\ ) ok "feed order: chats, decisions, then brief are last ($full)" ;;
+    *) no "feed order: dependent decisions/brief do not follow slow chats ($full)" ;;
   esac
 }
 c13() { # FIX 6: the data/ dir must be 0700, not world-readable
   local mch; mch="$(mktemp -d)/mc"
-  DASHBOARD_CMD_USAGE='echo {}' DASHBOARD_CMD_GIT='echo {}' DASHBOARD_CMD_CHATS='echo {}' DASHBOARD_CMD_AUTOMATION='echo {}' DASHBOARD_CMD_BRIEF='echo {}' \
+  DASHBOARD_CMD_USAGE='echo {}' DASHBOARD_CMD_GIT='echo {}' DASHBOARD_CMD_CHATS='echo {}' DASHBOARD_CMD_AUTOMATION='echo {}' DASHBOARD_CMD_DECISIONS='echo {}' DASHBOARD_CMD_BRIEF='echo {}' \
     MISSION_CONTROL_HOME="$mch" bash "$DASH" collect --force >/dev/null 2>&1
   local p; p="$(stat -f '%Lp' "$mch/data" 2>/dev/null || stat -c '%a' "$mch/data" 2>/dev/null)"
   [ "$p" = "700" ] && ok "data dir perms 700 (got $p)" || no "data dir world-readable (got $p, want 700)"
@@ -423,6 +436,7 @@ EOF
   local miss=0 p
   [ -x "$mch/bin/morning-brief" ] || miss=1
   [ -x "$mch/bin/morning-brief-deadman" ] || miss=1
+  [ -x "$mch/bin/decision-alert" ] || miss=1
   [ -f "$mch/bin/mission_control_common.py" ] || miss=1
   for p in com.gillettes.mission-control.plist com.gillettes.morning-brief.plist com.gillettes.morning-brief-deadman.plist; do
     [ -f "$h/Library/LaunchAgents/$p" ] || miss=1
@@ -430,7 +444,7 @@ EOF
     grep -q '__MCHOME__\|__HOME__' "$h/Library/LaunchAgents/$p" && miss=1
   done
   grep -qx 'com.gillettes.morning-brief.plist' "$h/bootstrapped" || miss=1
-  if [ "$miss" = 0 ]; then ok "install: composer, deadman, common policy, and plists wire in isolation"
+  if [ "$miss" = 0 ]; then ok "install: composer, decisions, deadman, common policy, and plists wire in isolation"
   else no "install: Morning Brief runtime/plist wiring incomplete"; fi
 }
 
@@ -513,7 +527,66 @@ PY
   else no "error persistence leaked sensitive feeder stderr"; fi
 }
 
-c1; c2; c3; c4; c5; c6; c7; c8; c8a; c8b; c9; c10; c11; c12; c13; c14; c15; c16; c17
+c18() { # dashboard dismiss routes to the transactional queue and executes no action
+  local mch created id state marker; mch="$(mktemp -d)"; marker="$mch/must-not-run"
+  created="$(MISSION_CONTROL_HOME="$mch" "$REPO/scripts/decision-alert" ingest \
+    --source-kind manual --source-key dashboard-dismiss --text 'Choose dashboard test' \
+    --trust structured --provenance manual \
+    --action-json '["touch","'$marker'"]' --json)" || { no "dashboard decide fixture ingest failed"; return; }
+  id="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["decision"]["id"])' "$created")"
+  env -u DASHBOARD_CMD_DECISIONS REPO_ROOT="$REPO" MISSION_CONTROL_HOME="$mch" \
+    bash "$DASH" collect --force decisions >/dev/null 2>&1
+  python3 - "$mch/data/decisions.json" "$id" <<'PY' || { no "dashboard decision fixture was not pinned"; return; }
+import json,sys
+d=json.load(open(sys.argv[1]))["data"]
+assert sys.argv[2] in [x["id"] for x in d["pinned"]]
+PY
+  env -u DASHBOARD_CMD_DECISIONS REPO_ROOT="$REPO" MISSION_CONTROL_HOME="$mch" \
+    bash "$DASH" decide dismiss "$id" >/dev/null 2>&1
+  state="$(MISSION_CONTROL_HOME="$mch" "$REPO/scripts/decision-alert" list --state dismissed --json)"
+  if [ ! -e "$marker" ] && printf '%s' "$state" | grep -Fq "$id" &&
+     python3 - "$mch/data/decisions.json" "$id" <<'PY'
+import json,sys
+d=json.load(open(sys.argv[1]))["data"]
+assert sys.argv[2] not in [x["id"] for x in d["pinned"]]
+PY
+  then
+    ok "dashboard dismiss refreshes pinned feed without executing action"
+  else
+    no "dashboard dismiss failed, left stale pinned data, or executed stored action"
+  fi
+
+  # A concurrent decisions collector must not let dismiss claim a refreshed UI.
+  local locked_id locked_created
+  locked_created="$(MISSION_CONTROL_HOME="$mch" "$REPO/scripts/decision-alert" ingest \
+    --source-kind manual --source-key dashboard-lock --text 'Choose locked test' \
+    --trust structured --provenance manual --json)" || { no "dashboard lock fixture ingest failed"; return; }
+  locked_id="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["decision"]["id"])' "$locked_created")"
+  env -u DASHBOARD_CMD_DECISIONS REPO_ROOT="$REPO" MISSION_CONTROL_HOME="$mch" \
+    bash "$DASH" collect --force decisions >/dev/null 2>&1
+  mkdir -p "$mch/data/.decisions.lock"
+  if env -u DASHBOARD_CMD_DECISIONS REPO_ROOT="$REPO" MISSION_CONTROL_HOME="$mch" \
+       bash "$DASH" decide dismiss "$locked_id" >/dev/null 2>&1; then
+    no "dashboard dismiss claimed refresh while decisions feed was locked"
+  else
+    ok "dashboard dismiss fails visibly when pinned feed refresh is locked"
+  fi
+  rmdir "$mch/data/.decisions.lock"
+}
+
+c19() { # code-only install cannot write or bootstrap launchd jobs
+  local mch fakehome; mch="$(mktemp -d)"; fakehome="$(mktemp -d)"
+  if HOME="$fakehome" MISSION_CONTROL_HOME="$mch" REPO_ROOT="$REPO" \
+       DASHBOARD_INSTALL_NO_LAUNCHD=1 bash "$DASH" install >/dev/null 2>&1 &&
+     [ -x "$mch/bin/dashboard" ] && [ -x "$mch/bin/decision-alert" ] &&
+     [ ! -d "$fakehome/Library/LaunchAgents" ]; then
+    ok "code-only install updates runtime without launchd side effects"
+  else
+    no "code-only install wrote launchd state or missed runtime files"
+  fi
+}
+
+c1; c2; c3; c4; c5; c6; c7; c8; c8a; c8b; c9; c10; c11; c12; c13; c14; c15; c16; c17; c18; c19
 shell_contract
 echo "----"
 echo "PASS=$PASS FAIL=$FAIL"

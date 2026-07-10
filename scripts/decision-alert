@@ -1,0 +1,978 @@
+#!/usr/bin/env python3
+"""Transactional Mission Control operator-decision queue.
+
+The queue is intentionally independent from the dashboard renderer.  It owns
+stable decision identity, immutable evidence/events, exact resolution gates,
+and alert attempt/receipt durability.  External sends are opt-in (`alert
+--send`) and always use a fixed argv vector.
+
+Python standard library only.
+"""
+
+from __future__ import print_function
+
+import argparse
+import hashlib
+import json
+import os
+import re
+import sqlite3
+import subprocess
+import sys
+import time
+
+from mission_control_common import (ACTION, IDENTIFIER, NARRATIVE,
+                                    NOTIFICATION, EgressCounters,
+                                    sanitize_text)
+
+
+SCHEMA = 1
+ALERT_WINDOW_S = 24 * 60 * 60
+ALERT_RESERVATION_LEASE_S = 60
+STATUS_CADENCE_S = 300
+TRUST_STATES = ("structured", "inferred")
+RESOLUTION_TYPES = (
+    "answering_user_turn", "downstream_resolution_key", "manual_resolution",
+)
+DECISION_STATES = ("open", "dismissed", "resolved")
+_ID_RE = re.compile(r"^decision:[0-9a-f]{24}$")
+
+
+class DecisionError(Exception):
+    pass
+
+
+class PrivateArgumentParser(argparse.ArgumentParser):
+    """Argparse errors must never echo an untrusted argv value."""
+
+    def error(self, _message):
+        raise DecisionError("invalid command arguments")
+
+
+def _now():
+    raw = os.environ.get("DECISION_ALERT_NOW_EPOCH", "")
+    try:
+        value = int(raw) if raw else int(time.time())
+    except ValueError:
+        value = int(time.time())
+    if value <= 0:
+        raise DecisionError("current epoch must be positive")
+    return value
+
+
+def _state_home():
+    root = os.path.expanduser(os.environ.get(
+        "MISSION_CONTROL_HOME", "~/.mission-control"))
+    return os.path.join(root, "decisions")
+
+
+def _db_path():
+    return os.path.join(_state_home(), "decisions.db")
+
+
+def _private_dir(path):
+    os.makedirs(path, mode=0o700, exist_ok=True)
+    os.chmod(path, 0o700)
+
+
+def _connect():
+    _private_dir(_state_home())
+    con = sqlite3.connect(_db_path(), timeout=10)
+    con.row_factory = sqlite3.Row
+    con.execute("PRAGMA busy_timeout=10000")
+    con.execute("PRAGMA foreign_keys=ON")
+    con.execute("PRAGMA journal_mode=WAL")
+    con.execute("PRAGMA synchronous=FULL")
+    _migrate(con)
+    for suffix in ("", "-wal", "-shm"):
+        try:
+            os.chmod(_db_path() + suffix, 0o600)
+        except OSError:
+            pass
+    return con
+
+
+def _migrate(con):
+    con.executescript("""
+        CREATE TABLE IF NOT EXISTS decisions(
+            decision_id TEXT PRIMARY KEY,
+            source_kind TEXT NOT NULL,
+            source_key TEXT NOT NULL,
+            evidence_fingerprint TEXT NOT NULL,
+            trust_state TEXT NOT NULL CHECK(trust_state IN ('structured','inferred')),
+            provenance TEXT NOT NULL,
+            text TEXT NOT NULL,
+            first_seen INTEGER NOT NULL,
+            last_seen INTEGER NOT NULL,
+            state TEXT NOT NULL CHECK(state IN ('open','dismissed','resolved')),
+            action_argv_json TEXT,
+            resolution_key TEXT NOT NULL,
+            anchor_ref TEXT,
+            recurrence_count INTEGER NOT NULL DEFAULT 0,
+            dismissed_at INTEGER,
+            dismiss_reason TEXT,
+            resolved_at INTEGER,
+            resolution_evidence_type TEXT,
+            resolution_evidence_ref TEXT,
+            UNIQUE(source_kind, source_key)
+        );
+        CREATE TABLE IF NOT EXISTS decision_evidence(
+            decision_id TEXT NOT NULL REFERENCES decisions(decision_id),
+            evidence_fingerprint TEXT NOT NULL,
+            first_seen INTEGER NOT NULL,
+            text TEXT NOT NULL,
+            trust_state TEXT NOT NULL,
+            provenance TEXT NOT NULL,
+            action_argv_json TEXT,
+            resolution_key TEXT NOT NULL,
+            anchor_ref TEXT,
+            PRIMARY KEY(decision_id, evidence_fingerprint)
+        );
+        CREATE TABLE IF NOT EXISTS decision_events(
+            event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            decision_id TEXT NOT NULL REFERENCES decisions(decision_id),
+            event_type TEXT NOT NULL,
+            evidence_fingerprint TEXT NOT NULL,
+            occurred_at INTEGER NOT NULL,
+            evidence_type TEXT,
+            evidence_ref TEXT,
+            detail_json TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_decision_events_item
+            ON decision_events(decision_id, event_id);
+        CREATE TABLE IF NOT EXISTS alert_attempts(
+            attempt_id TEXT PRIMARY KEY,
+            decision_id TEXT NOT NULL REFERENCES decisions(decision_id),
+            evidence_fingerprint TEXT NOT NULL,
+            attempted_at INTEGER NOT NULL,
+            state TEXT NOT NULL CHECK(state IN ('reserved','success','failed')),
+            failure_category TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_alert_attempt_window
+            ON alert_attempts(decision_id, evidence_fingerprint, attempted_at);
+        CREATE TABLE IF NOT EXISTS alert_receipts(
+            decision_id TEXT NOT NULL REFERENCES decisions(decision_id),
+            evidence_fingerprint TEXT NOT NULL,
+            attempt_id TEXT NOT NULL REFERENCES alert_attempts(attempt_id),
+            succeeded_at INTEGER NOT NULL,
+            message_hash TEXT NOT NULL,
+            PRIMARY KEY(decision_id, evidence_fingerprint)
+        );
+    """)
+    decision_cols = {row[1] for row in con.execute(
+        "PRAGMA table_info(decisions)").fetchall()}
+    if "anchor_ref" not in decision_cols:
+        con.execute("ALTER TABLE decisions ADD COLUMN anchor_ref TEXT")
+    evidence_cols = {row[1] for row in con.execute(
+        "PRAGMA table_info(decision_evidence)").fetchall()}
+    if "anchor_ref" not in evidence_cols:
+        con.execute("ALTER TABLE decision_evidence ADD COLUMN anchor_ref TEXT")
+    con.execute("PRAGMA user_version=%d" % SCHEMA)
+    con.commit()
+
+
+def _tx(con):
+    con.execute("BEGIN IMMEDIATE")
+
+
+def _sha(value):
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def _canonical(value):
+    return json.dumps(value, ensure_ascii=True, sort_keys=True,
+                      separators=(",", ":"))
+
+
+def _sanitize_required(value, field_class, label, counters=None):
+    result = sanitize_text(value, field_class, counters=counters)
+    if result.dropped or not result.value.strip():
+        reasons = ",".join(result.reasons) if result.reasons else "empty"
+        raise DecisionError("%s rejected by privacy boundary (%s)" % (label, reasons))
+    return result.value.strip()
+
+
+def _sanitize_optional(value, field_class, label, counters=None):
+    if value is None:
+        return None
+    return _sanitize_required(value, field_class, label, counters=counters)
+
+
+def _parse_action(raw, trust, counters):
+    if raw is None:
+        return None
+    if trust != "structured":
+        raise DecisionError("inferred decisions cannot carry action commands")
+    try:
+        argv = json.loads(raw)
+    except (TypeError, ValueError):
+        raise DecisionError("action-json must be a JSON argv array")
+    if (not isinstance(argv, list) or not argv or
+            any(not isinstance(part, str) or not part for part in argv)):
+        raise DecisionError("action-json must be a non-empty string argv array")
+    return [_sanitize_required(part, ACTION, "action argv", counters) for part in argv]
+
+
+def _identity(source_kind, source_key):
+    return "decision:%s" % _sha(_canonical(
+        ["decision-v1", source_kind, source_key]))[:24]
+
+
+def _structured_origin_requires_anchor(source_kind, provenance):
+    """Accept only closed deterministic origin pairs without an anchor.
+
+    Provenance is descriptive text, not an authority signal. New structured
+    producers fail closed until their exact pair is deliberately registered;
+    other producers may become structured only with a deterministic anchor.
+    """
+    deterministic = {
+        ("automation", "automation-status"),
+        ("chat", "chat-graph tier1"),
+        ("git", "git-facts"),
+        ("manual", "manual"),
+        ("operator", "operator"),
+        ("register", "enforcement-register"),
+        ("todo", "repo-todo"),
+    }
+    return (source_kind, provenance.casefold()) not in deterministic
+
+
+def _verified_resolution_evidence(evidence_type, evidence_ref, resolution_key):
+    """Verify automatic closure against chat-graph's persisted evidence row."""
+    if evidence_type == "manual_resolution":
+        return
+    expected = {
+        "answering_user_turn": "answering_user_turn",
+        "downstream_resolution_key": "downstream_explicit",
+    }.get(evidence_type)
+    if expected is None:
+        raise DecisionError("resolution evidence type is not exact/allowed")
+    path = os.path.expanduser(os.environ.get(
+        "CHAT_GRAPH_DB", os.path.join("~", ".chat-graph", "graph.db")))
+    try:
+        con = sqlite3.connect("file:%s?mode=ro" % path, uri=True, timeout=5)
+        row = con.execute("""SELECT 1 FROM open_ends
+            WHERE item_key=? AND resolved_at IS NOT NULL
+              AND resolution_evidence_type=? AND resolution_evidence_ref=?
+            LIMIT 1""", (resolution_key, expected, evidence_ref)).fetchone()
+        con.close()
+    except sqlite3.Error:
+        raise DecisionError("verified graph resolution evidence unavailable")
+    if row is None:
+        raise DecisionError("resolution evidence is not verified by chat graph")
+
+
+def _fingerprint(text, evidence, trust, provenance, action_argv, resolution_key,
+                 anchor_ref):
+    packet = {
+        "schema": 1,
+        "text": text,
+        "evidence": evidence,
+        "trust": trust,
+        "provenance": provenance,
+        "action_argv": action_argv,
+        "resolution_key": resolution_key,
+        "anchor_ref": anchor_ref,
+    }
+    return _sha(_canonical(packet))
+
+
+def _event(con, decision_id, kind, fingerprint, now,
+           evidence_type=None, evidence_ref=None, detail=None):
+    con.execute("""INSERT INTO decision_events(
+        decision_id,event_type,evidence_fingerprint,occurred_at,
+        evidence_type,evidence_ref,detail_json)
+        VALUES(?,?,?,?,?,?,?)""", (
+            decision_id, kind, fingerprint, now, evidence_type, evidence_ref,
+            _canonical(detail) if detail is not None else None,
+        ))
+
+
+def _receipt(con, decision_id, fingerprint):
+    row = con.execute("""SELECT attempt_id,succeeded_at,message_hash
+        FROM alert_receipts WHERE decision_id=? AND evidence_fingerprint=?""",
+        (decision_id, fingerprint)).fetchone()
+    return dict(row) if row else None
+
+
+def _latest_attempt(con, decision_id, fingerprint):
+    row = con.execute("""SELECT attempt_id,attempted_at,state,failure_category
+        FROM alert_attempts WHERE decision_id=? AND evidence_fingerprint=?
+        ORDER BY attempted_at DESC,attempt_id DESC LIMIT 1""",
+        (decision_id, fingerprint)).fetchone()
+    return dict(row) if row else None
+
+
+def _decision_dict(con, row):
+    if row is None:
+        return None
+    data = dict(row)
+    raw_action = data.pop("action_argv_json", None)
+    data["id"] = data.pop("decision_id")
+    data["trust"] = data.pop("trust_state")
+    data["action_argv"] = json.loads(raw_action) if raw_action else None
+    if data.get("resolved_at") is not None:
+        data["resolution"] = {
+            "at": data.pop("resolved_at"),
+            "evidence_type": data.pop("resolution_evidence_type"),
+            "evidence_ref": data.pop("resolution_evidence_ref"),
+        }
+    else:
+        data.pop("resolved_at", None)
+        data.pop("resolution_evidence_type", None)
+        data.pop("resolution_evidence_ref", None)
+        data["resolution"] = None
+    data["alert_receipt"] = _receipt(
+        con, data["id"], data["evidence_fingerprint"])
+    data["alert_attempt"] = _latest_attempt(
+        con, data["id"], data["evidence_fingerprint"])
+    return data
+
+
+def _get(con, decision_id):
+    if not _ID_RE.match(str(decision_id or "")):
+        raise DecisionError("invalid decision id")
+    row = con.execute("SELECT * FROM decisions WHERE decision_id=?",
+                      (decision_id,)).fetchone()
+    if row is None:
+        raise DecisionError("decision not found")
+    return row
+
+
+def ingest(args):
+    now = _now()
+    counters = EgressCounters()
+    source_kind = _sanitize_required(args.source_kind, IDENTIFIER,
+                                     "source-kind", counters).casefold()
+    source_key = _sanitize_required(args.source_key, IDENTIFIER,
+                                    "source-key", counters)
+    text = _sanitize_required(args.text, NARRATIVE, "decision text", counters)
+    evidence = _sanitize_required(args.evidence if args.evidence is not None else args.text,
+                                  NARRATIVE, "decision evidence", counters)
+    provenance = _sanitize_required(args.provenance, NARRATIVE,
+                                    "provenance", counters)
+    trust = args.trust
+    if trust not in TRUST_STATES:
+        raise DecisionError("trust must be structured or inferred")
+    action = _parse_action(args.action_json, trust, counters)
+    anchor_ref = _sanitize_optional(args.anchor, IDENTIFIER,
+                                    "deterministic anchor", counters)
+    if (trust == "structured" and
+            _structured_origin_requires_anchor(source_kind, provenance) and
+            not anchor_ref):
+        raise DecisionError(
+            "non-deterministic structured decisions require a deterministic anchor")
+    resolution_key = _sanitize_required(
+        args.resolution_key or _identity(source_kind, source_key), IDENTIFIER,
+        "resolution-key", counters)
+    decision_id = _identity(source_kind, source_key)
+    fingerprint = _fingerprint(text, evidence, trust, provenance, action,
+                               resolution_key, anchor_ref)
+    con = _connect()
+    event_created = False
+    event_type = None
+    try:
+        _tx(con)
+        row = con.execute("""SELECT * FROM decisions
+            WHERE source_kind=? AND source_key=?""",
+            (source_kind, source_key)).fetchone()
+        action_json = _canonical(action) if action is not None else None
+        if row is None:
+            con.execute("""INSERT INTO decisions(
+                decision_id,source_kind,source_key,evidence_fingerprint,
+                trust_state,provenance,text,first_seen,last_seen,state,
+                action_argv_json,resolution_key,anchor_ref)
+                VALUES(?,?,?,?,?,?,?,?,?,'open',?,?,?)""", (
+                    decision_id, source_kind, source_key, fingerprint, trust,
+                    provenance, text, now, now, action_json, resolution_key,
+                    anchor_ref,
+                ))
+            con.execute("""INSERT INTO decision_evidence(
+                decision_id,evidence_fingerprint,first_seen,text,trust_state,
+                provenance,action_argv_json,resolution_key,anchor_ref)
+                VALUES(?,?,?,?,?,?,?,?,?)""", (
+                    decision_id, fingerprint, now, text, trust, provenance,
+                    action_json, resolution_key, anchor_ref,
+                ))
+            _event(con, decision_id, "observed", fingerprint, now)
+            event_created = True
+            event_type = "observed"
+        elif row["evidence_fingerprint"] == fingerprint:
+            # An unchanged ingest is deliberately event-idempotent. last_seen is
+            # monotonic operational metadata, not evidence or state.
+            con.execute("""UPDATE decisions SET last_seen=MAX(last_seen,?)
+                WHERE decision_id=?""", (now, decision_id))
+        else:
+            prior_state = row["state"]
+            event_type = "recurrence" if prior_state in (
+                "dismissed", "resolved") else "evidence_changed"
+            recurrence = int(row["recurrence_count"]) + (
+                1 if event_type == "recurrence" else 0)
+            con.execute("""INSERT OR IGNORE INTO decision_evidence(
+                decision_id,evidence_fingerprint,first_seen,text,trust_state,
+                provenance,action_argv_json,resolution_key,anchor_ref)
+                VALUES(?,?,?,?,?,?,?,?,?)""", (
+                    decision_id, fingerprint, now, text, trust, provenance,
+                    action_json, resolution_key, anchor_ref,
+                ))
+            con.execute("""UPDATE decisions SET
+                evidence_fingerprint=?,trust_state=?,provenance=?,text=?,
+                last_seen=?,state='open',action_argv_json=?,resolution_key=?,anchor_ref=?,
+                recurrence_count=?,dismissed_at=NULL,dismiss_reason=NULL,
+                resolved_at=NULL,resolution_evidence_type=NULL,
+                resolution_evidence_ref=NULL
+                WHERE decision_id=?""", (
+                    fingerprint, trust, provenance, text, now, action_json,
+                    resolution_key, anchor_ref, recurrence, decision_id,
+                ))
+            _event(con, decision_id, event_type, fingerprint, now,
+                   detail={"prior_state": prior_state})
+            event_created = True
+        con.commit()
+        row = _get(con, decision_id)
+        return {
+            "ok": True, "decision": _decision_dict(con, row),
+            "event_created": event_created, "event_type": event_type,
+            "egress_counters": counters.snapshot(),
+        }
+    except Exception:
+        con.rollback()
+        raise
+    finally:
+        con.close()
+
+
+def dismiss(args):
+    now = _now()
+    counters = EgressCounters()
+    reason = _sanitize_optional(args.reason, NARRATIVE, "dismiss reason", counters)
+    con = _connect()
+    try:
+        _tx(con)
+        row = _get(con, args.decision_id)
+        if row["state"] == "resolved":
+            raise DecisionError("resolved decision cannot be dismissed")
+        changed = row["state"] != "dismissed"
+        if changed:
+            con.execute("""UPDATE decisions SET state='dismissed',
+                dismissed_at=?,dismiss_reason=? WHERE decision_id=?""",
+                (now, reason, args.decision_id))
+            _event(con, args.decision_id, "dismissed",
+                   row["evidence_fingerprint"], now,
+                   detail={"reason": reason} if reason else None)
+        con.commit()
+        return {"ok": True, "changed": changed,
+                "decision": _decision_dict(con, _get(con, args.decision_id)),
+                "egress_counters": counters.snapshot()}
+    except Exception:
+        con.rollback()
+        raise
+    finally:
+        con.close()
+
+
+def resolve(args):
+    now = _now()
+    counters = EgressCounters()
+    evidence_type = args.evidence_type
+    if evidence_type not in RESOLUTION_TYPES:
+        raise DecisionError("resolution evidence type is not exact/allowed")
+    evidence_ref = _sanitize_required(args.evidence_ref, IDENTIFIER,
+                                      "resolution evidence ref", counters)
+    supplied_key = _sanitize_optional(args.resolution_key, IDENTIFIER,
+                                      "resolution-key", counters)
+    con = _connect()
+    try:
+        _tx(con)
+        row = _get(con, args.decision_id)
+        if evidence_type != "manual_resolution":
+            if not supplied_key or supplied_key != row["resolution_key"]:
+                raise DecisionError("resolution key does not exactly match decision")
+            _verified_resolution_evidence(evidence_type, evidence_ref, supplied_key)
+        elif supplied_key is not None and supplied_key != row["resolution_key"]:
+            raise DecisionError("manual resolution key does not exactly match decision")
+        changed = row["state"] != "resolved"
+        if changed:
+            con.execute("""UPDATE decisions SET state='resolved',resolved_at=?,
+                resolution_evidence_type=?,resolution_evidence_ref=?
+                WHERE decision_id=?""", (
+                    now, evidence_type, evidence_ref, args.decision_id,
+                ))
+            _event(con, args.decision_id, "resolved",
+                   row["evidence_fingerprint"], now, evidence_type, evidence_ref)
+        else:
+            if (row["resolution_evidence_type"] != evidence_type or
+                    row["resolution_evidence_ref"] != evidence_ref):
+                raise DecisionError("decision already resolved by different evidence")
+        con.commit()
+        return {"ok": True, "changed": changed,
+                "decision": _decision_dict(con, _get(con, args.decision_id)),
+                "egress_counters": counters.snapshot()}
+    except Exception:
+        con.rollback()
+        raise
+    finally:
+        con.close()
+
+
+def _events(con, decision_id):
+    rows = con.execute("""SELECT event_id,event_type,evidence_fingerprint,
+        occurred_at,evidence_type,evidence_ref,detail_json
+        FROM decision_events WHERE decision_id=? ORDER BY event_id""",
+        (decision_id,)).fetchall()
+    out = []
+    for row in rows:
+        item = dict(row)
+        raw = item.pop("detail_json", None)
+        item["detail"] = json.loads(raw) if raw else None
+        out.append(item)
+    return out
+
+
+def _evidence_history(con, decision_id):
+    rows = con.execute("""SELECT evidence_fingerprint,first_seen,text,
+        trust_state,provenance,action_argv_json,resolution_key,anchor_ref
+        FROM decision_evidence WHERE decision_id=?
+        ORDER BY first_seen,evidence_fingerprint""", (decision_id,)).fetchall()
+    out = []
+    for row in rows:
+        item = dict(row)
+        raw = item.pop("action_argv_json", None)
+        item["trust"] = item.pop("trust_state")
+        item["action_argv"] = json.loads(raw) if raw else None
+        out.append(item)
+    return out
+
+
+def history(args):
+    con = _connect()
+    try:
+        row = _get(con, args.decision_id)
+        return {"ok": True, "decision": _decision_dict(con, row),
+                "events": _events(con, args.decision_id),
+                "evidence_history": _evidence_history(con, args.decision_id)}
+    finally:
+        con.close()
+
+
+def list_decisions(args):
+    con = _connect()
+    try:
+        where = []
+        params = []
+        if args.state:
+            if args.state not in DECISION_STATES:
+                raise DecisionError("invalid decision state")
+            where.append("state=?"); params.append(args.state)
+        if args.trust:
+            if args.trust not in TRUST_STATES:
+                raise DecisionError("invalid trust state")
+            where.append("trust_state=?"); params.append(args.trust)
+        sql = "SELECT * FROM decisions"
+        if where:
+            sql += " WHERE " + " AND ".join(where)
+        sql += " ORDER BY CASE state WHEN 'open' THEN 0 WHEN 'dismissed' THEN 1 ELSE 2 END, last_seen DESC, decision_id"
+        rows = con.execute(sql, params).fetchall()
+        return {"ok": True, "decisions": [_decision_dict(con, row) for row in rows]}
+    finally:
+        con.close()
+
+
+def status(_args):
+    now = _now()
+    con = _connect()
+    try:
+        rows = con.execute("""SELECT * FROM decisions ORDER BY
+            CASE state WHEN 'open' THEN 0 WHEN 'dismissed' THEN 1 ELSE 2 END,
+            last_seen DESC, decision_id""").fetchall()
+        decisions = [_decision_dict(con, row) for row in rows]
+        pinned = [d for d in decisions if d["state"] == "open" and
+                  d["trust"] == "structured"]
+        inferred = [d for d in decisions if d["trust"] == "inferred"]
+        counts = {}
+        for state in DECISION_STATES:
+            counts[state] = sum(d["state"] == state for d in decisions)
+        counts["structured_open"] = len(pinned)
+        counts["inferred"] = len(inferred)
+        data = {
+            "counts": counts,
+            "pinned": pinned,
+            "inferred": inferred,
+        }
+        return {
+            "schema": 1,
+            "feed": "decisions",
+            "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ",
+                                          time.gmtime(now)),
+            "generated_epoch": now,
+            "cadence_s": STATUS_CADENCE_S,
+            "ok": True,
+            "error": None,
+            "data": data,
+        }
+    finally:
+        con.close()
+
+
+def _load_feed(name):
+    path = os.path.join(os.path.dirname(_state_home()), "data", name + ".json")
+    try:
+        with open(path) as handle:
+            envelope = json.load(handle)
+    except (OSError, ValueError):
+        return {}
+    data = envelope.get("data") if isinstance(envelope, dict) else None
+    return data if isinstance(data, dict) else {}
+
+
+def sync_snapshot(args):
+    """Sync deterministic Tier-1 NEEDS-YOU items without resolving by omission."""
+    chats = _load_feed("chats")
+    seen = set()
+    stored = dropped = resolved = 0
+    for card in chats.get("outcomes") or []:
+        if not isinstance(card, dict) or card.get("method") != "tier1":
+            continue
+        session_id = str(card.get("session_id") or "")
+        for item in card.get("open_work") or []:
+            if not isinstance(item, dict) or item.get("section") != "needs_you":
+                continue
+            item_key = str(item.get("item_key") or "")
+            if not session_id or not item_key or item_key in seen:
+                continue
+            seen.add(item_key)
+            packet = argparse.Namespace(
+                source_kind="chat",
+                source_key="outcome:%s:%s" % (session_id, item_key),
+                text=item.get("text") or "Decision requires operator review",
+                evidence="tier1 outcome %s %s" % (
+                    card.get("card_id") or "unknown",
+                    card.get("tail_hash") or "unknown"),
+                trust="structured",
+                provenance="chat-graph tier1",
+                resolution_key=item_key,
+                anchor="chat-graph:%s:%s" % (session_id, item_key),
+                action_json=None,
+            )
+            try:
+                ingest(packet)
+                stored += 1
+            except DecisionError:
+                dropped += 1
+    evidence_map = {
+        "downstream_explicit": "downstream_resolution_key",
+        "answering_user_turn": "answering_user_turn",
+    }
+    for change in chats.get("loose_end_changes") or []:
+        if not isinstance(change, dict) or change.get("change_type") != "resolved":
+            continue
+        evidence_type = evidence_map.get(change.get("resolution_evidence_type"))
+        item_key = str(change.get("item_key") or "")
+        evidence_ref = str(change.get("resolution_evidence_ref") or "")
+        if not evidence_type or not item_key or not evidence_ref:
+            continue
+        con = _connect()
+        try:
+            ids = [row[0] for row in con.execute("""SELECT decision_id FROM decisions
+                WHERE resolution_key=? AND state='open'""", (item_key,)).fetchall()]
+        finally:
+            con.close()
+        for decision_id in ids:
+            packet = argparse.Namespace(
+                decision_id=decision_id, evidence_type=evidence_type,
+                evidence_ref=evidence_ref, resolution_key=item_key,
+            )
+            try:
+                if resolve(packet).get("changed"):
+                    resolved += 1
+            except DecisionError:
+                dropped += 1
+    result = status(args)
+    result["data"]["sync"] = {
+        "source": "chat-graph tier1 outcomes",
+        "seen": len(seen),
+        "stored": stored,
+        "resolved": resolved,
+        "dropped": dropped,
+        "omission_resolves": False,
+    }
+    return result
+
+
+def _alert_eligible(con, now):
+    rows = con.execute("""SELECT * FROM decisions
+        WHERE state='open' AND trust_state='structured'
+        ORDER BY first_seen,decision_id""").fetchall()
+    out = []
+    success_cutoff = now - ALERT_WINDOW_S
+    lease_cutoff = now - ALERT_RESERVATION_LEASE_S
+    for row in rows:
+        succeeded = con.execute("""SELECT 1 FROM alert_receipts
+            WHERE decision_id=? AND evidence_fingerprint=? AND succeeded_at>?
+            LIMIT 1""", (
+                row["decision_id"], row["evidence_fingerprint"], success_cutoff,
+            )).fetchone()
+        reserved = con.execute("""SELECT 1 FROM alert_attempts
+            WHERE decision_id=? AND evidence_fingerprint=? AND state='reserved'
+              AND attempted_at>?
+            LIMIT 1""", (
+                row["decision_id"], row["evidence_fingerprint"], lease_cutoff,
+            )).fetchone()
+        if not succeeded and not reserved:
+            out.append(row)
+    return out
+
+
+def _alert_message(decision, counters):
+    raw = ("Morning Brief NEEDS YOU: %s\nDismiss: dashboard decide dismiss %s" %
+           (decision["text"], decision["decision_id"]))
+    result = sanitize_text(raw, NOTIFICATION, counters=counters)
+    if result.dropped or not result.value:
+        raise DecisionError("notification rejected by privacy boundary")
+    return result.value
+
+
+def _reserve_alert(decision_id, now):
+    con = _connect()
+    try:
+        _tx(con)
+        row = _get(con, decision_id)
+        if row["state"] != "open" or row["trust_state"] != "structured":
+            con.commit(); return None, None
+        success_cutoff = now - ALERT_WINDOW_S
+        lease_cutoff = now - ALERT_RESERVATION_LEASE_S
+        expired = con.execute("""SELECT attempt_id FROM alert_attempts
+            WHERE decision_id=? AND evidence_fingerprint=? AND state='reserved'
+              AND attempted_at<=?""", (
+                decision_id, row["evidence_fingerprint"], lease_cutoff,
+            )).fetchall()
+        for prior in expired:
+            con.execute("""UPDATE alert_attempts SET state='failed',
+                failure_category='reservation_expired' WHERE attempt_id=?""",
+                (prior["attempt_id"],))
+            _event(con, decision_id, "alert_failure",
+                   row["evidence_fingerprint"], now,
+                   evidence_type="reservation_expired",
+                   evidence_ref=prior["attempt_id"],
+                   detail={"category": "reservation_expired"})
+        recent_success = con.execute("""SELECT 1 FROM alert_receipts
+            WHERE decision_id=? AND evidence_fingerprint=? AND succeeded_at>?
+            LIMIT 1""", (
+                decision_id, row["evidence_fingerprint"], success_cutoff,
+            )).fetchone()
+        active_reservation = con.execute("""SELECT 1 FROM alert_attempts
+            WHERE decision_id=? AND evidence_fingerprint=? AND state='reserved'
+              AND attempted_at>?
+            LIMIT 1""", (
+                decision_id, row["evidence_fingerprint"], lease_cutoff,
+            )).fetchone()
+        if recent_success or active_reservation:
+            con.commit(); return None, None
+        attempt_seq = con.execute("""SELECT COUNT(*) FROM alert_attempts
+            WHERE decision_id=? AND evidence_fingerprint=?""", (
+                decision_id, row["evidence_fingerprint"],
+            )).fetchone()[0] + 1
+        attempt_id = "alert:%s" % _sha(_canonical([
+            decision_id, row["evidence_fingerprint"], now, attempt_seq,
+        ]))[:28]
+        try:
+            con.execute("""INSERT INTO alert_attempts(
+                attempt_id,decision_id,evidence_fingerprint,attempted_at,state)
+                VALUES(?,?,?,?,'reserved')""", (
+                    attempt_id, decision_id, row["evidence_fingerprint"], now,
+                ))
+        except sqlite3.IntegrityError:
+            con.commit(); return None, None
+        con.commit()
+        return attempt_id, dict(row)
+    except Exception:
+        con.rollback()
+        raise
+    finally:
+        con.close()
+
+
+def _finish_alert(attempt_id, decision, now, success, message,
+                  failure_category=None):
+    con = _connect()
+    try:
+        _tx(con)
+        row = con.execute("SELECT * FROM alert_attempts WHERE attempt_id=?",
+                          (attempt_id,)).fetchone()
+        if row is None or row["state"] != "reserved":
+            raise DecisionError("alert reservation is missing or already finished")
+        state = "success" if success else "failed"
+        con.execute("""UPDATE alert_attempts SET state=?,failure_category=?
+            WHERE attempt_id=?""", (state, failure_category, attempt_id))
+        if success:
+            con.execute("""INSERT INTO alert_receipts(
+                decision_id,evidence_fingerprint,attempt_id,succeeded_at,message_hash)
+                VALUES(?,?,?,?,?)
+                ON CONFLICT(decision_id,evidence_fingerprint) DO UPDATE SET
+                    attempt_id=excluded.attempt_id,
+                    succeeded_at=excluded.succeeded_at,
+                    message_hash=excluded.message_hash""", (
+                    decision["decision_id"], decision["evidence_fingerprint"],
+                    attempt_id, now, _sha(message),
+                ))
+            _event(con, decision["decision_id"], "alert_success",
+                   decision["evidence_fingerprint"], now,
+                   evidence_type="fixed_argv_receipt", evidence_ref=attempt_id)
+        else:
+            _event(con, decision["decision_id"], "alert_failure",
+                   decision["evidence_fingerprint"], now,
+                   evidence_type="send_failure", evidence_ref=attempt_id,
+                   detail={"category": failure_category or "unknown"})
+        con.commit()
+    except Exception:
+        con.rollback()
+        raise
+    finally:
+        con.close()
+
+
+def _chat_id(configured):
+    value = str(configured or os.environ.get("DECISION_ALERT_CHAT_ID", "")).strip()
+    if not re.match(r"^-?[0-9]+$", value):
+        raise DecisionError("alert chat id must be numeric")
+    return value
+
+
+def alert(args):
+    now = _now()
+    con = _connect()
+    try:
+        eligible = _alert_eligible(con, now)
+        preview = [_decision_dict(con, row) for row in eligible]
+    finally:
+        con.close()
+    if not args.send:
+        return {"ok": True, "mode": "preview", "eligible_count": len(preview),
+                "sent_count": 0, "failed_count": 0, "decisions": preview}
+
+    sender = os.path.expanduser(args.sender or os.environ.get(
+        "DECISION_ALERT_SEND_BIN", ""))
+    if not sender or not os.path.isfile(sender) or not os.access(sender, os.X_OK):
+        raise DecisionError("alert sender is missing or not executable")
+    chat_id = _chat_id(args.chat_id)
+    counters = EgressCounters()
+    sent = []
+    failed = []
+    skipped = []
+    for candidate in eligible:
+        attempt_id, current = _reserve_alert(candidate["decision_id"], now)
+        if not attempt_id:
+            skipped.append(candidate["decision_id"])
+            continue
+        try:
+            message = _alert_message(current, counters)
+        except DecisionError:
+            _finish_alert(attempt_id, current, now, False, "", "privacy")
+            failed.append({"id": current["decision_id"], "category": "privacy"})
+            continue
+        try:
+            result = subprocess.run(
+                [sender, "send", chat_id, message],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                timeout=max(1, int(args.timeout)), check=False)
+            success = result.returncode == 0
+            category = None if success else "sender_exit"
+        except subprocess.TimeoutExpired:
+            success = False; category = "timeout"
+        except OSError:
+            success = False; category = "sender_error"
+        _finish_alert(attempt_id, current, now, success, message, category)
+        if success:
+            sent.append(current["decision_id"])
+        else:
+            failed.append({"id": current["decision_id"], "category": category})
+    return {
+        "ok": not failed,
+        "mode": "send",
+        "eligible_count": len(eligible),
+        "sent_count": len(sent),
+        "failed_count": len(failed),
+        "sent": sent,
+        "failed": failed,
+        "skipped_race": skipped,
+        "egress_counters": counters.snapshot(),
+        "_exit": 0 if not failed else 1,
+    }
+
+
+def _parser():
+    parser = PrivateArgumentParser(description="transactional operator decision queue")
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    for name in ("ingest", "sync"):
+        p = sub.add_parser(name)
+        p.add_argument("--source-kind", required=True)
+        p.add_argument("--source-key", required=True)
+        p.add_argument("--text", required=True)
+        p.add_argument("--evidence")
+        p.add_argument("--trust", required=True)
+        p.add_argument("--provenance", required=True)
+        p.add_argument("--resolution-key")
+        p.add_argument("--anchor")
+        p.add_argument("--action-json")
+
+    p = sub.add_parser("dismiss")
+    p.add_argument("decision_id")
+    p.add_argument("--reason")
+
+    p = sub.add_parser("resolve")
+    p.add_argument("decision_id")
+    p.add_argument("--evidence-type", required=True)
+    p.add_argument("--evidence-ref", required=True)
+    p.add_argument("--resolution-key")
+
+    p = sub.add_parser("history")
+    p.add_argument("decision_id")
+
+    p = sub.add_parser("list")
+    p.add_argument("--state")
+    p.add_argument("--trust")
+
+    sub.add_parser("status")
+    sub.add_parser("sync-snapshot")
+
+    p = sub.add_parser("alert")
+    p.add_argument("--send", action="store_true")
+    p.add_argument("--sender")
+    p.add_argument("--chat-id")
+    p.add_argument("--timeout", type=int, default=30)
+    return parser
+
+
+def main(argv=None):
+    # --json is accepted anywhere for CLI consistency. Output is structured in
+    # both modes so later feed/dashboard integration never parses prose.
+    argv = list(sys.argv[1:] if argv is None else argv)
+    argv = [arg for arg in argv if arg != "--json"]
+    parser = _parser()
+    try:
+        args = parser.parse_args(argv)
+        handlers = {
+            "ingest": ingest, "sync": ingest,
+            "dismiss": dismiss, "resolve": resolve,
+            "history": history, "list": list_decisions, "status": status,
+            "sync-snapshot": sync_snapshot, "alert": alert,
+        }
+        result = handlers[args.command](args)
+        exit_code = int(result.pop("_exit", 0))
+        print(json.dumps(result, ensure_ascii=True, sort_keys=True))
+        return exit_code
+    except DecisionError as exc:
+        sys.stderr.write(json.dumps({"ok": False, "error": str(exc)},
+                                    ensure_ascii=True, sort_keys=True) + "\n")
+        return 2
+    except sqlite3.Error:
+        # Do not persist or emit SQLite content that could contain rejected
+        # source values. The category is sufficient for machinery health.
+        sys.stderr.write('{"error":"decision store failure","ok":false}\n')
+        return 3
+
+
+if __name__ == "__main__":
+    os.umask(0o077)
+    sys.exit(main())

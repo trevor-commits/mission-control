@@ -32,6 +32,10 @@ write("usage", {"providers": [
     {"provider": "codex", "window": "5h", "used_pct": 62.0, "confidence": "live"},
     {"provider": "claude", "window": "weekly", "used_pct": 34.0, "confidence": "estimated"}
 ]}, cadence=604800, age=6*86400)
+write("decisions", {"pinned": [
+    {"id": "decision:" + "1"*24, "text": "Choose the rollout window",
+     "trust": "structured", "provenance": "chat-graph tier1"}],
+    "inferred": [], "counts": {"structured_open": 1}}, cadence=300)
 write("git", {"repos": [
     {"repo": "mission-control", "path": "/Users/gillettes/Coding Projects/mission-control",
      "branch": "codex/morning-brief", "remote": "ahead", "dirty": False,
@@ -57,6 +61,16 @@ changes.append({"id": "unsafe", "stable_id": "operator@example.com", "source_id"
  "text": "This item must fail closed", "change_type": "new", "updated_at": now-10,
  "resolved_at": None, "resolution_evidence_type": None, "resolution_evidence_ref": None})
 write("chats", {"nodes": [], "edges": [], "topics": [], "counts": {},
+     "outcomes": [
+       {"card_id": "c"*40, "session_id": "chat-outcome", "provider": "codex",
+        "method": "tier1", "updated_at": now-30,
+        "did": ["Implemented the verified outcome"],
+        "anchors": {"commits": ["c"*40], "commands": [], "ids": []}}
+     ],
+     "outcome_updates": [
+       {"id": "late-1", "provider": "claude", "method": "tier1",
+        "change_type": "late_update", "updated_at": now-25}
+     ],
      "loose_end_changes": changes,
      "loose_ends": [
        {"id": "repo:alpha:item-aging", "kind": "todo_open", "source_node": "repo:alpha",
@@ -88,13 +102,17 @@ assert d["selection_high_water"]["loose_end_changes"] == [1783673980, "chat-1:it
 assert "operator@example.com" not in json.dumps(d)
 assert d["egress_counters"]["compose"]["dropped_fields"] >= 1
 assert d["egress_counters"]["compose"]["reason_email"] >= 1
-assert set(d["inputs"]) == {"automation", "usage", "git", "chats"}
+assert set(d["inputs"]) == {"automation", "usage", "git", "chats", "decisions"}
 assert d["inputs"]["usage"]["state"] == "fresh", d["inputs"]["usage"]
 assert not d["stale_required_inputs"]
 expected=["NEEDS YOU", "What happened", "Open work changes", "Machinery health", "Usage headroom"]
 assert [s["title"] for s in d["sections"]] == expected
 assert md.index("## NEEDS YOU") < md.index("## What happened") < md.index("## Open work changes")
 assert "Confirmed" in md and "Inferred" not in d["sections"][0]["lines"][0]["trust"]
+assert d["sections"][0]["lines"][0]["text"] == "Choose the rollout window"
+assert d["sections"][0]["lines"][0]["action_cmd"].startswith("dashboard decide dismiss decision:")
+assert "Implemented the verified outcome" in md and "A session outcome received a late closeout update" in md
+assert "commit cccccccccccc" in md
 assert "aaaaaaaa" in md and "feat: add morning brief" in md
 assert "Review the release evidence" in md and "Old decision was answered" in md
 assert "Old unchecked task" in md and "Aging" in md

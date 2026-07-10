@@ -57,8 +57,8 @@ OK_EXITS = {"git": (0, 1)}
 
 # name, cadence_s, default feeder cmd, env override var, feeder timeout_s.
 # ORDER MATTERS: collect runs feeds sequentially, so the fast/cheap feeds go FIRST
-# and the slow chats feed (up to 150s catch-up scan) goes LAST — otherwise a chats
-# scan starves usage/git/automation up to 150s every catch-up (sweep FIX 3).
+# and the slow chats feed (up to 150s catch-up scan) runs only after independent
+# feeds; its dependent decision and brief feeds then run last.
 FEEDS = [
     ("automation",  300, _repo_script("automation-status") + " --json --registry " + shlex.quote(os.path.join(REPO, "dashboard", "jobs.json")), "DASHBOARD_CMD_AUTOMATION", 30),
     ("usage",      1800, _repo_script("usage-snapshot") + " --no-ccusage", "DASHBOARD_CMD_USAGE", 60),
@@ -68,8 +68,10 @@ FEEDS = [
     # export ALWAYS reaches its atomic rename inside the 150s budget even on a cold
     # ~/.chat-graph; successive ticker fires extend coverage via file cursors.
     # On timeout the feed keeps last-good + a stale banner, so the tab never blanks.
-    # LAST by design so its slow scan never delays the other three tabs.
+    # Late by design so its slow scan never delays the independent tabs.
     ("chats",      1800, "", "DASHBOARD_CMD_CHATS", 150),
+    # Decisions consume deterministic Tier-1 chat outcomes and must follow chats.
+    ("decisions",   300, "", "DASHBOARD_CMD_DECISIONS", 30),
     # Brief consumes the stable snapshots above and therefore MUST run last.
     ("brief",       300, "", "DASHBOARD_CMD_BRIEF", 30),
 ]
@@ -214,6 +216,25 @@ def _run_builtin_brief(timeout_s):
         return None, "cannot read Morning Brief sidecar: %s" % e
 
 
+def _run_builtin_decisions(timeout_s):
+    installed = os.path.join(HOME, "bin", "decision-alert")
+    tool = installed if os.path.isfile(installed) and os.access(installed, os.X_OK) \
+        else os.path.join(REPO, "scripts", "decision-alert")
+    try:
+        p = subprocess.run([tool, "sync-snapshot", "--json"],
+                           capture_output=True, text=True, timeout=timeout_s)
+    except subprocess.TimeoutExpired:
+        return None, "decision queue timed out after %ds" % timeout_s
+    except OSError:
+        return None, "cannot start decision queue"
+    if p.returncode != 0:
+        return None, "decision queue exit %d" % p.returncode
+    try:
+        return json.loads(p.stdout), None
+    except Exception:
+        return None, "decision queue output not JSON"
+
+
 def _run_feeder(name, defcmd, envvar, timeout_s):
     override = os.environ.get(envvar)
     if override:
@@ -232,6 +253,8 @@ def _run_feeder(name, defcmd, envvar, timeout_s):
             return None, "feeder output not JSON: %s" % e
     if name == "chats":
         return _run_builtin_chats(timeout_s)
+    if name == "decisions":
+        return _run_builtin_decisions(timeout_s)
     if name == "brief":
         return _run_builtin_brief(timeout_s)
     argv = shlex.split(defcmd)
@@ -288,14 +311,20 @@ def cmd_collect(argv):
     ensure_state()
     force = "--force" in argv
     due = "--due" in argv
+    strict = "--strict" in argv
     only = [a for a in argv if not a.startswith("--")]
+    failed = False
     for name, cadence, defcmd, envvar, tmo in FEEDS:
         if only and name not in only:
             continue
         if due and not force and not _is_due(name, cadence):
             continue
-        _collect_one(name, cadence, defcmd, envvar, tmo)  # feeds fail independently
-    return 0
+        status = _collect_one(name, cadence, defcmd, envvar, tmo)
+        failed = failed or status != "ok"
+    # Normal collection preserves feed independence. Explicit operator
+    # round-trips can request strict status so a lock/error is never reported
+    # as a successful user-visible refresh.
+    return 1 if strict and failed else 0
 
 
 def _load(name):
@@ -468,6 +497,7 @@ usage: dashboard <command>
   refresh [feed]                   = collect --force
   status                           text health table; nonzero if any feed red
   brief --print                    print a deterministic preview; change no cursor
+  decide dismiss <decision-id>     dismiss one queued decision; execute no action
   open [--serve]                   collect --due, open the shell (--serve: local http)
   install                          install shell + launchd job (idempotent)
   demo                             build feeds from fixtures into a temp dir + open
@@ -511,7 +541,7 @@ do_install() {
   chmod +x "$MISSION_CONTROL_HOME/bin/dashboard"
   echo "installed runtime -> $MISSION_CONTROL_HOME/bin/dashboard (REPO_ROOT=$REPO_ROOT)"
   local runtime
-  for runtime in morning-brief morning-brief-deadman mission_control_common.py; do
+  for runtime in morning-brief morning-brief-deadman decision-alert mission_control_common.py; do
     if [ -f "$REPO_ROOT/scripts/$runtime" ]; then
       cp "$REPO_ROOT/scripts/$runtime" "$MISSION_CONTROL_HOME/bin/$runtime"
       case "$runtime" in *.py) chmod 600 "$MISSION_CONTROL_HOME/bin/$runtime" ;; *) chmod +x "$MISSION_CONTROL_HOME/bin/$runtime" ;; esac
@@ -528,6 +558,10 @@ do_install() {
     echo "installed shell -> $MISSION_CONTROL_HOME/index.html"
   else
     echo "skip: dashboard/index.html not present yet"
+  fi
+  if [ "${DASHBOARD_INSTALL_NO_LAUNCHD:-0}" = "1" ]; then
+    echo "skip: launchd installation disabled by DASHBOARD_INSTALL_NO_LAUNCHD"
+    return 0
   fi
   local tmpl dest label
   for tmpl in "$REPO_ROOT"/launchd/*.plist.template; do
@@ -570,6 +604,12 @@ case "$cmd" in
   refresh)  engine collect --force "$@" ;;
   status)   engine status "$@"; exit $? ;;
   brief)    exec "$REPO_ROOT/scripts/morning-brief" "$@" ;;
+  decide)
+    [ "${1:-}" = "dismiss" ] && [ $# -eq 2 ] || { usage; exit 2; }
+    decision_result="$("$SCRIPT_DIR/decision-alert" dismiss "$2" --json)" || exit $?
+    # Keep the static pinned view consistent before reporting success.
+    engine collect --force --strict decisions >/dev/null || exit $?
+    printf '%s\n' "$decision_result" ;;
   open)     do_open "$@" ;;
   install)  do_install "$@" ;;
   demo)     do_demo "$@" ;;

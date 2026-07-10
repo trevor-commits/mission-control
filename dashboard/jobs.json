@@ -132,6 +132,7 @@
       "kind": "calendar",
       "label": "Morning Brief",
       "name": "com.gillettes.morning-brief",
+      "activation_required": true,
       "schedule": "07:00 daily"
     },
     {
@@ -147,6 +148,7 @@
       "kind": "calendar",
       "label": "Morning Brief Deadman",
       "name": "com.gillettes.morning-brief-deadman",
+      "activation_required": true,
       "schedule": "07:20 daily"
     },
     {

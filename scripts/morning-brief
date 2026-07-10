@@ -23,6 +23,7 @@ INPUTS = {
     "automation": {"cadence_s": 300, "required": True},
     "git": {"cadence_s": 900, "required": True},
     "chats": {"cadence_s": 1800, "required": True},
+    "decisions": {"cadence_s": 300, "required": False},
     "usage": {"cadence_s": 1800, "required": False},
 }
 SECTION_ORDER = (
@@ -142,6 +143,17 @@ def _read_delivery_cursor():
 
 def _needs_you(snapshot, health, cap):
     lines = []
+    decisions = _payload(snapshot.get("decisions"))
+    for item in decisions.get("pinned") or []:
+        if not isinstance(item, dict) or item.get("trust") != "structured":
+            continue
+        decision_id = safe_text(item.get("id") or "", IDENTIFIER,
+                                counters=_EGRESS_COUNTERS)
+        lines.append(_sanitize_line(
+            item.get("text") or "A confirmed decision requires review.",
+            source=item.get("provenance") or "decision queue",
+            action_cmd=("dashboard decide dismiss %s" % decision_id)
+            if decision_id else None))
     stale = [name for name in INPUTS if health[name]["required"] and
              health[name]["state"] != "fresh"]
     if stale:
@@ -201,6 +213,55 @@ def _recent_git(snapshot, top_n):
         lines.append(_sanitize_line("No recent commits were reported by the Git snapshot.",
                                     source="scan-unfinished-work"))
     return lines, max(0, len(rows) - top_n)
+
+
+def _recent_outcomes(snapshot, top_n):
+    chats = _payload(snapshot.get("chats"))
+    candidates = []
+    for card in chats.get("outcomes") or []:
+        if not isinstance(card, dict):
+            continue
+        trust = "Confirmed" if card.get("method") == "tier1" else "Inferred"
+        provider = safe_text(card.get("provider") or "unknown", IDENTIFIER,
+                             counters=_EGRESS_COUNTERS)
+        anchors = card.get("anchors") if isinstance(card.get("anchors"), dict) else {}
+        commits = anchors.get("commits") if isinstance(anchors.get("commits"), list) else []
+        anchor = " (commit %s)" % safe_text(str(commits[0])[:12], IDENTIFIER,
+                                             counters=_EGRESS_COUNTERS) if commits else ""
+        for text in card.get("did") or []:
+            if isinstance(text, str) and text.strip():
+                candidates.append({
+                    "epoch": int(card.get("updated_at") or 0),
+                    "stable": str(card.get("card_id") or card.get("session_id") or ""),
+                    "line": _sanitize_line(text + anchor, trust=trust,
+                                           source="%s outcome" % provider),
+                })
+    for update in chats.get("outcome_updates") or []:
+        if not isinstance(update, dict) or update.get("change_type") != "late_update":
+            continue
+        candidates.append({
+            "epoch": int(update.get("updated_at") or 0),
+            "stable": str(update.get("id") or ""),
+            "line": _sanitize_line(
+                "A session outcome received a late closeout update.",
+                trust="Confirmed" if update.get("method") == "tier1" else "Inferred",
+                source="%s outcome" % safe_text(update.get("provider") or "unknown",
+                                                IDENTIFIER, counters=_EGRESS_COUNTERS)),
+        })
+    candidates.sort(key=lambda row: (-row["epoch"], row["stable"]))
+    lines = [row["line"] for row in candidates if row.get("line")]
+    return lines[:top_n], max(0, len(lines) - top_n)
+
+
+def _what_happened(snapshot, top_n):
+    outcome_lines, outcome_hidden = _recent_outcomes(snapshot, top_n)
+    git_lines, git_hidden = _recent_git(snapshot, top_n)
+    if outcome_lines and len(git_lines) == 1 and git_lines[0].get("text", "").startswith(
+            "No recent commits"):
+        git_lines = []
+    combined = outcome_lines + git_lines
+    hidden = outcome_hidden + git_hidden + max(0, len(combined) - top_n)
+    return combined[:top_n], hidden
 
 
 def _open_changes(snapshot, top_n, cursor):
@@ -601,7 +662,7 @@ def _compose_locked(preview=False):
     needs_cap = _bounded_int("MORNING_BRIEF_NEEDS_YOU_MAX", 5, maximum=10)
     cursor = _read_delivery_cursor()
     needs, needs_collapsed, stale = _needs_you(snapshot, health, needs_cap)
-    happened, happened_collapsed = _recent_git(snapshot, top_n)
+    happened, happened_collapsed = _what_happened(snapshot, top_n)
     open_lines, open_collapsed, high_water = _open_changes(snapshot, top_n, cursor)
     machinery, machinery_collapsed = _machinery(snapshot, health, top_n)
     usage, usage_collapsed = _usage(snapshot, top_n)

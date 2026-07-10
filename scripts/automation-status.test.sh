@@ -219,6 +219,24 @@ done
 [ "$PRED" -eq 0 ] && pass "no pseudo job is ever RED (unloaded launchd label ignored)" \
   || fail "a pseudo job was marked RED"
 
+# A safety-gated job that is deliberately not installed is not a failure and
+# cannot expose a kickstart action until activation is explicitly authorized.
+AREG="$WORK/activation-required.json"
+cat > "$AREG" <<JSON
+{ "jobs": [
+  { "label": "Awaiting Job", "name": "com.gillettes.awaiting-job",
+    "activation_required": true, "kind": "calendar", "schedule": "07:00 daily",
+    "expected_freshness_s": 93600, "evidence": [] }
+] }
+JSON
+AOUT="$WORK/activation-required.out"
+AUTOMATION_STATUS_LAUNCHCTL="$STUB" \
+  python3 "$SC" --json --registry "$AREG" > "$AOUT" 2>/dev/null
+[ "$(getfield "$AOUT" com.gillettes.awaiting-job state)" = "awaiting-activation" ] \
+  && [ "$(top "$AOUT" exceptions)" = "0" ] \
+  && pass "activation-gated unloaded job is honest, non-failing state" \
+  || fail "activation-gated unloaded job was treated as failure"
+
 # --- distinct-run history, schedule math, globs, and atomic persistence ----
 RUNS="$WORK/distinct-runs"; mkdir -p "$RUNS"
 RUN_MARKER="$RUNS/run-marker.json"
