@@ -83,6 +83,13 @@ r=[x for x in d["repos"] if x["repo"].endswith("work")]
 assert r, "work repo not found in scan output"
 r=r[0]
 assert r["dirty"], "dirty not detected"
+assert r["path"].endswith("/work"), "repo path missing"
+assert r["branch"] == "main", "current branch missing"
+assert r["remote"] in ("synced", "ahead", "behind", "diverged"), "remote relationship missing"
+assert isinstance(r["behind"], int), "behind count missing"
+assert len(r["last_commit"]["sha"]) == 40, "last commit sha missing"
+assert r["last_commit"]["subject"], "last commit subject missing"
+assert isinstance(r["recent_commits"], list), "recent commit facts missing"
 # stale branch detection requires SKIP_RE to not exclude it; the default
 # SKIP_RE would exclude "work" only if it matched worktree|_ etc — it does not,
 # but the upstream clone is under $TMP which has no skip-match. Verify branches:
@@ -112,9 +119,11 @@ for repo in "${repos[@]}"; do
   dirty_lines=$(git -C "$repo" status --porcelain 2>/dev/null | wc -l | tr -d ' ')
   dirty=0; [ "$dirty_lines" -gt 0 ] && dirty=1
   upstream=$(git -C "$repo" rev-parse --abbrev-ref @{upstream} 2>/dev/null || echo "")
-  ahead=0
+  ahead=0; behind=0
   if [ -n "$upstream" ]; then
-    ahead=$(git -C "$repo" rev-list --count @{upstream}..HEAD 2>/dev/null || echo 0)
+    counts=$(git -C "$repo" rev-list --left-right --count @{upstream}...HEAD 2>/dev/null || echo "0 0")
+    behind=$(printf '%s' "$counts" | awk '{print $1+0}')
+    ahead=$(printf '%s' "$counts" | awk '{print $2+0}')
   fi
   detached=0
   git -C "$repo" symbolic-ref -q HEAD >/dev/null 2>&1 || detached=1
@@ -157,8 +166,8 @@ for repo in "${repos[@]}"; do
   if [ "$JSON" = 1 ]; then
     # Emit one JSONL line per repo: python builds the object, TSV feeds branches.
     printf '%s' "$stale_records" | python3 -c '
-import json, sys
-short, dirty, dirty_files, ahead, detached = sys.argv[1:6]
+import json, subprocess, sys
+short, path, branch, upstream, dirty, dirty_files, ahead, behind, detached = sys.argv[1:10]
 branches = []
 for line in sys.stdin:
     line = line.rstrip("\n")
@@ -168,9 +177,36 @@ for line in sys.stdin:
     name, age = parts
     if "\t" in name or "\n" in name or "\r" in name: continue
     branches.append({"name": name, "age_days": int(age)})
-print(json.dumps({"repo": short, "dirty": dirty == "1", "dirty_files": int(dirty_files),
-                  "ahead": int(ahead), "detached": detached == "1", "branches": branches}))
-' "$short" "$dirty" "$dirty_lines" "$ahead" "$detached" >> "$JSONL_FILE"
+def git(*args):
+    p = subprocess.run(["git", "-C", path] + list(args), capture_output=True, text=True)
+    return p.stdout.strip() if p.returncode == 0 else ""
+sha = git("rev-parse", "HEAD")
+subject = git("log", "-1", "--format=%s")
+epoch = git("log", "-1", "--format=%ct")
+recent = []
+for line in git("log", "-5", "--since=36 hours ago", "--format=%H%x09%ct%x09%s").splitlines():
+    parts = line.split("\t", 2)
+    if len(parts) == 3:
+        recent.append({"sha": parts[0], "epoch": int(parts[1]), "subject": parts[2][:160]})
+if not upstream:
+    relationship = "no-remote"
+elif int(ahead) and int(behind):
+    relationship = "diverged"
+elif int(ahead):
+    relationship = "ahead"
+elif int(behind):
+    relationship = "behind"
+else:
+    relationship = "synced"
+print(json.dumps({"repo": short, "path": path, "branch": branch,
+                  "upstream": upstream, "remote": relationship,
+                  "dirty": dirty == "1", "dirty_files": int(dirty_files),
+                  "ahead": int(ahead), "behind": int(behind),
+                  "detached": detached == "1", "branches": branches,
+                  "last_commit": {"sha": sha, "subject": subject[:160],
+                                  "epoch": int(epoch) if epoch else None},
+                  "recent_commits": recent}))
+' "$short" "$repo" "$cur_branch" "$upstream" "$dirty" "$dirty_lines" "$ahead" "$behind" "$detached" >> "$JSONL_FILE"
   elif [ "$repo_findings" -gt 0 ]; then
     printf '## %s\n' "$short"
     [ "$dirty" = 1 ] && printf '  ⚠ dirty tree: %s uncommitted file(s)\n' "$dirty_lines"

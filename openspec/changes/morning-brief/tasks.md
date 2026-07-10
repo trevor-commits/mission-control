@@ -26,9 +26,9 @@
 
 ## 5. Deterministic thin Morning Brief
 
-- [ ] 5.1 Add failing tests for minimal Git change facts, open-end new/resolved/aging change events, compound high-water cursors, input cadence/freshness, section order, caps, and source-quality labels.
-- [ ] 5.2 Implement deterministic composition to atomic Markdown and structured `latest.json`, with preview never advancing delivery state.
-- [ ] 5.3 Add `dashboard brief --print`, dashboard feed collection, Home rendering, fixtures, and render/browser proof.
+- [x] 5.1 Add failing tests for minimal Git change facts, open-end new/resolved/aging change events, compound high-water cursors, input cadence/freshness, section order, caps, and source-quality labels.
+- [x] 5.2 Implement deterministic composition to atomic Markdown and structured `latest.json`, with preview never advancing delivery state.
+- [x] 5.3 Add `dashboard brief --print`, dashboard feed collection, Home rendering, fixtures, and render/browser proof.
 
 ## 6. Delivery and deadman
 

@@ -11,6 +11,7 @@
 <script src="data/git.js"></script>
 <script src="data/chats.js"></script>
 <script src="data/automation.js"></script>
+<script src="data/brief.js"></script>
 <!-- vendored graph engine (local, offline, no CDN) for the connection Map -->
 <script src="vendor/cytoscape.min.js"></script>
 
@@ -718,7 +719,8 @@ body {
       chats: "chat-graph export",
       git: "scan-unfinished-work + watcher notes",
       usage: "usage snapshot + local adapters",
-      automation: "automation-status + launchctl evidence"
+      automation: "automation-status + launchctl evidence",
+      brief: "deterministic Morning Brief sidecar"
     }[name] || "local feed";
   }
   function panelTrustText(name, g) {
@@ -727,6 +729,7 @@ body {
     if (name === "map" || name === "chats") return providerStateHealth(g.data);
     if (name === "git") return "local scan";
     if (name === "automation") return "local launchd evidence";
+    if (name === "brief") return "deterministic local facts";
     return "mixed by feed";
   }
   function panelStatusText(name, g) {
@@ -757,6 +760,10 @@ body {
       if (repos.some(function (r) { return gitAction(r).state === "red"; })) return "attention";
       if (repos.some(function (r) { return gitAction(r).state === "amber"; })) return "warning";
       return "fresh";
+    }
+    if (name === "brief") {
+      if ((g.data && g.data.stale_required_inputs || []).length) return "attention — stale inputs";
+      return "fresh deterministic brief";
     }
     return "fresh";
   }
@@ -1087,12 +1094,54 @@ body {
   // ===========================================================================
   //  HOME
   // ===========================================================================
+  function briefSections(data) {
+    var out = {};
+    ((data && data.sections) || []).forEach(function (section) {
+      if (section && section.title) out[section.title] = section;
+    });
+    return out;
+  }
+  function appendBriefLines(container, section, limit) {
+    var lines = (section && section.lines) || [];
+    lines.slice(0, limit == null ? lines.length : limit).forEach(function (line) {
+      var row = h("div", { class: "mc-row" },
+        glyphSpan(section && section.title === "NEEDS YOU" ? "red" :
+          (line.trust === "Confirmed" ? "green" : "amber")),
+        h("div", { class: "mc-row-body" },
+          h("div", { class: "mc-row-problem" }, line.text || ""),
+          h("div", { class: "mc-row-meta" }, (line.trust || "Unknown trust") +
+            (line.source ? " · " + line.source : ""))));
+      if (line.action_cmd) row.appendChild(copyable(line.action_cmd, "Copy action"));
+      container.appendChild(row);
+    });
+    var hidden = Math.max(0, lines.length - (limit == null ? lines.length : limit));
+    var collapsed = +(section && section.collapsed_count || 0) + hidden;
+    if (collapsed) container.appendChild(h("div", { class: "mc-card-foot" }, "+" + collapsed + " lower-value item(s) collapsed"));
+  }
+  function renderMorningBriefSummary(main) {
+    var g = guard("brief");
+    var p = panel(g, "Morning Brief");
+    main.appendChild(p.wrap);
+    if (!p.body) return;
+    appendPanelProvenance(p.body, "brief", g);
+    var data = g.data || {};
+    if ((data.stale_required_inputs || []).length) {
+      p.body.appendChild(h("div", { class: "mc-banner mc-banner-red" },
+        "Stale data warning — missing or stale: " + data.stale_required_inputs.join(", ")));
+    }
+    var needs = briefSections(data)["NEEDS YOU"] || { lines: [] };
+    var list = h("div", { class: "mc-attention" });
+    appendBriefLines(list, needs, 5);
+    p.body.appendChild(list);
+    p.body.appendChild(h("a", { class: "mc-jump", href: "#brief" }, "Read the full brief →"));
+  }
   function renderHome(main) {
     var home = combinedHomeState();
     var homeHead = h("div", { class: "mc-section-head" }, h("h2", { text: "Home" }));
     if (home.epoch) homeHead.appendChild(ageSpan(home.epoch));
     main.appendChild(homeHead);
     appendPanelProvenance(main, "home", { ok: true, epoch: home.epoch }, home.status);
+    renderMorningBriefSummary(main);
     // needs-attention (merged, max 7, stable-sorted)
     var exc = harvestExceptions();
     var attn = h("section", { class: "mc-attention" });
@@ -1135,7 +1184,7 @@ body {
   }
 
   function combinedHomeState() {
-    var names = ["chats", "git", "usage", "automation"];
+    var names = ["chats", "git", "usage", "automation", "brief"];
     var epochs = [];
     var status = "fresh";
     names.forEach(function (name) {
@@ -1874,6 +1923,32 @@ body {
   function pad(n) { return n < 10 ? "0" + n : String(n); }
 
   // ===========================================================================
+  //  MORNING BRIEF TAB
+  // ===========================================================================
+  function renderBrief(main) {
+    var g = guard("brief");
+    var p = panel(g, "Morning Brief");
+    main.appendChild(p.wrap);
+    if (!p.body) return;
+    appendPanelProvenance(p.body, "brief", g);
+    var data = g.data || {};
+    if ((data.stale_required_inputs || []).length) {
+      p.body.appendChild(h("div", { class: "mc-banner mc-banner-red" },
+        "STALE DATA WARNING — missing or stale: " + data.stale_required_inputs.join(", ")));
+    }
+    p.body.appendChild(chipsLine([
+      { label: "Brief", value: data.brief_id || "unknown" },
+      { label: "Delivery", value: (data.delivery && data.delivery.state) || "unknown" }
+    ]));
+    (data.sections || []).forEach(function (section) {
+      p.body.appendChild(h("div", { class: "mc-section-head" }, h("h2", { text: section.title || "Section" })));
+      var list = h("div", { class: "mc-attention" });
+      appendBriefLines(list, section);
+      p.body.appendChild(list);
+    });
+  }
+
+  // ===========================================================================
   //  AUTOMATION TAB
   // ===========================================================================
   function renderAutomation(main) {
@@ -1960,10 +2035,11 @@ body {
   // ===========================================================================
   //  ROUTER + lifecycle
   // ===========================================================================
-  var TABS = [["home", "Home"], ["map", "Map"], ["chats", "Chats"], ["git", "Git"], ["usage", "Usage"], ["automation", "Automation"]];
+  var TABS = [["home", "Home"], ["brief", "Brief"], ["map", "Map"], ["chats", "Chats"], ["git", "Git"], ["usage", "Usage"], ["automation", "Automation"]];
   // pure render functions, spec shape render.<tab>(feed, el) reading window.MC.feeds.*
   var render = {
     home:       function (feed, el) { renderHome(el); },
+    brief:      function (feed, el) { renderBrief(el); },
     map:        function (feed, el) { renderMap(el); },
     chats:      function (feed, el) { renderChats(el); },
     git:        function (feed, el) { renderGit(el); },

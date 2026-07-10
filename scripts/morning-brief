@@ -1,0 +1,372 @@
+#!/usr/bin/env python3
+"""Compose a deterministic, NEEDS-YOU-first Mission Control morning brief.
+
+The composer reads one stable in-memory snapshot of local dashboard feeds. It
+does not call a model, execute suggested actions, or advance delivery cursors.
+Normal compose atomically writes latest.md + latest.json; --print is preview.
+"""
+
+import hashlib
+import json
+import os
+import subprocess
+import sys
+import time
+
+from mission_control_common import ACTION, IDENTIFIER, NARRATIVE, sanitize_text, safe_text
+
+SCHEMA = 1
+INPUTS = {
+    "automation": {"cadence_s": 300, "required": True},
+    "git": {"cadence_s": 900, "required": True},
+    "chats": {"cadence_s": 1800, "required": True},
+    "usage": {"cadence_s": 1800, "required": False},
+}
+SECTION_ORDER = (
+    "NEEDS YOU", "What happened", "Open work changes",
+    "Machinery health", "Usage headroom",
+)
+
+
+def _now():
+    raw = os.environ.get("MORNING_BRIEF_NOW_EPOCH")
+    try:
+        return int(raw) if raw else int(time.time())
+    except ValueError:
+        return int(time.time())
+
+
+def _state_home():
+    return os.path.expanduser(os.environ.get(
+        "MISSION_CONTROL_HOME", os.path.join("~", ".mission-control")))
+
+
+def _brief_home():
+    return os.path.join(_state_home(), "morning-brief")
+
+
+def _bounded_int(name, default, minimum=1, maximum=100):
+    try:
+        value = int(os.environ.get(name, default))
+    except ValueError:
+        value = default
+    return min(maximum, max(minimum, value))
+
+
+def _load_json(path):
+    try:
+        with open(path) as handle:
+            value = json.load(handle)
+        return value if isinstance(value, dict) else None
+    except (OSError, ValueError):
+        return None
+
+
+def _snapshot_inputs():
+    base = os.path.join(_state_home(), "data")
+    return {name: _load_json(os.path.join(base, name + ".json")) for name in INPUTS}
+
+
+def _input_health(name, feed, now):
+    declared = INPUTS[name]
+    cadence = declared["cadence_s"]
+    if feed and isinstance(feed.get("cadence_s"), (int, float)) and feed["cadence_s"] > 0:
+        cadence = int(feed["cadence_s"])
+    if feed is None:
+        state, age = "missing", None
+    elif not feed.get("ok", True):
+        state, age = "error", max(0, now - int(feed.get("generated_epoch") or 0))
+    else:
+        generated = feed.get("generated_epoch")
+        try:
+            age = max(0, now - int(generated))
+        except (TypeError, ValueError):
+            age = None
+        state = "fresh" if age is not None and age <= cadence else "stale"
+    return {
+        "state": state,
+        "required": bool(declared["required"]),
+        "cadence_s": cadence,
+        "age_s": age,
+        "generated_epoch": feed.get("generated_epoch") if feed else None,
+        "ok": bool(feed and feed.get("ok", True)),
+    }
+
+
+def _payload(feed):
+    data = feed.get("data") if isinstance(feed, dict) else None
+    return data if isinstance(data, dict) else {}
+
+
+def _sanitize_line(text, trust="Confirmed", source="", action_cmd=None):
+    result = sanitize_text(text, NARRATIVE)
+    if result.dropped or not result.value.strip():
+        return None
+    line = {
+        "text": result.value.strip(),
+        "trust": trust,
+        "source": safe_text(source, IDENTIFIER) if source else "",
+    }
+    if action_cmd:
+        action = sanitize_text(action_cmd, ACTION)
+        if not action.dropped and action.value.strip():
+            line["action_cmd"] = action.value.strip()
+    return line
+
+
+def _section(title, lines, collapsed=0):
+    return {"title": title, "lines": [line for line in lines if line],
+            "collapsed_count": max(0, int(collapsed))}
+
+
+def _read_delivery_cursor():
+    value = _load_json(os.path.join(_brief_home(), "delivery-cursor.json")) or {}
+    cursor = value.get("loose_end_changes") or [0, ""]
+    try:
+        return int(cursor[0]), str(cursor[1])
+    except (IndexError, TypeError, ValueError):
+        return 0, ""
+
+
+def _needs_you(snapshot, health, cap):
+    lines = []
+    stale = [name for name in INPUTS if health[name]["required"] and
+             health[name]["state"] != "fresh"]
+    if stale:
+        lines.append(_sanitize_line(
+            "Required inputs are not current: %s. Treat this brief as incomplete."
+            % ", ".join(sorted(stale)), source="input freshness"))
+
+    automation = _payload(snapshot.get("automation"))
+    for job in automation.get("jobs") or []:
+        if not isinstance(job, dict) or job.get("state") != "red":
+            continue
+        name = job.get("name") or job.get("label") or "Background job"
+        streak = job.get("failure_streak")
+        suffix = " (failure streak %s)" % streak if isinstance(streak, int) and streak else ""
+        lines.append(_sanitize_line(
+            "%s is failing%s." % (name, suffix), source="automation-status",
+            action_cmd=job.get("run_cmd")))
+
+    chats = _payload(snapshot.get("chats"))
+    for item in chats.get("loose_ends") or []:
+        if not isinstance(item, dict) or item.get("severity") != "red":
+            continue
+        lines.append(_sanitize_line(
+            "%s: %s" % (item.get("title") or "Open work", item.get("text") or "needs review"),
+            source="chat-graph", action_cmd=item.get("resolve_cmd")))
+
+    if not lines:
+        lines.append(_sanitize_line("No confirmed operator decision is required from current inputs.",
+                                    source="deterministic feeds"))
+    collapsed = max(0, len(lines) - cap)
+    return lines[:cap], collapsed, stale
+
+
+def _recent_git(snapshot, top_n):
+    commits = {}
+    for repo in _payload(snapshot.get("git")).get("repos") or []:
+        if not isinstance(repo, dict):
+            continue
+        repo_name = safe_text(repo.get("repo") or "unknown repo", IDENTIFIER)
+        for commit in repo.get("recent_commits") or []:
+            if not isinstance(commit, dict) or not commit.get("sha"):
+                continue
+            sha = safe_text(str(commit["sha"]), IDENTIFIER)
+            key = (sha, repo_name)
+            commits[key] = {
+                "sha": sha, "repo": repo_name,
+                "subject": commit.get("subject") or "(no subject)",
+                "epoch": int(commit.get("epoch") or 0),
+            }
+    rows = sorted(commits.values(), key=lambda row: (-row["epoch"], row["repo"], row["sha"]))
+    lines = [_sanitize_line(
+        "%s %s — %s" % (row["repo"], row["sha"][:8], row["subject"]),
+        source="scan-unfinished-work") for row in rows[:top_n]]
+    if not lines:
+        lines.append(_sanitize_line("No recent commits were reported by the Git snapshot.",
+                                    source="scan-unfinished-work"))
+    return lines, max(0, len(rows) - top_n)
+
+
+def _open_changes(snapshot, top_n, cursor):
+    chats = _payload(snapshot.get("chats"))
+    candidates = []
+    for change in chats.get("loose_end_changes") or []:
+        if not isinstance(change, dict):
+            continue
+        try:
+            mark = (int(change.get("updated_at") or 0), str(change.get("stable_id") or change.get("id") or ""))
+        except (TypeError, ValueError):
+            continue
+        if mark <= cursor:
+            continue
+        row = dict(change)
+        row["_mark"] = mark
+        candidates.append(row)
+    candidates.sort(key=lambda row: row["_mark"])
+    high_water = max([cursor] + [row["_mark"] for row in candidates])
+    labels = {"new": "New", "updated": "Updated", "resolved": "Resolved", "reopened": "Reopened"}
+    lines = []
+    seen = set()
+    for row in candidates:
+        stable = str(row.get("stable_id") or row.get("id") or "")
+        seen.add(stable)
+        prefix = labels.get(row.get("change_type"), "Updated")
+        lines.append(_sanitize_line(
+            "%s — %s" % (prefix, row.get("text") or row.get("kind") or "open work"),
+            source=row.get("source_node") or "chat-graph"))
+
+    for item in chats.get("loose_ends") or []:
+        if not isinstance(item, dict) or int(item.get("age_days") or 0) < 7:
+            continue
+        if str(item.get("id") or "") in seen:
+            continue
+        lines.append(_sanitize_line(
+            "Aging %sd — %s" % (int(item.get("age_days") or 0), item.get("text") or "open work"),
+            source=item.get("source_node") or "chat-graph",
+            action_cmd=item.get("resolve_cmd")))
+    if not lines:
+        lines.append(_sanitize_line("No new, resolved, reopened, or aging open-work changes.",
+                                    source="chat-graph"))
+    collapsed = max(0, len(lines) - top_n)
+    return lines[:top_n], collapsed, high_water
+
+
+def _machinery(snapshot, health, top_n):
+    lines = []
+    for name in sorted(INPUTS):
+        item = health[name]
+        age = "unknown age" if item["age_s"] is None else "%ss old" % item["age_s"]
+        lines.append(_sanitize_line("%s input is %s (%s)." % (name, item["state"], age),
+                                    source="input freshness"))
+    automation = _payload(snapshot.get("automation"))
+    counts = automation.get("counts") or {}
+    if counts:
+        lines.append(_sanitize_line(
+            "Automation reports %s red and %s green jobs."
+            % (counts.get("red", 0), counts.get("green", 0)), source="automation-status"))
+    return lines[:top_n], max(0, len(lines) - top_n)
+
+
+def _usage(snapshot, top_n):
+    rows = []
+    for provider in _payload(snapshot.get("usage")).get("providers") or []:
+        if not isinstance(provider, dict):
+            continue
+        name = provider.get("provider") or "unknown"
+        window = provider.get("window") or "window"
+        used = provider.get("used_pct")
+        confidence = provider.get("confidence") or "unknown"
+        if isinstance(used, (int, float)):
+            text = "%s %s: %.1f%% used (%s source)." % (name, window, float(used), confidence)
+        else:
+            text = "%s %s: usage unavailable (%s source)." % (name, window, confidence)
+        rows.append(_sanitize_line(text, source="usage-snapshot"))
+    if not rows:
+        rows.append(_sanitize_line("Usage headroom is unavailable from current inputs.",
+                                   source="usage-snapshot"))
+    return rows[:top_n], max(0, len(rows) - top_n)
+
+
+def _render_markdown(sidecar):
+    out = ["# Mission Control Morning Brief", "",
+           "Brief ID: `%s`" % sidecar["brief_id"], ""]
+    if sidecar["stale_required_inputs"]:
+        out.extend(["**STALE DATA WARNING:** Required inputs are incomplete or stale.", ""])
+    for section in sidecar["sections"]:
+        out.extend(["## %s" % section["title"], ""])
+        for line in section["lines"]:
+            out.append("- **%s:** %s" % (line["trust"], line["text"]))
+            if line.get("action_cmd"):
+                out.append("  - Action: `%s`" % line["action_cmd"].replace("`", ""))
+        if section["collapsed_count"]:
+            out.append("- %s lower-value item(s) collapsed." % section["collapsed_count"])
+        out.append("")
+    return "\n".join(out).rstrip() + "\n"
+
+
+def _atomic_write(path, content):
+    parent = os.path.dirname(path)
+    os.makedirs(parent, mode=0o700, exist_ok=True)
+    os.chmod(parent, 0o700)
+    tmp = "%s.tmp.%d" % (path, os.getpid())
+    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
+    fd = os.open(tmp, flags, 0o600)
+    try:
+        with os.fdopen(fd, "w") as handle:
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp, path)
+        os.chmod(path, 0o600)
+    finally:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+
+
+def compose(preview=False):
+    now = _now()
+    snapshot = _snapshot_inputs()
+    # Test seam proves input selection is a snapshot. Fixed argv; never a shell.
+    hook = os.environ.get("MORNING_BRIEF_TEST_AFTER_SNAPSHOT_HOOK")
+    if hook and os.path.isfile(hook) and os.access(hook, os.X_OK):
+        subprocess.run([hook], check=False, timeout=5)
+
+    health = {name: _input_health(name, snapshot[name], now) for name in INPUTS}
+    top_n = _bounded_int("MORNING_BRIEF_TOP_N", 8)
+    needs_cap = _bounded_int("MORNING_BRIEF_NEEDS_YOU_MAX", 5, maximum=10)
+    cursor = _read_delivery_cursor()
+    needs, needs_collapsed, stale = _needs_you(snapshot, health, needs_cap)
+    happened, happened_collapsed = _recent_git(snapshot, top_n)
+    open_lines, open_collapsed, high_water = _open_changes(snapshot, top_n, cursor)
+    machinery, machinery_collapsed = _machinery(snapshot, health, top_n)
+    usage, usage_collapsed = _usage(snapshot, top_n)
+    sections = [
+        _section("NEEDS YOU", needs, needs_collapsed),
+        _section("What happened", happened, happened_collapsed),
+        _section("Open work changes", open_lines, open_collapsed),
+        _section("Machinery health", machinery, machinery_collapsed),
+        _section("Usage headroom", usage, usage_collapsed),
+    ]
+    identity = json.dumps({"now": now, "inputs": health, "sections": sections},
+                          ensure_ascii=True, sort_keys=True)
+    brief_id = time.strftime("%Y%m%d", time.localtime(now)) + "-" + hashlib.sha256(
+        identity.encode("utf-8")).hexdigest()[:12]
+    sidecar = {
+        "schema": SCHEMA,
+        "brief_id": brief_id,
+        "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now)),
+        "generated_epoch": now,
+        "inputs": health,
+        "stale_required_inputs": sorted(stale),
+        "selection_high_water": {"loose_end_changes": [high_water[0], high_water[1]]},
+        "sections": sections,
+        "delivery": {"state": "not_sent", "confirmed_chunks": 0, "total_chunks": 0},
+    }
+    markdown = _render_markdown(sidecar)
+    if preview:
+        sys.stdout.write(markdown)
+        return 0
+    _atomic_write(os.path.join(_brief_home(), "latest.md"), markdown)
+    _atomic_write(os.path.join(_brief_home(), "latest.json"),
+                  json.dumps(sidecar, ensure_ascii=True, indent=2, sort_keys=True) + "\n")
+    dated = os.path.join(_brief_home(), time.strftime("%Y-%m-%d.md", time.localtime(now)))
+    _atomic_write(dated, markdown)
+    print("composed %s" % brief_id)
+    return 0
+
+
+def main(argv):
+    allowed = {"--print"}
+    unknown = [arg for arg in argv if arg not in allowed]
+    if unknown:
+        sys.stderr.write("usage: morning-brief [--print]\n")
+        return 2
+    return compose(preview="--print" in argv)
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

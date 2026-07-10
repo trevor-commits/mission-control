@@ -136,42 +136,42 @@ max_iterations: 3
 verify: REPO_ROOT="$PWD" bash scripts/dashboard.test.sh --require-shell && node scripts/dashboard-render-smoke.js .
 gate: auto
 
-- [ ] **Step 19: Write red minimal Git-change and open-delta tests**
+- [x] **Step 19: Write red minimal Git-change and open-delta tests**
 action: Add deterministic tests for the thin brief's minimal repo changes and open-work new/resolved/aging inputs without pulling in safe-runner eligibility yet.
 loop: false
 max_iterations: 1
 verify: test -s /tmp/morning-brief-thin-inputs-red.txt
 gate: auto
 
-- [ ] **Step 20: Implement thin-brief input contracts**
+- [x] **Step 20: Implement thin-brief input contracts**
 action: Extend scan/open-work exports only enough for honest deterministic repo changes and deltas; label missing/noisy data instead of inventing completeness.
 loop: until scan and graph tests pass
 max_iterations: 3
 verify: bash scripts/scan-unfinished-work --self-test && bash scripts/chat-graph.test.sh
 gate: auto
 
-- [ ] **Step 21: Write red composer and sidecar tests**
+- [x] **Step 21: Write red composer and sidecar tests**
 action: Add tests for section order, structured sidecar, per-input cadence/freshness, first-run window, equal-timestamp compound cursor, event arrival during compose, preview non-advancement, top-N, and one-screen NEEDS YOU.
 loop: false
 max_iterations: 1
 verify: test -s /tmp/morning-brief-composer-red.txt
 gate: auto
 
-- [ ] **Step 22: Implement deterministic composer**
+- [x] **Step 22: Implement deterministic composer**
 action: Add `scripts/morning-brief` producing atomic Markdown and latest.json from deterministic inputs with source-quality/trust labels and snapshot high-water marks.
 loop: until composer tests pass
 max_iterations: 3
 verify: bash scripts/morning-brief.test.sh
 gate: auto
 
-- [ ] **Step 23: Add local CLI and dashboard brief feed**
+- [x] **Step 23: Add local CLI and dashboard brief feed**
 action: Implement `dashboard brief --print`, brief feed collection, fixtures, and Home top section from latest.json without parsing Markdown.
 loop: until dashboard and render smoke pass
 max_iterations: 3
 verify: REPO_ROOT="$PWD" bash scripts/dashboard.test.sh --require-shell && node scripts/dashboard-render-smoke.js .
 gate: auto
 
-- [ ] **Step 24: Capture local thin-brief browser proof**
+- [x] **Step 24: Capture local thin-brief browser proof**
 action: Install into an isolated runtime, collect deterministic feeds, render Home/Brief, and capture a nonblank browser artifact before adding model outcomes.
 loop: until the local UI proof is readable
 max_iterations: 3

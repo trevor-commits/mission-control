@@ -1,0 +1,61 @@
+{
+  "schema": 1,
+  "feed": "brief",
+  "generated_at": "2026-07-10T09:00:00Z",
+  "generated_epoch": 1783674000,
+  "cadence_s": 86400,
+  "ok": true,
+  "error": null,
+  "data": {
+    "schema": 1,
+    "brief_id": "20260710-fixture",
+    "generated_at": "2026-07-10T09:00:00Z",
+    "generated_epoch": 1783674000,
+    "inputs": {
+      "automation": {"state": "fresh", "required": true, "cadence_s": 300, "age_s": 20},
+      "git": {"state": "fresh", "required": true, "cadence_s": 900, "age_s": 30},
+      "chats": {"state": "fresh", "required": true, "cadence_s": 1800, "age_s": 40},
+      "usage": {"state": "fresh", "required": false, "cadence_s": 1800, "age_s": 50}
+    },
+    "stale_required_inputs": [],
+    "selection_high_water": {"loose_end_changes": [1783673980, "chat-1:item-b"]},
+    "delivery": {"state": "not_sent", "confirmed_chunks": 0, "total_chunks": 0},
+    "sections": [
+      {
+        "title": "NEEDS YOU",
+        "collapsed_count": 0,
+        "lines": [
+          {"trust": "Confirmed", "source": "automation-status", "text": "Morning Health is failing (failure streak 2).", "action_cmd": "launchctl kickstart -k gui/501/com.gillettes.morning-health"}
+        ]
+      },
+      {
+        "title": "What happened",
+        "collapsed_count": 0,
+        "lines": [
+          {"trust": "Confirmed", "source": "scan-unfinished-work", "text": "mission-control aaaaaaaa — feat: add morning brief"}
+        ]
+      },
+      {
+        "title": "Open work changes",
+        "collapsed_count": 1,
+        "lines": [
+          {"trust": "Confirmed", "source": "codex:chat-1", "text": "New — Review the release evidence"}
+        ]
+      },
+      {
+        "title": "Machinery health",
+        "collapsed_count": 0,
+        "lines": [
+          {"trust": "Confirmed", "source": "input freshness", "text": "All four configured inputs are fresh."}
+        ]
+      },
+      {
+        "title": "Usage headroom",
+        "collapsed_count": 0,
+        "lines": [
+          {"trust": "Confirmed", "source": "usage-snapshot", "text": "codex 5h: 62.0% used (live source)."}
+        ]
+      }
+    ]
+  }
+}

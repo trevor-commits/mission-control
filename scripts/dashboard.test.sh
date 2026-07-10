@@ -55,30 +55,31 @@ export DASHBOARD_CMD_USAGE="cat '$STUB/usage.json'"
 export DASHBOARD_CMD_GIT="cat '$STUB/git.json'"
 export DASHBOARD_CMD_CHATS="cat '$STUB/chats.json'"
 export DASHBOARD_CMD_AUTOMATION="cat '$STUB/auto_green.json'"
+export DASHBOARD_CMD_BRIEF="cat '$REPO/dashboard/fixtures/brief.json'"
 
 newhome() { mktemp -d "$ROOT/home.XXXXXX"; }
 
-# --- case 1: collect --force writes 8 files, every .json envelope-valid --------
+# --- case 1: collect --force writes 10 files, every .json envelope-valid -------
 c1() {
   local H; H="$(newhome)"
   MISSION_CONTROL_HOME="$H" bash "$DASH" collect --force >/dev/null 2>&1
   local f miss=0
-  for f in usage git chats automation; do
+  for f in usage git chats automation brief; do
     [ -f "$H/data/$f.json" ] || miss=1
     [ -f "$H/data/$f.js" ] || miss=1
   done
-  if [ "$miss" != 0 ]; then no "collect --force writes 8 files (some missing)"; return; fi
+  if [ "$miss" != 0 ]; then no "collect --force writes 10 files (some missing)"; return; fi
   if python3 /dev/stdin "$H/data" <<'PYEOF'
 import json, os, sys
 d = sys.argv[1]
 keys = {"schema", "feed", "generated_at", "generated_epoch", "cadence_s", "ok", "error", "data"}
-for f in ("usage", "git", "chats", "automation"):
+for f in ("usage", "git", "chats", "automation", "brief"):
     e = json.load(open(os.path.join(d, f + ".json")))
     assert keys <= set(e), (f, keys - set(e))
     assert e["schema"] == 1 and e["feed"] == f, f
     assert isinstance(e["generated_epoch"], int), f
 PYEOF
-  then ok "collect --force writes 8 files, all .json envelope-valid"
+  then ok "collect --force writes 10 files, all .json envelope-valid"
   else no "collect --force .json not envelope-valid"; fi
 }
 
@@ -89,7 +90,7 @@ c2() {
   if python3 /dev/stdin "$H/data" <<'PYEOF'
 import json, os, sys
 d = sys.argv[1]
-for f in ("usage", "git", "chats", "automation"):
+for f in ("usage", "git", "chats", "automation", "brief"):
     jc = open(os.path.join(d, f + ".json")).read()
     js = open(os.path.join(d, f + ".js")).read()
     marker = "window.MC.feeds.%s = " % f
@@ -382,16 +383,17 @@ c11() { # render layer EXECUTION coverage — runs the real renderers over fixtu
   rm -rf "$scratch"
 }
 
-c12() { # FIX 3: chats (slow) must be LAST in FEEDS so it never starves the fast feeds
+c12() { # chats is slow; brief consumes it and therefore must be the only later feed
   local order; order="$(grep -oE '\("(usage|git|chats|automation)"' "$DASH" | sed -E 's/[("]//g' | tr '\n' ' ')"
-  case "$order" in
-    *chats\ ) ok "feed order: chats collected last ($order)" ;;
-    *) no "feed order: chats not last — slow scan starves other tabs ($order)" ;;
+  local full; full="$(grep -oE '\("(usage|git|chats|automation|brief)"' "$DASH" | sed -E 's/[("]//g' | tr '\n' ' ')"
+  case "$full" in
+    *chats\ brief\ ) ok "feed order: chats then dependent brief are last ($full)" ;;
+    *) no "feed order: brief does not immediately follow slow chats ($full)" ;;
   esac
 }
 c13() { # FIX 6: the data/ dir must be 0700, not world-readable
   local mch; mch="$(mktemp -d)/mc"
-  DASHBOARD_CMD_USAGE='echo {}' DASHBOARD_CMD_GIT='echo {}' DASHBOARD_CMD_CHATS='echo {}' DASHBOARD_CMD_AUTOMATION='echo {}' \
+  DASHBOARD_CMD_USAGE='echo {}' DASHBOARD_CMD_GIT='echo {}' DASHBOARD_CMD_CHATS='echo {}' DASHBOARD_CMD_AUTOMATION='echo {}' DASHBOARD_CMD_BRIEF='echo {}' \
     MISSION_CONTROL_HOME="$mch" bash "$DASH" collect --force >/dev/null 2>&1
   local p; p="$(stat -f '%Lp' "$mch/data" 2>/dev/null || stat -c '%a' "$mch/data" 2>/dev/null)"
   [ "$p" = "700" ] && ok "data dir perms 700 (got $p)" || no "data dir world-readable (got $p, want 700)"

@@ -63,7 +63,7 @@ const locationShim = { hash: '', reload() {}, href: 'file:///mc' };
 // --- fixtures as window.MC.feeds -------------------------------------------
 const FIX = path.join(REPO, 'dashboard', 'fixtures');
 const feeds = {};
-for (const name of ['usage', 'git', 'chats', 'automation']) {
+for (const name of ['usage', 'git', 'chats', 'automation', 'brief']) {
   const p = path.join(FIX, name + '.json');
   if (!fs.existsSync(p)) { console.error('FAIL: missing fixture ' + p); process.exit(1); }
   feeds[name] = JSON.parse(fs.readFileSync(p, 'utf8'));
@@ -98,6 +98,7 @@ function newestChatTitle(feed) {
   return n && n.title;
 }
 const markers = {
+  brief: ((feeds.brief || {}).data || {}).brief_id,
   map: newestChatTitle(feeds.chats),
   chats: firstStr(feeds.chats, ['nodes']),
   git: firstStr(feeds.git, ['repos', 'repositories']),
@@ -108,7 +109,7 @@ const markers = {
 // --- run the IIFE once per tab ---------------------------------------------
 // The map tab uses Cytoscape in the browser. A tiny stub is enough to prove the
 // real graph path builds elements and wires handlers without loading the vendor.
-const TABS = ['home', 'map', 'chats', 'git', 'usage', 'automation'];
+const TABS = ['home', 'brief', 'map', 'chats', 'git', 'usage', 'automation'];
 let fails = 0;
 for (const tab of TABS) {
   resetDom();
@@ -177,6 +178,10 @@ for (const tab of TABS) {
       console.error('FAIL: #home does not surface yellow automation jobs');
       fails++; continue;
     }
+    if (txt.indexOf('Morning Brief') === -1 || txt.indexOf('Read the full brief') === -1) {
+      console.error('FAIL: #home is missing the Morning Brief summary');
+      fails++; continue;
+    }
     if (txt.indexOf('Session monitor') === -1 || txt.indexOf('Recent activity') === -1) {
       console.error('FAIL: #home is missing the session monitor or activity heatmap sections');
       fails++; continue;
@@ -210,6 +215,12 @@ for (const tab of TABS) {
       (txt.indexOf('Next run:') === -1 || txt.indexOf('Run history:') === -1 ||
        txt.indexOf('failure streak 2') === -1 || txt.indexOf('Run now') === -1)) {
     console.error('FAIL: #automation is missing next-run, distinct history, streak, or Run now fields');
+    fails++; continue;
+  }
+  if (tab === 'brief' &&
+      (txt.indexOf('NEEDS YOU') === -1 || txt.indexOf('What happened') === -1 ||
+       txt.indexOf('Open work changes') === -1 || txt.indexOf('Confirmed') === -1)) {
+    console.error('FAIL: #brief is missing ordered sections or visible trust labels');
     fails++; continue;
   }
   console.log('PASS: #' + tab + ' renders (' + txt.length + ' chars' + (marker ? ', contains "' + marker.slice(0, 30) + '"' : '') + ')');

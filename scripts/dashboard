@@ -7,7 +7,7 @@
 # built only inside the embedded python3 engine below — NEVER string-concatenated.
 #
 # Subcommands: collect [--due|--force] [feed] · refresh [feed] · status ·
-#              open [--serve] · install · demo
+#              brief --print · open [--serve] · install · demo
 #
 # Env: MISSION_CONTROL_HOME (state dir, default ~/.mission-control)
 #      DASHBOARD_CMD_{USAGE,GIT,CHATS,AUTOMATION} override feeder commands
@@ -63,6 +63,8 @@ FEEDS = [
     # On timeout the feed keeps last-good + a stale banner, so the tab never blanks.
     # LAST by design so its slow scan never delays the other three tabs.
     ("chats",      1800, "", "DASHBOARD_CMD_CHATS", 150),
+    # Brief consumes the stable snapshots above and therefore MUST run last.
+    ("brief",     86400, "", "DASHBOARD_CMD_BRIEF", 30),
 ]
 FEED_CADENCE = dict((n, c) for n, c, _, _, _ in FEEDS)
 
@@ -156,6 +158,24 @@ def _run_builtin_chats(timeout_s):
         return None, "cannot read graph export: %s" % e
 
 
+def _run_builtin_brief(timeout_s):
+    composer = os.path.join(REPO, "scripts", "morning-brief")
+    try:
+        p = subprocess.run([composer], capture_output=True, text=True, timeout=timeout_s)
+    except subprocess.TimeoutExpired:
+        return None, "morning-brief timed out after %ds" % timeout_s
+    except OSError as e:
+        return None, "cannot start morning-brief: %s" % e
+    if p.returncode != 0:
+        return None, "morning-brief exit %d: %s" % (p.returncode, (p.stderr or "").strip()[:200])
+    path = os.path.join(HOME, "morning-brief", "latest.json")
+    try:
+        with open(path) as f:
+            return json.load(f), None
+    except Exception as e:
+        return None, "cannot read Morning Brief sidecar: %s" % e
+
+
 def _run_feeder(name, defcmd, envvar, timeout_s):
     override = os.environ.get(envvar)
     if override:
@@ -174,6 +194,8 @@ def _run_feeder(name, defcmd, envvar, timeout_s):
             return None, "feeder output not JSON: %s" % e
     if name == "chats":
         return _run_builtin_chats(timeout_s)
+    if name == "brief":
+        return _run_builtin_brief(timeout_s)
     argv = shlex.split(defcmd)
     try:
         p = subprocess.run(argv, capture_output=True, text=True, timeout=timeout_s)
@@ -374,6 +396,7 @@ usage: dashboard <command>
   collect [--due|--force] [feed]   collect feeds (--due honors cadence)
   refresh [feed]                   = collect --force
   status                           text health table; nonzero if any feed red
+  brief --print                    print a deterministic preview; change no cursor
   open [--serve]                   collect --due, open the shell (--serve: local http)
   install                          install shell + launchd job (idempotent)
   demo                             build feeds from fixtures into a temp dir + open
@@ -467,6 +490,7 @@ case "$cmd" in
   collect)  engine collect "$@" ;;
   refresh)  engine collect --force "$@" ;;
   status)   engine status "$@"; exit $? ;;
+  brief)    exec "$REPO_ROOT/scripts/morning-brief" "$@" ;;
   open)     do_open "$@" ;;
   install)  do_install "$@" ;;
   demo)     do_demo "$@" ;;
