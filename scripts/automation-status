@@ -16,6 +16,8 @@
 # envelope, still exit 0.
 
 import argparse
+import glob
+import hashlib
 import json
 import os
 import re
@@ -23,26 +25,18 @@ import subprocess
 import sys
 import time
 
+from mission_control_common import ERROR, safe_text
+
 CADENCE_S = 300
 FEED = "automation"
 SCHEMA = 1
-
-# Mirror the secret-redaction layer in scripts/search-transcripts — err-log
-# lines are untrusted display text and must be scrubbed before output.
-_SECRET_RE = re.compile(
-    r"(sk-[A-Za-z0-9_-]{20,}"
-    r"|AIza[0-9A-Za-z_-]{35}"
-    r"|ya29\.[0-9A-Za-z._-]+"
-    r"|ghp_[A-Za-z0-9]{20,}|gho_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}"
-    r"|xox[baprs]-[A-Za-z0-9-]{10,}"
-    r"|AKIA[0-9A-Z]{16}"
-    r"|eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}"  # JWT
-    r"|(?i:bearer)\s+[A-Za-z0-9._-]{16,})"
-)
-
+HISTORY_SCHEMA = 1
+HISTORY_LIMIT = 20
+HISTORY_LOCK_WAIT_S = 5
+HISTORY_LOCK_STALE_S = 30
 
 def _redact(s):
-    return _SECRET_RE.sub("«REDACTED-SECRET»", s)
+    return safe_text(s, ERROR)
 
 
 def _repo_root():
@@ -51,6 +45,16 @@ def _repo_root():
 
 def _expand(path):
     return os.path.expanduser(path or "")
+
+
+def _now():
+    raw = os.environ.get("AUTOMATION_STATUS_NOW_EPOCH")
+    if raw:
+        try:
+            return float(raw)
+        except ValueError:
+            pass
+    return time.time()
 
 
 def _is_offline_media(path):
@@ -140,38 +144,283 @@ def err_log_tail(path):
         return None
 
 
-def evidence_state(evidence):
-    """Return (freshest_age_s | None, offline_media_bool).
+def evidence_details(evidence, now=None):
+    """Return freshness plus stable evidence identity for one job.
 
     freshest_age = seconds since the newest existing evidence file's mtime.
     None means no readable evidence. offline_media = evidence lives on
-    unmounted removable media (and none of it is currently readable)."""
-    now = time.time()
-    newest = None
+    unmounted removable media (and none of it is currently readable).
+
+    Registry paths may be exact files or globs. Only evidence explicitly marked
+    ``run_key: true`` may identify a distinct run; ordinary progress/display
+    files still participate in freshness without inflating run history.
+    """
+    now = _now() if now is None else now
+    newest_ns = None
+    newest_run_ns = None
     saw_media_offline = False
     saw_readable = False
     for ev in evidence or []:
-        path = _expand(ev.get("path", ""))
-        if not path:
+        pattern = _expand(ev.get("path", ""))
+        if not pattern:
             continue
-        if _is_offline_media(path):
+        if _is_offline_media(pattern):
             saw_media_offline = True
             continue
-        if os.path.isfile(path):
+        paths = glob.glob(pattern) if glob.has_magic(pattern) else [pattern]
+        for path in paths:
+            if not os.path.isfile(path):
+                continue
             try:
-                mt = os.path.getmtime(path)
+                mt_ns = os.stat(path).st_mtime_ns
                 saw_readable = True
-                if newest is None or mt > newest:
-                    newest = mt
+                if newest_ns is None or mt_ns > newest_ns:
+                    newest_ns = mt_ns
+                if ev.get("run_key") is True and (newest_run_ns is None or mt_ns > newest_run_ns):
+                    newest_run_ns = mt_ns
             except OSError:
                 continue
-    age = (now - newest) if newest is not None else None
+    newest_epoch = newest_ns / 1000000000.0 if newest_ns is not None else None
+    age = (now - newest_epoch) if newest_epoch is not None else None
     offline = saw_media_offline and not saw_readable
-    return age, offline
+    return {
+        "age_s": age,
+        "offline": offline,
+        "newest_mtime_ns": newest_ns,
+        "newest_epoch": newest_epoch,
+        "run_mtime_ns": newest_run_ns,
+    }
 
 
-def classify(entry, by_label, parse_ok):
+def evidence_state(evidence):
+    """Compatibility helper used by tests and small callers."""
+    details = evidence_details(evidence)
+    return details["age_s"], details["offline"]
+
+
+_DAILY_RE = re.compile(r"^(\d{1,2}):(\d{2}) daily$")
+_INTERVAL_RE = re.compile(r"^every\s+(\d+)([smh])$")
+
+
+def next_run_epoch(schedule, evidence_epoch, now=None):
+    """Estimate the next future run for the two supported registry forms."""
+    now = _now() if now is None else float(now)
+    value = (schedule or "").strip()
+    daily = _DAILY_RE.match(value)
+    if daily:
+        hour, minute = int(daily.group(1)), int(daily.group(2))
+        if hour > 23 or minute > 59:
+            return None
+        local = list(time.localtime(now))
+        local[3], local[4], local[5] = hour, minute, 0
+        local[8] = -1  # let libc determine DST for the candidate occurrence
+        candidate = time.mktime(tuple(local))
+        if candidate <= now:
+            local[2] += 1  # mktime normalizes month/year rollover and DST.
+            candidate = time.mktime(tuple(local))
+        return int(candidate)
+    interval = _INTERVAL_RE.match(value)
+    if interval and evidence_epoch is not None:
+        amount = int(interval.group(1))
+        unit = {"s": 1, "m": 60, "h": 3600}[interval.group(2)]
+        seconds = amount * unit
+        if seconds <= 0:
+            return None
+        candidate = float(evidence_epoch) + seconds
+        if candidate <= now:
+            candidate += (int((now - candidate) // seconds) + 1) * seconds
+        return int(candidate)
+    return None
+
+
+def _mtime_ns(path):
+    path = _expand(path)
+    if not path or not os.path.isfile(path):
+        return None
+    try:
+        return os.stat(path).st_mtime_ns
+    except OSError:
+        return None
+
+
+def _history_path():
+    home = _expand(os.environ.get("MISSION_CONTROL_HOME", "~/.mission-control"))
+    return os.path.join(home, "job-history.json")
+
+
+def _empty_history():
+    return {"schema": HISTORY_SCHEMA, "jobs": {}}
+
+
+def _load_history(path):
+    try:
+        with open(path) as f:
+            data = json.load(f)
+        if data.get("schema") != HISTORY_SCHEMA or not isinstance(data.get("jobs"), dict):
+            return _empty_history()
+        return data
+    except (OSError, ValueError, AttributeError):
+        return _empty_history()
+
+
+def _acquire_history_lock(path):
+    lock = path + ".lock"
+    deadline = time.monotonic() + HISTORY_LOCK_WAIT_S
+    while True:
+        try:
+            os.mkdir(lock, 0o700)
+            return lock
+        except FileExistsError:
+            try:
+                if time.time() - os.path.getmtime(lock) > HISTORY_LOCK_STALE_S:
+                    os.rmdir(lock)
+                    continue
+            except OSError:
+                pass
+            if time.monotonic() >= deadline:
+                raise RuntimeError("job history lock busy")
+            time.sleep(0.01)
+
+
+def _atomic_history_write(path, data):
+    parent = os.path.dirname(path)
+    os.makedirs(parent, mode=0o700, exist_ok=True)
+    os.chmod(parent, 0o700)
+    tmp = "%s.tmp.%d" % (path, os.getpid())
+    try:
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w") as f:
+            json.dump(data, f, ensure_ascii=True, sort_keys=True)
+            f.write("\n")
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+        os.chmod(path, 0o600)
+    finally:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+
+
+def _run_key(name, result, exit_state, marker_ns):
+    raw = "%s|%s|%s|%s" % (name, result, exit_state, marker_ns)
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def _failure_streak(events):
+    streak = 0
+    for event in reversed(events or []):
+        if event.get("result") == "failure":
+            streak += 1
+        elif event.get("result") == "success":
+            break
+    return streak
+
+
+def _history_projection(job, stored, confidence):
+    events = list(stored.get("events") or [])[-HISTORY_LIMIT:]
+    job["history_confidence"] = confidence
+    job["history_unknown"] = confidence != "trusted"
+    job["failure_streak"] = _failure_streak(events)
+    job["recent_runs"] = events
+
+
+def _update_one_history(entry, job, stored, now):
+    """Update one job from a trustworthy distinct-run signal."""
+    events = list(stored.get("events") or [])
+    result = None
+    marker_ns = None
+    confidence = "unknown"
+
+    if entry.get("kind") == "keepalive":
+        terminal = "success" if job.get("state") == "green" else (
+            "failure" if job.get("state") == "red" else None)
+        if terminal is not None:
+            confidence = "trusted"
+            previous = stored.get("keepalive_terminal")
+            if terminal != previous:
+                sequence = int(stored.get("keepalive_episode", 0)) + 1
+                stored["keepalive_episode"] = sequence
+                stored["keepalive_terminal"] = terminal
+                result = terminal
+                marker_ns = "episode-%d" % sequence
+    else:
+        status = job.get("last_exit")
+        run_ns = job.pop("_run_mtime_ns", None)
+        err_ns = job.pop("_err_mtime_ns", None)
+        if entry.get("pseudo") and job.get("state") == "green" and run_ns is not None:
+            result, marker_ns, confidence = "success", run_ns, "trusted"
+        elif status is not None and job.get("state") not in ("offline-media", "degraded", "retired"):
+            result = "success" if status == 0 else "failure"
+            if result == "failure" and job.get("state") != "red":
+                result = None
+            marker_ns = run_ns
+            if result == "failure" and err_ns is not None:
+                marker_ns = max(x for x in (run_ns, err_ns) if x is not None)
+            confidence = "trusted" if result is not None and marker_ns is not None else "unknown"
+            if marker_ns is None:
+                result = None
+
+    if result is not None:
+        key = _run_key(entry.get("name", ""), result, job.get("last_exit"), marker_ns)
+        if key not in {event.get("run_key") for event in events}:
+            run_at = now if isinstance(marker_ns, str) else marker_ns / 1000000000.0
+            events.append({
+                "run_key": key,
+                "result": result,
+                "run_at": int(run_at),
+                "observed_at": int(now),
+                "last_exit": job.get("last_exit"),
+            })
+    stored["events"] = events[-HISTORY_LIMIT:]
+    stored["last_observed_at"] = int(now)
+    stored["last_observed_state"] = job.get("state")
+    stored["observation_count"] = int(stored.get("observation_count", 0)) + 1
+    _history_projection(job, stored, confidence)
+    job.pop("_run_mtime_ns", None)
+    job.pop("_err_mtime_ns", None)
+
+
+def attach_history(entries, jobs, parse_ok, now):
+    """Attach bounded run history; only a parseable poll may mutate it."""
+    path = _history_path()
+    if not parse_ok:
+        data = _load_history(path)
+        for entry, job in zip(entries, jobs):
+            stored = data["jobs"].get(entry.get("name", ""), {})
+            _history_projection(job, stored, "unknown")
+            job.pop("_run_mtime_ns", None)
+            job.pop("_err_mtime_ns", None)
+        return
+
+    try:
+        os.makedirs(os.path.dirname(path), mode=0o700, exist_ok=True)
+        lock = _acquire_history_lock(path)
+    except (OSError, RuntimeError):
+        data = _load_history(path)
+        for entry, job in zip(entries, jobs):
+            _history_projection(job, data["jobs"].get(entry.get("name", ""), {}), "unknown")
+            job.pop("_run_mtime_ns", None)
+            job.pop("_err_mtime_ns", None)
+        return
+    try:
+        data = _load_history(path)
+        for entry, job in zip(entries, jobs):
+            name = entry.get("name", "")
+            stored = data["jobs"].setdefault(name, {"events": []})
+            _update_one_history(entry, job, stored, now)
+        _atomic_history_write(path, data)
+    finally:
+        try:
+            os.rmdir(lock)
+        except OSError:
+            pass
+
+
+def classify(entry, by_label, parse_ok, now=None):
     """Compute one job's state + detail fields."""
+    now = _now() if now is None else now
     name = entry.get("name", "")
     result = {
         "label": entry.get("label", name),
@@ -183,7 +432,16 @@ def classify(entry, by_label, parse_ok):
         "last_exit": by_label.get(name, {}).get("status"),
         "evidence_age_s": None,
         "err_log_tail": None,
+        "next_run_epoch": None,
+        "next_run_estimate": None,
+        "run_cmd": None,
+        "_run_mtime_ns": None,
+        "_err_mtime_ns": None,
     }
+
+    if (not entry.get("pseudo") and not entry.get("retired")
+            and re.match(r"^[A-Za-z0-9_.-]+$", name or "")):
+        result["run_cmd"] = "launchctl kickstart -k gui/$UID/%s" % name
 
     if entry.get("retired"):
         result["state"] = "retired"
@@ -194,8 +452,13 @@ def classify(entry, by_label, parse_ok):
     # ONLY. green if evidence is within expected_freshness_s, else yellow. Never
     # red-for-unloaded — an unloaded launchctl label is meaningless for a pseudo job.
     if entry.get("pseudo"):
-        age, _offline = evidence_state(entry.get("evidence"))
+        details = evidence_details(entry.get("evidence"), now)
+        age = details["age_s"]
         result["evidence_age_s"] = None if age is None else round(age, 1)
+        result["_run_mtime_ns"] = details["run_mtime_ns"]
+        next_epoch = next_run_epoch(entry.get("schedule"), details["newest_epoch"], now)
+        result["next_run_epoch"] = next_epoch
+        result["next_run_estimate"] = _iso(next_epoch) if next_epoch is not None else None
         exp = entry.get("expected_freshness_s")
         fresh = age is not None and isinstance(exp, (int, float)) and age <= exp
         result["state"] = "green" if fresh else "yellow"
@@ -205,8 +468,14 @@ def classify(entry, by_label, parse_ok):
         result["state"] = "degraded"
         return result
 
-    age, offline = evidence_state(entry.get("evidence"))
+    details = evidence_details(entry.get("evidence"), now)
+    age, offline = details["age_s"], details["offline"]
     result["evidence_age_s"] = None if age is None else round(age, 1)
+    result["_run_mtime_ns"] = details["run_mtime_ns"]
+    result["_err_mtime_ns"] = _mtime_ns(entry.get("err_log", ""))
+    next_epoch = next_run_epoch(entry.get("schedule"), details["newest_epoch"], now)
+    result["next_run_epoch"] = next_epoch
+    result["next_run_estimate"] = _iso(next_epoch) if next_epoch is not None else None
     if offline:
         result["state"] = "offline-media"
         return result
@@ -227,7 +496,7 @@ def classify(entry, by_label, parse_ok):
         result["state"] = "red"
         return result
 
-    if stale and nonzero:
+    if nonzero:
         result["state"] = "red"
         return result
 
@@ -247,7 +516,10 @@ def collect(registry_path):
     raw = launchctl_list(launchctl_bin)
     by_label, parse_ok = parse_launchctl(raw)
 
-    jobs = [classify(e, by_label, parse_ok) for e in entries]
+    now = _now()
+    jobs = [classify(e, by_label, parse_ok, now) for e in entries]
+    if reg_err is None:
+        attach_history(entries, jobs, parse_ok, now)
 
     # unregistered: live com.gillette* labels absent from the registry
     known = set(e.get("name", "") for e in entries)
@@ -262,7 +534,6 @@ def collect(registry_path):
     for j in jobs:
         counts[j["state"]] = counts.get(j["state"], 0) + 1
 
-    now = time.time()
     data = {
         "checked_at": _iso(now),
         "t7_mounted": os.path.exists(t7_path),

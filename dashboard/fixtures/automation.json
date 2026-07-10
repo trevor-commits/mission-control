@@ -20,7 +20,22 @@
         "last_exit": 0,
         "state": "green",
         "evidence_age_s": 3600,
-        "err_log_tail": null
+        "err_log_tail": null,
+        "next_run_epoch": 1783639800,
+        "next_run_estimate": "2026-07-09T23:30:00Z",
+        "history_confidence": "trusted",
+        "history_unknown": false,
+        "failure_streak": 0,
+        "recent_runs": [
+          {
+            "run_key": "nightly-success-1",
+            "result": "success",
+            "run_at": 1783553400,
+            "observed_at": 1783553405,
+            "last_exit": 0
+          }
+        ],
+        "run_cmd": "launchctl kickstart -k gui/$UID/com.gillettes.nightly-review"
       },
       {
         "label": "Usage Snapshot",
@@ -32,7 +47,22 @@
         "last_exit": 0,
         "state": "yellow",
         "evidence_age_s": 2200,
-        "err_log_tail": null
+        "err_log_tail": null,
+        "next_run_epoch": 1783598600,
+        "next_run_estimate": "2026-07-09T12:03:20Z",
+        "history_confidence": "trusted",
+        "history_unknown": false,
+        "failure_streak": 0,
+        "recent_runs": [
+          {
+            "run_key": "usage-success-1",
+            "result": "success",
+            "run_at": 1783596800,
+            "observed_at": 1783596805,
+            "last_exit": 0
+          }
+        ],
+        "run_cmd": "launchctl kickstart -k gui/$UID/com.gillettes.usage-snapshot"
       },
       {
         "label": "morning-health-brief 🚑",
@@ -44,7 +74,36 @@
         "last_exit": 1,
         "state": "red",
         "evidence_age_s": 90000,
-        "err_log_tail": "Traceback (most recent call last):\n  File \"brief.py\", line 88, in <module>\n    resets = row['resets_in_min']\nKeyError: 'resets_in_min'"
+        "err_log_tail": "Traceback (most recent call last):\n  File \"brief.py\", line 88, in <module>\n    resets = row['resets_in_min']\nKeyError: 'resets_in_min'",
+        "next_run_epoch": 1783663200,
+        "next_run_estimate": "2026-07-10T07:00:00Z",
+        "history_confidence": "trusted",
+        "history_unknown": false,
+        "failure_streak": 2,
+        "recent_runs": [
+          {
+            "run_key": "health-success-1",
+            "result": "success",
+            "run_at": 1783429200,
+            "observed_at": 1783429205,
+            "last_exit": 0
+          },
+          {
+            "run_key": "health-failure-1",
+            "result": "failure",
+            "run_at": 1783515600,
+            "observed_at": 1783515605,
+            "last_exit": 1
+          },
+          {
+            "run_key": "health-failure-2",
+            "result": "failure",
+            "run_at": 1783602000,
+            "observed_at": 1783602005,
+            "last_exit": 1
+          }
+        ],
+        "run_cmd": "launchctl kickstart -k gui/$UID/com.gillettes.morning-health-brief"
       },
       {
         "label": "Repo Groom",

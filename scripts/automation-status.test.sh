@@ -13,6 +13,8 @@ fail() { echo "FAIL: $1"; FAILS=$((FAILS + 1)); }
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
+export MISSION_CONTROL_HOME="$WORK/default-mission-control-home"
+mkdir -p "$MISSION_CONTROL_HOME"
 
 # --- fixtures -------------------------------------------------------------
 FRESH="$WORK/fresh-evidence.log"; : > "$FRESH"            # mtime = now
@@ -216,6 +218,200 @@ for n in pseudo-fresh pseudo-stale pseudo-missing; do
 done
 [ "$PRED" -eq 0 ] && pass "no pseudo job is ever RED (unloaded launchd label ignored)" \
   || fail "a pseudo job was marked RED"
+
+# --- distinct-run history, schedule math, globs, and atomic persistence ----
+RUNS="$WORK/distinct-runs"; mkdir -p "$RUNS"
+RUN_MARKER="$RUNS/run-marker.json"
+GLOB_OLD="$RUNS/run-older.json"
+GLOB_NEW="$RUNS/run-newer.json"
+RUN_ERR="$RUNS/run.err"
+STATUS_FILE="$RUNS/status"
+KEEPALIVE_MODE_FILE="$RUNS/keepalive-mode"
+: > "$RUN_MARKER"; : > "$GLOB_OLD"; : > "$GLOB_NEW"; : > "$RUN_ERR"
+printf '1\n' > "$STATUS_FILE"
+printf 'down\n' > "$KEEPALIVE_MODE_FILE"
+
+# Fixed UTC clock: 2026-07-09 12:00:00Z. Newest glob evidence is 100 seconds old.
+FAKE_NOW=1783598400
+python3 - "$RUN_MARKER" "$GLOB_OLD" "$GLOB_NEW" "$RUN_ERR" "$FAKE_NOW" <<'PY'
+import os, sys
+marker, old, new, err, now = sys.argv[1:5] + [int(sys.argv[5])]
+for path, ts in ((marker, now - 100), (old, now - 900), (new, now - 100), (err, now - 50)):
+    os.utime(path, ns=(ts * 1000000000, ts * 1000000000))
+PY
+
+HREG="$RUNS/jobs.json"
+cat > "$HREG" <<JSON
+{ "jobs": [
+  { "label": "Distinct Job", "name": "com.gillettes.distinct", "kind": "calendar",
+    "schedule": "23:30 daily", "expected_freshness_s": 3600,
+    "evidence": [ { "role": "run", "path": "$RUNS/run-*.json", "run_key": true } ],
+    "err_log": "$RUN_ERR" },
+  { "label": "Interval Job", "name": "com.gillettes.interval", "kind": "interval",
+    "schedule": "every 300s", "expected_freshness_s": 3600,
+    "evidence": [ { "role": "run", "path": "$RUN_MARKER", "run_key": true } ] },
+  { "label": "Unknown History", "name": "com.gillettes.unknown", "kind": "calendar",
+    "schedule": "07:00 daily", "expected_freshness_s": 3600,
+    "evidence": [ { "role": "display", "path": "$RUN_MARKER" } ] },
+  { "label": "Offline Failure", "name": "com.gillettes.offline-failure", "kind": "calendar",
+    "schedule": "07:00 daily", "expected_freshness_s": 3600,
+    "evidence": [ { "role": "run", "path": "/Volumes/NOPE_T7_history/run", "run_key": true } ],
+    "err_log": "$RUN_ERR" },
+  { "label": "Keepalive Episode", "name": "com.gillettes.keepalive-episode", "kind": "keepalive",
+    "schedule": "keepalive", "expected_freshness_s": 3600,
+    "evidence": [ { "role": "progress", "path": "$RUN_MARKER" } ] }
+] }
+JSON
+
+HSTUB="$RUNS/launchctl.sh"
+cat > "$HSTUB" <<'SH'
+#!/usr/bin/env bash
+printf 'PID\tStatus\tLabel\n'
+printf -- '-\t%s\tcom.gillettes.distinct\n' "$(cat "$STATUS_FILE")"
+printf -- '-\t0\tcom.gillettes.interval\n'
+printf -- '-\t0\tcom.gillettes.unknown\n'
+printf -- '-\t1\tcom.gillettes.offline-failure\n'
+if [ "$(cat "$KEEPALIVE_MODE_FILE")" = up ]; then
+  printf '4321\t0\tcom.gillettes.keepalive-episode\n'
+fi
+SH
+chmod +x "$HSTUB"
+
+HIST_HOME="$RUNS/home"; mkdir -p "$HIST_HOME"
+run_history_collect() {
+  TZ=UTC AUTOMATION_STATUS_NOW_EPOCH="$FAKE_NOW" MISSION_CONTROL_HOME="$HIST_HOME" \
+    STATUS_FILE="$STATUS_FILE" KEEPALIVE_MODE_FILE="$KEEPALIVE_MODE_FILE" \
+    AUTOMATION_STATUS_LAUNCHCTL="$HSTUB" python3 "$SC" --json --registry "$HREG"
+}
+
+HOUT="$RUNS/history.json.out"
+run_history_collect > "$HOUT"
+
+python3 - "$HOUT" "$FAKE_NOW" <<'PY'
+import json, sys
+env = json.load(open(sys.argv[1])); now = int(sys.argv[2])
+jobs = {j["name"]: j for j in env["data"]["jobs"]}
+daily = jobs["com.gillettes.distinct"]
+interval = jobs["com.gillettes.interval"]
+unknown = jobs["com.gillettes.unknown"]
+offline = jobs["com.gillettes.offline-failure"]
+assert daily["evidence_age_s"] == 100.0, daily
+assert daily["next_run_epoch"] == 1783639800, daily
+assert interval["next_run_epoch"] == now + 200, interval
+assert daily["failure_streak"] == 1 and len(daily["recent_runs"]) == 1, daily
+assert unknown["history_confidence"] == "unknown" and not unknown["recent_runs"], unknown
+assert offline["state"] == "offline-media" and not offline["recent_runs"], offline
+assert daily["run_cmd"].endswith("/com.gillettes.distinct"), daily
+PY
+if [ "$?" -eq 0 ]; then pass "history: newest glob, fake-time schedules, trusted/unknown fields";
+else fail "history: newest glob, fake-time schedules, trusted/unknown fields"; fi
+
+# Twelve repeated observations of the same failed run must remain one event.
+i=1
+while [ "$i" -le 11 ]; do run_history_collect >/dev/null; i=$((i + 1)); done
+run_history_collect > "$HOUT"
+python3 - "$HOUT" <<'PY'
+import json, sys
+j = next(x for x in json.load(open(sys.argv[1]))["data"]["jobs"] if x["name"] == "com.gillettes.distinct")
+assert len(j["recent_runs"]) == 1, j
+assert j["failure_streak"] == 1, j
+PY
+if [ "$?" -eq 0 ]; then pass "history: repeated polls do not inflate distinct failure streak";
+else fail "history: repeated polls inflated failure streak"; fi
+
+# A new error mtime is a distinct failed run; a later trusted success resets it.
+FAKE_NOW=$((FAKE_NOW + 60))
+python3 - "$RUN_ERR" "$FAKE_NOW" <<'PY'
+import os, sys
+ts = int(sys.argv[2]); os.utime(sys.argv[1], ns=(ts * 1000000000, ts * 1000000000))
+PY
+run_history_collect > "$HOUT"
+printf '0\n' > "$STATUS_FILE"
+FAKE_NOW=$((FAKE_NOW + 60))
+python3 - "$GLOB_NEW" "$FAKE_NOW" <<'PY'
+import os, sys
+ts = int(sys.argv[2]); os.utime(sys.argv[1], ns=(ts * 1000000000, ts * 1000000000))
+PY
+run_history_collect > "$HOUT"
+python3 - "$HOUT" <<'PY'
+import json, sys
+j = next(x for x in json.load(open(sys.argv[1]))["data"]["jobs"] if x["name"] == "com.gillettes.distinct")
+assert [x["result"] for x in j["recent_runs"]] == ["failure", "failure", "success"], j
+assert j["failure_streak"] == 0, j
+PY
+if [ "$?" -eq 0 ]; then pass "history: new error creates failure and distinct success resets streak";
+else fail "history: distinct failure/success semantics"; fi
+
+# Unparseable launchctl must preserve history bytes and report confidence unknown.
+HIST_BEFORE="$(shasum "$HIST_HOME/job-history.json" | awk '{print $1}')"
+TZ=UTC AUTOMATION_STATUS_NOW_EPOCH="$FAKE_NOW" MISSION_CONTROL_HOME="$HIST_HOME" \
+  AUTOMATION_STATUS_LAUNCHCTL="$GARBAGE" python3 "$SC" --json --registry "$HREG" > "$HOUT"
+HIST_AFTER="$(shasum "$HIST_HOME/job-history.json" | awk '{print $1}')"
+if [ "$HIST_BEFORE" = "$HIST_AFTER" ] \
+   && [ "$(getfield "$HOUT" com.gillettes.distinct history_confidence)" = "unknown" ]; then
+  pass "history: unparseable state preserves persisted history and reports unknown"
+else fail "history: unparseable state mutated history or hid uncertainty"; fi
+
+# Keepalive red polls form one episode; recovery and a later red create new episodes.
+printf 'down\n' > "$KEEPALIVE_MODE_FILE"
+run_history_collect >/dev/null; run_history_collect > "$HOUT"
+printf 'up\n' > "$KEEPALIVE_MODE_FILE"; run_history_collect >/dev/null
+printf 'down\n' > "$KEEPALIVE_MODE_FILE"; run_history_collect > "$HOUT"
+python3 - "$HOUT" <<'PY'
+import json, sys
+j = next(x for x in json.load(open(sys.argv[1]))["data"]["jobs"] if x["name"] == "com.gillettes.keepalive-episode")
+assert [x["result"] for x in j["recent_runs"]] == ["failure", "success", "failure"], j
+assert j["failure_streak"] == 1, j
+PY
+if [ "$?" -eq 0 ]; then pass "history: persistent keepalive failure is one episode";
+else fail "history: keepalive polls inflated or lost episodes"; fi
+
+# Twenty-event cap and atomic concurrent dedupe.
+printf '1\n' > "$STATUS_FILE"
+i=1
+while [ "$i" -le 25 ]; do
+  FAKE_NOW=$((FAKE_NOW + 1))
+  python3 - "$RUN_ERR" "$FAKE_NOW" <<'PY'
+import os, sys
+ts = int(sys.argv[2]); os.utime(sys.argv[1], ns=(ts * 1000000000, ts * 1000000000))
+PY
+  run_history_collect >/dev/null
+  i=$((i + 1))
+done
+run_history_collect > "$HOUT"
+python3 - "$HOUT" "$HIST_HOME/job-history.json" <<'PY'
+import json, os, stat, sys
+env = json.load(open(sys.argv[1])); hist = json.load(open(sys.argv[2]))
+j = next(x for x in env["data"]["jobs"] if x["name"] == "com.gillettes.distinct")
+events = hist["jobs"]["com.gillettes.distinct"]["events"]
+assert len(j["recent_runs"]) == 20 and len(events) == 20, (j, events)
+assert len({x["run_key"] for x in events}) == 20, events
+assert stat.S_IMODE(os.stat(sys.argv[2]).st_mode) == 0o600
+PY
+if [ "$?" -eq 0 ]; then pass "history: atomic file is mode 600, unique, and capped at twenty";
+else fail "history: cap, uniqueness, or permissions"; fi
+
+CONCURRENT_HOME="$RUNS/concurrent-home"; mkdir -p "$CONCURRENT_HOME"
+TZ=UTC AUTOMATION_STATUS_NOW_EPOCH="$FAKE_NOW" MISSION_CONTROL_HOME="$CONCURRENT_HOME" \
+  STATUS_FILE="$STATUS_FILE" KEEPALIVE_MODE_FILE="$KEEPALIVE_MODE_FILE" \
+  AUTOMATION_STATUS_LAUNCHCTL="$HSTUB" python3 "$SC" --json --registry "$HREG" >/dev/null &
+P1=$!
+TZ=UTC AUTOMATION_STATUS_NOW_EPOCH="$FAKE_NOW" MISSION_CONTROL_HOME="$CONCURRENT_HOME" \
+  STATUS_FILE="$STATUS_FILE" KEEPALIVE_MODE_FILE="$KEEPALIVE_MODE_FILE" \
+  AUTOMATION_STATUS_LAUNCHCTL="$HSTUB" python3 "$SC" --json --registry "$HREG" >/dev/null &
+P2=$!
+wait "$P1"; R1=$?; wait "$P2"; R2=$?
+python3 - "$CONCURRENT_HOME/job-history.json" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1]))
+for row in d["jobs"].values():
+    keys = [x["run_key"] for x in row.get("events", [])]
+    assert len(keys) == len(set(keys))
+PY
+CRC=$?
+if [ "$R1" -eq 0 ] && [ "$R2" -eq 0 ] && [ "$CRC" -eq 0 ]; then
+  pass "history: concurrent writers preserve valid deduplicated atomic state"
+else fail "history: concurrent writers failed (r1=$R1 r2=$R2 parse=$CRC)"; fi
 
 # --- summary --------------------------------------------------------------
 echo "-----"

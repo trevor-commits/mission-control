@@ -3,8 +3,9 @@
     {
       "evidence": [
         {
-          "path": "/Users/gillettes/.claude/nightly-review/reports/2026-07-02.md",
-          "role": "run"
+          "path": "/Users/gillettes/.claude/nightly-review/reports/*.md",
+          "role": "run",
+          "run_key": true
         }
       ],
       "err_log": "/Users/gillettes/.claude/nightly-review/launchd.err.log",
@@ -17,8 +18,24 @@
     {
       "evidence": [
         {
+          "path": "/Users/gillettes/.codex/automation-state/morning-health-brief/last-run",
+          "role": "run",
+          "run_key": true
+        }
+      ],
+      "err_log": "/Users/gillettes/.codex/automation-state/morning-health-brief/launchd.err.log",
+      "expected_freshness_s": 93600,
+      "kind": "calendar",
+      "label": "Morning Health Brief",
+      "name": "com.gillettes.morning-health-brief",
+      "schedule": "07:00 daily"
+    },
+    {
+      "evidence": [
+        {
           "path": "/Users/gillettes/.usage-snapshot/history.jsonl",
-          "role": "run"
+          "role": "run",
+          "run_key": true
         }
       ],
       "err_log": "/Users/gillettes/.usage-snapshot/launchd.err",
@@ -32,7 +49,8 @@
       "evidence": [
         {
           "path": "/Users/gillettes/.delegation-audit/last-scan.json",
-          "role": "run"
+          "role": "run",
+          "run_key": true
         }
       ],
       "err_log": "/Users/gillettes/.delegation-audit/launchd.err",
@@ -46,7 +64,8 @@
       "evidence": [
         {
           "path": "/Users/gillettes/.local/state/repo-state-watcher/last-scan.tsv",
-          "role": "scan"
+          "role": "scan",
+          "run_key": true
         }
       ],
       "err_log": "/Users/gillettes/.local/state/repo-state-watcher/logs/scan.err.log",
@@ -59,8 +78,9 @@
     {
       "evidence": [
         {
-          "path": "/Users/gillettes/.local/state/repo-state-watcher/last-scan.tsv",
-          "role": "digest"
+          "path": "/Users/gillettes/.local/state/repo-state-watcher/logs/digest.out.log",
+          "role": "digest",
+          "run_key": true
         }
       ],
       "err_log": "/Users/gillettes/.local/state/repo-state-watcher/logs/digest.err.log",
@@ -74,7 +94,8 @@
       "evidence": [
         {
           "path": "/Users/gillettes/.local/state/repo-state-watcher/groom-last.txt",
-          "role": "run"
+          "role": "run",
+          "run_key": true
         }
       ],
       "err_log": "/Users/gillettes/.local/state/repo-state-watcher/groom.launchd.err",
@@ -88,7 +109,7 @@
       "evidence": [
         {
           "path": "/Users/gillettes/.mobile-connect/log/launchd.out",
-          "role": "run"
+          "role": "progress"
         }
       ],
       "err_log": "/Users/gillettes/.mobile-connect/log/launchd.err",
@@ -103,7 +124,8 @@
         {
           "expected_offline": true,
           "path": "/Users/gillettes/.mission-control/data/automation.json",
-          "role": "run"
+          "role": "run",
+          "run_key": true
         }
       ],
       "expected_freshness_s": 600,
@@ -116,7 +138,8 @@
       "evidence": [
         {
           "path": "/Users/gillettes/.chat-graph/last-ingest",
-          "role": "run"
+          "role": "run",
+          "run_key": true
         }
       ],
       "expected_freshness_s": 172800,

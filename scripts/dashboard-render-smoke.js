@@ -206,6 +206,12 @@ for (const tab of TABS) {
     console.error('FAIL: #usage is missing the decision-card section');
     fails++; continue;
   }
+  if (tab === 'automation' &&
+      (txt.indexOf('Next run:') === -1 || txt.indexOf('Run history:') === -1 ||
+       txt.indexOf('failure streak 2') === -1 || txt.indexOf('Run now') === -1)) {
+    console.error('FAIL: #automation is missing next-run, distinct history, streak, or Run now fields');
+    fails++; continue;
+  }
   console.log('PASS: #' + tab + ' renders (' + txt.length + ' chars' + (marker ? ', contains "' + marker.slice(0, 30) + '"' : '') + ')');
 }
 if (fails) { console.error('render-smoke: ' + fails + ' tab(s) FAILED'); process.exit(1); }

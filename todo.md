@@ -9,6 +9,7 @@ Capture the current goal plus the concrete dependency-ordered steps that are sti
 - Put audit-created actionable execution items at the top of this section so audit follow-through is the next queue to execute.
 - If the current chat creates or discovers more urgent execution-ready work than the existing queue reflects, persist and move that fresher work to the top of this section before handoff so the chat is not the only durable record.
 - When a step is verified complete, move or summarize it in `## Completed` instead of deleting the history.
+- ER-107 Morning Brief (highest, active): execute `openspec/changes/morning-brief/` on `codex/morning-brief`; ship the thin brief first, then outcome extraction, decision recall, delivery proof, and the safe dry-run loose-end tier. The approved Fable plan and U1-U7 audit upgrades are binding inputs. | owner: Codex thread `019f4963-1e75-7600-8a17-1e6f6f8e8ca6` | linear: repo-only; no Mission Control Linear team is configured.
 - ER-089 usage-aware autonomous routing (high): design and implement provider-usage adapters only where safe credentials/sources exist, then expose the routing signal in Mission Control without inventing missing provider percentages. Blocker: Trevor-held provider auth for z.ai/OpenAI/GitHub if live usage is required. | owner: next Mission Control routing session | linear: self-contained until Linear is configured.
 - ER-090 autonomous coding-hygiene loop (high): design the coordinator that consumes Mission Control feeds and raises glaring decisions for dirty work, branches, and fixable problems without unsafe auto-merge/push behavior. Build only after the boundary/aggressiveness decision is recorded. | owner: next Mission Control autonomy session | linear: self-contained until Linear is configured.
 - P14 end-of-day loose-ends robot (after ER-090/P12 boundaries): consume the new Open work ledger in dry-run first, auto-fix only mechanically safe items, and escalate decision items loudly without merging, force-pushing, deleting, or editing human docs. | owner: future Mission Control autonomy session | linear: self-contained until Linear is configured.
@@ -228,6 +229,31 @@ Each active branch entry should include:
 - `retain reason` when not deleting
 - `cleanup command`
 - `linked PR/audit/completion record`
+
+### `codex/morning-brief`
+- status: active
+- created: 2026-07-09
+- base: `origin/main` at `ebfbd50`
+- worktree: `/Users/gillettes/Coding Projects/mission-control-worktrees/morning-brief`
+- source chat: 2026-07-09 `Audit: Mission Control orchestration priorities` (`019f4963-1e75-7600-8a17-1e6f6f8e8ca6`)
+- last refreshed by chat: 2026-07-09 same Codex thread
+- purpose: Implement ER-107 Morning Brief and the approved Fable plan plus U1-U7 audit corrections as one reviewable product lane.
+- linked issue: repo-only disposition; no Mission Control Linear team is configured
+- plugin mirror: none; repo-only mode is explicit in the Linear Issue Ledger
+- merge expectation: merge to `main`
+- merge target: `main`
+- review surface: independent Codex evidence audit, then final adversarial review; PR or direct merge after all blocking findings close
+- exit checklist:
+  - [ ] OpenSpec artifacts, HOTL workflow, and durable plan pointers complete
+  - [ ] Thin brief, outcome extraction, decision queue, delivery proof, and safe dry-run runner complete
+  - [ ] Full local and installed-runtime verification complete
+  - [ ] Independent audit loop reaches review-clean or explicit deferred risk
+  - [ ] Work/Test/Audit records and project memory refreshed
+  - [ ] Branch committed, pushed, merged or explicitly handed off
+- delete when: after merge, remote push, durable closeout, and worktree removal
+- retain reason: n/a
+- cleanup command: `git -C /Users/gillettes/Coding\ Projects/mission-control worktree remove /Users/gillettes/Coding\ Projects/mission-control-worktrees/morning-brief && git -C /Users/gillettes/Coding\ Projects/mission-control branch -d codex/morning-brief`
+- linked PR/audit/completion record: `openspec/changes/morning-brief/`; final record pending
 
 ## Branch History
 - No closed branch entries recorded yet.

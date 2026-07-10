@@ -333,6 +333,7 @@ body {
 .mc-bar-fill.mc-state-amber { background: var(--mc-amber); }
 .mc-bar-fill.mc-state-red   { background: var(--mc-red); }
 .mc-usage-row { display: flex; align-items: center; gap: var(--mc-sp-3); padding: var(--mc-sp-2) 0; }
+.mc-run-strip { display: inline-flex; align-items: center; gap: 5px; margin: var(--mc-sp-1) 0; }
 .mc-usage-name { width: 140px; flex: none; font-size: var(--mc-fs-2); }
 .mc-pace { color: var(--mc-amber); font-size: var(--mc-fs-2); }
 .mc-countdown { font-family: var(--mc-mono); font-size: var(--mc-fs-1); color: var(--mc-fg-muted); }
@@ -1894,6 +1895,28 @@ body {
       card.appendChild(head);
       var age = jb.evidence_age_s != null ? fmtAgeS(jb.evidence_age_s) : "never ran";
       card.appendChild(h("div", { class: "mc-card-secondary mc-num" }, "last evidence " + age + " · " + (jb.schedule || "")));
+      if (jb.next_run_epoch != null) {
+        var nextLabel;
+        try { nextLabel = new Date((+jb.next_run_epoch) * 1000).toLocaleString([], { dateStyle: "short", timeStyle: "short" }); }
+        catch (e) { nextLabel = jb.next_run_estimate || String(jb.next_run_epoch); }
+        card.appendChild(h("div", { class: "mc-card-secondary mc-num" }, "Next run: " + nextLabel));
+      } else if (jb.kind !== "keepalive" && jb.state !== "retired") {
+        card.appendChild(h("div", { class: "mc-card-secondary" }, "Next run: not estimated for this schedule"));
+      }
+      var recentRuns = Array.isArray(jb.recent_runs) ? jb.recent_runs : [];
+      if (jb.history_confidence === "trusted") {
+        var failedRuns = recentRuns.filter(function (run) { return run.result === "failure"; }).length;
+        card.appendChild(h("div", { class: "mc-card-secondary" },
+          "Run history: " + recentRuns.length + " distinct · " + failedRuns + " failed · failure streak " + (+jb.failure_streak || 0)));
+        var runStrip = h("div", { class: "mc-run-strip", title: "Oldest to newest distinct runs" });
+        recentRuns.forEach(function (run) {
+          runStrip.appendChild(dot(run.result === "failure" ? "red" : "green"));
+        });
+        card.appendChild(runStrip);
+      } else {
+        card.appendChild(h("div", { class: "mc-card-secondary" }, "Run history unavailable — no stable run marker"));
+      }
+      if (jb.run_cmd) card.appendChild(copyable(jb.run_cmd, "Run now"));
       if (jb.err_log_tail) {
         var d = { on: false };
         var toggle = h("div", { class: "mc-collapse" }, "Show last error");

@@ -1,0 +1,5 @@
+schema: superpowers-bridge
+created: 2026-07-10
+goal: Deliver one trustworthy daily fleet-state brief in Mission Control, with
+  outcome extraction, decisions, health, usage, delivery proof, and conservative
+  dry-run automation.

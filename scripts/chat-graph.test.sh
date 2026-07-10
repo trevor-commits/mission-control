@@ -487,8 +487,8 @@ con.execute("INSERT INTO edges VALUES('C','D','audits','titles',0.5,'{}','x','su
 con.commit(); con.close()
 PY
 "$CG" stats >/dev/null 2>&1              # any DB open triggers _migrate
-ok 4 "$(q "SELECT value FROM meta WHERE key='schema_version'")" \
-   "v1 DB open migrates meta.schema_version to 4"
+ok 5 "$(q "SELECT value FROM meta WHERE key='schema_version'")" \
+   "v1 DB open migrates meta.schema_version to 5"
 ok 2 "$(q "SELECT COUNT(*) FROM edges")" \
    "migration preserves all rows"
 ok suppressed "$(q "SELECT status FROM edges WHERE src='C' AND dst='D' AND type='audits'")" \
@@ -717,8 +717,11 @@ rows = [
     ("repo:repo-git", "repo_dirty", "repo-git: detached HEAD needs a decision", "sev-detached", now),
 ]
 for sid, kind, text, h, first_seen in rows:
-    con.execute("INSERT INTO open_ends(session_id, kind, text, text_hash, first_seen_at) VALUES(?,?,?,?,?)",
-                (sid, kind, text, h, first_seen))
+    con.execute("""INSERT INTO open_ends(
+                session_id, kind, text, text_hash, item_key,
+                first_seen_at, updated_at, last_change_type)
+                VALUES(?,?,?,?,?,?,?,'new')""",
+                (sid, kind, text, h, 'item-' + h, first_seen, first_seen))
 con.commit()
 PYEOF
 EXP32="$CHAT_GRAPH_HOME/export/graph.json"
@@ -770,6 +773,133 @@ PYEOF
 "$CG" validate-export "$BAD33" >/dev/null 2>&1; RC33=$?
 if [ "$RC33" -ne 0 ]; then pass "validate-export rejects snapshot missing loose_ends"
 else fail "validate-export accepted snapshot missing loose_ends"; fi
+
+# --- 35. v4 -> v5 outcome/open-work migration is additive + idempotent -----
+new_env
+python3 - <<'PYEOF'
+import os, sqlite3
+db = os.path.join(os.environ["CHAT_GRAPH_HOME"], "graph.db")
+con = sqlite3.connect(db)
+con.executescript("""
+  CREATE TABLE meta(key TEXT PRIMARY KEY, value TEXT);
+  CREATE TABLE sessions(
+    id TEXT PRIMARY KEY, provider TEXT, title TEXT, repo TEXT,
+    first_prompt TEXT, last_activity TEXT,
+    closeout_seen INTEGER DEFAULT 0, open_end_count INTEGER DEFAULT 0,
+    first_seen_at INTEGER, first_msg_uuid TEXT, enriched_at INTEGER);
+  CREATE TABLE open_ends(
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT, kind TEXT, text TEXT, text_hash TEXT,
+    resolved_at INTEGER, first_seen_at INTEGER, UNIQUE(session_id, text_hash));
+""")
+con.execute("INSERT INTO meta VALUES('schema_version','4')")
+con.execute("INSERT INTO sessions(id,provider,title,repo,first_seen_at) VALUES(?,?,?,?,?)",
+            ('repo:alpha','repo','Repo: alpha','alpha',100))
+con.execute("INSERT INTO sessions(id,provider,title,first_seen_at) VALUES(?,?,?,?)",
+            ('CHAT35','claude','Chat 35',101))
+con.execute("INSERT INTO open_ends(session_id,kind,text,text_hash,first_seen_at) VALUES(?,?,?,?,?)",
+            ('CHAT35','closeout_handoff','finish it','legacy-hash',102))
+con.commit(); con.close()
+PYEOF
+"$CG" stats >/dev/null 2>&1
+"$CG" stats >/dev/null 2>&1
+ok 5 "$(q "SELECT value FROM meta WHERE key='schema_version'")" \
+   "v4 DB migrates to schema 5 exactly once"
+ok 1 "$(q "SELECT COUNT(*) FROM open_ends WHERE text_hash='legacy-hash' AND text='finish it'")" \
+   "v5 migration preserves the legacy open-end row"
+ok repo "$(q "SELECT node_kind FROM sessions WHERE id='repo:alpha'")" \
+   "migration backfills repo node_kind"
+ok chat "$(q "SELECT node_kind FROM sessions WHERE id='CHAT35'")" \
+   "migration backfills allowlisted chat node_kind"
+ok 5 "$(q "SELECT COUNT(*) FROM pragma_table_info('open_ends') WHERE name IN ('item_key','updated_at','resolution_evidence_type','resolution_evidence_ref','last_change_type')")" \
+   "v5 adds stable item/update/resolution fields"
+ok 1 "$(q "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='session_outcomes'")" \
+   "v5 creates additive session_outcomes storage"
+
+# --- 36. provider/node-kind hygiene preserves repos and hides raw garbage ---
+python3 - <<'PYEOF'
+import os, sqlite3
+db = os.path.join(os.environ["CHAT_GRAPH_HOME"], "graph.db")
+con = sqlite3.connect(db)
+con.execute("INSERT INTO sessions(id,provider,title,node_kind,first_seen_at) VALUES(?,?,?,?,?)",
+            ('BAD36','${PARENT_PROVIDER}','Bad provider','unknown',103))
+con.execute("INSERT INTO sessions(id,provider,title,node_kind,first_seen_at) VALUES(?,?,?,?,?)",
+            ('CODEX36','codex','Codex 36','chat',104))
+con.execute("INSERT INTO edges VALUES(?,?,?,?,?,?,?,?)",
+            ('BAD36','CODEX36','continues','test',1.0,'{}',None,'active'))
+con.execute("INSERT INTO edges VALUES(?,?,?,?,?,?,?,?)",
+            ('CHAT35','CODEX36','continues','test',1.0,'{}',None,'active'))
+con.commit(); con.close()
+PYEOF
+EXP36="$CHAT_GRAPH_HOME/export/graph.json"
+"$CG" export --json --catchup-limit 0 >/dev/null 2>&1
+if python3 - "$EXP36" <<'PYEOF'
+import json, sys
+d = json.load(open(sys.argv[1])); nodes = {n['id']: n for n in d['data']['nodes']}
+assert nodes['repo:alpha']['node_kind'] == 'repo'
+assert nodes['repo:alpha']['provider'] == 'repo'
+assert nodes['BAD36']['node_kind'] == 'unknown'
+assert nodes['BAD36']['provider'] == 'unknown'
+assert '${PARENT_PROVIDER}' not in json.dumps(d)
+edges = {(e['src'], e['dst'], e['type']) for e in d['data']['edges']}
+assert any('CHAT35' in a and 'CODEX36' in b for a,b,t in edges if t == 'continues')
+assert not any('BAD36' in a or 'BAD36' in b for a,b,t in edges)
+assert d['data']['counts']['unknown_provider_nodes'] >= 1
+PYEOF
+then pass "export preserves repo nodes, labels unknown safely, and excludes malformed lineage"
+else fail "provider/node-kind hygiene export contract"; fi
+
+# --- 37. same text under distinct kinds coexists; chat omission never resolves
+python3 - <<'PYEOF'
+import os, sqlite3, time
+db = os.path.join(os.environ["CHAT_GRAPH_HOME"], "graph.db")
+con = sqlite3.connect(db); now = int(time.time())
+for kind, key, text_hash in [('chat_open_end','item-chat','hash-chat'),
+                             ('closeout_handoff','item-handoff','hash-handoff')]:
+    con.execute("INSERT INTO open_ends(session_id,kind,text,text_hash,item_key,first_seen_at,updated_at,last_change_type) VALUES(?,?,?,?,?,?,?,?)",
+                ('CHAT35',kind,'identical text',text_hash,key,now,now,'new'))
+con.commit(); con.close()
+PYEOF
+ok 2 "$(q "SELECT COUNT(*) FROM open_ends WHERE session_id='CHAT35' AND text='identical text'")" \
+   "same text under two kinds has two stable items"
+mkdir -p "$(cl_root)"
+umsg "Session Closeout Handoff: finish a different item" u37 > "$(cl_root)/CHAT35.jsonl"
+"$CG" ingest --full >/dev/null 2>&1
+ok 1 "$(q "SELECT COUNT(*) FROM open_ends WHERE session_id='CHAT35' AND kind='chat_open_end' AND item_key='item-chat' AND resolved_at IS NULL")" \
+   "finalized extraction omission does not resolve chat_open_end"
+
+# --- 38. manual resolution records evidence and exports a bounded change ----
+HASH38="$(q "SELECT text_hash FROM open_ends WHERE session_id='CHAT35' AND kind='chat_open_end' LIMIT 1")"
+"$CG" resolve CHAT35 "$HASH38" >/dev/null
+ok manual "$(q "SELECT resolution_evidence_type FROM open_ends WHERE session_id='CHAT35' AND kind='chat_open_end'")" \
+   "manual resolve stores resolution evidence type"
+ok journal "$(q "SELECT resolution_evidence_ref FROM open_ends WHERE session_id='CHAT35' AND kind='chat_open_end'")" \
+   "manual resolve stores journal evidence reference"
+"$CG" export --json --catchup-limit 0 >/dev/null 2>&1
+if python3 - "$EXP36" <<'PYEOF'
+import json, sys
+d = json.load(open(sys.argv[1])); changes = d['data']['loose_end_changes']
+hit = [c for c in changes if c['source_id'] == 'CHAT35' and c['kind'] == 'chat_open_end']
+assert hit and hit[0]['change_type'] == 'resolved'
+assert hit[0]['resolution_evidence_type'] == 'manual'
+assert hit[0]['resolution_evidence_ref'] == 'journal'
+assert len(changes) <= 500
+PYEOF
+then pass "export includes bounded stable loose_end_changes with resolution evidence"
+else fail "loose_end_changes export contract"; fi
+
+# --- 39. validate-export requires the loose_end_changes contract ------------
+"$CG" validate-export "$EXP36" >/dev/null 2>&1
+ok 0 "$?" "validate-export accepts snapshot with loose_end_changes"
+BAD39="$CHAT_GRAPH_HOME/export/bad-changes.json"
+python3 - "$EXP36" "$BAD39" <<'PYEOF'
+import json, sys
+d = json.load(open(sys.argv[1])); d['data'].pop('loose_end_changes', None)
+json.dump(d, open(sys.argv[2], 'w'))
+PYEOF
+"$CG" validate-export "$BAD39" >/dev/null 2>&1; RC39=$?
+if [ "$RC39" -ne 0 ]; then pass "validate-export rejects snapshot missing loose_end_changes"
+else fail "validate-export accepted snapshot missing loose_end_changes"; fi
 
 echo "----"
 if [ "$FAILS" -eq 0 ]; then echo "ALL PASS"; exit 0; else echo "$FAILS FAILED"; exit 1; fi

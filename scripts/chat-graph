@@ -11,10 +11,13 @@ runs write-sandboxed and its tests use mktemp dirs. See docs/MISSION_CONTROL_PLA
 """
 import glob, hashlib, json, os, re, shutil, sqlite3, subprocess, sys, time
 
-SCHEMA_VERSION = 4
+from mission_control_common import NARRATIVE, safe_text
+
+SCHEMA_VERSION = 5
 STALE_INGEST_S = 30 * 60  # show/doctor staleness threshold
 LOCK_STALE_S = 30 * 60      # ingest.lock older than this is treated as crashed
 _INGEST_SKIPPED = False     # set when export's catch-up ingest could not acquire lock
+CHAT_PROVIDERS = frozenset(("claude", "codex", "cursor", "hermes", "copilot"))
 
 # ---- env resolution -------------------------------------------------------
 def _env(name, default):
@@ -37,19 +40,9 @@ def ensure_dir(path, mode=0o700):
     os.makedirs(path, exist_ok=True)
     os.chmod(path, mode)  # makedirs mode is umask-masked; force it
 
-# ---- secret redaction (verbatim mirror of scripts/search-transcripts) -----
-_SECRET_RE = re.compile(
-    r"(sk-[A-Za-z0-9_-]{20,}"
-    r"|AIza[0-9A-Za-z_-]{35}"
-    r"|ya29\.[0-9A-Za-z._-]+"
-    r"|ghp_[A-Za-z0-9]{20,}|gho_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}"
-    r"|xox[baprs]-[A-Za-z0-9-]{10,}"
-    r"|AKIA[0-9A-Z]{16}"
-    r"|eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}"  # JWT
-    r"|(?i:bearer)\s+[A-Za-z0-9._-]{16,})"
-)
+# ---- shared field-aware boundary -----------------------------------------
 def redact(s):
-    return _SECRET_RE.sub("«REDACTED-SECRET»", s or "")
+    return safe_text(s or "", NARRATIVE)
 
 # ---- edge model -----------------------------------------------------------
 EDGE_TYPES = ("audits", "spawned", "continues", "signaled",
@@ -100,6 +93,70 @@ def _rebuild_edges_v2(con):
                    FROM edges_v1""")
     con.execute("DROP TABLE edges_v1")
 
+def _node_kind(sid, provider):
+    if str(sid or "").startswith("repo:") or provider == "repo":
+        return "repo"
+    if provider in CHAT_PROVIDERS:
+        return "chat"
+    return "unknown"
+
+def _safe_provider(provider, node_kind=None):
+    if node_kind == "repo" or provider == "repo":
+        return "repo"
+    return provider if provider in CHAT_PROVIDERS else "unknown"
+
+def _open_end_schema_v5(con):
+    cols = {r["name"] for r in con.execute("PRAGMA table_info('open_ends')")}
+    required = {"item_key", "updated_at", "resolution_evidence_type",
+                "resolution_evidence_ref", "last_change_type"}
+    if not required.issubset(cols):
+        return False
+    for idx in con.execute("PRAGMA index_list('open_ends')").fetchall():
+        if not idx["unique"]:
+            continue
+        name = idx["name"]
+        if not re.match(r"^[A-Za-z0-9_]+$", name or ""):
+            continue
+        names = [r["name"] for r in con.execute("PRAGMA index_info(%s)" % name)]
+        if names == ["session_id", "kind", "item_key"]:
+            return True
+    return False
+
+def _create_open_ends_v5(con):
+    con.execute("""CREATE TABLE open_ends(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        session_id TEXT, kind TEXT, text TEXT, text_hash TEXT,
+        item_key TEXT NOT NULL, resolved_at INTEGER, first_seen_at INTEGER,
+        updated_at INTEGER, resolution_evidence_type TEXT,
+        resolution_evidence_ref TEXT, last_change_type TEXT,
+        UNIQUE(session_id, kind, item_key))""")
+    con.execute("CREATE INDEX IF NOT EXISTS idx_open_ends_updated ON open_ends(updated_at, item_key)")
+
+def _rebuild_open_ends_v5(con):
+    """Rebuild the v4 table around kind-salted stable identity, preserving rows."""
+    now = int(time.time())
+    con.execute("ALTER TABLE open_ends RENAME TO open_ends_v4")
+    _create_open_ends_v5(con)
+    rows = con.execute("SELECT * FROM open_ends_v4 ORDER BY id").fetchall()
+    for row in rows:
+        kind = row["kind"] or "open"
+        text_hash = row["text_hash"] or hashlib.sha1(
+            (row["text"] or "").encode("utf-8", "replace")).hexdigest()
+        item_key = hashlib.sha1(("%s:legacy:%s" % (kind, text_hash)).encode("utf-8")).hexdigest()
+        first_seen = row["first_seen_at"] or now
+        resolved = row["resolved_at"]
+        updated = resolved or first_seen
+        con.execute("""INSERT INTO open_ends(
+            id, session_id, kind, text, text_hash, item_key, resolved_at,
+            first_seen_at, updated_at, resolution_evidence_type,
+            resolution_evidence_ref, last_change_type)
+            VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (row["id"], row["session_id"], kind, row["text"], text_hash,
+             item_key, resolved, first_seen, updated,
+             "legacy" if resolved else None, "v4-migration" if resolved else None,
+             "resolved" if resolved else "new"))
+    con.execute("DROP TABLE open_ends_v4")
+
 def _migrate(con):
     # meta must exist before the future-version guard can read the version, but
     # CREATE TABLE IF NOT EXISTS on an already-present meta is a pure no-op.
@@ -118,7 +175,7 @@ def _migrate(con):
         id TEXT PRIMARY KEY, provider TEXT, title TEXT, repo TEXT,
         first_prompt TEXT, last_activity TEXT,
         closeout_seen INTEGER DEFAULT 0, open_end_count INTEGER DEFAULT 0,
-        first_seen_at INTEGER);
+        first_seen_at INTEGER, node_kind TEXT);
       CREATE TABLE IF NOT EXISTS edges(
         src TEXT, dst TEXT, type TEXT, source TEXT,
         confidence REAL, evidence TEXT, note TEXT,
@@ -131,7 +188,18 @@ def _migrate(con):
       CREATE TABLE IF NOT EXISTS open_ends(
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         session_id TEXT, kind TEXT, text TEXT, text_hash TEXT,
-        resolved_at INTEGER, first_seen_at INTEGER, UNIQUE(session_id, text_hash));
+        item_key TEXT NOT NULL, resolved_at INTEGER, first_seen_at INTEGER,
+        updated_at INTEGER, resolution_evidence_type TEXT,
+        resolution_evidence_ref TEXT, last_change_type TEXT,
+        UNIQUE(session_id, kind, item_key));
+      CREATE TABLE IF NOT EXISTS session_outcomes(
+        id TEXT PRIMARY KEY, session_id TEXT NOT NULL, provider TEXT,
+        tail_hash TEXT NOT NULL, outcome_json TEXT NOT NULL,
+        extraction_status TEXT, finalized INTEGER DEFAULT 0,
+        updated_at INTEGER, method TEXT, confidence REAL,
+        source_start TEXT, source_end TEXT, source_span TEXT,
+        evidence_fingerprint TEXT, created_at INTEGER,
+        UNIQUE(session_id, tail_hash));
       CREATE TABLE IF NOT EXISTS collector_state(
         collector TEXT PRIMARY KEY, cursor TEXT, last_run INTEGER,
         row_count INTEGER DEFAULT 0);
@@ -139,16 +207,26 @@ def _migrate(con):
         path TEXT PRIMARY KEY, mtime INTEGER, size INTEGER);
     """)
     # additive columns (idempotent; ALTER has no IF NOT EXISTS pre-3.35)
-    for col, decl in (("first_msg_uuid", "TEXT"), ("enriched_at", "INTEGER")):
+    for col, decl in (("first_msg_uuid", "TEXT"), ("enriched_at", "INTEGER"),
+                      ("node_kind", "TEXT")):
         try:
             con.execute("ALTER TABLE sessions ADD COLUMN %s %s" % (col, decl))
         except sqlite3.OperationalError:
             pass
-    try:
+    open_cols = {r["name"] for r in con.execute("PRAGMA table_info('open_ends')")}
+    if "first_seen_at" not in open_cols:
         con.execute("ALTER TABLE open_ends ADD COLUMN first_seen_at INTEGER")
-    except sqlite3.OperationalError:
-        pass
-    con.execute("UPDATE open_ends SET first_seen_at=COALESCE(first_seen_at, ?)", (int(time.time()),))
+    if not _open_end_schema_v5(con):
+        _rebuild_open_ends_v5(con)
+    con.execute("CREATE INDEX IF NOT EXISTS idx_open_ends_updated ON open_ends(updated_at, item_key)")
+    con.execute("UPDATE open_ends SET first_seen_at=COALESCE(first_seen_at, ?), "
+                "updated_at=COALESCE(updated_at, resolved_at, first_seen_at, ?), "
+                "last_change_type=COALESCE(last_change_type, CASE WHEN resolved_at IS NULL "
+                "THEN 'new' ELSE 'resolved' END)", (int(time.time()), int(time.time())))
+    con.execute("UPDATE sessions SET node_kind=CASE "
+                "WHEN id LIKE 'repo:%' OR provider='repo' THEN 'repo' "
+                "WHEN provider IN ('claude','codex','cursor','hermes','copilot') THEN 'chat' "
+                "ELSE 'unknown' END WHERE node_kind IS NULL OR node_kind='' ")
     # v1->v2: edges uniqueness gained `source` so a strong (e.g. delegations) and a
     # weak (e.g. titles) edge for the same (src,dst,type) coexist. A pre-existing v1
     # edges table keeps its old UNIQUE(src,dst,type) until rebuilt here. Detect via
@@ -178,6 +256,12 @@ def touch_session(con, sid, provider=None, title=None, first_prompt=None):
         if val:
             con.execute("UPDATE sessions SET %s=? WHERE id=? AND (%s IS NULL OR %s='')"
                         % (col, col, col), (val, sid))
+    effective = provider
+    if not effective:
+        row = con.execute("SELECT provider FROM sessions WHERE id=?", (sid,)).fetchone()
+        effective = row["provider"] if row else None
+    con.execute("UPDATE sessions SET node_kind=? WHERE id=?",
+                (_node_kind(sid, effective), sid))
 
 def display_title(row):
     """Untitled fallback chain: title -> first_prompt(60) -> (untitled) <id8>."""
@@ -228,9 +312,16 @@ def _apply_unlink(con, a, b, etype):
                         "evidence, status) VALUES(?,?,?, 'manual', 0.0, '{}', 'suppressed')",
                         (s, d, t))
 
+def _resolve_open_end(con, sid, text_hash, evidence_type, evidence_ref):
+    now = int(time.time())
+    con.execute("""UPDATE open_ends SET resolved_at=?, updated_at=?,
+                resolution_evidence_type=?, resolution_evidence_ref=?,
+                last_change_type='resolved'
+                WHERE session_id=? AND text_hash=? AND resolved_at IS NULL""",
+                (now, now, evidence_type, evidence_ref, sid, text_hash))
+
 def _apply_resolve(con, sid, text_hash):
-    con.execute("UPDATE open_ends SET resolved_at=? WHERE session_id=? AND text_hash=?",
-                (int(time.time()), sid, text_hash))
+    _resolve_open_end(con, sid, text_hash, "manual", "journal")
 
 # ---- manual journal (durability keystone) ---------------------------------
 def journal_append(rec):
@@ -510,26 +601,64 @@ def _sha1(s):
 def _open_hash(kind, source_key, text):
     return _sha1("%s:%s:%s" % (kind, source_key, text))
 
-def _upsert_open_end(con, sid, kind, text, text_hash=None):
+def _open_item_key(kind, sid, source_key):
+    return _sha1("%s:%s:%s" % (kind, sid, source_key))
+
+def _upsert_open_end(con, sid, kind, text, source_key=None, text_hash=None):
     now = int(time.time())
-    h = text_hash or _open_hash(kind, sid, text)
-    con.execute("INSERT OR IGNORE INTO open_ends(session_id, kind, text, text_hash, first_seen_at) "
-                "VALUES(?,?,?,?,?)", (sid, kind, text, h, now))
-    con.execute("UPDATE open_ends SET resolved_at=NULL, kind=?, text=?, "
-                "first_seen_at=COALESCE(first_seen_at, ?) "
-                "WHERE session_id=? AND text_hash=?", (kind, text, now, sid, h))
+    source_key = source_key or text_hash or text
+    item_key = _open_item_key(kind, sid, source_key)
+    # Compatibility hash stays content-oriented so resumed/forked sessions can
+    # deduplicate the same open item. Kind salting prevents cross-kind collision;
+    # stable per-source identity lives separately in item_key.
+    h = text_hash or _sha1("%s:%s" % (kind, text))
+    row = con.execute("SELECT text, text_hash, resolved_at, last_change_type FROM open_ends "
+                      "WHERE session_id=? AND kind=? AND item_key=?",
+                      (sid, kind, item_key)).fetchone()
+    if row is None:
+        con.execute("""INSERT INTO open_ends(
+                    session_id, kind, text, text_hash, item_key, first_seen_at,
+                    updated_at, last_change_type) VALUES(?,?,?,?,?,?,?,'new')""",
+                    (sid, kind, text, h, item_key, now, now))
+    else:
+        changed = row["text"] != text or row["text_hash"] != h
+        reopened = row["resolved_at"] is not None
+        change_type = "reopened" if reopened else ("updated" if changed else row["last_change_type"])
+        updated = now if reopened or changed else None
+        con.execute("""UPDATE open_ends SET resolved_at=NULL, text=?, text_hash=?,
+                    updated_at=COALESCE(?, updated_at),
+                    resolution_evidence_type=NULL, resolution_evidence_ref=NULL,
+                    last_change_type=?
+                    WHERE session_id=? AND kind=? AND item_key=?""",
+                    (text, h, updated, change_type, sid, kind, item_key))
     return h
 
 def _reconcile_open_kind(con, kind, active):
-    """active maps (session_id, text_hash) -> text. Missing active signals resolve."""
-    now = int(time.time())
-    for sid, h in active:
-        _upsert_open_end(con, sid, kind, active[(sid, h)], h)
-    for o in con.execute("SELECT session_id, text_hash FROM open_ends "
+    """active maps (session_id, source_key) -> text. Missing source signals resolve."""
+    active_items = set()
+    for sid, source_key in active:
+        _upsert_open_end(con, sid, kind, active[(sid, source_key)], source_key=source_key)
+        active_items.add((sid, _open_item_key(kind, sid, source_key)))
+    if kind == "chat_open_end":
+        return
+    for o in con.execute("SELECT session_id, text_hash, item_key FROM open_ends "
                          "WHERE kind=? AND resolved_at IS NULL", (kind,)).fetchall():
-        if (o["session_id"], o["text_hash"]) not in active:
-            con.execute("UPDATE open_ends SET resolved_at=? WHERE session_id=? AND text_hash=?",
-                        (now, o["session_id"], o["text_hash"]))
+        if (o["session_id"], o["item_key"]) not in active_items:
+            _resolve_open_end(con, o["session_id"], o["text_hash"],
+                              "source_absent", kind)
+
+def _reconcile_open_session_kind(con, sid, kind, active):
+    """Per-transcript reconciliation; never resolves another session's signals."""
+    active_items = set()
+    for source_key, text in active.items():
+        _upsert_open_end(con, sid, kind, text, source_key=source_key)
+        active_items.add(_open_item_key(kind, sid, source_key))
+    if kind == "chat_open_end":
+        return
+    for row in con.execute("SELECT text_hash, item_key FROM open_ends WHERE session_id=? "
+                           "AND kind=? AND resolved_at IS NULL", (sid, kind)).fetchall():
+        if row["item_key"] not in active_items:
+            _resolve_open_end(con, sid, row["text_hash"], "source_absent", kind)
 
 def _loose_action(kind):
     return {
@@ -692,37 +821,23 @@ def _scan_one(con, path, provider, sid, known, mtime_s):
         con.execute("INSERT OR IGNORE INTO session_topics(session_id, code) VALUES(?,?)", (sid, c))
         n_sig += 1
         if _register_status(c) == "unverified":
-            open_now[_sha1("register:" + c)] = ("register_unverified", c)
+            open_now.setdefault("register_unverified", {})["register:%s" % c] = c
     if "Session Closeout" in blob:
         m = _HANDOFF_RE.search(blob)
         if m:
             txt = m.group(1).strip()
             if len(txt) > 3 and txt.lower() not in ("none", "n/a", "na", "-"):
-                open_now[_sha1(txt)] = ("closeout_handoff", txt)
+                open_now.setdefault("closeout_handoff", {})["closeout_handoff"] = txt
                 con.execute("UPDATE sessions SET closeout_seen=1 WHERE id=?", (sid,))
-    now = int(time.time())
-    for h, (kind, text) in open_now.items():
-        con.execute("INSERT OR IGNORE INTO open_ends(session_id, kind, text, text_hash, first_seen_at) "
-                    "VALUES(?,?,?,?,?)", (sid, kind, text, h, now))
-        con.execute("UPDATE open_ends SET resolved_at=NULL, kind=?, text=?, "
-                    "first_seen_at=COALESCE(first_seen_at, ?) "
-                    "WHERE session_id=? AND text_hash=?", (kind, text, now, sid, h))
-        n_sig += 1
-    # auto-resolve: only close/register kinds whose signal disappeared this pass
-    if open_now:
-        qs = ",".join("?" * len(open_now))
-        con.execute("UPDATE open_ends SET resolved_at=? WHERE session_id=? AND resolved_at IS NULL "
-                    "AND text_hash NOT IN (%s)" % qs, [now, sid] + list(open_now))
-    else:
-        row = con.execute("SELECT closeout_seen FROM sessions WHERE id=?", (sid,)).fetchone()
-        if row and row["closeout_seen"]:
-            con.execute("UPDATE open_ends SET resolved_at=? WHERE session_id=? AND resolved_at IS NULL "
-                        "AND kind='closeout_handoff'", (now, sid))
-        for o in con.execute("SELECT text_hash, text FROM open_ends WHERE session_id=? "
-                             "AND resolved_at IS NULL AND kind='register_unverified'", (sid,)):
-            if o["text"] not in blob:
-                con.execute("UPDATE open_ends SET resolved_at=? WHERE session_id=? AND text_hash=?",
-                            (now, sid, o["text_hash"]))
+    # Reconcile only source-backed scanner kinds. `chat_open_end` is deliberately
+    # absent: a finalized extraction omitting an item is never resolution proof.
+    closeout_seen = con.execute("SELECT closeout_seen FROM sessions WHERE id=?", (sid,)).fetchone()
+    if open_now.get("closeout_handoff") or (closeout_seen and closeout_seen["closeout_seen"]):
+        _reconcile_open_session_kind(con, sid, "closeout_handoff",
+                                     open_now.get("closeout_handoff", {}))
+    _reconcile_open_session_kind(con, sid, "register_unverified",
+                                 open_now.get("register_unverified", {}))
+    n_sig += sum(len(v) for v in open_now.values())
     con.execute("UPDATE sessions SET provider=COALESCE(NULLIF(provider,''),?), "
                 "last_activity=?, first_msg_uuid=COALESCE(first_msg_uuid,?) WHERE id=?",
                 (provider, str(mtime_s), first_uuid, sid))
@@ -753,8 +868,7 @@ def _resume_fork(con):
                                 "AND resolved_at IS NULL", (mid,)).fetchall():
                 th = o["text_hash"]
                 if th in seen:
-                    con.execute("UPDATE open_ends SET resolved_at=? WHERE session_id=? "
-                                "AND text_hash=?", (now, mid, th))
+                    _resolve_open_end(con, mid, th, "fork_dedup", earliest)
                 else:
                     seen.add(th)
 
@@ -910,9 +1024,8 @@ def collect_todo_open(con):
                     if not item:
                         continue
                     text = "%s: %s" % (repo, item[:220])
-                    h = _open_hash("todo_open", repo, item)
-                    active[(sid, h)] = text
                     cap += 1
+                    active[(sid, "todo:%s:%d" % (repo, cap))] = text
                     if cap >= 50:
                         break
         except OSError:
@@ -930,7 +1043,7 @@ def collect_nightly_findings(con):
         sid = _repo_node(con, "nightly-review")
         try:
             with open(path, errors="replace") as f:
-                for line in f:
+                for lineno, line in enumerate(f, 1):
                     s = line.strip()
                     if not re.match(r"^[-*]\s+", s):
                         continue
@@ -939,8 +1052,7 @@ def collect_nightly_findings(con):
                     repo_m = re.search(r"(?:Coding Projects/|repo[:=]\s*`?)([A-Za-z0-9_.-]+)", s)
                     item_sid = _repo_node(con, repo_m.group(1)) if repo_m else sid
                     text = re.sub(r"\s+", " ", re.sub(r"^[-*]\s+", "", s))[:240]
-                    h = _open_hash("nightly_finding", item_sid, text)
-                    active[(item_sid, h)] = text
+                    active[(item_sid, "%s:%d" % (path, lineno))] = text
         except OSError:
             pass
     _reconcile_open_kind(con, "nightly_finding", active)
@@ -958,19 +1070,20 @@ def collect_repo_dirty(con):
         sid = _repo_node(con, repo)
         items = []
         if r.get("dirty"):
-            items.append("%s: %s files uncommitted" % (repo, r.get("dirty_files", "?")))
+            items.append(("dirty", "%s: %s files uncommitted" % (repo, r.get("dirty_files", "?"))))
         if int(r.get("ahead") or 0) > 0:
-            items.append("%s: %s unpushed commits" % (repo, r.get("ahead")))
+            items.append(("ahead", "%s: %s unpushed commits" % (repo, r.get("ahead"))))
         if r.get("detached"):
-            items.append("%s: detached HEAD needs a decision" % repo)
+            items.append(("detached", "%s: detached HEAD needs a decision" % repo))
         for b in r.get("branches") or []:
             name = b.get("name") if isinstance(b, dict) else ""
             age = b.get("age_days") if isinstance(b, dict) else None
             if name:
-                items.append("%s: branch %s is %sd old and unmerged" % (repo, name, age if age is not None else "?"))
-        for text in items:
-            h = _open_hash("repo_dirty", repo, text)
-            active[(sid, h)] = text
+                items.append(("branch:%s" % name,
+                              "%s: branch %s is %sd old and unmerged" %
+                              (repo, name, age if age is not None else "?")))
+        for source_key, text in items:
+            active[(sid, source_key)] = text
     _reconcile_open_kind(con, "repo_dirty", active)
     return len(active)
 
@@ -990,8 +1103,7 @@ def collect_register_open(con):
                 sid = _repo_node(con, "global-implementations")
                 text = re.sub(r"\s+", " ", line.strip(" |\n"))[:240]
                 for code in codes[:1]:
-                    h = _open_hash("register_open", code, text)
-                    active[(sid, h)] = text
+                    active[(sid, code)] = text
     except OSError:
         pass
     _reconcile_open_kind(con, "register_open", active)
@@ -1032,38 +1144,47 @@ def _last_full_ingest_epoch():
 def _build_export(con, ingest_skipped=False):
     now = int(time.time())
     last_full = _last_full_ingest_epoch()
-    prov_of = {r["id"]: (r["provider"] or "unknown")
-               for r in con.execute("SELECT id, provider FROM sessions")}
+    session_identity = {
+        r["id"]: (_safe_provider(r["provider"], r["node_kind"]),
+                  r["node_kind"] or _node_kind(r["id"], r["provider"]))
+        for r in con.execute("SELECT id, provider, node_kind FROM sessions")}
+    prov_of = {sid: ident[0] for sid, ident in session_identity.items()}
+    kind_of = {sid: ident[1] for sid, ident in session_identity.items()}
     node_meta = {}
     nodes = []
     for r in con.execute("SELECT * FROM sessions"):
         opens = [{"kind": o["kind"], "text": redact(o["text"] or ""), "text_hash": o["text_hash"],
-                  "first_seen_at": o["first_seen_at"]}
-                 for o in con.execute("SELECT kind, text, text_hash, first_seen_at FROM open_ends "
+                  "item_key": o["item_key"], "first_seen_at": o["first_seen_at"],
+                  "updated_at": o["updated_at"]}
+                 for o in con.execute("SELECT kind, text, text_hash, item_key, first_seen_at, updated_at FROM open_ends "
                                       "WHERE session_id=? AND resolved_at IS NULL", (r["id"],))]
         try:
             la = int(r["last_activity"])
         except (TypeError, ValueError):
             la = None
-        prov = r["provider"] or "unknown"
+        node_kind = r["node_kind"] or _node_kind(r["id"], r["provider"])
+        prov = _safe_provider(r["provider"], node_kind)
         node_meta[r["id"]] = {
             "provider": prov,
+            "node_kind": node_kind,
             "title": display_title(r),
             "repo": r["repo"] or "",
         }
         nodes.append({
-            "provider": prov, "id": r["id"], "title": node_meta[r["id"]]["title"],
+            "provider": prov, "node_kind": node_kind,
+            "id": r["id"], "title": node_meta[r["id"]]["title"],
             "repo": r["repo"] or "",
             "last_activity": (time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(la)) if la else ""),
             "first_seen_at": r["first_seen_at"],
             "live": la is not None and (now - la) < 30 * 60,
             "closeout_seen": bool(r["closeout_seen"]),
             "open_ends": opens,
-            "resume_cmd": _resume_cmd(prov, r["id"]),
-            "view_cmd": "" if prov == "repo" else "chat-source full %s" % r["id"],
+            "resume_cmd": _resume_cmd(prov, r["id"]) if node_kind == "chat" else "",
+            "view_cmd": "chat-source full %s" % r["id"] if node_kind == "chat" else "",
         })
     loose_ends = []
-    for o in con.execute("SELECT session_id, kind, text, text_hash, first_seen_at FROM open_ends "
+    for o in con.execute("SELECT session_id, kind, text, text_hash, item_key, first_seen_at, updated_at "
+                         "FROM open_ends "
                          "WHERE resolved_at IS NULL ORDER BY COALESCE(first_seen_at, 0), id"):
         meta = node_meta.get(o["session_id"], {})
         first_seen = o["first_seen_at"] or now
@@ -1071,26 +1192,59 @@ def _build_export(con, ingest_skipped=False):
         text = redact(o["text"] or "")
         kind = o["kind"] or "open"
         loose_ends.append({
-            "id": "%s:%s" % (o["session_id"], o["text_hash"]),
+            "id": "%s:%s" % (o["session_id"], o["item_key"]),
             "kind": kind,
             "source_node": _provider_key(meta.get("provider"), o["session_id"]),
             "title": meta.get("title") or o["session_id"],
             "repo": meta.get("repo") or "",
             "text": text,
             "text_hash": o["text_hash"],
+            "item_key": o["item_key"],
             "first_seen_at": first_seen,
+            "updated_at": o["updated_at"] or first_seen,
             "action_hint": _loose_action(kind),
             "age_days": age_days,
             "severity": _loose_severity(kind, text, age_days),
             "resolve_cmd": "chat-graph resolve %s %s" % (o["session_id"], o["text_hash"]),
         })
+    loose_end_changes = []
+    cutoff = now - 7 * 86400
+    for o in con.execute("""SELECT session_id, kind, text, text_hash, item_key,
+                         first_seen_at, updated_at, resolved_at, last_change_type,
+                         resolution_evidence_type, resolution_evidence_ref
+                         FROM open_ends WHERE COALESCE(updated_at, first_seen_at, 0) >= ?
+                         ORDER BY COALESCE(updated_at, first_seen_at, 0) DESC, item_key DESC
+                         LIMIT 500""", (cutoff,)):
+        meta = node_meta.get(o["session_id"], {})
+        updated = o["updated_at"] or o["first_seen_at"] or now
+        loose_end_changes.append({
+            "id": "%s:%s" % (o["session_id"], o["item_key"]),
+            "stable_id": "%s:%s" % (o["session_id"], o["item_key"]),
+            "source_id": o["session_id"],
+            "source_node": _provider_key(meta.get("provider"), o["session_id"]),
+            "kind": o["kind"] or "open",
+            "item_key": o["item_key"],
+            "text": redact(o["text"] or ""),
+            "text_hash": o["text_hash"],
+            "change_type": o["last_change_type"] or ("resolved" if o["resolved_at"] else "new"),
+            "updated_at": updated,
+            "resolved_at": o["resolved_at"],
+            "resolution_evidence_type": o["resolution_evidence_type"],
+            "resolution_evidence_ref": o["resolution_evidence_ref"],
+        })
     edges = []
+    excluded_lineage = 0
     # suppressions is source-independent: hide any (src,dst,type) an unlink
     # suppressed, regardless of which source's row is currently active.
     for e in con.execute(
             "SELECT e.* FROM edges e WHERE e.status='active' "
             "AND NOT EXISTS(SELECT 1 FROM suppressions s "
             "WHERE s.src=e.src AND s.dst=e.dst AND s.type=e.type)"):
+        if (kind_of.get(e["src"]) != "chat" or kind_of.get(e["dst"]) != "chat" or
+                prov_of.get(e["src"]) not in CHAT_PROVIDERS or
+                prov_of.get(e["dst"]) not in CHAT_PROVIDERS):
+            excluded_lineage += 1
+            continue
         edge = {"src": "%s:%s" % (prov_of.get(e["src"], "unknown"), e["src"]),
                 "dst": "%s:%s" % (prov_of.get(e["dst"], "unknown"), e["dst"]),
                 "type": e["type"], "source": e["source"],
@@ -1115,13 +1269,15 @@ def _build_export(con, ingest_skipped=False):
         "last_full_ingest_epoch": last_full,
         "last_full_ingest_age_s": (now - last_full if last_full is not None else None),
         "ingest_skipped": bool(ingest_skipped),
+        "unknown_provider_nodes": sum(1 for n in nodes if n["node_kind"] == "unknown"),
+        "excluded_lineage_edges": excluded_lineage,
     }
     return {
         "schema": 1, "feed": "chats",
         "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now)),
         "generated_epoch": now, "cadence_s": 1800, "ok": True, "error": None,
         "data": {"nodes": nodes, "edges": edges, "topics": topics,
-                 "loose_ends": loose_ends,
+                 "loose_ends": loose_ends, "loose_end_changes": loose_end_changes,
                  "repo_annotations": repo_annotations,
                  "stale_providers": sorted(_STALE_PROVIDERS), "notes": notes, "counts": counts},
     }
@@ -1166,16 +1322,22 @@ def cmd_validate_export(args):
     if d.get("schema") != 1:
         errs.append("schema != 1")
     data = d.get("data") or {}
-    for k in ("nodes", "edges", "topics", "loose_ends", "counts"):
+    for k in ("nodes", "edges", "topics", "loose_ends", "loose_end_changes", "counts"):
         if k not in data:
             errs.append("missing data key: %s" % k)
     if "loose_ends" in data and not isinstance(data.get("loose_ends"), list):
         errs.append("data.loose_ends is not a list")
+    if "loose_end_changes" in data and not isinstance(data.get("loose_end_changes"), list):
+        errs.append("data.loose_end_changes is not a list")
     for n in data.get("nodes", []):
         if not n.get("id"):
             errs.append("node missing id")
         if not (n.get("title") or "").strip():
             errs.append("node %s has empty title" % n.get("id"))
+        if n.get("node_kind") not in ("chat", "repo", "unknown"):
+            errs.append("node %s has invalid node_kind" % n.get("id"))
+        if n.get("provider") not in CHAT_PROVIDERS | {"repo", "unknown"}:
+            errs.append("node %s has unsafe provider" % n.get("id"))
     for e in data.get("edges", []):
         if any(k not in e for k in ("src", "dst", "type", "source", "confidence")):
             errs.append("edge missing required field: %r" % e); continue
@@ -1191,6 +1353,13 @@ def cmd_validate_export(args):
             errs.append("loose_end severity out of range: %r" % o.get("severity"))
         if not isinstance(o.get("age_days"), int):
             errs.append("loose_end age_days is not an int: %r" % o.get("age_days"))
+    for c in data.get("loose_end_changes", []):
+        missing = [k for k in ("id", "stable_id", "source_id", "kind", "item_key",
+                               "change_type", "updated_at") if k not in c]
+        if missing:
+            errs.append("loose_end_change missing %s: %r" % (",".join(missing), c)); continue
+        if c.get("change_type") not in ("new", "updated", "resolved", "reopened"):
+            errs.append("loose_end_change invalid change_type: %r" % c.get("change_type"))
     if errs:
         for e in errs:
             print("FAIL: %s" % e)
