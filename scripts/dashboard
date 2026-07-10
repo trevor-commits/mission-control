@@ -497,6 +497,7 @@ usage: dashboard <command>
   refresh [feed]                   = collect --force
   status                           text health table; nonzero if any feed red
   brief --print                    print a deterministic preview; change no cursor
+  extract-outcomes [options]       run bounded Tier 2 outcome enrichment
   decide dismiss <decision-id>     dismiss one queued decision; execute no action
   open [--serve]                   collect --due, open the shell (--serve: local http)
   install                          install shell + launchd job (idempotent)
@@ -568,6 +569,14 @@ do_install() {
     [ -f "$tmpl" ] || continue
     dest="$HOME/Library/LaunchAgents/$(basename "${tmpl%.template}")"
     label="$(basename "${tmpl%.plist.template}")"
+    case "$label" in
+      com.gillettes.outcome-extractor|com.gillettes.morning-brief|com.gillettes.morning-brief-deadman)
+        if [ "${DASHBOARD_INSTALL_ACTIVATE_GATED:-0}" != "1" ]; then
+          echo "skip: activation-gated job requires DASHBOARD_INSTALL_ACTIVATE_GATED=1: $label"
+          continue
+        fi
+        ;;
+    esac
     mkdir -p "$HOME/Library/LaunchAgents"
     # __MCHOME__ = the COMPLETE mission-control home (already includes .mission-control);
     # the template must not re-append it (the double-prefix bug the fresh-eyes audit
@@ -604,6 +613,7 @@ case "$cmd" in
   refresh)  engine collect --force "$@" ;;
   status)   engine status "$@"; exit $? ;;
   brief)    exec "$REPO_ROOT/scripts/morning-brief" "$@" ;;
+  extract-outcomes) exec "$REPO_ROOT/scripts/chat-graph" extract-outcomes "$@" ;;
   decide)
     [ "${1:-}" = "dismiss" ] && [ $# -eq 2 ] || { usage; exit 2; }
     decision_result="$("$SCRIPT_DIR/decision-alert" dismiss "$2" --json)" || exit $?

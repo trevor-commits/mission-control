@@ -432,20 +432,47 @@ exit 0
 EOF
   chmod +x "$sbin/launchctl"
   HOME="$h" PATH="$sbin:$PATH" REPO_ROOT="$REPO" MISSION_CONTROL_HOME="$mch" LAUNCH_CAPTURE="$h/bootstrapped" \
+    DASHBOARD_INSTALL_ACTIVATE_GATED=1 \
     bash "$DASH" install >/dev/null 2>&1
   local miss=0 p
   [ -x "$mch/bin/morning-brief" ] || miss=1
   [ -x "$mch/bin/morning-brief-deadman" ] || miss=1
   [ -x "$mch/bin/decision-alert" ] || miss=1
   [ -f "$mch/bin/mission_control_common.py" ] || miss=1
-  for p in com.gillettes.mission-control.plist com.gillettes.morning-brief.plist com.gillettes.morning-brief-deadman.plist; do
+  for p in com.gillettes.mission-control.plist com.gillettes.outcome-extractor.plist com.gillettes.morning-brief.plist com.gillettes.morning-brief-deadman.plist; do
     [ -f "$h/Library/LaunchAgents/$p" ] || miss=1
     plutil -lint "$h/Library/LaunchAgents/$p" >/dev/null 2>&1 || miss=1
     grep -q '__MCHOME__\|__HOME__' "$h/Library/LaunchAgents/$p" && miss=1
   done
   grep -qx 'com.gillettes.morning-brief.plist' "$h/bootstrapped" || miss=1
+  grep -qx 'com.gillettes.outcome-extractor.plist' "$h/bootstrapped" || miss=1
+  grep -q '<string>extract-outcomes</string>' \
+    "$h/Library/LaunchAgents/com.gillettes.outcome-extractor.plist" || miss=1
   if [ "$miss" = 0 ]; then ok "install: composer, decisions, deadman, common policy, and plists wire in isolation"
   else no "install: Morning Brief runtime/plist wiring incomplete"; fi
+}
+
+c14a() { # default install must not write/bootstrap activation-gated jobs
+  local h mch sbin p miss=0; h="$(mktemp -d)"; mch="$h/state"; sbin="$(mktemp -d)"
+  cat > "$sbin/launchctl" <<'EOF'
+#!/bin/sh
+case "$1" in
+  print) exit 1 ;;
+  bootstrap) basename "$3" >> "$LAUNCH_CAPTURE"; exit 0 ;;
+esac
+exit 0
+EOF
+  chmod +x "$sbin/launchctl"
+  HOME="$h" PATH="$sbin:$PATH" REPO_ROOT="$REPO" MISSION_CONTROL_HOME="$mch" \
+    LAUNCH_CAPTURE="$h/bootstrapped" bash "$DASH" install >/dev/null 2>&1
+  [ -f "$h/Library/LaunchAgents/com.gillettes.mission-control.plist" ] || miss=1
+  for p in com.gillettes.outcome-extractor.plist com.gillettes.morning-brief.plist \
+           com.gillettes.morning-brief-deadman.plist; do
+    [ ! -e "$h/Library/LaunchAgents/$p" ] || miss=1
+    grep -qx "$p" "$h/bootstrapped" 2>/dev/null && miss=1
+  done
+  if [ "$miss" = 0 ]; then ok "default install leaves activation-gated jobs uninstalled"
+  else no "default install wrote or bootstrapped an activation-gated job"; fi
 }
 
 c15() { # reading an old sidecar must preserve compose age instead of refreshing it
@@ -586,7 +613,7 @@ c19() { # code-only install cannot write or bootstrap launchd jobs
   fi
 }
 
-c1; c2; c3; c4; c5; c6; c7; c8; c8a; c8b; c9; c10; c11; c12; c13; c14; c15; c16; c17; c18; c19
+c1; c2; c3; c4; c5; c6; c7; c8; c8a; c8b; c9; c10; c11; c12; c13; c14; c14a; c15; c16; c17; c18; c19
 shell_contract
 echo "----"
 echo "PASS=$PASS FAIL=$FAIL"

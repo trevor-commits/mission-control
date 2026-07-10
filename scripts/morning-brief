@@ -27,7 +27,7 @@ INPUTS = {
     "usage": {"cadence_s": 1800, "required": False},
 }
 SECTION_ORDER = (
-    "NEEDS YOU", "What happened", "Open work changes",
+    "NEEDS YOU", "What happened", "Possible follow-ups — Inferred", "Open work changes",
     "Machinery health", "Usage headroom",
 )
 _EGRESS_COUNTERS = EgressCounters()
@@ -187,6 +187,23 @@ def _needs_you(snapshot, health, cap):
     return lines[:cap], collapsed, stale
 
 
+def _possible_followups(snapshot, cap):
+    """Render model-only suggestions outside the actionable NEEDS YOU block."""
+    lines = []
+    for item in _payload(snapshot.get("decisions")).get("inferred") or []:
+        if (not isinstance(item, dict) or item.get("trust") != "inferred" or
+                item.get("state") != "open"):
+            continue
+        lines.append(_sanitize_line(
+            item.get("text") or "A possible follow-up needs review.",
+            trust="Inferred", source=item.get("provenance") or "decision queue"))
+    if not lines:
+        lines.append(_sanitize_line(
+            "No model-only follow-up is currently suggested.",
+            trust="Inferred", source="decision queue"))
+    return lines[:cap], max(0, len(lines) - cap)
+
+
 def _recent_git(snapshot, top_n):
     commits = {}
     for repo in _payload(snapshot.get("git")).get("repos") or []:
@@ -217,38 +234,121 @@ def _recent_git(snapshot, top_n):
 
 def _recent_outcomes(snapshot, top_n):
     chats = _payload(snapshot.get("chats"))
-    candidates = []
-    for card in chats.get("outcomes") or []:
-        if not isinstance(card, dict):
+    node_subjects = {}
+    for node in chats.get("nodes") or []:
+        if not isinstance(node, dict) or not node.get("id"):
             continue
+        title = safe_text(node.get("title") or "Untitled session", NARRATIVE,
+                          counters=_EGRESS_COUNTERS)
+        repo = safe_text(node.get("repo") or "", IDENTIFIER,
+                         counters=_EGRESS_COUNTERS)
+        subject = title + (" [%s]" % repo if repo and repo.casefold() not in
+                           title.casefold() else "")
+        provider = safe_text(node.get("provider") or "unknown", IDENTIFIER,
+                             counters=_EGRESS_COUNTERS)
+        node_subjects[str(node["id"])] = subject
+        node_subjects["%s:%s" % (provider, node["id"])] = subject
+    cards = [card for card in (chats.get("outcomes") or []) if isinstance(card, dict)]
+    outcome_keys = {
+        "%s:%s" % (safe_text(card.get("provider") or "unknown", IDENTIFIER,
+                             counters=_EGRESS_COUNTERS), card.get("session_id"))
+        for card in cards if card.get("session_id")
+    }
+    candidates = []
+    for card in cards:
         trust = "Confirmed" if card.get("method") == "tier1" else "Inferred"
         provider = safe_text(card.get("provider") or "unknown", IDENTIFIER,
                              counters=_EGRESS_COUNTERS)
+        session_id = str(card.get("session_id") or "")
+        node_key = "%s:%s" % (provider, session_id)
         anchors = card.get("anchors") if isinstance(card.get("anchors"), dict) else {}
         commits = anchors.get("commits") if isinstance(anchors.get("commits"), list) else []
         anchor = " (commit %s)" % safe_text(str(commits[0])[:12], IDENTIFIER,
                                              counters=_EGRESS_COUNTERS) if commits else ""
+        title = safe_text(card.get("session_title") or "Untitled session", NARRATIVE,
+                          counters=_EGRESS_COUNTERS)
+        repo = safe_text(card.get("repo") or "", IDENTIFIER,
+                         counters=_EGRESS_COUNTERS)
+        subject = title + (" [%s]" % repo if repo and repo.casefold() not in title.casefold()
+                           else "")
+        node_subjects[node_key] = subject
+        group, depth = node_key, 0
+        relationship_subject = subject
+        edges = [edge for edge in (chats.get("edges") or [])
+                 if isinstance(edge, dict) and isinstance(edge.get("confidence"), (int, float))
+                 and not isinstance(edge.get("confidence"), bool)
+                 and float(edge["confidence"]) >= 0.7]
+        # Prefer the explicit audit relationship over incidental spawn/continue
+        # edges so the central "chat auditing another chat" case stays clear.
+        for relation in ("audits", "spawned", "continues"):
+            matched = False
+            for edge in edges:
+                source = str(edge.get("src") or "")
+                target = str(edge.get("dst") or "")
+                if relation == "audits" and edge.get("type") == relation and source == node_key:
+                    group = target
+                    relationship_subject = "%s — audit of %s" % (
+                        subject, node_subjects.get(target) or "another session")
+                    depth = 1 if target in outcome_keys else 0
+                    matched = True
+                elif relation == "spawned" and edge.get("type") == relation and target == node_key:
+                    group = source
+                    relationship_subject = "%s → %s" % (
+                        node_subjects.get(source) or "Parent session", subject)
+                    depth = 1 if source in outcome_keys else 0
+                    matched = True
+                elif relation == "continues" and edge.get("type") == relation and source == node_key:
+                    group = target
+                    relationship_subject = "%s → continued as %s" % (
+                        node_subjects.get(target) or "Earlier session", subject)
+                    depth = 1 if target in outcome_keys else 0
+                    matched = True
+                if matched:
+                    break
+            if matched:
+                break
+        residuals = [value for value in (card.get("left_open") or [])
+                     if isinstance(value, str) and value.strip()]
+        residual = (" " + " ".join(residuals)) if residuals else ""
         for text in card.get("did") or []:
             if isinstance(text, str) and text.strip():
+                line = _sanitize_line(
+                    relationship_subject + " — " + text + residual + anchor,
+                    trust=trust, source="%s outcome" % provider)
+                if line is not None:
+                    line["depth"] = depth
                 candidates.append({
                     "epoch": int(card.get("updated_at") or 0),
                     "stable": str(card.get("card_id") or card.get("session_id") or ""),
-                    "line": _sanitize_line(text + anchor, trust=trust,
-                                           source="%s outcome" % provider),
+                    "group": group,
+                    "depth": depth,
+                    "line": line,
                 })
     for update in chats.get("outcome_updates") or []:
         if not isinstance(update, dict) or update.get("change_type") != "late_update":
             continue
+        update_provider = safe_text(update.get("provider") or "unknown", IDENTIFIER,
+                                    counters=_EGRESS_COUNTERS)
+        update_key = "%s:%s" % (update_provider, update.get("session_id") or "")
+        update_subject = node_subjects.get(update_key) or "A session"
         candidates.append({
             "epoch": int(update.get("updated_at") or 0),
             "stable": str(update.get("id") or ""),
+            "group": update_key,
+            "depth": 0,
             "line": _sanitize_line(
-                "A session outcome received a late closeout update.",
+                "%s received a late closeout update." % update_subject,
                 trust="Confirmed" if update.get("method") == "tier1" else "Inferred",
-                source="%s outcome" % safe_text(update.get("provider") or "unknown",
-                                                IDENTIFIER, counters=_EGRESS_COUNTERS)),
+                source="%s outcome" % update_provider),
         })
-    candidates.sort(key=lambda row: (-row["epoch"], row["stable"]))
+    group_epoch = {}
+    for row in candidates:
+        group_epoch[row.get("group") or row["stable"]] = max(
+            row["epoch"], group_epoch.get(row.get("group") or row["stable"], 0))
+    candidates.sort(key=lambda row: (
+        -group_epoch.get(row.get("group") or row["stable"], row["epoch"]),
+        row.get("group") or row["stable"], row.get("depth", 0),
+        -row["epoch"], row["stable"]))
     lines = [row["line"] for row in candidates if row.get("line")]
     return lines[:top_n], max(0, len(lines) - top_n)
 
@@ -325,6 +425,24 @@ def _machinery(snapshot, health, top_n):
         lines.append(_sanitize_line(
             "Automation reports %s red and %s green jobs."
             % (counts.get("red", 0), counts.get("green", 0)), source="automation-status"))
+    outcome_health = _payload(snapshot.get("chats")).get("outcome_extraction_health") or {}
+    if isinstance(outcome_health, dict) and outcome_health.get("day"):
+        lines.append(_sanitize_line(
+            "Outcome extraction status %s: %s successes, %s cache hits, %s defers, "
+            "%s failures, %s budget skips (%s uncalibrated), %s disabled, %s provider, "
+            "%s privacy, %s lock, and %s backoff skips, with %s escalations today."
+            % (outcome_health.get("last_status", "unknown"),
+               outcome_health.get("successes", 0), outcome_health.get("cache_hits", 0),
+               outcome_health.get("deferred", 0), outcome_health.get("failures", 0),
+               outcome_health.get("budget_skips", 0),
+               outcome_health.get("uncalibrated_skips", 0),
+               outcome_health.get("disabled_skips", 0),
+               outcome_health.get("provider_skips", 0),
+               outcome_health.get("privacy_skips", 0),
+               outcome_health.get("lock_skips", 0),
+               outcome_health.get("backoff_skips", 0),
+               outcome_health.get("escalations", 0)),
+            source="chat-graph extract-outcomes"))
     return lines[:top_n], max(0, len(lines) - top_n)
 
 
@@ -356,7 +474,8 @@ def _render_markdown(sidecar):
     for section in sidecar["sections"]:
         out.extend(["## %s" % section["title"], ""])
         for line in section["lines"]:
-            out.append("- **%s:** %s" % (line["trust"], line["text"]))
+            indent = "  " * max(0, min(1, int(line.get("depth") or 0)))
+            out.append("%s- **%s:** %s" % (indent, line["trust"], line["text"]))
             if line.get("action_cmd"):
                 out.append("  - Action: `%s`" % line["action_cmd"].replace("`", ""))
         if section["collapsed_count"]:
@@ -663,12 +782,14 @@ def _compose_locked(preview=False):
     cursor = _read_delivery_cursor()
     needs, needs_collapsed, stale = _needs_you(snapshot, health, needs_cap)
     happened, happened_collapsed = _what_happened(snapshot, top_n)
+    possible, possible_collapsed = _possible_followups(snapshot, top_n)
     open_lines, open_collapsed, high_water = _open_changes(snapshot, top_n, cursor)
     machinery, machinery_collapsed = _machinery(snapshot, health, top_n)
     usage, usage_collapsed = _usage(snapshot, top_n)
     sections = [
         _section("NEEDS YOU", needs, needs_collapsed),
         _section("What happened", happened, happened_collapsed),
+        _section("Possible follow-ups — Inferred", possible, possible_collapsed),
         _section("Open work changes", open_lines, open_collapsed),
         _section("Machinery health", machinery, machinery_collapsed),
         _section("Usage headroom", usage, usage_collapsed),

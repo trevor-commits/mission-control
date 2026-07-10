@@ -343,22 +343,34 @@ PY
 then pass "concurrent dismiss, ingest, and alert preserve valid state"
 else fail "concurrent dismiss, ingest, and alert preserve valid state"; fi
 
-# Dashboard sync consumes only deterministic Tier-1 NEEDS-YOU items and omission
-# never resolves them.
+# Dashboard sync preserves deterministic Tier-1 NEEDS-YOU items through a
+# Tier-2 wrapper and stores fixed-taxonomy Tier-2 needs as non-actionable
+# inferred decisions. Omission resolves neither class.
 mkdir -p "$MISSION_CONTROL_HOME/data"
 python3 - "$MISSION_CONTROL_HOME/data/chats.json" <<'PY'
 import json,sys
-item={"item_key":"a"*40,"section":"needs_you","text":"Choose the rollout window"}
+item={"item_key":"a"*40,"section":"needs_you","text":"Choose the rollout window",
+      "trust":"structured","source_method":"tier1"}
+inferred={"item_key":"d"*40,"section":"needs_you","text":"Invented model decision"}
 card={"card_id":"b"*40,"session_id":"session-safe","tail_hash":"c"*40,
-      "method":"tier1","open_work":[item]}
+      "method":"tier2","open_work":[item,inferred],"session_title":"Audit: cache safety",
+      "repo":"mission-control",
+      "inferred_needs_trevor_codes":["review_evidence"],
+      "inferred_needs_trevor":["Trevor needs to review the evidence."]}
 json.dump({"schema":1,"data":{"outcomes":[card]}},open(sys.argv[1],"w"))
 PY
 SYNCED="$(run_json sync-snapshot)" || SYNCED=""
+rm -f "$MISSION_CONTROL_HOME/data/chats.json"
+MISSING="$(run_json sync-snapshot)" || MISSING=""
 python3 - "$MISSION_CONTROL_HOME/data/chats.json" <<'PY'
 import json,sys
-json.dump({"schema":1,"data":{"outcomes":[]}},open(sys.argv[1],"w"))
+item={"item_key":"a"*40,"section":"needs_you","text":"Choose the rollout window",
+      "trust":"structured","source_method":"tier1"}
+card={"card_id":"b"*40,"session_id":"session-safe","tail_hash":"e"*40,
+      "method":"tier1","open_work":[item]}
+json.dump({"schema":1,"data":{"outcomes":[card]}},open(sys.argv[1],"w"))
 PY
-OMITTED="$(run_json sync-snapshot)" || OMITTED=""
+ROLLED="$(run_json sync-snapshot)" || ROLLED=""
 python3 - "$CHAT_GRAPH_DB" <<'PY'
 import sqlite3,sys
 c=sqlite3.connect(sys.argv[1])
@@ -375,19 +387,155 @@ json.dump({"schema":1,"data":{"outcomes":[],"loose_end_changes":[change]}},
           open(sys.argv[1],"w"))
 PY
 PROVEN="$(run_json sync-snapshot)" || PROVEN=""
-if python3 - "$SYNCED" "$OMITTED" "$PROVEN" <<'PY'
+if python3 - "$SYNCED" "$MISSING" "$ROLLED" "$PROVEN" <<'PY'
 import json,sys
-a,b,c=map(json.loads,sys.argv[1:])
+a,m,b,c=map(json.loads,sys.argv[1:])
 match=[d for d in a["data"]["pinned"] if d["source_key"].startswith("outcome:session-safe:")]
+match_missing=[d for d in m["data"]["pinned"] if d["source_key"].startswith("outcome:session-safe:")]
 match2=[d for d in b["data"]["pinned"] if d["source_key"].startswith("outcome:session-safe:")]
 match3=[d for d in c["data"]["pinned"] if d["source_key"].startswith("outcome:session-safe:")]
-assert len(match)==1 and len(match2)==1
-assert a["data"]["sync"]["stored"]==1 and b["data"]["sync"]["stored"]==0
+inferred=[d for d in a["data"]["inferred"] if d["source_key"].startswith("outcome-inferred:session-safe:")]
+inferred_missing=[d for d in m["data"]["inferred"] if d["source_key"].startswith("outcome-inferred:session-safe:")]
+inferred2=[d for d in b["data"]["inferred"] if d["source_key"].startswith("outcome-inferred:session-safe:")]
+assert len(match)==1 and len(match_missing)==1 and len(match2)==1
+assert len(inferred)==1 and inferred[0]["action_argv"] is None
+assert inferred[0]["text"].startswith("Audit: cache safety [mission-control] — ")
+assert len(inferred_missing)==1 and inferred_missing[0]["state"]=="open"
+assert len(inferred2)==1 and inferred2[0]["state"]=="resolved"
+assert inferred2[0]["resolution"]["evidence_type"]=="tier2_supersession"
+assert a["data"]["sync"]["stored"]==2 and m["data"]["sync"]["resolved"]==0, (a["data"]["sync"],m["data"]["sync"])
+assert b["data"]["sync"]["stored"]==1
+assert b["data"]["sync"]["resolved"]==1
 assert b["data"]["sync"]["omission_resolves"] is False
+assert b["data"]["sync"]["structured_omission_resolves"] is False
+assert b["data"]["sync"]["inferred_exact_supersession_resolves"] is True
 assert match3==[] and c["data"]["sync"]["resolved"]==1
 PY
-then pass "Tier-1 sync preserves omission but applies positive graph resolution"
-else fail "Tier-1 sync omission/positive-resolution contract"; fi
+then pass "Tier-1 evidence persists while stale inferred Tier-2 needs supersede safely"
+else fail "Tier-1 evidence in Tier-2 sync contract"; fi
+
+# Provider/session rollback is local: one surviving Tier-2 provider cannot keep
+# another provider's stale inferred decision open.
+python3 - "$MISSION_CONTROL_HOME/data/chats.json" <<'PY'
+import json,sys
+def card(sid,provider,tail,method="tier2",need=True):
+    row={"card_id":sid+"-card","session_id":sid,"provider":provider,
+         "tail_hash":tail,"method":method,"open_work":[],
+         "session_title":"Audit: "+sid,"repo":"mission-control"}
+    if method=="tier2":
+        row["inferred_needs_trevor_codes"]=["review_evidence"] if need else []
+        row["inferred_needs_trevor"]=["Trevor needs to review the evidence."] if need else []
+    return row
+json.dump({"schema":1,"data":{"outcomes":[
+  card("provider-a","claude","1"*40),card("provider-b","codex","2"*40)]}},
+  open(sys.argv[1],"w"))
+PY
+run_json sync-snapshot >/dev/null
+python3 - "$MISSION_CONTROL_HOME/data/chats.json" <<'PY'
+import json,sys
+a={"card_id":"a-card","session_id":"provider-a","provider":"claude",
+   "tail_hash":"1"*40,"method":"tier2","open_work":[],
+   "session_title":"Audit: provider-a","repo":"mission-control",
+   "inferred_needs_trevor_codes":["review_evidence"],
+   "inferred_needs_trevor":["Trevor needs to review the evidence."]}
+b={"card_id":"b-card","session_id":"provider-b","provider":"codex",
+   "tail_hash":"3"*40,"method":"tier1","open_work":[]}
+json.dump({"schema":1,"data":{"outcomes":[a,b]}},open(sys.argv[1],"w"))
+PY
+MIXED="$(run_json sync-snapshot)" || MIXED=""
+python3 - "$MISSION_CONTROL_HOME/data/chats.json" <<'PY'
+import json,sys
+def card(sid,provider,tail):
+    return {"card_id":sid+"-card","session_id":sid,"provider":provider,
+      "tail_hash":tail,"method":"tier2","open_work":[],
+      "session_title":"Audit: "+sid,"repo":"mission-control",
+      "inferred_needs_trevor_codes":["review_evidence"],
+      "inferred_needs_trevor":["Trevor needs to review the evidence."]}
+json.dump({"schema":1,"data":{"outcomes":[
+  card("provider-a","claude","1"*40),card("provider-b","codex","2"*40)]}},
+  open(sys.argv[1],"w"))
+PY
+REENABLED="$(run_json sync-snapshot)" || REENABLED=""
+if python3 - "$MIXED" "$REENABLED" <<'PY'
+import json,sys
+d=json.loads(sys.argv[1])["data"]["inferred"]
+r=json.loads(sys.argv[2])["data"]["inferred"]
+a=[r for r in d if r["source_key"].startswith("outcome-inferred:provider-a:")]
+b=[r for r in d if r["source_key"].startswith("outcome-inferred:provider-b:")]
+reopened=[row for row in r if row["source_key"].startswith("outcome-inferred:provider-b:")]
+assert len(a)==1 and a[0]["state"]=="open"
+assert len(b)==1 and b[0]["state"]=="resolved"
+assert len(reopened)==1 and reopened[0]["state"]=="open"
+assert reopened[0]["recurrence_count"]==1
+PY
+then pass "mixed-provider rollback and unchanged-cache re-enable are reversible"
+else fail "mixed-provider inferred rollback"; fi
+
+# Deterministic title/repo enrichment changes display text without changing the
+# model evidence. It must not reopen a dismissal or manual resolution.
+python3 - "$MISSION_CONTROL_HOME/data/chats.json" <<'PY'
+import json,sys
+def card(sid,title):
+    return {"card_id":sid+"-card","session_id":sid,"provider":"claude",
+      "tail_hash":"9"*40,"method":"tier2","open_work":[],
+      "session_title":title,"repo":"mission-control",
+      "inferred_needs_trevor_codes":["review_evidence"],
+      "inferred_needs_trevor":["Trevor needs to review the evidence."]}
+json.dump({"schema":1,"data":{"outcomes":[
+  card("context-dismiss","Audit: old title"),
+  card("context-resolve","Audit: old title")] }},open(sys.argv[1],"w"))
+PY
+CONTEXT_FIRST="$(run_json sync-snapshot)" || CONTEXT_FIRST=""
+python3 - "$CONTEXT_FIRST" "$T/context-ids" <<'PY'
+import json,sys
+rows=json.loads(sys.argv[1])["data"]["inferred"]
+out=[]
+for sid in ("context-dismiss","context-resolve"):
+    row=next(r for r in rows if r["source_key"].startswith("outcome-inferred:%s:"%sid))
+    out.append(row["id"])
+open(sys.argv[2],"w").write("\n".join(out)+"\n")
+PY
+CONTEXT_DISMISS_ID="$(sed -n '1p' "$T/context-ids")"
+CONTEXT_RESOLVE_ID="$(sed -n '2p' "$T/context-ids")"
+run_json dismiss "$CONTEXT_DISMISS_ID" --reason "not needed" >/dev/null
+run_json resolve "$CONTEXT_RESOLVE_ID" --evidence-type manual_resolution \
+  --evidence-ref operator-reviewed >/dev/null
+python3 - "$MISSION_CONTROL_HOME/data/chats.json" <<'PY'
+import json,sys
+def card(sid):
+    return {"card_id":sid+"-card","session_id":sid,"provider":"claude",
+      "tail_hash":"a"*40,"method":"tier2","open_work":[],
+      "session_title":"Audit: interim title","repo":"mission-control",
+      "inferred_needs_trevor_codes":[],"inferred_needs_trevor":[]}
+json.dump({"schema":1,"data":{"outcomes":[card("context-dismiss"),
+  card("context-resolve")] }},open(sys.argv[1],"w"))
+PY
+run_json sync-snapshot >/dev/null
+python3 - "$MISSION_CONTROL_HOME/data/chats.json" <<'PY'
+import json,sys
+def card(sid):
+    return {"card_id":sid+"-card","session_id":sid,"provider":"claude",
+      "tail_hash":"9"*40,"method":"tier2","open_work":[],
+      "session_title":"Audit: enriched title","repo":"global-implementations",
+      "inferred_needs_trevor_codes":["review_evidence"],
+      "inferred_needs_trevor":["Trevor needs to review the evidence."]}
+json.dump({"schema":1,"data":{"outcomes":[card("context-dismiss"),
+  card("context-resolve")] }},open(sys.argv[1],"w"))
+PY
+CONTEXT_SECOND="$(run_json sync-snapshot)" || CONTEXT_SECOND=""
+if python3 - "$CONTEXT_SECOND" <<'PY'
+import json,sys
+rows=json.loads(sys.argv[1])["data"]["inferred"]
+d=next(r for r in rows if r["source_key"].startswith("outcome-inferred:context-dismiss:"))
+r=next(r for r in rows if r["source_key"].startswith("outcome-inferred:context-resolve:"))
+assert d["state"]=="dismissed" and d["recurrence_count"]==0
+assert r["state"]=="resolved" and r["recurrence_count"]==0
+assert r["resolution"]["evidence_type"]=="manual_resolution"
+assert "Audit: enriched title [global-implementations]" in d["text"]
+assert "Audit: enriched title [global-implementations]" in r["text"]
+PY
+then pass "context enrichment preserves human inferred-decision dispositions"
+else fail "context-only inferred decision recurrence"; fi
 
 # Feed/status shape pins confirmed open above inferred; DB uses WAL and private modes.
 STATUS="$(run_json status)" || STATUS=""

@@ -8,11 +8,15 @@ The decision queue MUST use SQLite WAL with short immediate transactions and sta
 - **THEN** the DB remains valid and produces one deterministic state and at most one alert receipt for the evidence fingerprint
 
 ### Requirement: Confirmed and inferred decisions are separate
-Confirmed decisions MUST originate from manual/structured evidence or independently anchored high-confidence inference; model-only candidates MUST be labeled inferred and MUST NOT enter the red NEEDS YOU queue or carry commands.
+Confirmed decisions MUST originate from manual/structured evidence or independently anchored high-confidence inference; model-only candidates MUST be labeled inferred, MUST include deterministic session-title/repo context, and MUST NOT enter the red NEEDS YOU queue or carry commands. A current same-session Tier 1 card or a newer Tier 2 card omitting the code MUST supersede the inferred item; a missing/unreadable feed MUST NOT. Re-enabling an unchanged cached Tier 2 code MAY reopen only a prior reversible `tier2_supersession`, never a manual dismissal or structured resolution.
 
 #### Scenario: Low-confidence LLM decision is observed
 - **WHEN** a model-only decision has no deterministic anchor
 - **THEN** it is stored/rendered only as an inferred possible follow-up and no alert/action command is produced
+
+#### Scenario: One provider is disabled while another remains enabled
+- **WHEN** the current export shows Tier 1 for one session and Tier 2 for another
+- **THEN** only the first session's stale inferred item is superseded, while a missing feed changes neither item
 
 ### Requirement: Cross-session high-recall persistence
 A structured decision MUST remain open until an exact answering user turn, an exact downstream resolution key on a verified edge, or a manual resolution proves closure; parser absence, generic downstream completion, and model omission MUST NOT resolve it.

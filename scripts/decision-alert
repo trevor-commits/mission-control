@@ -366,7 +366,12 @@ def ingest(args):
         args.resolution_key or _identity(source_kind, source_key), IDENTIFIER,
         "resolution-key", counters)
     decision_id = _identity(source_kind, source_key)
-    fingerprint = _fingerprint(text, evidence, trust, provenance, action,
+    # Tier-2 display text includes deterministic title/repo context that may be
+    # enriched later. Its semantic evidence is the stable source/card/tail
+    # packet, so context-only changes must not reopen human dispositions.
+    fingerprint_text = (evidence if trust == "inferred" and
+                        provenance == "chat-graph tier2" else text)
+    fingerprint = _fingerprint(fingerprint_text, evidence, trust, provenance, action,
                                resolution_key, anchor_ref)
     con = _connect()
     event_created = False
@@ -398,10 +403,27 @@ def ingest(args):
             event_created = True
             event_type = "observed"
         elif row["evidence_fingerprint"] == fingerprint:
-            # An unchanged ingest is deliberately event-idempotent. last_seen is
-            # monotonic operational metadata, not evidence or state.
-            con.execute("""UPDATE decisions SET last_seen=MAX(last_seen,?)
-                WHERE decision_id=?""", (now, decision_id))
+            if (row["state"] == "resolved" and trust == "inferred" and
+                    provenance == "chat-graph tier2" and
+                    row["resolution_evidence_type"] == "tier2_supersession"):
+                # Tier-2 disable/provider rollback is reversible. Re-enabling
+                # the same cached code is positive current evidence, even when
+                # its fingerprint is unchanged. Human dismissals and exact
+                # structured resolutions remain sticky.
+                recurrence = int(row["recurrence_count"]) + 1
+                con.execute("""UPDATE decisions SET last_seen=?,state='open',
+                    text=?,recurrence_count=?,resolved_at=NULL,
+                    resolution_evidence_type=NULL,resolution_evidence_ref=NULL
+                    WHERE decision_id=?""", (now, text, recurrence, decision_id))
+                _event(con, decision_id, "recurrence", fingerprint, now,
+                       detail={"prior_state": "tier2_superseded"})
+                event_created = True
+                event_type = "recurrence"
+            else:
+                # An unchanged ingest is deliberately event-idempotent.
+                # last_seen is monotonic operational metadata, not evidence.
+                con.execute("""UPDATE decisions SET last_seen=MAX(last_seen,?),text=?
+                    WHERE decision_id=?""", (now, text, decision_id))
         else:
             prior_state = row["state"]
             event_type = "recurrence" if prior_state in (
@@ -626,16 +648,28 @@ def _load_feed(name):
 
 
 def sync_snapshot(args):
-    """Sync deterministic Tier-1 NEEDS-YOU items without resolving by omission."""
+    """Sync structured decisions and reversible inferred follow-ups."""
     chats = _load_feed("chats")
     seen = set()
+    active_inferred = set()
+    current_tier2 = {}
+    current_sessions = set()
     stored = dropped = resolved = 0
     for card in chats.get("outcomes") or []:
-        if not isinstance(card, dict) or card.get("method") != "tier1":
+        if not isinstance(card, dict) or card.get("method") not in ("tier1", "tier2"):
             continue
         session_id = str(card.get("session_id") or "")
+        if session_id:
+            current_sessions.add(session_id)
         for item in card.get("open_work") or []:
             if not isinstance(item, dict) or item.get("section") != "needs_you":
+                continue
+            # A Tier-2 card carries the exact Tier-1 items alongside its inferred
+            # prose. Only explicitly preserved structured items may enter this
+            # confirmed queue; model-generated needs remain non-actionable.
+            if card.get("method") == "tier2" and not (
+                    item.get("trust") == "structured" and
+                    item.get("source_method") == "tier1"):
                 continue
             item_key = str(item.get("item_key") or "")
             if not session_id or not item_key or item_key in seen:
@@ -659,6 +693,79 @@ def sync_snapshot(args):
                 stored += 1
             except DecisionError:
                 dropped += 1
+        if card.get("method") == "tier2":
+            current_tier2[session_id] = str(card.get("tail_hash") or "unknown")
+            codes = card.get("inferred_needs_trevor_codes") or []
+            texts = card.get("inferred_needs_trevor") or []
+            for code, text in zip(codes, texts):
+                if (not isinstance(code, str) or not code or
+                        not isinstance(text, str) or not text.strip()):
+                    continue
+                source_key = "outcome-inferred:%s:%s" % (session_id, code)
+                if not session_id or source_key in seen:
+                    continue
+                seen.add(source_key)
+                active_inferred.add(source_key)
+                title = str(card.get("session_title") or "Untitled session").strip()
+                repo = str(card.get("repo") or "").strip()
+                context = title + (" [%s]" % repo if repo and repo.casefold() not in
+                                   title.casefold() else "")
+                packet = argparse.Namespace(
+                    source_kind="chat",
+                    source_key=source_key,
+                    text="%s — %s" % (context, text),
+                    evidence="tier2 outcome %s %s" % (
+                        card.get("card_id") or "unknown",
+                        card.get("tail_hash") or "unknown"),
+                    trust="inferred",
+                    provenance="chat-graph tier2",
+                    resolution_key="inferred:%s:%s" % (session_id, code),
+                    anchor="chat-graph:%s:%s" % (session_id, code),
+                    action_json=None,
+                )
+                try:
+                    ingest(packet)
+                    stored += 1
+                except DecisionError:
+                    dropped += 1
+    # Structured decisions never resolve by omission. Model-only candidates are
+    # different: a newer successful Tier-2 card for the same session is exact
+    # supersession evidence, and disabling Tier 2 removes every current Tier-2
+    # card. In both cases stale inferred effects must stop surfacing.
+    con = _connect()
+    try:
+        _tx(con)
+        rows = con.execute("""SELECT decision_id,source_key,evidence_fingerprint,state
+            FROM decisions WHERE trust_state='inferred' AND provenance='chat-graph tier2'
+              AND state='open'""").fetchall()
+        for row in rows:
+            parts = row["source_key"].split(":", 2)
+            if len(parts) != 3 or parts[0] != "outcome-inferred":
+                continue
+            sid = parts[1]
+            # A current Tier-2 card can supersede omitted codes. If no Tier-2
+            # card is exported at all, the kill switch/provider gate is active,
+            # so suppress all stale model-only queue effects.
+            superseded = (
+                (sid in current_tier2 and row["source_key"] not in active_inferred) or
+                (sid in current_sessions and sid not in current_tier2)
+            )
+            if not superseded:
+                continue
+            now = _now()
+            evidence_ref = current_tier2.get(sid) or "tier2-disabled"
+            con.execute("""UPDATE decisions SET state='resolved',resolved_at=?,
+                resolution_evidence_type='tier2_supersession',resolution_evidence_ref=?
+                WHERE decision_id=?""", (now, evidence_ref, row["decision_id"]))
+            _event(con, row["decision_id"], "resolved", row["evidence_fingerprint"], now,
+                   "tier2_supersession", evidence_ref)
+            resolved += 1
+        con.commit()
+    except Exception:
+        con.rollback()
+        raise
+    finally:
+        con.close()
     evidence_map = {
         "downstream_explicit": "downstream_resolution_key",
         "answering_user_turn": "answering_user_turn",
@@ -689,11 +796,14 @@ def sync_snapshot(args):
                 dropped += 1
     result = status(args)
     result["data"]["sync"] = {
-        "source": "chat-graph tier1 outcomes",
+        "source": "chat-graph tier1 and tier2 outcomes",
         "seen": len(seen),
         "stored": stored,
         "resolved": resolved,
         "dropped": dropped,
+        "structured_omission_resolves": False,
+        "inferred_exact_supersession_resolves": True,
+        # Backwards-compatible alias for the stricter structured contract.
         "omission_resolves": False,
     }
     return result

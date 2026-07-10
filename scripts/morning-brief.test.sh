@@ -35,7 +35,10 @@ write("usage", {"providers": [
 write("decisions", {"pinned": [
     {"id": "decision:" + "1"*24, "text": "Choose the rollout window",
      "trust": "structured", "provenance": "chat-graph tier1"}],
-    "inferred": [], "counts": {"structured_open": 1}}, cadence=300)
+    "inferred": [
+      {"id":"decision:"+"2"*24,"text":"Trevor needs to review the evidence.",
+       "trust":"inferred","state":"open","provenance":"chat-graph tier2"}],
+    "counts": {"structured_open": 1,"inferred":1}}, cadence=300)
 write("git", {"repos": [
     {"repo": "mission-control", "path": "/Users/gillettes/Coding Projects/mission-control",
      "branch": "codex/morning-brief", "remote": "ahead", "dirty": False,
@@ -60,16 +63,36 @@ changes.append({"id": "unsafe", "stable_id": "operator@example.com", "source_id"
  "source_node": "codex:chat-unsafe", "kind": "chat_open_end", "item_key": "unsafe",
  "text": "This item must fail closed", "change_type": "new", "updated_at": now-10,
  "resolved_at": None, "resolution_evidence_type": None, "resolution_evidence_ref": None})
-write("chats", {"nodes": [], "edges": [], "topics": [], "counts": {},
+write("chats", {"nodes": [
+       {"id":"chat-outcome","provider":"codex","title":"Morning Brief implementation",
+        "repo":"mission-control"},
+       {"id":"chat-audit","provider":"claude","title":"Audit: OAuth handling",
+        "repo":"global-implementations"}],
+     "edges": [
+       {"src":"claude:chat-audit","dst":"codex:chat-outcome","type":"audits",
+        "source":"titles","confidence":0.7}],
+     "topics": [], "counts": {},
+     "outcome_extraction_health": {"day":"2026-07-09","successes":2,
+       "cache_hits":3,"deferred":1,"failures":0,"budget_skips":1,
+       "uncalibrated_skips":1,"disabled_skips":6,"provider_skips":2,"privacy_skips":3,
+       "lock_skips":4,"backoff_skips":5,"escalations":1,"last_status":"budget_skip"},
      "outcomes": [
        {"card_id": "c"*40, "session_id": "chat-outcome", "provider": "codex",
         "method": "tier1", "updated_at": now-30,
+        "session_title":"Morning Brief implementation","repo":"mission-control",
         "did": ["Implemented the verified outcome"],
-        "anchors": {"commits": ["c"*40], "commands": [], "ids": []}}
+        "anchors": {"commits": ["c"*40], "commands": [], "ids": []}},
+       {"card_id":"d"*40,"session_id":"chat-audit","provider":"claude",
+        "method":"tier2","updated_at":now-29,
+        "session_title":"Audit: OAuth handling","repo":"global-implementations",
+        "did":["An audit was completed."],"left_open":["Review remains open."],
+        "anchors":{"commits":[],"commands":[],"ids":[]}}
      ],
      "outcome_updates": [
        {"id": "late-1", "provider": "claude", "method": "tier1",
-        "change_type": "late_update", "updated_at": now-25}
+        "session_id":"chat-audit","change_type": "late_update", "updated_at": now-25},
+       {"id":"late-2","provider":"codex","method":"tier1",
+        "session_id":"chat-outcome","change_type":"late_update","updated_at":now-24}
      ],
      "loose_end_changes": changes,
      "loose_ends": [
@@ -105,17 +128,31 @@ assert d["egress_counters"]["compose"]["reason_email"] >= 1
 assert set(d["inputs"]) == {"automation", "usage", "git", "chats", "decisions"}
 assert d["inputs"]["usage"]["state"] == "fresh", d["inputs"]["usage"]
 assert not d["stale_required_inputs"]
-expected=["NEEDS YOU", "What happened", "Open work changes", "Machinery health", "Usage headroom"]
+expected=["NEEDS YOU", "What happened", "Possible follow-ups — Inferred",
+          "Open work changes", "Machinery health", "Usage headroom"]
 assert [s["title"] for s in d["sections"]] == expected
 assert md.index("## NEEDS YOU") < md.index("## What happened") < md.index("## Open work changes")
 assert "Confirmed" in md and "Inferred" not in d["sections"][0]["lines"][0]["trust"]
 assert d["sections"][0]["lines"][0]["text"] == "Choose the rollout window"
 assert d["sections"][0]["lines"][0]["action_cmd"].startswith("dashboard decide dismiss decision:")
-assert "Implemented the verified outcome" in md and "A session outcome received a late closeout update" in md
+needs=next(s for s in d["sections"] if s["title"]=="NEEDS YOU")
+possible=next(s for s in d["sections"] if s["title"]=="Possible follow-ups — Inferred")
+assert all("Trevor needs to review the evidence" not in row["text"] for row in needs["lines"])
+assert any("Trevor needs to review the evidence" in row["text"] for row in possible["lines"])
+assert "Morning Brief implementation" in md and "Implemented the verified outcome" in md
+assert "Audit: OAuth handling [global-implementations]" in md
+assert "audit of Morning Brief implementation [mission-control]" in md
+assert "An audit was completed. Review remains open." in md
+assert "Audit: OAuth handling [global-implementations] received a late closeout update" in md
+assert "Morning Brief implementation [mission-control] received a late closeout update" in md
+assert md.index("Morning Brief implementation [mission-control] — Implemented") < md.index(
+    "Audit: OAuth handling [global-implementations] — audit of")
+assert "\n  - **Inferred:** Audit: OAuth handling" in md
 assert "commit cccccccccccc" in md
 assert "aaaaaaaa" in md and "feat: add morning brief" in md
 assert "Review the release evidence" in md and "Old decision was answered" in md
 assert "Old unchecked task" in md and "Aging" in md
+assert "Outcome extraction status budget_skip: 2 successes, 3 cache hits, 1 defers, 0 failures, 1 budget skips (1 uncalibrated), 6 disabled, 2 provider, 3 privacy, 4 lock, and 5 backoff skips, with 1 escalations today" in md
 assert not list(os.path.dirname(sys.argv[1]) for _ in [] )
 PY
 then pass "sidecar preserves order, freshness, equal-timestamp cursor, Git and open deltas"

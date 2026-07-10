@@ -15,7 +15,7 @@ from collections import deque
 from mission_control_common import (ACTION, NARRATIVE, EgressCounters,
                                     safe_text, sanitize_text)
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 7
 STALE_INGEST_S = 30 * 60  # show/doctor staleness threshold
 LOCK_STALE_S = 30 * 60      # ingest.lock older than this is treated as crashed
 _INGEST_SKIPPED = False     # set when export's catch-up ingest could not acquire lock
@@ -161,6 +161,48 @@ def _rebuild_open_ends_v5(con):
              "resolved" if resolved else "new"))
     con.execute("DROP TABLE open_ends_v4")
 
+def _outcome_unique_has_variant(con):
+    """True when prompt/model variants can coexist within an outcome lane."""
+    for idx in con.execute("PRAGMA index_list('session_outcomes')").fetchall():
+        if not idx["unique"]:
+            continue
+        name = idx["name"]
+        if not re.match(r"^[A-Za-z0-9_]+$", name or ""):
+            continue
+        names = [r["name"] for r in con.execute("PRAGMA index_info(%s)" % name)]
+        if names == ["session_id", "tail_hash", "method", "variant"]:
+            return True
+    return False
+
+def _create_session_outcomes_v7(con):
+    con.execute("""CREATE TABLE session_outcomes(
+        id TEXT PRIMARY KEY, session_id TEXT NOT NULL, provider TEXT,
+        tail_hash TEXT NOT NULL, outcome_json TEXT NOT NULL,
+        extraction_status TEXT, finalized INTEGER DEFAULT 0,
+        updated_at INTEGER, method TEXT NOT NULL DEFAULT 'tier1',
+        variant TEXT NOT NULL DEFAULT 'tier1', confidence REAL,
+        source_start TEXT, source_end TEXT, source_span TEXT,
+        evidence_fingerprint TEXT, created_at INTEGER,
+        UNIQUE(session_id, tail_hash, method, variant))""")
+
+def _rebuild_session_outcomes_v7(con):
+    """Allow immutable prompt/model variants for the same source tail."""
+    columns = {row["name"] for row in con.execute(
+        "PRAGMA table_info('session_outcomes')")}
+    con.execute("ALTER TABLE session_outcomes RENAME TO session_outcomes_legacy")
+    _create_session_outcomes_v7(con)
+    variant = ("COALESCE(NULLIF(variant,''),CASE WHEN method='tier2' "
+               "THEN 'legacy:'||id ELSE 'tier1' END)" if "variant" in columns else
+               "CASE WHEN method='tier2' THEN 'legacy:'||id ELSE 'tier1' END")
+    con.execute("""INSERT INTO session_outcomes(
+        id,session_id,provider,tail_hash,outcome_json,extraction_status,finalized,
+        updated_at,method,variant,confidence,source_start,source_end,source_span,
+        evidence_fingerprint,created_at)
+        SELECT id,session_id,provider,tail_hash,outcome_json,extraction_status,finalized,
+        updated_at,COALESCE(NULLIF(method,''),'tier1'),%s,confidence,source_start,source_end,
+        source_span,evidence_fingerprint,created_at FROM session_outcomes_legacy""" % variant)
+    con.execute("DROP TABLE session_outcomes_legacy")
+
 def _migrate(con):
     # meta must exist before the future-version guard can read the version, but
     # CREATE TABLE IF NOT EXISTS on an already-present meta is a pure no-op.
@@ -200,10 +242,11 @@ def _migrate(con):
         id TEXT PRIMARY KEY, session_id TEXT NOT NULL, provider TEXT,
         tail_hash TEXT NOT NULL, outcome_json TEXT NOT NULL,
         extraction_status TEXT, finalized INTEGER DEFAULT 0,
-        updated_at INTEGER, method TEXT, confidence REAL,
+        updated_at INTEGER, method TEXT NOT NULL DEFAULT 'tier1',
+        variant TEXT NOT NULL DEFAULT 'tier1', confidence REAL,
         source_start TEXT, source_end TEXT, source_span TEXT,
         evidence_fingerprint TEXT, created_at INTEGER,
-        UNIQUE(session_id, tail_hash));
+        UNIQUE(session_id, tail_hash, method, variant));
       CREATE TABLE IF NOT EXISTS session_outcome_observations(
         observation_id INTEGER PRIMARY KEY AUTOINCREMENT,
         session_id TEXT NOT NULL, outcome_id TEXT NOT NULL,
@@ -216,6 +259,36 @@ def _migrate(con):
         marker_ref TEXT PRIMARY KEY, session_id TEXT NOT NULL,
         item_key TEXT NOT NULL, marker_type TEXT NOT NULL,
         applied_at INTEGER NOT NULL);
+      CREATE TABLE IF NOT EXISTS outcome_extraction_cache(
+        cache_key TEXT PRIMARY KEY, session_id TEXT NOT NULL, provider TEXT NOT NULL,
+        model TEXT NOT NULL, sanitized_tail_hash TEXT NOT NULL,
+        result_json TEXT NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);
+      CREATE INDEX IF NOT EXISTS idx_outcome_cache_session
+        ON outcome_extraction_cache(session_id, sanitized_tail_hash);
+      CREATE TABLE IF NOT EXISTS outcome_extraction_health(
+        day TEXT PRIMARY KEY, calls INTEGER NOT NULL DEFAULT 0,
+        successes INTEGER NOT NULL DEFAULT 0,
+        input_tokens INTEGER NOT NULL DEFAULT 0,
+        output_tokens INTEGER NOT NULL DEFAULT 0,
+        cache_hits INTEGER NOT NULL DEFAULT 0,
+        deferred INTEGER NOT NULL DEFAULT 0,
+        failures INTEGER NOT NULL DEFAULT 0,
+        budget_skips INTEGER NOT NULL DEFAULT 0,
+        provider_skips INTEGER NOT NULL DEFAULT 0,
+        disabled_skips INTEGER NOT NULL DEFAULT 0,
+        privacy_skips INTEGER NOT NULL DEFAULT 0,
+        uncalibrated_skips INTEGER NOT NULL DEFAULT 0,
+        lock_skips INTEGER NOT NULL DEFAULT 0,
+        backoff_skips INTEGER NOT NULL DEFAULT 0,
+        escalations INTEGER NOT NULL DEFAULT 0,
+        total_latency_ms INTEGER NOT NULL DEFAULT 0,
+        last_status TEXT, updated_at INTEGER NOT NULL DEFAULT 0);
+      CREATE TABLE IF NOT EXISTS outcome_extraction_attempts(
+        session_id TEXT NOT NULL, provider TEXT NOT NULL, tail_hash TEXT NOT NULL,
+        variant TEXT NOT NULL, last_status TEXT NOT NULL,
+        attempts INTEGER NOT NULL DEFAULT 0, last_attempt_at INTEGER NOT NULL,
+        next_retry_at INTEGER NOT NULL,
+        PRIMARY KEY(session_id,provider,tail_hash,variant));
       CREATE TABLE IF NOT EXISTS collector_state(
         collector TEXT PRIMARY KEY, cursor TEXT, last_run INTEGER,
         row_count INTEGER DEFAULT 0);
@@ -234,12 +307,18 @@ def _migrate(con):
         con.execute("ALTER TABLE file_cursors ADD COLUMN parser_version INTEGER DEFAULT 0")
     except sqlite3.OperationalError:
         pass
+    try:
+        con.execute("ALTER TABLE outcome_extraction_health ADD COLUMN backoff_skips INTEGER NOT NULL DEFAULT 0")
+    except sqlite3.OperationalError:
+        pass
     open_cols = {r["name"] for r in con.execute("PRAGMA table_info('open_ends')")}
     if "first_seen_at" not in open_cols:
         con.execute("ALTER TABLE open_ends ADD COLUMN first_seen_at INTEGER")
     if not _open_end_schema_v5(con):
         _rebuild_open_ends_v5(con)
     con.execute("CREATE INDEX IF NOT EXISTS idx_open_ends_updated ON open_ends(updated_at, item_key)")
+    if not _outcome_unique_has_variant(con):
+        _rebuild_session_outcomes_v7(con)
     if _get_meta(con, "outcome_observations_backfilled", "0") != "1":
         if con.execute("SELECT COUNT(*) FROM session_outcome_observations").fetchone()[0] == 0:
             con.execute("""INSERT INTO session_outcome_observations(
@@ -1195,19 +1274,22 @@ def _persist_tier1_outcome(con, sid, provider, messages, path):
     prior_observation = con.execute("""SELECT o.tail_hash,v.outcome_json
         FROM session_outcome_observations o
         JOIN session_outcomes v ON v.id=o.outcome_id
-        WHERE o.session_id=? ORDER BY o.observation_id DESC LIMIT 1""",
+        WHERE o.session_id=? AND v.method='tier1'
+        ORDER BY o.observation_id DESC LIMIT 1""",
         (sid,)).fetchone()
-    exists = con.execute("SELECT id FROM session_outcomes WHERE session_id=? AND tail_hash=?",
+    exists = con.execute("""SELECT id FROM session_outcomes
+        WHERE session_id=? AND tail_hash=? AND method='tier1'""",
                          (sid, card["tail_hash"])).fetchone()
     if not exists:
         con.execute("""INSERT INTO session_outcomes(
                     id, session_id, provider, tail_hash, outcome_json,
-                    extraction_status, finalized, updated_at, method, confidence,
+                    extraction_status, finalized, updated_at, method, variant, confidence,
                     source_start, source_end, source_span, evidence_fingerprint, created_at)
-                    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                     (version_id, sid, card["provider"], card["tail_hash"],
                      json.dumps(card, sort_keys=True), card["extraction_status"],
-                     1 if card["finalized"] else 0, now, "tier1", card["confidence"],
+                     1 if card["finalized"] else 0, now, "tier1", "tier1",
+                     card["confidence"],
                      "assistant-tail", "assistant-tail-end",
                      json.dumps(card["source_span"], sort_keys=True),
                      card["evidence_fingerprint"], now))
@@ -1316,7 +1398,7 @@ def _enumerate_files():
         if not os.path.isdir(root):
             continue
         for path in glob.glob(os.path.join(root, "**", pattern), recursive=True):
-            if provider == "claude" and "subagents" in os.path.relpath(
+            if provider in ("claude", "cursor") and "subagents" in os.path.relpath(
                     path, root).split(os.sep):
                 continue
             try:
@@ -1813,8 +1895,51 @@ def _last_full_ingest_epoch():
     except OSError:
         return None
 
+def _truthy(raw):
+    return str(raw).strip().lower() not in ("", "0", "false", "no", "off", "disabled")
+
+def _tier2_export_providers():
+    """Return providers whose inferred cards may supersede Tier 1 in exports."""
+    state_home = os.path.expanduser(os.environ.get(
+        "MISSION_CONTROL_HOME", "~/.mission-control"))
+    try:
+        with open(os.path.join(state_home, "outcome-extractor", "config.json")) as handle:
+            config = json.load(handle)
+    except (OSError, ValueError):
+        config = None
+    if isinstance(config, dict) and config.get("schema") == (
+            "mission-control/outcome-extractor-config/v1"):
+        # Persistent off and calibrated provider scope dominate inherited
+        # positive environment state. Environment may only tighten to off.
+        if config.get("enabled") is not True:
+            return set()
+        call_cap = config.get("daily_call_cap")
+        token_cap = config.get("daily_token_cap")
+        if (not isinstance(call_cap, int) or isinstance(call_cap, bool) or
+                not 1 <= call_cap <= 100 or
+                not isinstance(token_cap, int) or isinstance(token_cap, bool) or
+                not 1 <= token_cap <= 10000000):
+            return set()
+        providers = config.get("providers") if isinstance(
+            config.get("providers"), dict) else {}
+        if (set(providers) != set(CHAT_PROVIDERS) or
+                any(not isinstance(providers[name], bool) for name in CHAT_PROVIDERS)):
+            return set()
+        enabled = {provider for provider in CHAT_PROVIDERS
+                   if providers.get(provider) is True}
+    elif _truthy(os.environ.get("MORNING_BRIEF_LLM_TESTING", "0")):
+        enabled = set(CHAT_PROVIDERS)
+    else:
+        return set()
+    if not _truthy(os.environ.get("MORNING_BRIEF_LLM", "1")):
+        return set()
+    return {provider for provider in enabled
+            if _truthy(os.environ.get(
+                "MORNING_BRIEF_LLM_%s" % provider.upper(), "1"))}
+
 def _outcome_export(con, cutoff):
     """Return current observed cards plus bounded observation-change events."""
+    tier2_providers = _tier2_export_providers()
     grouped = {}
     rows = con.execute("""SELECT o.observation_id,o.session_id,o.tail_hash,
                        o.observed_at,o.finalized AS observed_finalized,
@@ -1830,6 +1955,8 @@ def _outcome_export(con, cutoff):
     for sid in sorted(grouped):
         previous, latest_card = None, None
         for row in grouped[sid]:
+            if (row["method"] or "tier1") == "tier2" and row["provider"] not in tier2_providers:
+                continue
             try:
                 card = json.loads(row["outcome_json"])
             except (TypeError, ValueError):
@@ -1843,9 +1970,17 @@ def _outcome_export(con, cutoff):
             card["confidence"] = row["confidence"]
             card["evidence_fingerprint"] = row["observed_fingerprint"]
             card.pop("resolution_markers", None)
+            # Evidence changes within one extraction lane are late updates.
+            # A Tier-2 rewrite of the same source tail is enrichment, while
+            # appended chatter that preserves the selected structured evidence
+            # is also not a late closeout.
+            lane_enrichment = bool(
+                previous is not None and previous["tail_hash"] == row["tail_hash"] and
+                (previous["method"] or "tier1") != (row["method"] or "tier1"))
             changed = (previous is not None and
-                       (previous["observed_fingerprint"] != row["observed_fingerprint"] or
-                        bool(previous["observed_finalized"]) != bool(row["observed_finalized"])))
+                       (bool(previous["observed_finalized"]) != bool(row["observed_finalized"]) or
+                        (previous["observed_fingerprint"] != row["observed_fingerprint"] and
+                         not lane_enrichment)))
             if changed and row["observed_at"] >= cutoff:
                 updates.append({
                     "id": "%s:observation:%s" % (
@@ -1863,6 +1998,13 @@ def _outcome_export(con, cutoff):
                 })
             previous, latest_card = row, card
         if latest_card is not None:
+            meta = con.execute("SELECT id,title,first_prompt,repo FROM sessions WHERE id=?",
+                               (sid,)).fetchone()
+            if meta is not None:
+                # These are deterministic graph facts, not model-generated
+                # narrative.  The composer applies the shared egress policy.
+                latest_card["session_title"] = display_title(meta)
+                latest_card["repo"] = meta["repo"] or ""
             latest.append(latest_card)
     updates.sort(key=lambda item: (item.get("updated_at") or 0, item["id"]))
     return latest, updates[-500:]
@@ -1993,6 +2135,20 @@ def _build_export(con, ingest_skipped=False):
     yld = int(_get_meta(con, "scan_files_yield", 0) or 0)
     lt = time.localtime(now)
     midnight = now - (lt.tm_hour * 3600 + lt.tm_min * 60 + lt.tm_sec)
+    health_row = con.execute("""SELECT day,calls,successes,input_tokens,output_tokens,
+        cache_hits,deferred,failures,budget_skips,provider_skips,disabled_skips,
+        privacy_skips,uncalibrated_skips,lock_skips,backoff_skips,escalations,total_latency_ms,
+        last_status,updated_at FROM outcome_extraction_health
+        ORDER BY day DESC LIMIT 1""").fetchone()
+    outcome_health = dict(health_row) if health_row else {
+        "day": None, "calls": 0, "successes": 0, "input_tokens": 0,
+        "output_tokens": 0, "cache_hits": 0, "deferred": 0, "failures": 0,
+        "budget_skips": 0, "provider_skips": 0, "disabled_skips": 0,
+        "privacy_skips": 0, "uncalibrated_skips": 0, "lock_skips": 0,
+        "backoff_skips": 0,
+        "escalations": 0, "total_latency_ms": 0, "last_status": "never",
+        "updated_at": None,
+    }
     counts = {
         "new_today": con.execute("SELECT COUNT(*) c FROM sessions WHERE first_seen_at >= ?",
                                  (midnight,)).fetchone()["c"],
@@ -2015,6 +2171,7 @@ def _build_export(con, ingest_skipped=False):
         "data": {"nodes": nodes, "edges": edges, "topics": topics,
                  "outcomes": outcomes, "outcome_updates": outcome_updates,
                  "outcome_egress_counters": outcome_egress,
+                 "outcome_extraction_health": outcome_health,
                  "loose_ends": loose_ends, "loose_end_changes": loose_end_changes,
                  "repo_annotations": repo_annotations,
                  "stale_providers": sorted(_STALE_PROVIDERS), "notes": notes, "counts": counts},
@@ -2061,13 +2218,16 @@ def cmd_validate_export(args):
         errs.append("schema != 1")
     data = d.get("data") or {}
     for k in ("nodes", "edges", "topics", "outcomes", "outcome_updates",
-              "loose_ends", "loose_end_changes", "counts"):
+              "outcome_extraction_health", "loose_ends", "loose_end_changes", "counts"):
         if k not in data:
             errs.append("missing data key: %s" % k)
     if "outcomes" in data and not isinstance(data.get("outcomes"), list):
         errs.append("data.outcomes is not a list")
     if "outcome_updates" in data and not isinstance(data.get("outcome_updates"), list):
         errs.append("data.outcome_updates is not a list")
+    if "outcome_extraction_health" in data and not isinstance(
+            data.get("outcome_extraction_health"), dict):
+        errs.append("data.outcome_extraction_health is not an object")
     if "loose_ends" in data and not isinstance(data.get("loose_ends"), list):
         errs.append("data.loose_ends is not a list")
     if "loose_end_changes" in data and not isinstance(data.get("loose_end_changes"), list):
@@ -2407,9 +2567,17 @@ def cmd_self_test(args):
     print("self-test: %s" % test)
     return subprocess.call(["bash", test])
 
+def cmd_extract_outcomes(args):
+    # Import only for the explicit command. Ingest and export never load or call
+    # the model lane, preserving their deterministic/collector-only contract.
+    import outcome_extractor
+    return outcome_extractor.run(sys.modules[__name__], args)
+
 # ---- dispatch -------------------------------------------------------------
-USAGE = ("usage: chat-graph {ingest|export|validate-export|link|unlink|resolve|show|stats|doctor|rebuild|--self-test}\n"
+USAGE = ("usage: chat-graph {ingest|extract-outcomes|export|validate-export|link|unlink|resolve|show|stats|doctor|rebuild|--self-test}\n"
          "  ingest [--collector NAME] [--full] [--limit-files N]\n"
+         "  extract-outcomes [--days N] [--limit N] [--sample-per-provider N]\n"
+         "                   [--apply-calibration PATH] [--set-enabled 0|1] [--json]\n"
          "  export --json [--out PATH] [--catchup-limit N]   validate-export <file>\n"
          "  link A B --type T [--note ..]   unlink A B [--type T]   resolve <id> <text-hash>\n"
          "  show <id>   stats   doctor   rebuild   --self-test")
@@ -2419,7 +2587,8 @@ def main(argv):
         print(USAGE); return 1
     cmd, args = argv[0], argv[1:]
     table = {
-        "ingest": cmd_ingest, "export": cmd_export, "validate-export": cmd_validate_export,
+        "ingest": cmd_ingest, "extract-outcomes": cmd_extract_outcomes,
+        "export": cmd_export, "validate-export": cmd_validate_export,
         "link": cmd_link, "unlink": cmd_unlink,
         "resolve": cmd_resolve, "show": cmd_show, "stats": cmd_stats,
         "doctor": cmd_doctor, "rebuild": cmd_rebuild,

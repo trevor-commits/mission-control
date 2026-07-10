@@ -40,11 +40,15 @@ The red NEEDS YOU block MUST contain only manual/structured facts or inference i
 - **THEN** the command is discarded and the narrative appears only under `Possible follow-ups — Inferred`, never NEEDS YOU
 
 ### Requirement: Brief organization and volume
-The brief MUST order NEEDS YOU, What happened, Open work changes, Machinery health, and Usage headroom; MUST rank a configurable top-N; MUST collapse lower-value items; and MUST label inferred lines with the word `Inferred` rather than a subtle symbol.
+The brief MUST order NEEDS YOU, What happened, Possible follow-ups — Inferred, Open work changes, Machinery health, and Usage headroom; MUST rank a configurable top-N; MUST collapse lower-value items; and MUST label inferred lines with the word `Inferred` rather than a subtle symbol. What happened MUST use allowlisted graph edges to keep parent outcomes adjacent to and explicitly related to spawned workers, audits, and continuations.
 
 #### Scenario: High-volume morning remains bounded
 - **WHEN** more than the configured number of outcome lines qualify
 - **THEN** only the ranked top-N render and the remainder is summarized by count without dropping NEEDS YOU items
+
+#### Scenario: One chat audits another
+- **WHEN** outcome cards have a valid `audits` edge between their allowlisted chat nodes
+- **THEN** the audited chat appears as the group parent and the audit line names that relationship instead of rendering as an unrelated generic event
 
 ### Requirement: Honest provider presentation
 Only allowlisted chat providers may be lineage-grouped; repo nodes remain valid Open work sources; malformed/unknown source labels MUST NOT render raw and MAY contribute a safe `Unknown source` flat card plus a machinery-health count.

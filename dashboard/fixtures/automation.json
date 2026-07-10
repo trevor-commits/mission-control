@@ -166,6 +166,26 @@
         "err_log_tail": null
       },
       {
+        "label": "Outcome Extractor",
+        "name": "com.gillettes.outcome-extractor",
+        "kind": "calendar",
+        "schedule": "06:40 daily",
+        "retry_schedule": "06:47 and 06:54",
+        "loaded": false,
+        "pid": null,
+        "last_exit": null,
+        "state": "awaiting-activation",
+        "activation_required": true,
+        "semantic_status": null,
+        "evidence_age_s": null,
+        "history_confidence": "unknown",
+        "failure_streak": 0,
+        "recent_runs": [],
+        "next_run_epoch": null,
+        "run_cmd": null,
+        "err_log_tail": null
+      },
+      {
         "label": "Morning Brief",
         "name": "com.gillettes.morning-brief",
         "kind": "calendar",

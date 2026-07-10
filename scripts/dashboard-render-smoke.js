@@ -232,10 +232,12 @@ for (const tab of TABS) {
     fails++; continue;
   }
   if (tab === 'automation' &&
-      (txt.indexOf('Next run:') === -1 || txt.indexOf('Run history:') === -1 ||
+      (txt.indexOf('Outcome Extractor') === -1 ||
+       txt.indexOf('Next run:') === -1 || txt.indexOf('Run history:') === -1 ||
        txt.indexOf('failure streak 2') === -1 || txt.indexOf('Run now') === -1 ||
        txt.indexOf('Status: awaiting activation') === -1 ||
        txt.indexOf('Next run: available after activation') === -1 ||
+       txt.indexOf('retries 06:47 and 06:54') === -1 ||
        txt.indexOf(ACTIVATION_STALE_LABEL) !== -1 ||
        txt.indexOf(TOKEN_PREFIX_ONLY) !== -1 || txt.indexOf(TOKEN_SECRET_SUFFIX) !== -1 ||
        txt.indexOf('«REDACTED-SECRET»') === -1)) {

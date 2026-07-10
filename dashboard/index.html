@@ -2027,7 +2027,8 @@ body {
           "Status: awaiting activation — this job is not installed or scheduled yet"));
       }
       var age = jb.evidence_age_s != null ? fmtAgeS(jb.evidence_age_s) : "never ran";
-      card.appendChild(h("div", { class: "mc-card-secondary mc-num" }, "last evidence " + age + " · " + (jb.schedule || "")));
+      var retryLabel = jb.retry_schedule ? " · retries " + jb.retry_schedule : "";
+      card.appendChild(h("div", { class: "mc-card-secondary mc-num" }, "last evidence " + age + " · " + (jb.schedule || "") + retryLabel));
       if (jb.state === "awaiting-activation") {
         card.appendChild(h("div", { class: "mc-card-secondary" }, "Next run: available after activation"));
       } else if (jb.next_run_epoch != null) {

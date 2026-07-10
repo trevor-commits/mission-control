@@ -72,7 +72,7 @@ Left untouched except for named repair: nightly-review, delegation-audit, provid
 | **L3** | Five-morning proof with notification consolidation decision | Medium | Comprehension criteria and receipt/action evidence hold; noise tuned |
 | **L4** | Reviewed safe runner allowed beyond dry-run | High | A live-ledger dry-run is independently reviewed clean and Trevor explicitly accepts activation |
 
-**Current state:** before L1.
+**Current state:** L1 is implemented. L2 is code-complete but remains blocked on authorized live provider calibration, scheduled activation, and delivery/deadman proof.
 **Target for this initiative:** L3; L4 remains gated even though the dry-run implementation is in scope.
 
 ## 7. Phase breakdown
@@ -81,7 +81,7 @@ Left untouched except for named repair: nightly-review, delegation-audit, provid
 |---|---|---|
 | Phase 0 | Repair immediate monitoring gaps and finish source provenance | `docs/plans/2026-07-09-phase-0-morning-brief-foundations-plan.md` |
 | Phase 1 | Add job history and ship the deterministic thin brief | `docs/plans/2026-07-09-phase-1-thin-morning-brief-plan.md` |
-| Phase 2 | Add private, bounded, evidence-gated session outcomes and coverage/cost measurement | `docs/plans/2026-07-09-phase-2-session-outcomes-plan.md` |
+| Phase 2 | Add private, bounded, evidence-gated session outcomes and coverage/cost measurement | [`openspec/changes/morning-brief/plan.md`](../../openspec/changes/morning-brief/plan.md) and [`docs/runbooks/outcome-extraction.md`](../runbooks/outcome-extraction.md) |
 | Phase 3 | Add the high-recall transactional decision queue and alerts | `docs/plans/2026-07-09-phase-3-decision-queue-plan.md` |
 | Phase 4 | Enrich the brief, install scheduled delivery, and prove the deadman | `docs/plans/2026-07-09-phase-4-delivery-and-proof-plan.md` |
 | Phase 5 | Add recomputed Git facts and the conservative default-dry-run robot | `docs/plans/2026-07-09-phase-5-safe-runner-plan.md` |
@@ -102,7 +102,7 @@ Phases 0 and parts of 1/2/3/5 may be investigated in parallel, but the primary i
 
 ## 9. Risks and open questions
 
-**Risk: trusted-looking hallucination.** An LLM can misstate a session. Mitigation: deterministic anchors, visible inference markers, confidence gating, verbatim structured commands/SHAs, and no low-confidence NEEDS YOU items.
+**Risk: trusted-looking hallucination.** An LLM can misstate a session. Mitigation: the model selects only fixed outcome codes; deterministic code supplies session-title/repo/commit context; inferred queue items are visibly inferred and non-actionable; exact commands, SHAs, and confirmed decisions remain Tier 1 only.
 
 **Risk: privacy egress.** Transcript tails can contain secrets or personal data. Mitigation: one boundary policy before every external/model/send path, fail-closed field drops, redacted counters, fixtures covering every field class, and a threat pass before live scheduling.
 

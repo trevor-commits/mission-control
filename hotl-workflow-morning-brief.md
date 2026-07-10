@@ -247,7 +247,7 @@ max_iterations: 3
 verify: bash scripts/outcome-coverage.test.sh
 gate: human
 
-- [ ] **Step 34: Write red Tier 2 isolation tests**
+- [x] **Step 34: Write red Tier 2 isolation tests**
 action: Add cache, budget-zero, provider kill-switch, OAuth exit-75 defer, raw-tool exclusion, invented-command discard, and slow-model-vs-ingest concurrency tests.
 loop: false
 max_iterations: 1
@@ -271,8 +271,8 @@ max_iterations: 2
 verify: test -s /tmp/morning-brief-outcome-calibration.json
 gate: human
 
-- [ ] **Step 37: Implement isolated Tier 2 extraction**
-action: Add separate locked extraction, closed-DB model calls, short WAL writes, content-hash cache, caps, OAuth defer, provider kills, health counters, and narrative-only model output.
+- [x] **Step 37: Implement isolated Tier 2 extraction**
+action: Add separate locked extraction, closed-DB model calls, short WAL writes, code-only cache, strict bounded caps, OAuth defer, provider kills, health counters, a closed model-selected taxonomy, and deterministic session/repo/lineage context.
 loop: until outcome, privacy, and concurrency suites pass
 max_iterations: 3
 verify: bash scripts/chat-graph.test.sh && bash scripts/mission-control-common.test.sh && bash scripts/outcome-extractor.test.sh

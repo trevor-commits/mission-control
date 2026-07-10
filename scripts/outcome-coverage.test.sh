@@ -75,6 +75,15 @@ c.execute("INSERT INTO messages VALUES(?,?,?,?,?,1)",(1,"hermes-one","assistant"
  "plain unstructured Hermes tail",time.time()))
 c.commit()
 PY
+python3 - "$TMP/graph.db" <<'PY'
+import sqlite3,sys
+c=sqlite3.connect(sys.argv[1])
+c.execute("CREATE TABLE sessions(id TEXT PRIMARY KEY,repo TEXT)")
+c.execute("CREATE TABLE edges(src TEXT,dst TEXT,type TEXT,status TEXT)")
+c.execute("INSERT INTO sessions VALUES('unstructured','mission-control')")
+c.execute("INSERT INTO sessions VALUES('hermes-one','mission-control')")
+c.commit()
+PY
 
 # A tempting model command is a negative control: plan mode must never execute it.
 export OUTCOME_COVERAGE_MODEL_CMD="touch $TMP/MODEL_CALLED"
@@ -84,6 +93,7 @@ export OUTCOME_COVERAGE_CURSOR_ROOT="$TMP/cursor"
 export OUTCOME_COVERAGE_HERMES_ROOT="$TMP/hermes"
 export OUTCOME_COVERAGE_HERMES_DB="$TMP/hermes-state.db"
 export OUTCOME_COVERAGE_COPILOT_ROOT="$TMP/copilot"
+export OUTCOME_COVERAGE_GRAPH_DB="$TMP/graph.db"
 
 if "$OC" --days 7 --json > "$TMP/report.json" 2> "$TMP/stderr"; then
   pass "coverage command exits zero"
@@ -107,27 +117,36 @@ assert d["providers"]["hermes"]["sessions"] == 1
 assert d["providers"]["copilot"]["sessions"] == 3
 assert d["providers"]["copilot"]["no_assistant_tail"] == 2
 assert d["providers"]["copilot"]["structured"] == 1
+assert d["providers"]["claude"]["eligible_structured"] == 1
+assert d["providers"]["codex"]["eligible_structured"] == 1
+assert d["providers"]["cursor"]["eligible_unstructured"] == 1
+assert d["providers"]["hermes"]["eligible_unstructured"] == 1
 assert d["grammar_counts"]["reply_v5"] == 1
 assert d["grammar_counts"]["codex_closeout"] >= 2
 assert d["grammar_counts"]["audit_report"] == 1
 assert d["grammar_counts"]["handoff_packet"] == 1
 assert d["packet_tails"] == 1
 assert d["unparseable_sessions"] == 2
-assert d["eligible_model_calls"] == 2
+assert d["eligible_model_calls"] == 4
 assert d["no_assistant_tail_sessions"] == 2
 assert d["tail_bytes"] > 0
 assert d["projection"]["basis"] == "modeled"
 assert d["projection"]["charged_api_dollars"] is None
-assert d["projection"]["eligible_calls_window"] == 2
+assert d["projection"]["eligible_calls_window"] == 4
 assert 0 < d["projection"]["input_tokens_day"] < d["projection"]["input_tokens_window"]
-assert d["projection"]["output_tokens_window"] == 512
-assert d["projection"]["output_tokens_day"] == round(512 / 7.0, 3)
-assert d["projection"]["calls_day"] == round(2 / 7.0, 3)
+assert d["projection"]["output_tokens_window"] == 1024
+assert d["projection"]["output_tokens_day"] == round(1024 / 7.0, 3)
+assert d["projection"]["calls_day"] == round(4 / 7.0, 3)
+assert d["graph_evidence_present"] is True
+assert d["eligible_reason_counts"] == {"commit":2,"lineage":0,"repo":2}
 assert d["source_status"]["hermes"]["storage"] == "state.db"
 assert "modeled_call_headroom" in d["quota"]
 PY
 then pass "coverage reports provider/grammar/packet/unparseable and modeled load"
-else fail "coverage report contract"; fi
+else
+  cat "$TMP/report.json" >&2
+  fail "coverage report contract"
+fi
 
 echo "----"
 if [ "$FAILS" -eq 0 ]; then echo "ALL PASS"; exit 0; else echo "$FAILS FAILED"; exit 1; fi

@@ -32,19 +32,39 @@ Tier 2 MUST run only in `extract-outcomes`, MUST never be invoked by ingest or e
 - **WHEN** a test model blocks while the normal collector ingests
 - **THEN** ingest completes within its expected bound and no long write transaction is held by the extractor
 
-### Requirement: Model output is narrative only
-Tier 2 MAY generate inferred narrative but MUST discard model-generated commands, IDs, SHAs, and repo names unless they are separately present in deterministic anchors; all action fields MUST originate from structured source text or deterministic code.
+### Requirement: Model output is closed classification only
+Tier 2 MAY generate inferred classification, but the model response MUST select from a fixed outcome-code taxonomy that deterministic code maps to fixed prose. The caller MUST validate the exact response keys, types, enum membership, item limits, finite confidence bound, and ambiguity contract before persistence or cache reuse. Free-form model strings, commands, IDs, SHAs, repo names, paths, and counts MUST NOT enter a card; all action fields MUST originate from structured source text or deterministic code. The exported card and brief MUST add deterministic session-title and repo context so two equal taxonomy codes from different sessions remain distinguishable. Inferred `needs_trevor` codes MAY enter the decision queue only as non-actionable inferred items.
 
 #### Scenario: Model invents a command
 - **WHEN** the model response contains a command absent from structured anchors
 - **THEN** the command is discarded and cannot enter an outcome action or decision queue
 
+#### Scenario: Model returns an unknown free-form string
+- **WHEN** a schema-bypassing or malformed provider response returns prose instead of a recognized outcome code
+- **THEN** the prose is rejected and Tier 1 remains current
+
+#### Scenario: Two audits share one taxonomy code
+- **WHEN** two different session tails both select `audit_completed`
+- **THEN** the brief renders each with its deterministic session title and repo, includes any fixed residual code, and does not collapse them into indistinguishable lines
+
+#### Scenario: Provider returns a malformed near-match
+- **WHEN** a response adds properties, omits required fields, uses wrong types, returns a non-finite confidence, or supplies a non-schema code alias
+- **THEN** it is rejected rather than cached or partially accepted
+
 ### Requirement: Cache, budget, lock, and provider controls
-Tier 2 MUST cache by sanitized tail hash, enforce daily call/token caps, use the installed OAuth-lock wrapper, treat exit 75 as a benign defer, honor global and per-source-provider kill switches, and fail open to Tier 1 with health counters.
+Tier 2 MUST cache by sanitized tail hash using a canonical code-only result shape, enforce daily call/token caps no greater than 100 calls and 10,000,000 tokens, use the installed OAuth-lock wrapper, treat exit 75 as a benign defer, honor global and per-source-provider kill switches, and fail open to Tier 1 with health counters. Persistent explicit off MUST also dominate sample and test bypasses; synthetic test mode MUST require an explicit stub command and MUST NOT fall back to the installed wrapper.
 
 #### Scenario: Budget is zero
 - **WHEN** the daily budget is configured to zero
 - **THEN** no model call occurs, structured outcomes remain available, and the budget skip is visible in machinery health
+
+#### Scenario: Sample requested while persistently disabled
+- **WHEN** a bounded provider sample or synthetic test is requested after persistent Tier 2 disable
+- **THEN** no model call occurs and the run reports a disabled skip
+
+#### Scenario: Haiku returns explicit ambiguity without a result code
+- **WHEN** the first pinned model returns `ambiguity=true` with an empty `did` array
+- **THEN** the extractor may make exactly one budgeted pinned Sonnet escalation and persists nothing unless the stronger result resolves ambiguity with a valid `did` code
 
 ### Requirement: Explicit evidence resolves open work
 Each `chat_open_end` MUST have a kind-salted source-derived stable item key and MUST resolve only through an exact same-session resolution marker, an exact downstream `Resolves: <item-key>` on a verified continuation/spawn edge, an explicit manual resolution/suppression, or a versioned deterministic parser supersession that replaces prior `NEEDS YOU` representations from the same selected source message and same sanitized content hash with one coherent item. Parser migration MUST NOT treat a changed, missing, unstructured, rewritten-under-the-same-ID, or merely omitting source message as resolution evidence.

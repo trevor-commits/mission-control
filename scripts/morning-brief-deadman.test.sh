@@ -140,10 +140,22 @@ if [ "$DR1" -ne 0 ] && [ "$DR2" -ne 0 ] && [ "$(python3 -c 'import json,sys; pri
   pass "concurrent deadman checks emit one throttled alert"
 else fail "concurrent deadman checks emit one throttled alert"; fi
 
-for tmpl in "$ROOT/launchd/com.gillettes.morning-brief.plist.template" "$ROOT/launchd/com.gillettes.morning-brief-deadman.plist.template"; do
+for tmpl in "$ROOT/launchd/com.gillettes.morning-brief.plist.template" \
+            "$ROOT/launchd/com.gillettes.morning-brief-deadman.plist.template" \
+            "$ROOT/launchd/com.gillettes.outcome-extractor.plist.template"; do
   if plutil -lint "$tmpl" >/dev/null 2>&1 && ! grep -q -- '-lc' "$tmpl"; then pass "$(basename "$tmpl") is direct-argv plist"
   else fail "$(basename "$tmpl") plist contract"; fi
 done
+
+if python3 - "$ROOT/launchd/com.gillettes.outcome-extractor.plist.template" <<'PY'
+import plistlib,sys
+with open(sys.argv[1],"rb") as handle:
+    data=plistlib.load(handle)
+slots=data["StartCalendarInterval"]
+assert [(slot["Hour"],slot["Minute"]) for slot in slots] == [(6,40),(6,47),(6,54)]
+PY
+then pass "outcome extractor has bounded pre-brief retry slots"
+else fail "outcome extractor retry schedule"; fi
 
 printf '%s\n' "----"
 if [ "$FAIL" -eq 0 ]; then echo "ALL PASS"; exit 0; fi

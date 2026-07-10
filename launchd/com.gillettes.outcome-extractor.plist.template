@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.gillettes.outcome-extractor</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>__MCHOME__/bin/dashboard</string>
+    <string>extract-outcomes</string>
+    <string>--days</string><string>7</string>
+    <string>--limit</string><string>20</string>
+    <string>--json</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>HOME</key><string>__HOME__</string>
+    <key>PATH</key><string>__HOME__/.local/bin:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin</string>
+    <key>MISSION_CONTROL_HOME</key><string>__MCHOME__</string>
+    <key>PYTHONPATH</key><string>__REPO__/scripts</string>
+  </dict>
+  <key>StartCalendarInterval</key>
+  <array>
+    <dict><key>Hour</key><integer>6</integer><key>Minute</key><integer>40</integer></dict>
+    <dict><key>Hour</key><integer>6</integer><key>Minute</key><integer>47</integer></dict>
+    <dict><key>Hour</key><integer>6</integer><key>Minute</key><integer>54</integer></dict>
+  </array>
+  <key>StandardOutPath</key><string>__MCHOME__/logs/outcome-extractor.out.log</string>
+  <key>StandardErrorPath</key><string>__MCHOME__/logs/outcome-extractor.err.log</string>
+</dict>
+</plist>

@@ -158,6 +158,8 @@ def evidence_details(evidence, now=None):
     now = _now() if now is None else now
     newest_ns = None
     newest_run_ns = None
+    semantic_status = None
+    semantic_status_ns = None
     saw_media_offline = False
     saw_readable = False
     for ev in evidence or []:
@@ -178,6 +180,20 @@ def evidence_details(evidence, now=None):
                     newest_ns = mt_ns
                 if ev.get("run_key") is True and (newest_run_ns is None or mt_ns > newest_run_ns):
                     newest_run_ns = mt_ns
+                if (ev.get("semantic_status") is True and
+                        (semantic_status_ns is None or mt_ns > semantic_status_ns)):
+                    try:
+                        if os.stat(path).st_size > 65536:
+                            raise ValueError("semantic marker too large")
+                        with open(path) as handle:
+                            marker = json.load(handle)
+                        status = marker.get("status") if isinstance(marker, dict) else None
+                        semantic_status = (status if isinstance(status, str) and
+                                           re.match(r"^[a-z][a-z0-9_-]{0,63}$", status)
+                                           else "invalid")
+                    except (OSError, ValueError):
+                        semantic_status = "invalid"
+                    semantic_status_ns = mt_ns
             except OSError:
                 continue
     newest_epoch = newest_ns / 1000000000.0 if newest_ns is not None else None
@@ -189,6 +205,7 @@ def evidence_details(evidence, now=None):
         "newest_mtime_ns": newest_ns,
         "newest_epoch": newest_epoch,
         "run_mtime_ns": newest_run_ns,
+        "semantic_status": semantic_status,
     }
 
 
@@ -351,6 +368,10 @@ def _update_one_history(entry, job, stored, now):
         err_ns = job.pop("_err_mtime_ns", None)
         if entry.get("pseudo") and job.get("state") == "green" and run_ns is not None:
             result, marker_ns, confidence = "success", run_ns, "trusted"
+        elif job.get("semantic_status") is not None and run_ns is not None:
+            result = ("success" if job.get("semantic_status") == "completed"
+                      else "failure")
+            marker_ns, confidence = run_ns, "trusted"
         elif status is not None and job.get("state") not in ("offline-media", "degraded", "retired"):
             result = "success" if status == 0 else "failure"
             if result == "failure" and job.get("state") != "red":
@@ -427,6 +448,7 @@ def classify(entry, by_label, parse_ok, now=None):
         "name": name,
         "kind": entry.get("kind", "interval"),
         "schedule": entry.get("schedule", ""),
+        "retry_schedule": entry.get("retry_schedule", ""),
         "loaded": name in by_label,
         "pid": by_label.get(name, {}).get("pid"),
         "last_exit": by_label.get(name, {}).get("status"),
@@ -436,6 +458,7 @@ def classify(entry, by_label, parse_ok, now=None):
         "next_run_estimate": None,
         "run_cmd": None,
         "activation_required": bool(entry.get("activation_required")),
+        "semantic_status": None,
         "_run_mtime_ns": None,
         "_err_mtime_ns": None,
     }
@@ -478,6 +501,7 @@ def classify(entry, by_label, parse_ok, now=None):
     age, offline = details["age_s"], details["offline"]
     result["evidence_age_s"] = None if age is None else round(age, 1)
     result["_run_mtime_ns"] = details["run_mtime_ns"]
+    result["semantic_status"] = details["semantic_status"]
     result["_err_mtime_ns"] = _mtime_ns(entry.get("err_log", ""))
     next_epoch = next_run_epoch(entry.get("schedule"), details["newest_epoch"], now)
     result["next_run_epoch"] = next_epoch
@@ -504,6 +528,10 @@ def classify(entry, by_label, parse_ok, now=None):
 
     if nonzero:
         result["state"] = "red"
+        return result
+
+    if result["semantic_status"] not in (None, "completed"):
+        result["state"] = "yellow"
         return result
 
     needs_pid = result["kind"] == "keepalive"

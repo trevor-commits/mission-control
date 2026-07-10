@@ -3,6 +3,24 @@
     {
       "evidence": [
         {
+          "path": "/Users/gillettes/.mission-control/outcome-extractor/last-run.json",
+          "role": "run",
+          "semantic_status": true,
+          "run_key": true
+        }
+      ],
+      "err_log": "/Users/gillettes/.mission-control/logs/outcome-extractor.err.log",
+      "expected_freshness_s": 93600,
+      "kind": "calendar",
+      "label": "Outcome Extractor",
+      "name": "com.gillettes.outcome-extractor",
+      "activation_required": true,
+      "retry_schedule": "06:47 and 06:54",
+      "schedule": "06:40 daily"
+    },
+    {
+      "evidence": [
+        {
           "path": "/Users/gillettes/.claude/nightly-review/reports/*.md",
           "role": "run",
           "run_key": true

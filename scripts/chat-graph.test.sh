@@ -495,8 +495,8 @@ con.execute("INSERT INTO edges VALUES('C','D','audits','titles',0.5,'{}','x','su
 con.commit(); con.close()
 PY
 "$CG" stats >/dev/null 2>&1              # any DB open triggers _migrate
-ok 5 "$(q "SELECT value FROM meta WHERE key='schema_version'")" \
-   "v1 DB open migrates meta.schema_version to 5"
+ok 7 "$(q "SELECT value FROM meta WHERE key='schema_version'")" \
+   "v1 DB open migrates meta.schema_version to 7"
 ok 2 "$(q "SELECT COUNT(*) FROM edges")" \
    "migration preserves all rows"
 ok suppressed "$(q "SELECT status FROM edges WHERE src='C' AND dst='D' AND type='audits'")" \
@@ -782,7 +782,7 @@ PYEOF
 if [ "$RC33" -ne 0 ]; then pass "validate-export rejects snapshot missing loose_ends"
 else fail "validate-export accepted snapshot missing loose_ends"; fi
 
-# --- 35. v4 -> v5 outcome/open-work migration is additive + idempotent -----
+# --- 35. v4 -> v7 outcome/open-work/Tier-2 migration is additive + idempotent
 new_env
 python3 - <<'PYEOF'
 import os, sqlite3
@@ -811,8 +811,8 @@ con.commit(); con.close()
 PYEOF
 "$CG" stats >/dev/null 2>&1
 "$CG" stats >/dev/null 2>&1
-ok 5 "$(q "SELECT value FROM meta WHERE key='schema_version'")" \
-   "v4 DB migrates to schema 5 exactly once"
+ok 7 "$(q "SELECT value FROM meta WHERE key='schema_version'")" \
+   "v4 DB migrates to schema 7 exactly once"
 ok 1 "$(q "SELECT COUNT(*) FROM open_ends WHERE text_hash='legacy-hash' AND text='finish it'")" \
    "v5 migration preserves the legacy open-end row"
 ok repo "$(q "SELECT node_kind FROM sessions WHERE id='repo:alpha'")" \
@@ -822,7 +822,11 @@ ok chat "$(q "SELECT node_kind FROM sessions WHERE id='CHAT35'")" \
 ok 5 "$(q "SELECT COUNT(*) FROM pragma_table_info('open_ends') WHERE name IN ('item_key','updated_at','resolution_evidence_type','resolution_evidence_ref','last_change_type')")" \
    "v5 adds stable item/update/resolution fields"
 ok 1 "$(q "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='session_outcomes'")" \
-   "v5 creates additive session_outcomes storage"
+   "v7 creates additive session_outcomes storage"
+ok 3 "$(q "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('outcome_extraction_cache','outcome_extraction_health','outcome_extraction_attempts')")" \
+   "v7 creates private Tier 2 cache, health, and retry storage"
+ok 1 "$(q "SELECT COUNT(*) FROM (SELECT i.name FROM pragma_index_list('session_outcomes') i JOIN pragma_index_info(i.name) c WHERE i.[unique]=1 GROUP BY i.name HAVING group_concat(c.name)='session_id,tail_hash,method,variant')")" \
+   "v7 permits immutable Tier 2 variants for one source tail"
 
 # --- 36. provider/node-kind hygiene preserves repos and hides raw garbage ---
 python3 - <<'PYEOF'
@@ -1387,6 +1391,14 @@ else fail "Tier 1 privacy boundary"; fi
 EXP47="$CHAT_GRAPH_HOME/export/graph.json"
 "$CG" validate-export "$EXP47" >/dev/null 2>&1
 ok 0 "$?" "validate-export accepts outcome arrays"
+if python3 - "$EXP47" <<'PYEOF'
+import json,sys
+cards=json.load(open(sys.argv[1]))["data"]["outcomes"]
+assert cards and all(isinstance(card.get("session_title"),str) and
+                     isinstance(card.get("repo"),str) for card in cards)
+PYEOF
+then pass "outcome export carries deterministic session title and repo context"
+else fail "outcome export deterministic context"; fi
 BAD47="$CHAT_GRAPH_HOME/export/bad-outcomes.json"
 python3 - "$EXP47" "$BAD47" <<'PYEOF'
 import json, sys
@@ -1396,6 +1408,15 @@ PYEOF
 "$CG" validate-export "$BAD47" >/dev/null 2>&1; RC47=$?
 if [ "$RC47" -ne 0 ]; then pass "validate-export rejects snapshot missing outcomes"
 else fail "validate-export accepted snapshot missing outcomes"; fi
+BAD47H="$CHAT_GRAPH_HOME/export/bad-outcome-health.json"
+python3 - "$EXP47" "$BAD47H" <<'PYEOF'
+import json, sys
+d = json.load(open(sys.argv[1])); d["data"].pop("outcome_extraction_health", None)
+json.dump(d, open(sys.argv[2], "w"))
+PYEOF
+"$CG" validate-export "$BAD47H" >/dev/null 2>&1; RC47H=$?
+if [ "$RC47H" -ne 0 ]; then pass "validate-export rejects missing extraction health"
+else fail "validate-export accepted missing extraction health"; fi
 
 # --- 47b. newer Claude subagent file cannot replace parent transcript -------
 new_env
@@ -1416,6 +1437,24 @@ assert len(rows)==1 and rows[0][0]==sys.argv[2], rows
 PYEOF
 then pass "Claude subagent transcript cannot replace parent session source"
 else fail "Claude parent/subagent enumeration"; fi
+
+CURSOR_PARENT47="79797979-7979-4797-8797-797979797979"
+mkdir -p "$CHAT_GRAPH_CURSOR_ROOT/project/$CURSOR_PARENT47/subagents"
+printf '%s\n' '{"id":"cursor-parent","role":"assistant","content":"parent"}' > \
+  "$CHAT_GRAPH_CURSOR_ROOT/project/$CURSOR_PARENT47.jsonl"
+printf '%s\n' '{"id":"cursor-child","role":"assistant","content":"child"}' > \
+  "$CHAT_GRAPH_CURSOR_ROOT/project/$CURSOR_PARENT47/subagents/agent-child.jsonl"
+touch "$CHAT_GRAPH_CURSOR_ROOT/project/$CURSOR_PARENT47/subagents/agent-child.jsonl"
+if python3 - "$HERE/chat-graph" "$CHAT_GRAPH_CURSOR_ROOT/project/$CURSOR_PARENT47.jsonl" <<'PYEOF'
+import importlib.machinery,importlib.util,os,sys
+sys.path.insert(0,os.path.dirname(sys.argv[1]))
+l=importlib.machinery.SourceFileLoader("chat_graph_cursor_enum",sys.argv[1])
+s=importlib.util.spec_from_loader(l.name,l); cg=importlib.util.module_from_spec(s); l.exec_module(cg)
+rows=[r for r in cg._enumerate_files() if r[1]=="cursor" and r[2].startswith("79797979")]
+assert len(rows)==1 and rows[0][0]==sys.argv[2], rows
+PYEOF
+then pass "Cursor subagent transcript cannot replace parent session source"
+else fail "Cursor parent/subagent enumeration"; fi
 
 # --- 48. provider-native transcript stores persist allowlisted cards --------
 new_env

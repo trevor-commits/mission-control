@@ -237,6 +237,51 @@ AUTOMATION_STATUS_LAUNCHCTL="$STUB" \
   && pass "activation-gated unloaded job is honest, non-failing state" \
   || fail "activation-gated unloaded job was treated as failure"
 
+# A fresh, exit-zero job is still degraded when its content-free run marker
+# says the fail-open operation did not complete cleanly.
+SEM_MARKER="$WORK/semantic-run.json"
+printf '%s\n' '{"status":"completed_with_failures"}' > "$SEM_MARKER"
+SEM_REG="$WORK/semantic-jobs.json"
+cat > "$SEM_REG" <<JSON
+{"jobs":[{"label":"Semantic Job","name":"com.gillettes.semantic-job",
+"kind":"calendar","schedule":"06:40 daily","expected_freshness_s":3600,
+"evidence":[{"path":"$SEM_MARKER","role":"run","run_key":true,"semantic_status":true}]}]}
+JSON
+SEM_STUB="$WORK/semantic-launchctl.sh"
+cat > "$SEM_STUB" <<'SH'
+#!/usr/bin/env bash
+printf 'PID\tStatus\tLabel\n100\t0\tcom.gillettes.semantic-job\n'
+SH
+chmod +x "$SEM_STUB"
+SEM_OUT="$WORK/semantic.out"
+AUTOMATION_STATUS_LAUNCHCTL="$SEM_STUB" python3 "$SC" --json \
+  --registry "$SEM_REG" > "$SEM_OUT" 2>/dev/null
+if [ "$(getfield "$SEM_OUT" com.gillettes.semantic-job state)" = yellow ] \
+   && [ "$(getfield "$SEM_OUT" com.gillettes.semantic-job semantic_status)" = completed_with_failures ] \
+   && python3 - "$SEM_OUT" <<'PY'
+import json,sys
+job=json.load(open(sys.argv[1]))["data"]["jobs"][0]
+assert job["recent_runs"][-1]["result"] == "failure"
+assert job["failure_streak"] == 1
+PY
+then
+  pass "semantic fail-open marker prevents a false green job"
+else
+  fail "semantic fail-open marker classification"
+fi
+printf '%s\n' '{"status":"completed"}' > "$SEM_MARKER"
+AUTOMATION_STATUS_LAUNCHCTL="$SEM_STUB" python3 "$SC" --json \
+  --registry "$SEM_REG" > "$SEM_OUT" 2>/dev/null
+if [ "$(getfield "$SEM_OUT" com.gillettes.semantic-job state)" = green ] \
+  && python3 - "$SEM_OUT" <<'PY'
+import json,sys
+job=json.load(open(sys.argv[1]))["data"]["jobs"][0]
+assert job["recent_runs"][-1]["result"] == "success"
+assert job["failure_streak"] == 0
+PY
+then pass "semantic completed marker permits green and resets history"
+else fail "semantic completed marker classification"; fi
+
 # --- distinct-run history, schedule math, globs, and atomic persistence ----
 RUNS="$WORK/distinct-runs"; mkdir -p "$RUNS"
 RUN_MARKER="$RUNS/run-marker.json"
