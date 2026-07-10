@@ -12,6 +12,7 @@
 # Usage:
 #   scan-unfinished-work                 # human report to stdout
 #   scan-unfinished-work --json          # machine-parseable (one JSON object)
+#   scan-unfinished-work --repo PATH     # scan one exact repository
 #   scan-unfinished-work --stale-days 14 # branches older than 14 days (default 21)
 #   scan-unfinished-work --self-test     # run the built-in self-test
 #
@@ -19,6 +20,10 @@
 # present (by design, like morning-health-brief); 2 = usage error.
 
 set -euo pipefail
+
+SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd -P)
+# All scanner Git reads must avoid opportunistic index refresh/lock writes.
+export GIT_OPTIONAL_LOCKS=0
 
 STALE_DAYS_DEFAULT=21
 CODING_ROOT="${CODING_ROOT:-/Users/gillettes/Coding Projects}"
@@ -28,6 +33,7 @@ SKIP_RE="${SKIP_RE:-worktree|_deliverables|_worktrees|Archived|aca-usage-burst|_
 SELF_TEST=0
 JSON=0
 STALE_DAYS="$STALE_DAYS_DEFAULT"
+EXACT_REPO=""
 
 usage() {
   sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'
@@ -37,6 +43,7 @@ usage() {
 while [ $# -gt 0 ]; do
   case "$1" in
     --json) JSON=1; shift ;;
+    --repo) EXACT_REPO="${2:?--repo needs a path}"; shift 2 ;;
     --self-test) SELF_TEST=1; shift ;;
     --stale-days) STALE_DAYS="${2:?--stale-days needs a number}"; shift 2 ;;
     -h|--help) usage ;;
@@ -60,41 +67,100 @@ days_since() {
 
 # ─── self-test ────────────────────────────────────────────────────────────
 if [ "$SELF_TEST" = 1 ]; then
+  [ "${GIT_OPTIONAL_LOCKS:-}" = "0" ] || { echo "SELF-TEST FAIL: GIT_OPTIONAL_LOCKS"; exit 1; }
   TMP=$(mktemp -d)
   trap 'rm -rf "$TMP"' EXIT
   UP="$TMP/upstream"; mkdir -p "$UP"
   git -C "$UP" init -q -b main .
   git -C "$UP" config user.email t@t; git -C "$UP" config user.name t
   echo hi > "$UP/f"; git -C "$UP" add f; git -C "$UP" commit -qm "init"
-  # clone, make dirty + unpushed + stale branch
+  git -C "$UP" checkout -qb feature-safe
+  git -C "$UP" commit -qm "feature base" --allow-empty
+  git -C "$UP" checkout -q main
+  # Clone, create a non-current branch that is one old commit ahead, and prove
+  # the branch-local contract independently from the current checkout.
   git clone -q "$UP" "$TMP/work"
-  echo dirty >> "$TMP/work/f"                          # dirty tree
-  git -C "$TMP/work" checkout -q -b feature-stale
-  git -C "$TMP/work" commit -qm "stale work" --allow-empty
+  git -C "$TMP/work" config user.email t@t; git -C "$TMP/work" config user.name t
+  git -C "$TMP/work" checkout -qb feature-safe --track origin/feature-safe
+  OLD_DATE=$(python3 -c 'import datetime; print((datetime.datetime.now(datetime.timezone.utc)-datetime.timedelta(hours=8)).isoformat())')
+  GIT_AUTHOR_DATE="$OLD_DATE" GIT_COMMITTER_DATE="$OLD_DATE" \
+    git -C "$TMP/work" commit -qm "old sk-branch-subject-must-not-leak" --allow-empty
   git -C "$TMP/work" checkout -q main
-  # run the scanner against the temp pool by calling it with overridden env.
-  # The script reads CODING_ROOT/STALE_DAYS from env; SKIP_RE and JSON are
-  # internal constants, so we exercise the real paths instead.
-  FIND=$(CODING_ROOT="$TMP" SKIP_RE='^$' "$0" --json --stale-days 0 2>/dev/null || true)
-  printf '%s' "$FIND" | python3 -c '
+  git -C "$TMP/work" branch 'feature/sk-abcdefghijklmnopqrstuvwxyz123456' main
+  INDEX_BEFORE=$(python3 -c 'import os,sys; print(os.stat(sys.argv[1]).st_mtime_ns)' "$TMP/work/.git/index")
+  CLEAN=$("$0" --json --repo "$TMP/work" --stale-days 0 2>/dev/null || true)
+  INDEX_AFTER=$(python3 -c 'import os,sys; print(os.stat(sys.argv[1]).st_mtime_ns)' "$TMP/work/.git/index")
+  [ "$INDEX_BEFORE" = "$INDEX_AFTER" ] || { echo "SELF-TEST FAIL: index mutated"; exit 1; }
+  UNKNOWN_WT=$(SCAN_FORCE_WORKTREE_LIST_FAILURE=1 "$0" --json --repo "$TMP/work" 2>/dev/null || true)
+  EMPTY_WT=$(SCAN_FORCE_WORKTREE_LIST_EMPTY=1 "$0" --json --repo "$TMP/work" 2>/dev/null || true)
+  HUMAN_SAFE=$("$0" --repo "$TMP/work" --stale-days 0 2>&1 || true)
+  case "$HUMAN_SAFE" in
+    *sk-abcdefghijklmnopqrstuvwxyz123456*) echo "SELF-TEST FAIL: human ref leaked"; exit 1 ;;
+  esac
+  git -C "$TMP/work" remote add backup "$UP"
+  git -C "$TMP/work" fetch -q backup
+  git -C "$TMP/work" symbolic-ref -d refs/remotes/backup/HEAD 2>/dev/null || true
+  git -C "$TMP/work" config branch.feature-safe.remote backup
+  git -C "$TMP/work" config branch.feature-safe.merge refs/heads/feature-safe
+  UNKNOWN_DEFAULT=$("$0" --json --repo "$TMP/work" 2>/dev/null || true)
+  git -C "$TMP/work" config branch.feature-safe.remote origin
+  # A credential-bearing URL and dirty worktree must fail closed without ever
+  # appearing in output. Tracking refs remain local, so no network is touched.
+  echo dirty >> "$TMP/work/f"
+  git -C "$TMP/work" remote set-url origin 'https://user:super-secret@example.invalid/repo.git'
+  UNSAFE=$(MISSION_CONTROL_EGRESS_DENYLIST='private-source' "$0" --json --repo "$TMP/work" --stale-days 0 2>/dev/null || true)
+  git -C "$TMP/work" remote set-url origin 'https://example.invalid/private-source/repo.git?token=sk-abcdefghijklmnopqrstuvwxyz123456#fragment'
+  QUERY_UNSAFE=$(MISSION_CONTROL_EGRESS_DENYLIST='private-source' "$0" --json --repo "$TMP/work" --stale-days 0 2>/dev/null || true)
+  printf '%s\n%s\n%s\n%s\n%s\n%s' "$CLEAN" "$UNKNOWN_WT" "$EMPTY_WT" "$UNKNOWN_DEFAULT" "$UNSAFE" "$QUERY_UNSAFE" | python3 -c '
 import json,sys
-d=json.load(sys.stdin)
-r=[x for x in d["repos"] if x["repo"].endswith("work")]
-assert r, "work repo not found in scan output"
-r=r[0]
-assert r["dirty"], "dirty not detected"
-assert r["path"].endswith("/work"), "repo path missing"
-assert r["branch"] == "main", "current branch missing"
-assert r["remote"] in ("synced", "ahead", "behind", "diverged"), "remote relationship missing"
-assert isinstance(r["behind"], int), "behind count missing"
-assert len(r["last_commit"]["sha"]) == 40, "last commit sha missing"
-assert r["last_commit"]["subject"], "last commit subject missing"
-assert isinstance(r["recent_commits"], list), "recent commit facts missing"
-# stale branch detection requires SKIP_RE to not exclude it; the default
-# SKIP_RE would exclude "work" only if it matched worktree|_ etc — it does not,
-# but the upstream clone is under $TMP which has no skip-match. Verify branches:
-brs=[b["name"] for b in r.get("branches",[])]
-assert "feature-stale" in brs, f"stale branch not detected, got: {brs}"
+docs=[json.loads(line) for line in sys.stdin if line.strip()]
+assert len(docs) == 6, "expected six scanner cases"
+clean, unknown_wt, empty_wt, unknown_default, unsafe, query_unsafe = (d["repos"][0] for d in docs)
+assert clean["path"].endswith("/work"), "repo path missing"
+assert clean["branch"] == "main", "current branch missing"
+assert clean["default_branch"] == "main", "default branch missing"
+assert isinstance(clean["worktrees"], list) and clean["worktrees"], "worktrees missing"
+assert len(clean["last_commit"]["sha"]) == 40, "last commit sha missing"
+assert isinstance(clean["recent_commits"], list), "recent commit facts missing"
+assert any(b["name"] == "feature-safe" for b in clean["branches"]), "legacy stale branch list changed"
+br={b["name"]:b for b in clean["branch_facts"]}
+f=br["feature-safe"]
+assert f["local_ref"] == "refs/heads/feature-safe", f
+assert f["upstream_ref"] == "refs/remotes/origin/feature-safe", f
+assert f["remote_name"] == "origin" and f["remote_classification"] == "local", f
+assert f["ahead"] == 1 and f["behind"] == 0, f
+assert not f["checkout_paths"], f
+assert f["last_activity"]["state"] == "stale", f
+assert f["push_eligible"] and not f["refusal_reasons"], f
+expected=["git","-C",clean["path"],"push","--","origin",
+          "refs/heads/feature-safe:refs/heads/feature-safe"]
+assert f["proposal_argv"] == expected, f
+main=br["main"]
+for reason in ("ahead_not_positive","default_branch","protected_branch","branch_checked_out"):
+    assert reason in main["refusal_reasons"], (reason, main)
+raw=json.dumps(unsafe)
+assert "super-secret" not in raw and "example.invalid" not in raw, "credential URL leaked"
+assert "branch-subject-must-not-leak" not in raw, "branch commit subject leaked"
+assert "sk-abcdefghijklmnopqrstuvwxyz123456" not in json.dumps(clean), "sensitive ref leaked"
+uf={b["name"]:b for b in unsafe["branch_facts"]}["feature-safe"]
+assert not uf["push_eligible"], uf
+assert "remote_credentials" in uf["refusal_reasons"], uf
+assert "privacy_rejected" in uf["refusal_reasons"], uf
+assert "repo_or_worktree_dirty" in uf["refusal_reasons"], uf
+assert uf["remote_classification"] == "credentialed", uf
+wf={b["name"]:b for b in unknown_wt["branch_facts"]}["feature-safe"]
+assert unknown_wt["worktrees_known"] is False and not wf["push_eligible"], wf
+assert "worktree_state_unknown" in wf["refusal_reasons"], wf
+ef={b["name"]:b for b in empty_wt["branch_facts"]}["feature-safe"]
+assert empty_wt["worktrees_known"] is False and not ef["push_eligible"], ef
+assert "worktree_state_unknown" in ef["refusal_reasons"], ef
+df={b["name"]:b for b in unknown_default["branch_facts"]}["feature-safe"]
+assert df["default_branch"] is None and "default_branch_unknown" in df["refusal_reasons"], df
+qf={b["name"]:b for b in query_unsafe["branch_facts"]}["feature-safe"]
+assert not qf["push_eligible"], qf
+assert "remote_query_or_fragment" in qf["refusal_reasons"], qf
+assert "privacy_rejected" in qf["refusal_reasons"], qf
+assert "private-source" not in json.dumps(query_unsafe), "denylisted remote leaked"
 print("SELF-TEST PASS")' || { echo "SELF-TEST FAIL"; exit 1; }
   exit 0
 fi
@@ -102,11 +168,19 @@ fi
 # ─── main ─────────────────────────────────────────────────────────────────
 
 repos=()
-while IFS= read -r d; do
-  short=$(basename "$d")
-  printf '%s' "$short" | grep -qiE "$SKIP_RE" && continue
-  is_git_repo "$d" && repos+=("$d")
-done < <(find "$CODING_ROOT" -maxdepth 1 -mindepth 1 -type d 2>/dev/null | sort)
+if [ -n "$EXACT_REPO" ]; then
+  if ! is_git_repo "$EXACT_REPO"; then
+    echo "not a git repository: $EXACT_REPO" >&2
+    exit 2
+  fi
+  repos+=("$(cd "$EXACT_REPO" && pwd -P)")
+else
+  while IFS= read -r d; do
+    short=$(basename "$d")
+    printf '%s' "$short" | grep -qiE "$SKIP_RE" && continue
+    is_git_repo "$d" && repos+=("$d")
+  done < <(find "$CODING_ROOT" -maxdepth 1 -mindepth 1 -type d 2>/dev/null | sort)
+fi
 
 findings_total=0
 # JSON mode: accumulate one JSONL line per repo, build final JSON at the end.
@@ -166,9 +240,16 @@ for repo in "${repos[@]}"; do
   if [ "$JSON" = 1 ]; then
     # Emit one JSONL line per repo: python builds the object, TSV feeds branches.
     printf '%s' "$stale_records" | python3 -c '
-import json, subprocess, sys
-short, path, branch, upstream, dirty, dirty_files, ahead, behind, detached = sys.argv[1:10]
-branches = []
+import json, os, re, subprocess, sys, time
+from urllib.parse import urlsplit
+short, path, branch, upstream, dirty, dirty_files, ahead, behind, detached, script_dir = sys.argv[1:11]
+sys.path.insert(0, script_dir)
+from mission_control_common import ACTION, IDENTIFIER, NARRATIVE, EgressCounters, sanitize_text
+counters = EgressCounters()
+def screened(value, field_class):
+    result = sanitize_text(value, field_class, counters=counters)
+    return None if result.dropped else result.value
+stale_branches = []
 for line in sys.stdin:
     line = line.rstrip("\n")
     if not line: continue
@@ -176,10 +257,242 @@ for line in sys.stdin:
     if len(parts) != 2: continue
     name, age = parts
     if "\t" in name or "\n" in name or "\r" in name: continue
-    branches.append({"name": name, "age_days": int(age)})
+    safe_name = screened(name, IDENTIFIER)
+    if safe_name is not None:
+        stale_branches.append({"name": safe_name, "age_days": int(age)})
+git_env = dict(os.environ)
+git_env["GIT_OPTIONAL_LOCKS"] = "0"
+def git_result(*args):
+    return subprocess.run(["git", "-C", path] + list(args), capture_output=True,
+                          text=True, env=git_env)
 def git(*args):
-    p = subprocess.run(["git", "-C", path] + list(args), capture_output=True, text=True)
+    p = git_result(*args)
     return p.stdout.strip() if p.returncode == 0 else ""
+def integer(value):
+    try: return int(value)
+    except (TypeError, ValueError): return None
+def remote_classification(url):
+    # Never return the URL. HTTPS userinfo is always treated as credentialed;
+    # SSH usernames (for example git@github.com) are transport identities, but
+    # an SSH password in URL userinfo is still credential-bearing.
+    if not url:
+        return "missing", False, False, False
+    low = url.lower()
+    try:
+        parsed = urlsplit(url) if "://" in url else None
+    except ValueError:
+        parsed = None
+        low = ""
+    has_query_or_fragment = bool((parsed and (parsed.query or parsed.fragment)) or
+                                 (not parsed and ("?" in url or "#" in url)))
+    if re.match(r"^https?://[^/@]+@", url):
+        remote_class, has_credentials = "credentialed", True
+    elif re.match(r"^ssh://[^/@]*:[^/@]*@", url):
+        remote_class, has_credentials = "credentialed", True
+    elif low.startswith("https://") or low.startswith("http://"):
+        remote_class, has_credentials = "https", False
+    elif low.startswith("ssh://") or re.match(r"^[^/ :@]+@[^/:]+:.+", url):
+        remote_class, has_credentials = "ssh", False
+    elif low.startswith("file://") or url.startswith("/") or url.startswith("./") or url.startswith("../"):
+        remote_class, has_credentials = "local", False
+    else:
+        remote_class, has_credentials = "unknown", False
+    # Standard git@ SSH transport identity is not PII. Everything else,
+    # including query/fragment text and local paths, crosses the shared policy.
+    policy_value = re.sub(r"(?i)(ssh://)?git@", r"\1", url)
+    privacy_rejected = sanitize_text(policy_value, ACTION, counters=counters).dropped
+    return remote_class, has_credentials, has_query_or_fragment, privacy_rejected
+def worktree_facts():
+    facts = []
+    if os.environ.get("SCAN_FORCE_WORKTREE_LIST_FAILURE") == "1":
+        return [], False
+    listing = git_result("worktree", "list", "--porcelain")
+    if listing.returncode != 0:
+        return [], False
+    listing_text = "" if os.environ.get("SCAN_FORCE_WORKTREE_LIST_EMPTY") == "1" \
+        else listing.stdout
+    if not listing_text.strip():
+        return [], False
+    for block in re.split(r"\n\s*\n", listing_text.strip()):
+        row = {"path": None, "branch_ref": None, "branch": None,
+               "detached": False, "dirty": None}
+        seen = set()
+        malformed = False
+        for line in block.splitlines():
+            if line.startswith("worktree ") and "worktree" not in seen:
+                row["path"] = line[9:]; seen.add("worktree")
+            elif line.startswith("HEAD ") and "HEAD" not in seen:
+                if not re.fullmatch(r"[0-9a-fA-F]{40,64}", line[5:]):
+                    malformed = True
+                seen.add("HEAD")
+            elif line.startswith("branch ") and "state" not in seen:
+                ref = line[7:]
+                if not ref.startswith("refs/heads/"):
+                    malformed = True
+                row["branch_ref"] = ref
+                row["branch"] = ref[11:] if ref.startswith("refs/heads/") else None
+                seen.add("state")
+            elif line == "detached" and "state" not in seen:
+                row["detached"] = True; seen.add("state")
+            elif line.startswith("locked") or line.startswith("prunable"):
+                continue
+            else:
+                malformed = True
+        if malformed or not {"worktree", "HEAD", "state"} <= seen:
+            return [], False
+        facts.append(row)
+    canonical_paths = []
+    for item in facts:
+        try:
+            canonical_paths.append(os.path.realpath(item["path"]))
+        except (TypeError, ValueError):
+            return [], False
+    if (len(set(canonical_paths)) != len(canonical_paths) or
+            os.path.realpath(path) not in canonical_paths):
+        return [], False
+    for item in facts:
+        wt_path = item["path"]
+        if os.path.isdir(wt_path):
+            status = subprocess.run(["git", "-C", wt_path, "status", "--porcelain"],
+                                    capture_output=True, text=True, env=git_env)
+            item["dirty"] = None if status.returncode else bool(status.stdout)
+        raw_path, raw_ref, raw_branch = item.get("path"), item.get("branch_ref"), item.get("branch")
+        item["path"] = screened(raw_path, ACTION)
+        item["branch_ref"] = screened(raw_ref, IDENTIFIER) if raw_ref else None
+        item["branch"] = screened(raw_branch, IDENTIFIER) if raw_branch else None
+        item["privacy_rejected"] = any(raw is not None and safe is None for raw, safe in (
+            (raw_path, item["path"]), (raw_ref, item["branch_ref"]), (raw_branch, item["branch"])))
+    return facts, True
+
+generated_epoch = int(time.time())
+try:
+    activity_guard_seconds = max(21600, int(os.environ.get("GIT_ACTIVITY_GUARD_SECONDS", "21600")))
+except ValueError:
+    activity_guard_seconds = 21600
+try:
+    facts_max_age_seconds = max(1, min(120, int(os.environ.get("GIT_FACTS_MAX_AGE_SECONDS", "120"))))
+except ValueError:
+    facts_max_age_seconds = 120
+protected = {x for x in re.split(r"[,\s]+", os.environ.get("PROTECTED_BRANCHES", "main,master")) if x}
+worktrees, worktrees_known = worktree_facts()
+repo_dirty = (not worktrees_known) or any(w.get("dirty") is not False for w in worktrees)
+
+remote_names = git("remote").splitlines()
+default_by_remote = {}
+for candidate_remote in remote_names:
+    head = git("symbolic-ref", "--quiet", "refs/remotes/%s/HEAD" % candidate_remote)
+    prefix = "refs/remotes/%s/" % candidate_remote
+    if head.startswith(prefix):
+        default_by_remote[candidate_remote] = head[len(prefix):]
+
+branch_facts = []
+for name in git("for-each-ref", "--format=%(refname:short)", "refs/heads").splitlines():
+    if not name:
+        continue
+    local_ref = "refs/heads/%s" % name
+    upstream_ref = git("rev-parse", "--symbolic-full-name", "%s@{upstream}" % name)
+    remote_name = git("config", "--get", "branch.%s.remote" % name)
+    merge_ref = git("config", "--get", "branch.%s.merge" % name)
+    safe_remote_name = remote_name if re.match(r"^[A-Za-z0-9._-]+$", remote_name or "") else None
+    remote_url = git("remote", "get-url", remote_name) if safe_remote_name else ""
+    remote_class, has_credentials, has_query_or_fragment, remote_privacy_rejected = remote_classification(remote_url)
+    default_branch = default_by_remote.get(remote_name)
+    branch_ahead = branch_behind = 0
+    if upstream_ref:
+        counts = git("rev-list", "--left-right", "--count", "%s...%s" % (upstream_ref, local_ref)).split()
+        if len(counts) == 2:
+            branch_behind, branch_ahead = int(counts[0]), int(counts[1])
+    checkout_paths = [w["path"] for w in worktrees if w.get("branch_ref") == local_ref]
+    commit_sha = git("rev-parse", local_ref)
+    commit_epoch = integer(git("log", "-1", "--format=%ct", local_ref))
+    reflog_epoch = integer(git("reflog", "show", "-1", "--format=%ct", local_ref))
+    activity_epoch = max([x for x in (commit_epoch, reflog_epoch) if x is not None], default=None)
+    activity_age = max(0, generated_epoch - activity_epoch) if activity_epoch is not None else None
+    if activity_age is None:
+        activity_state = "unknown"
+    elif activity_age < activity_guard_seconds:
+        activity_state = "recent"
+    else:
+        activity_state = "stale"
+    is_default = default_branch is not None and name == default_branch
+    is_protected = name in protected or is_default
+    remote_branch_name = merge_ref[len("refs/heads/"):] if merge_ref.startswith("refs/heads/") else None
+    remote_is_default = remote_branch_name is not None and default_branch is not None and remote_branch_name == default_branch
+    remote_is_protected = remote_branch_name in protected if remote_branch_name is not None else True
+    if remote_is_default:
+        remote_is_protected = True
+    reasons = []
+    if branch_ahead <= 0: reasons.append("ahead_not_positive")
+    if branch_behind > 0: reasons.append("behind_upstream" if branch_ahead == 0 else "diverged_upstream")
+    if not upstream_ref: reasons.append("upstream_missing")
+    if not safe_remote_name or remote_name == ".": reasons.append("remote_missing_or_invalid")
+    if has_credentials: reasons.append("remote_credentials")
+    elif remote_class not in ("https", "ssh", "local"): reasons.append("remote_unsafe_or_unknown")
+    if has_query_or_fragment: reasons.append("remote_query_or_fragment")
+    if default_branch is None: reasons.append("default_branch_unknown")
+    if is_default: reasons.append("default_branch")
+    if is_protected: reasons.append("protected_branch")
+    if remote_is_default: reasons.append("remote_target_default_branch")
+    if remote_is_protected: reasons.append("remote_target_protected_branch")
+    if checkout_paths: reasons.append("branch_checked_out")
+    if not worktrees_known: reasons.append("worktree_state_unknown")
+    if any(w.get("privacy_rejected") for w in worktrees): reasons.append("privacy_rejected")
+    if repo_dirty: reasons.append("repo_or_worktree_dirty")
+    if activity_state == "unknown": reasons.append("activity_unknown")
+    elif activity_state == "recent": reasons.append("recent_activity")
+    if not merge_ref.startswith("refs/heads/"): reasons.append("remote_branch_ref_invalid")
+    ref_check = subprocess.run(["git", "check-ref-format", local_ref], capture_output=True, env=git_env)
+    if ref_check.returncode != 0:
+        reasons.append("local_branch_ref_invalid")
+    safe_name = screened(name, IDENTIFIER)
+    safe_local_ref = screened(local_ref, IDENTIFIER)
+    safe_upstream_ref = screened(upstream_ref, IDENTIFIER) if upstream_ref else None
+    screened_remote_name = screened(safe_remote_name, IDENTIFIER) if safe_remote_name else None
+    safe_merge_ref = screened(merge_ref, IDENTIFIER) if merge_ref else None
+    safe_default_branch = screened(default_branch, IDENTIFIER) if default_branch else None
+    safe_commit_sha = screened(commit_sha, IDENTIFIER) if commit_sha else None
+    safe_checkout_paths = [screened(p, ACTION) for p in checkout_paths]
+    privacy_rejected = (remote_privacy_rejected or
+        any(raw is not None and safe is None for raw, safe in (
+            (name, safe_name), (local_ref, safe_local_ref),
+            (upstream_ref or None, safe_upstream_ref),
+            (safe_remote_name, screened_remote_name), (merge_ref or None, safe_merge_ref),
+            (default_branch, safe_default_branch), (commit_sha or None, safe_commit_sha))) or
+        any(p is None for p in safe_checkout_paths))
+    if privacy_rejected: reasons.append("privacy_rejected")
+    reasons = sorted(set(reasons))
+    proposal_argv = None
+    if not reasons:
+        safe_repo_path = screened(path, ACTION)
+        if safe_repo_path is None:
+            reasons.append("privacy_rejected")
+        else:
+            proposal_argv = ["git", "-C", safe_repo_path, "push", "--", screened_remote_name,
+                             "%s:%s" % (safe_local_ref, safe_merge_ref)]
+    branch_facts.append({
+        "name": safe_name, "local_ref": safe_local_ref, "upstream_ref": safe_upstream_ref,
+        "remote_name": screened_remote_name, "remote_classification": remote_class,
+        "remote_branch_ref": safe_merge_ref if merge_ref.startswith("refs/heads/") else None,
+        "ahead": branch_ahead, "behind": branch_behind,
+        "default_branch": safe_default_branch, "is_default": is_default,
+        "is_protected": is_protected,
+        "remote_is_default": remote_is_default,
+        "remote_is_protected": remote_is_protected,
+        "checkout_paths": [p for p in safe_checkout_paths if p is not None],
+        "worktree_state_known": worktrees_known,
+        "repo_or_worktree_dirty": repo_dirty,
+        "last_commit": {"sha": safe_commit_sha, "epoch": commit_epoch},
+        "last_activity": {"epoch": activity_epoch, "age_seconds": activity_age,
+                          "state": activity_state,
+                          "guard_seconds": activity_guard_seconds,
+                          "evidence": "reflog_or_commit" if activity_epoch is not None else "unknown"},
+        "facts_generated_epoch": generated_epoch,
+        "facts_max_age_seconds": facts_max_age_seconds,
+        "activity_facts_fresh": True,
+        "push_eligible": not reasons,
+        "refusal_reasons": reasons,
+        "proposal_argv": proposal_argv,
+    })
 sha = git("rev-parse", "HEAD")
 subject = git("log", "-1", "--format=%s")
 epoch = git("log", "-1", "--format=%ct")
@@ -187,7 +500,9 @@ recent = []
 for line in git("log", "-5", "--since=36 hours ago", "--format=%H%x09%ct%x09%s").splitlines():
     parts = line.split("\t", 2)
     if len(parts) == 3:
-        recent.append({"sha": parts[0], "epoch": int(parts[1]), "subject": parts[2][:160]})
+        safe_recent_sha = screened(parts[0], IDENTIFIER)
+        safe_subject = screened(parts[2][:160], NARRATIVE)
+        recent.append({"sha": safe_recent_sha, "epoch": int(parts[1]), "subject": safe_subject})
 if not upstream:
     relationship = "no-remote"
 elif int(ahead) and int(behind):
@@ -198,21 +513,38 @@ elif int(behind):
     relationship = "behind"
 else:
     relationship = "synced"
-print(json.dumps({"repo": short, "path": path, "branch": branch,
-                  "upstream": upstream, "remote": relationship,
+safe_short = screened(short, IDENTIFIER)
+safe_path = screened(path, ACTION)
+safe_branch = screened(branch, IDENTIFIER)
+safe_upstream = screened(upstream, IDENTIFIER) if upstream else None
+safe_sha = screened(sha, IDENTIFIER) if sha else None
+current_facts = next((b for b in branch_facts if b["name"] == safe_branch), {})
+safe_subject = screened(subject[:160], NARRATIVE)
+print(json.dumps({"repo": safe_short, "path": safe_path, "branch": safe_branch,
+                  "upstream": safe_upstream, "remote": relationship,
+                  "remote_name": current_facts.get("remote_name"),
+                  "remote_classification": current_facts.get("remote_classification", "missing"),
+                  "default_branch": current_facts.get("default_branch"),
                   "dirty": dirty == "1", "dirty_files": int(dirty_files),
                   "ahead": int(ahead), "behind": int(behind),
-                  "detached": detached == "1", "branches": branches,
-                  "last_commit": {"sha": sha, "subject": subject[:160],
+                  "detached": detached == "1", "worktrees": worktrees,
+                  "worktrees_known": worktrees_known,
+                  "branches": stale_branches, "branch_facts": branch_facts,
+                  "facts_generated_epoch": generated_epoch,
+                  "last_commit": {"sha": safe_sha, "subject": safe_subject,
                                   "epoch": int(epoch) if epoch else None},
-                  "recent_commits": recent}))
-' "$short" "$repo" "$cur_branch" "$upstream" "$dirty" "$dirty_lines" "$ahead" "$behind" "$detached" >> "$JSONL_FILE"
+                  "recent_commits": recent,
+                  "privacy_counters": counters.snapshot()}))
+' "$short" "$repo" "$cur_branch" "$upstream" "$dirty" "$dirty_lines" "$ahead" "$behind" "$detached" "$SCRIPT_DIR" >> "$JSONL_FILE"
   elif [ "$repo_findings" -gt 0 ]; then
-    printf '## %s\n' "$short"
+    # Human output uses content-free labels. The machine-readable path/refs are
+    # screened by the shared field-aware policy above; raw shell values must
+    # never bypass that boundary.
+    printf '## Repository finding\n'
     [ "$dirty" = 1 ] && printf '  ⚠ dirty tree: %s uncommitted file(s)\n' "$dirty_lines"
-    [ "$ahead" -gt 0 ] && printf '  ⚠ %s unpushed commit(s) on %s\n' "$ahead" "$cur_branch"
+    [ "$ahead" -gt 0 ] && printf '  ⚠ %s unpushed commit(s)\n' "$ahead"
     [ "$detached" = 1 ] && printf '  ⚠ detached HEAD\n'
-    [ -n "$stale_branches" ] && printf '  ⚠ stale unmerged branches:%s\n' "$stale_branches"
+    [ -n "$stale_branches" ] && printf '  ⚠ stale unmerged branch(es) detected\n'
     echo
   fi
 done
