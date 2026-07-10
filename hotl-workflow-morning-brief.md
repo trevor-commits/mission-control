@@ -38,28 +38,28 @@ max_iterations: 3
 verify: bash /Users/gillettes/.codex/plugins/cache/gillettes-local-plugins/hotl/2.11.0/scripts/document-lint.sh hotl-workflow-morning-brief.md
 gate: auto
 
-- [ ] **Step 5: Capture T7 LaunchAgent failure evidence in the owning repo**
+- [x] **Step 5: Capture T7 LaunchAgent failure evidence in the owning repo**
 action: Re-verify exit 126, removable-media resolution, affected labels, log failure, and stable local runtime candidate without changing services.
 loop: false
 max_iterations: 1
 verify: test -s /tmp/morning-brief-t7-launchd-before.txt
 gate: auto
 
-- [ ] **Step 6: Repair systemic T7-backed LaunchAgent paths**
+- [x] **Step 6: Repair systemic T7-backed LaunchAgent paths**
 action: In an isolated third-party runtime branch, add a removable-media-path validator, point affected tracked plists at the stable local runtime, preserve intended loaded/unloaded states, rotate denial logs, and reinstall only intended labels.
 loop: until the owning repo tests and proportional live status checks pass
 max_iterations: 3
 verify: test -s /tmp/morning-brief-t7-launchd-after.txt
 gate: human
 
-- [ ] **Step 7: Repair Morning Health and register stable evidence**
+- [x] **Step 7: Repair Morning Health and register stable evidence**
 action: Add a bounded recent-log check, stable last-run marker, regression test, and Mission Control job registry row; prove the live job no longer exits 126 and its evidence becomes green.
 loop: until focused health and automation tests pass
 max_iterations: 3
 verify: bash scripts/automation-status.test.sh
 gate: auto
 
-- [ ] **Step 8: Repair improvement-loop false corrections**
+- [x] **Step 8: Repair improvement-loop false corrections**
 action: Write failing Claude tool-result and Codex wrapper fixtures, filter provider-generated pseudo-user input, group digest identity before cap, quarantine proven false queue/lesson items, regenerate advisory output, and preserve real correction detection.
 loop: until focused improvement-loop verification passes
 max_iterations: 3
@@ -226,21 +226,21 @@ max_iterations: 2
 verify: test -s /tmp/morning-brief-live-delivery-proof.txt && test -s /tmp/morning-brief-deadman-proof.txt
 gate: human
 
-- [ ] **Step 31: Write red Tier 1 outcome fixtures**
+- [x] **Step 31: Write red Tier 1 outcome fixtures**
 action: Add synthetic real-shape Claude/Codex/audit/handoff/unstructured/late/unknown-provider fixtures and exact structured command/SHA anchoring assertions.
 loop: false
 max_iterations: 1
 verify: test -s /tmp/morning-brief-tier1-red.txt
 gate: auto
 
-- [ ] **Step 32: Implement bounded Tier 1 outcome cards**
+- [x] **Step 32: Implement bounded Tier 1 outcome cards**
 action: Parse bounded assistant tails into stable cards, classify handoffs honestly, preserve deterministic anchors, emit late updates, and never resolve on omission.
 loop: until graph outcome tests pass
 max_iterations: 3
 verify: bash scripts/chat-graph.test.sh
 gate: auto
 
-- [ ] **Step 33: Implement zero-call coverage planning**
+- [x] **Step 33: Implement zero-call coverage planning**
 action: Add seven-day provider/grammar/tail/eligibility/token projection with no model calls and modeled-cost labeling rather than claimed charges.
 loop: until coverage plan fixtures and no-call assertion pass
 max_iterations: 3
@@ -278,63 +278,63 @@ max_iterations: 3
 verify: bash scripts/chat-graph.test.sh && bash scripts/mission-control-common.test.sh && bash scripts/outcome-extractor.test.sh
 gate: human
 
-- [ ] **Step 38: Write red decision-queue concurrency tests**
+- [x] **Step 38: Write red decision-queue concurrency tests**
 action: Add sync/alert/dismiss/restart/explicit-resolution/recurrence/duplicate-ingest tests with structured-vs-inferred trust behavior.
 loop: false
 max_iterations: 1
 verify: test -s /tmp/morning-brief-decision-red.txt
 gate: auto
 
-- [ ] **Step 39: Implement transactional decision queue and alerts**
+- [x] **Step 39: Implement transactional decision queue and alerts**
 action: Add SQLite WAL decision events, stable identities/fingerprints, explicit resolution, recurrence, fixed-argv alert receipts, dismiss CLI, feed, and pinned Home rows.
 loop: until decision and dashboard suites pass
 max_iterations: 3
 verify: bash scripts/decision-alert.test.sh && REPO_ROOT="$PWD" bash scripts/dashboard.test.sh --require-shell && node scripts/dashboard-render-smoke.js .
 gate: auto
 
-- [ ] **Step 40: Enrich the working brief with outcomes and decisions**
+- [x] **Step 40: Enrich the working brief with outcomes and decisions**
 action: Add Confirmed/Inferred outcome lines, lineage grouping only for valid chat nodes, flat unknown-provider cards, late updates, high-recall decisions, and deterministic anchors while preserving LLM-disabled fallback.
 loop: until integrated brief, graph, decision, and dashboard tests pass
 max_iterations: 3
 verify: bash scripts/morning-brief.test.sh && bash scripts/chat-graph.test.sh && bash scripts/decision-alert.test.sh && node scripts/dashboard-render-smoke.js .
 gate: auto
 
-- [ ] **Step 41: Write red branch-level Git fact tests**
+- [x] **Step 41: Write red branch-level Git fact tests**
 action: Add fixtures for local/upstream refs, named remote, ahead/behind, default/protected, worktrees, dirt, last commit/activity freshness, credential-bearing remote, and all refusal reasons.
 loop: false
 max_iterations: 1
 verify: test -s /tmp/morning-brief-git-facts-red.txt
 gate: auto
 
-- [ ] **Step 42: Implement structured branch facts**
+- [x] **Step 42: Implement structured branch facts**
 action: Extend the scanner with sanitized branch-level facts, conservative eligibility, safe remote classification, and explicit refspec argv without leaking URLs.
 loop: until scan contract tests pass
 max_iterations: 3
 verify: bash scripts/scan-unfinished-work --self-test
 gate: auto
 
-- [ ] **Step 43: Write red safe-runner refusal tests**
+- [x] **Step 43: Write red safe-runner refusal tests**
 action: Add DISABLE, default dry-run, checked-out, dirty, no upstream, behind/diverged, default/protected, recent/unknown activity, stale activity, credential remote, exact argv, log, and no-mutation tests.
 loop: false
 max_iterations: 1
 verify: test -s /tmp/morning-brief-runner-red.txt
 gate: auto
 
-- [ ] **Step 44: Implement default-dry-run safe runner**
+- [x] **Step 44: Implement default-dry-run safe runner**
 action: Recompute facts immediately, implement only eligible explicit push proposals/open-end reconciliation/satisfied-todo detection, enforce hard prohibitions, and write permission-restricted exact before/after JSONL.
 loop: until runner tests pass
 max_iterations: 3
 verify: bash scripts/loose-end-runner.test.sh
 gate: human
 
-- [ ] **Step 45: Capture real live-ledger runner dry-run**
+- [x] **Step 45: Capture real live-ledger runner dry-run**
 action: Run against the actual ledger in default dry-run, snapshot refs/worktrees before and after, and preserve every proposal/refusal for review.
 loop: false
 max_iterations: 1
 verify: test -s /tmp/morning-brief-runner-live-dry-run.jsonl
 gate: auto
 
-- [ ] **Step 46: Independently review every runner proposal**
+- [x] **Step 46: Independently review every runner proposal**
 action: Have a separate Codex reviewer compare each dry-run action with live recomputed repo facts and confirm no state moved.
 loop: until all unsafe proposals are fixed or explicitly removed
 max_iterations: 3
@@ -344,14 +344,14 @@ verify:
   check: Review the real dry-run, live facts, and before/after ref snapshots; automatic push remains disabled regardless of result.
 gate: human
 
-- [ ] **Step 47: Prove automatic push remains disabled**
+- [x] **Step 47: Prove automatic push remains disabled**
 action: Verify no installed plist or default flag can enable live push and the runner requires a later explicit activation decision outside this closeout.
 loop: false
 max_iterations: 1
 verify: bash scripts/loose-end-runner.test.sh
 gate: auto
 
-- [ ] **Step 48: Run full cold verification**
+- [x] **Step 48: Run full cold verification**
 action: Run every existing/new suite, Python compile, bash syntax, JSON validation, privacy scan, diff check, OpenSpec strict validation, and relevant global/third-party validators.
 loop: until all task-caused failures are fixed
 max_iterations: 3
@@ -368,28 +368,28 @@ verify:
   check: Home and Automation show current Morning Brief, trust/freshness labels, and decision/job history surfaces without errors.
 gate: human
 
-- [ ] **Step 50: Run self-audit and threat/ripple checks**
+- [x] **Step 50: Run self-audit and threat/ripple checks**
 action: Compare implementation against every OpenSpec requirement, inspect privacy/security, migrations, side effects, scope, docs, runtime/install drift, manual burden, and rollback; convert findings into tests or durable dispositions.
 loop: until no blocking self-audit finding remains
 max_iterations: 3
 verify: test -s openspec/changes/morning-brief/verify.md
 gate: auto
 
-- [ ] **Step 51: Run independent Codex implementation audit**
+- [x] **Step 51: Run independent Codex implementation audit**
 action: Give a separate Codex session the actual diff, specs, cold outputs, installed proof, and live dry-run; require enumerated findings or review-clean with residual risk.
 loop: until the reviewer returns a complete evidence-backed audit
 max_iterations: 3
 verify: test -s records/morning-brief-independent-codex-audit.md
 gate: auto
 
-- [ ] **Step 52: Implement audit findings and repeat**
+- [x] **Step 52: Implement audit findings and repeat**
 action: Fix every accepted material finding with regression evidence and rerun independent review while severe novel issues remain plausible.
 loop: until review-clean or every residual is explicitly owned and deferred
 max_iterations: 5
 verify: rg -n 'review-clean|Residual risk' records/morning-brief-independent-codex-audit.md
 gate: auto
 
-- [ ] **Step 53: Refresh durable records and implemented state**
+- [x] **Step 53: Refresh durable records and implemented state**
 action: Update Mission Control Work/Test/Audit records, IMPROVEMENTS statuses, PROJECT_MEMORY, OpenSpec verify/retrospective, ER-107 lifecycle as implemented-pending-proof, branch ledger, and notification consolidation work item.
 loop: until project/global validators pass
 max_iterations: 3

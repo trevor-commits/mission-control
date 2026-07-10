@@ -7,8 +7,8 @@
   "auto_approve": true,
   "branch": "codex/morning-brief",
   "started_at": "2026-07-10T01:47:55+00:00",
-  "completed_at": null,
-  "status": "running",
+  "completed_at": "2026-07-10T05:29:53+00:00",
+  "status": "blocked",
   "current_step": 1,
   "total_steps": 56,
   "report_path": ".hotl/reports/morning-brief-20260710T014755Z.md",
@@ -17,17 +17,23 @@
       "number": 1,
       "name": "Resolve source plan and live ground truth",
       "action": "Resolve the Fable transcript, approved plan, upgrade audit, repo contracts, current branch state, and exact runtime/repo claims.",
-      "status": "pending",
+      "status": "blocked",
       "attempts": 0,
       "max_iterations": 1,
       "loop": "false",
       "started_at": null,
       "completed_at": null,
-      "verify": {"type":"shell","command":"test -s /Users/gillettes/.claude/plans/019f4550-2a9a-7fe3-9313-9e7a0be10b35-tha-cuddly-hopcroft.md","passed":null,"stdout":null,"stderr":null},
+      "verify": {
+        "type": "shell",
+        "command": "test -s /Users/gillettes/.claude/plans/019f4550-2a9a-7fe3-9313-9e7a0be10b35-tha-cuddly-hopcroft.md",
+        "passed": null,
+        "stdout": null,
+        "stderr": null
+      },
       "gate": "auto",
       "gate_result": null,
       "gate_mode": null,
-      "block_reason": null
+      "block_reason": "Superseded: this generated run was initialized but its step transitions were never used. Implementation proceeded through the canonical workflow checkboxes, OpenSpec tasks, verify.md, and independent audit; do not resume this sidecar or infer execution evidence from its pending rows."
     },
     {
       "number": 2,
@@ -39,7 +45,13 @@
       "loop": "false",
       "started_at": null,
       "completed_at": null,
-      "verify": {"type":"shell","command":"bash scripts/chat-graph.test.sh && bash scripts/automation-status.test.sh && REPO_ROOT=\"$PWD\" bash scripts/dashboard.test.sh --require-shell && node scripts/dashboard-render-smoke.js . && bash scripts/usage-snapshot.test.sh && bash scripts/scan-unfinished-work --self-test","passed":null,"stdout":null,"stderr":null},
+      "verify": {
+        "type": "shell",
+        "command": "bash scripts/chat-graph.test.sh && bash scripts/automation-status.test.sh && REPO_ROOT=\"$PWD\" bash scripts/dashboard.test.sh --require-shell && node scripts/dashboard-render-smoke.js . && bash scripts/usage-snapshot.test.sh && bash scripts/scan-unfinished-work --self-test",
+        "passed": null,
+        "stdout": null,
+        "stderr": null
+      },
       "gate": "auto",
       "gate_result": null,
       "gate_mode": null,
@@ -55,7 +67,13 @@
       "loop": "until strict OpenSpec validation passes",
       "started_at": null,
       "completed_at": null,
-      "verify": {"type":"shell","command":"DO_NOT_TRACK=1 openspec validate morning-brief --strict","passed":null,"stdout":null,"stderr":null},
+      "verify": {
+        "type": "shell",
+        "command": "DO_NOT_TRACK=1 openspec validate morning-brief --strict",
+        "passed": null,
+        "stdout": null,
+        "stderr": null
+      },
       "gate": "auto",
       "gate_result": null,
       "gate_mode": null,
@@ -71,7 +89,13 @@
       "loop": "until the workflow lints clean",
       "started_at": null,
       "completed_at": null,
-      "verify": {"type":"shell","command":"bash /Users/gillettes/.codex/plugins/cache/gillettes-local-plugins/hotl/2.11.0/scripts/document-lint.sh hotl-workflow-morning-brief.md","passed":null,"stdout":null,"stderr":null},
+      "verify": {
+        "type": "shell",
+        "command": "bash /Users/gillettes/.codex/plugins/cache/gillettes-local-plugins/hotl/2.11.0/scripts/document-lint.sh hotl-workflow-morning-brief.md",
+        "passed": null,
+        "stdout": null,
+        "stderr": null
+      },
       "gate": "auto",
       "gate_result": null,
       "gate_mode": null,
@@ -87,7 +111,13 @@
       "loop": "false",
       "started_at": null,
       "completed_at": null,
-      "verify": {"type":"shell","command":"test -s /tmp/morning-brief-t7-launchd-before.txt","passed":null,"stdout":null,"stderr":null},
+      "verify": {
+        "type": "shell",
+        "command": "test -s /tmp/morning-brief-t7-launchd-before.txt",
+        "passed": null,
+        "stdout": null,
+        "stderr": null
+      },
       "gate": "auto",
       "gate_result": null,
       "gate_mode": null,
@@ -103,7 +133,13 @@
       "loop": "until the owning repo tests and proportional live status checks pass",
       "started_at": null,
       "completed_at": null,
-      "verify": {"type":"shell","command":"test -s /tmp/morning-brief-t7-launchd-after.txt","passed":null,"stdout":null,"stderr":null},
+      "verify": {
+        "type": "shell",
+        "command": "test -s /tmp/morning-brief-t7-launchd-after.txt",
+        "passed": null,
+        "stdout": null,
+        "stderr": null
+      },
       "gate": "human",
       "gate_result": null,
       "gate_mode": null,
@@ -119,7 +155,13 @@
       "loop": "until focused health and automation tests pass",
       "started_at": null,
       "completed_at": null,
-      "verify": {"type":"shell","command":"bash scripts/automation-status.test.sh","passed":null,"stdout":null,"stderr":null},
+      "verify": {
+        "type": "shell",
+        "command": "bash scripts/automation-status.test.sh",
+        "passed": null,
+        "stdout": null,
+        "stderr": null
+      },
       "gate": "auto",
       "gate_result": null,
       "gate_mode": null,
@@ -135,7 +177,13 @@
       "loop": "until focused improvement-loop verification passes",
       "started_at": null,
       "completed_at": null,
-      "verify": {"type":"shell","command":"bash '/Users/gillettes/Coding Projects/global-implementations/scripts/verify.sh'","passed":null,"stdout":null,"stderr":null},
+      "verify": {
+        "type": "shell",
+        "command": "bash '/Users/gillettes/Coding Projects/global-implementations/scripts/verify.sh'",
+        "passed": null,
+        "stdout": null,
+        "stderr": null
+      },
       "gate": "auto",
       "gate_result": null,
       "gate_mode": null,
@@ -151,7 +199,13 @@
       "loop": "until source-card closeout succeeds",
       "started_at": null,
       "completed_at": null,
-      "verify": {"type":"shell","command":"bash -lc 'cd \"/Users/gillettes/Coding Projects/3rd Party Git Hub Repo'\"'\"'s\" && scripts/source-card-closeout --with-export'","passed":null,"stdout":null,"stderr":null},
+      "verify": {
+        "type": "shell",
+        "command": "bash -lc 'cd \"/Users/gillettes/Coding Projects/3rd Party Git Hub Repo'\"'\"'s\" && scripts/source-card-closeout --with-export'",
+        "passed": null,
+        "stdout": null,
+        "stderr": null
+      },
       "gate": "auto",
       "gate_result": null,
       "gate_mode": null,
@@ -167,7 +221,13 @@
       "loop": "false",
       "started_at": null,
       "completed_at": null,
-      "verify": {"type":"shell","command":"test -s /tmp/morning-brief-egress-red.txt","passed":null,"stdout":null,"stderr":null},
+      "verify": {
+        "type": "shell",
+        "command": "test -s /tmp/morning-brief-egress-red.txt",
+        "passed": null,
+        "stdout": null,
+        "stderr": null
+      },
       "gate": "auto",
       "gate_result": null,
       "gate_mode": null,
@@ -183,7 +243,13 @@
       "loop": "until the privacy field matrix passes",
       "started_at": null,
       "completed_at": null,
-      "verify": {"type":"shell","command":"bash scripts/mission-control-common.test.sh","passed":null,"stdout":null,"stderr":null},
+      "verify": {
+        "type": "shell",
+        "command": "bash scripts/mission-control-common.test.sh",
+        "passed": null,
+        "stdout": null,
+        "stderr": null
+      },
       "gate": "auto",
       "gate_result": null,
       "gate_mode": null,
@@ -199,7 +265,13 @@
       "loop": "false",
       "started_at": null,
       "completed_at": null,
-      "verify": {"type":"shell","command":"test -s /tmp/morning-brief-graph-migration-red.txt","passed":null,"stdout":null,"stderr":null},
+      "verify": {
+        "type": "shell",
+        "command": "test -s /tmp/morning-brief-graph-migration-red.txt",
+        "passed": null,
+        "stdout": null,
+        "stderr": null
+      },
       "gate": "auto",
       "gate_result": null,
       "gate_mode": null,
@@ -215,7 +287,13 @@
       "loop": "until graph migration tests pass",
       "started_at": null,
       "completed_at": null,
-      "verify": {"type":"shell","command":"bash scripts/chat-graph.test.sh","passed":null,"stdout":null,"stderr":null},
+      "verify": {
+        "type": "shell",
+        "command": "bash scripts/chat-graph.test.sh",
+        "passed": null,
+        "stdout": null,
+        "stderr": null
+      },
       "gate": "auto",
       "gate_result": null,
       "gate_mode": null,
@@ -231,7 +309,13 @@
       "loop": "false",
       "started_at": null,
       "completed_at": null,
-      "verify": {"type":"shell","command":"test -s /tmp/morning-brief-open-work-red.txt","passed":null,"stdout":null,"stderr":null},
+      "verify": {
+        "type": "shell",
+        "command": "test -s /tmp/morning-brief-open-work-red.txt",
+        "passed": null,
+        "stdout": null,
+        "stderr": null
+      },
       "gate": "auto",
       "gate_result": null,
       "gate_mode": null,
@@ -247,7 +331,13 @@
       "loop": "until graph tests pass",
       "started_at": null,
       "completed_at": null,
-      "verify": {"type":"shell","command":"bash scripts/chat-graph.test.sh","passed":null,"stdout":null,"stderr":null},
+      "verify": {
+        "type": "shell",
+        "command": "bash scripts/chat-graph.test.sh",
+        "passed": null,
+        "stdout": null,
+        "stderr": null
+      },
       "gate": "auto",
       "gate_result": null,
       "gate_mode": null,
@@ -263,7 +353,13 @@
       "loop": "false",
       "started_at": null,
       "completed_at": null,
-      "verify": {"type":"shell","command":"test -s /tmp/morning-brief-job-history-red.txt","passed":null,"stdout":null,"stderr":null},
+      "verify": {
+        "type": "shell",
+        "command": "test -s /tmp/morning-brief-job-history-red.txt",
+        "passed": null,
+        "stdout": null,
+        "stderr": null
+      },
       "gate": "auto",
       "gate_result": null,
       "gate_mode": null,
@@ -279,7 +375,13 @@
       "loop": "until automation tests pass",
       "started_at": null,
       "completed_at": null,
-      "verify": {"type":"shell","command":"bash scripts/automation-status.test.sh","passed":null,"stdout":null,"stderr":null},
+      "verify": {
+        "type": "shell",
+        "command": "bash scripts/automation-status.test.sh",
+        "passed": null,
+        "stdout": null,
+        "stderr": null
+      },
       "gate": "auto",
       "gate_result": null,
       "gate_mode": null,
@@ -295,7 +397,13 @@
       "loop": "until dashboard and render smoke pass",
       "started_at": null,
       "completed_at": null,
-      "verify": {"type":"shell","command":"REPO_ROOT=\"$PWD\" bash scripts/dashboard.test.sh --require-shell && node scripts/dashboard-render-smoke.js .","passed":null,"stdout":null,"stderr":null},
+      "verify": {
+        "type": "shell",
+        "command": "REPO_ROOT=\"$PWD\" bash scripts/dashboard.test.sh --require-shell && node scripts/dashboard-render-smoke.js .",
+        "passed": null,
+        "stdout": null,
+        "stderr": null
+      },
       "gate": "auto",
       "gate_result": null,
       "gate_mode": null,
@@ -311,7 +419,13 @@
       "loop": "false",
       "started_at": null,
       "completed_at": null,
-      "verify": {"type":"shell","command":"test -s /tmp/morning-brief-thin-inputs-red.txt","passed":null,"stdout":null,"stderr":null},
+      "verify": {
+        "type": "shell",
+        "command": "test -s /tmp/morning-brief-thin-inputs-red.txt",
+        "passed": null,
+        "stdout": null,
+        "stderr": null
+      },
       "gate": "auto",
       "gate_result": null,
       "gate_mode": null,
@@ -327,7 +441,13 @@
       "loop": "until scan and graph tests pass",
       "started_at": null,
       "completed_at": null,
-      "verify": {"type":"shell","command":"bash scripts/scan-unfinished-work --self-test && bash scripts/chat-graph.test.sh","passed":null,"stdout":null,"stderr":null},
+      "verify": {
+        "type": "shell",
+        "command": "bash scripts/scan-unfinished-work --self-test && bash scripts/chat-graph.test.sh",
+        "passed": null,
+        "stdout": null,
+        "stderr": null
+      },
       "gate": "auto",
       "gate_result": null,
       "gate_mode": null,
@@ -343,7 +463,13 @@
       "loop": "false",
       "started_at": null,
       "completed_at": null,
-      "verify": {"type":"shell","command":"test -s /tmp/morning-brief-composer-red.txt","passed":null,"stdout":null,"stderr":null},
+      "verify": {
+        "type": "shell",
+        "command": "test -s /tmp/morning-brief-composer-red.txt",
+        "passed": null,
+        "stdout": null,
+        "stderr": null
+      },
       "gate": "auto",
       "gate_result": null,
       "gate_mode": null,
@@ -359,7 +485,13 @@
       "loop": "until composer tests pass",
       "started_at": null,
       "completed_at": null,
-      "verify": {"type":"shell","command":"bash scripts/morning-brief.test.sh","passed":null,"stdout":null,"stderr":null},
+      "verify": {
+        "type": "shell",
+        "command": "bash scripts/morning-brief.test.sh",
+        "passed": null,
+        "stdout": null,
+        "stderr": null
+      },
       "gate": "auto",
       "gate_result": null,
       "gate_mode": null,
@@ -375,7 +507,13 @@
       "loop": "until dashboard and render smoke pass",
       "started_at": null,
       "completed_at": null,
-      "verify": {"type":"shell","command":"REPO_ROOT=\"$PWD\" bash scripts/dashboard.test.sh --require-shell && node scripts/dashboard-render-smoke.js .","passed":null,"stdout":null,"stderr":null},
+      "verify": {
+        "type": "shell",
+        "command": "REPO_ROOT=\"$PWD\" bash scripts/dashboard.test.sh --require-shell && node scripts/dashboard-render-smoke.js .",
+        "passed": null,
+        "stdout": null,
+        "stderr": null
+      },
       "gate": "auto",
       "gate_result": null,
       "gate_mode": null,
@@ -391,7 +529,15 @@
       "loop": "until the local UI proof is readable",
       "started_at": null,
       "completed_at": null,
-      "verify": {"type":"browser","command":"browser: file:///tmp/mission-control-morning-brief/index.html - Home shows a NEEDS-YOU-first Morning Brief summary with source freshness and no raw markdown parsing.","url":"file:///tmp/mission-control-morning-brief/index.html","check":"Home shows a NEEDS-YOU-first Morning Brief summary with source freshness and no raw markdown parsing.","passed":null,"stdout":null,"stderr":null},
+      "verify": {
+        "type": "browser",
+        "command": "browser: file:///tmp/mission-control-morning-brief/index.html - Home shows a NEEDS-YOU-first Morning Brief summary with source freshness and no raw markdown parsing.",
+        "url": "file:///tmp/mission-control-morning-brief/index.html",
+        "check": "Home shows a NEEDS-YOU-first Morning Brief summary with source freshness and no raw markdown parsing.",
+        "passed": null,
+        "stdout": null,
+        "stderr": null
+      },
       "gate": "auto",
       "gate_result": null,
       "gate_mode": null,
@@ -407,7 +553,13 @@
       "loop": "false",
       "started_at": null,
       "completed_at": null,
-      "verify": {"type":"shell","command":"test -s /tmp/morning-brief-delivery-red.txt","passed":null,"stdout":null,"stderr":null},
+      "verify": {
+        "type": "shell",
+        "command": "test -s /tmp/morning-brief-delivery-red.txt",
+        "passed": null,
+        "stdout": null,
+        "stderr": null
+      },
       "gate": "auto",
       "gate_result": null,
       "gate_mode": null,
@@ -423,7 +575,13 @@
       "loop": "until delivery tests pass",
       "started_at": null,
       "completed_at": null,
-      "verify": {"type":"shell","command":"bash scripts/morning-brief.test.sh","passed":null,"stdout":null,"stderr":null},
+      "verify": {
+        "type": "shell",
+        "command": "bash scripts/morning-brief.test.sh",
+        "passed": null,
+        "stdout": null,
+        "stderr": null
+      },
       "gate": "auto",
       "gate_result": null,
       "gate_mode": null,
@@ -439,7 +597,13 @@
       "loop": "false",
       "started_at": null,
       "completed_at": null,
-      "verify": {"type":"shell","command":"test -s /tmp/morning-brief-deadman-red.txt","passed":null,"stdout":null,"stderr":null},
+      "verify": {
+        "type": "shell",
+        "command": "test -s /tmp/morning-brief-deadman-red.txt",
+        "passed": null,
+        "stdout": null,
+        "stderr": null
+      },
       "gate": "human",
       "gate_result": null,
       "gate_mode": null,
@@ -455,7 +619,13 @@
       "loop": "until deadman, dashboard, and automation tests pass",
       "started_at": null,
       "completed_at": null,
-      "verify": {"type":"shell","command":"bash scripts/morning-brief-deadman.test.sh && bash scripts/automation-status.test.sh && REPO_ROOT=\"$PWD\" bash scripts/dashboard.test.sh --require-shell","passed":null,"stdout":null,"stderr":null},
+      "verify": {
+        "type": "shell",
+        "command": "bash scripts/morning-brief-deadman.test.sh && bash scripts/automation-status.test.sh && REPO_ROOT=\"$PWD\" bash scripts/dashboard.test.sh --require-shell",
+        "passed": null,
+        "stdout": null,
+        "stderr": null
+      },
       "gate": "auto",
       "gate_result": null,
       "gate_mode": null,
@@ -471,7 +641,14 @@
       "loop": "until no blocking privacy or delivery finding remains",
       "started_at": null,
       "completed_at": null,
-      "verify": {"type":"human-review","command":null,"prompt":"Review the actual diff and synthetic leakage evidence before first live cross-provider transcript egress or Telegram delivery.","passed":null,"stdout":null,"stderr":null},
+      "verify": {
+        "type": "human-review",
+        "command": null,
+        "prompt": "Review the actual diff and synthetic leakage evidence before first live cross-provider transcript egress or Telegram delivery.",
+        "passed": null,
+        "stdout": null,
+        "stderr": null
+      },
       "gate": "human",
       "gate_result": null,
       "gate_mode": null,
@@ -487,7 +664,13 @@
       "loop": "until receipt and failure-path evidence both exist",
       "started_at": null,
       "completed_at": null,
-      "verify": {"type":"shell","command":"test -s /tmp/morning-brief-live-delivery-proof.txt && test -s /tmp/morning-brief-deadman-proof.txt","passed":null,"stdout":null,"stderr":null},
+      "verify": {
+        "type": "shell",
+        "command": "test -s /tmp/morning-brief-live-delivery-proof.txt && test -s /tmp/morning-brief-deadman-proof.txt",
+        "passed": null,
+        "stdout": null,
+        "stderr": null
+      },
       "gate": "human",
       "gate_result": null,
       "gate_mode": null,
@@ -503,7 +686,13 @@
       "loop": "false",
       "started_at": null,
       "completed_at": null,
-      "verify": {"type":"shell","command":"test -s /tmp/morning-brief-tier1-red.txt","passed":null,"stdout":null,"stderr":null},
+      "verify": {
+        "type": "shell",
+        "command": "test -s /tmp/morning-brief-tier1-red.txt",
+        "passed": null,
+        "stdout": null,
+        "stderr": null
+      },
       "gate": "auto",
       "gate_result": null,
       "gate_mode": null,
@@ -519,7 +708,13 @@
       "loop": "until graph outcome tests pass",
       "started_at": null,
       "completed_at": null,
-      "verify": {"type":"shell","command":"bash scripts/chat-graph.test.sh","passed":null,"stdout":null,"stderr":null},
+      "verify": {
+        "type": "shell",
+        "command": "bash scripts/chat-graph.test.sh",
+        "passed": null,
+        "stdout": null,
+        "stderr": null
+      },
       "gate": "auto",
       "gate_result": null,
       "gate_mode": null,
@@ -535,7 +730,13 @@
       "loop": "until coverage plan fixtures and no-call assertion pass",
       "started_at": null,
       "completed_at": null,
-      "verify": {"type":"shell","command":"bash scripts/outcome-coverage.test.sh","passed":null,"stdout":null,"stderr":null},
+      "verify": {
+        "type": "shell",
+        "command": "bash scripts/outcome-coverage.test.sh",
+        "passed": null,
+        "stdout": null,
+        "stderr": null
+      },
       "gate": "human",
       "gate_result": null,
       "gate_mode": null,
@@ -551,7 +752,13 @@
       "loop": "false",
       "started_at": null,
       "completed_at": null,
-      "verify": {"type":"shell","command":"test -s /tmp/morning-brief-tier2-red.txt","passed":null,"stdout":null,"stderr":null},
+      "verify": {
+        "type": "shell",
+        "command": "test -s /tmp/morning-brief-tier2-red.txt",
+        "passed": null,
+        "stdout": null,
+        "stderr": null
+      },
       "gate": "human",
       "gate_result": null,
       "gate_mode": null,
@@ -567,7 +774,14 @@
       "loop": "until the privacy reviewer accepts the bounded sample packet",
       "started_at": null,
       "completed_at": null,
-      "verify": {"type":"human-review","command":null,"prompt":"Confirm the sample contains no raw tool output or prohibited data and that per-provider kill switches work.","passed":null,"stdout":null,"stderr":null},
+      "verify": {
+        "type": "human-review",
+        "command": null,
+        "prompt": "Confirm the sample contains no raw tool output or prohibited data and that per-provider kill switches work.",
+        "passed": null,
+        "stdout": null,
+        "stderr": null
+      },
       "gate": "human",
       "gate_result": null,
       "gate_mode": null,
@@ -583,7 +797,13 @@
       "loop": "until calibration evidence and configured caps exist",
       "started_at": null,
       "completed_at": null,
-      "verify": {"type":"shell","command":"test -s /tmp/morning-brief-outcome-calibration.json","passed":null,"stdout":null,"stderr":null},
+      "verify": {
+        "type": "shell",
+        "command": "test -s /tmp/morning-brief-outcome-calibration.json",
+        "passed": null,
+        "stdout": null,
+        "stderr": null
+      },
       "gate": "human",
       "gate_result": null,
       "gate_mode": null,
@@ -599,7 +819,13 @@
       "loop": "until outcome, privacy, and concurrency suites pass",
       "started_at": null,
       "completed_at": null,
-      "verify": {"type":"shell","command":"bash scripts/chat-graph.test.sh && bash scripts/mission-control-common.test.sh && bash scripts/outcome-extractor.test.sh","passed":null,"stdout":null,"stderr":null},
+      "verify": {
+        "type": "shell",
+        "command": "bash scripts/chat-graph.test.sh && bash scripts/mission-control-common.test.sh && bash scripts/outcome-extractor.test.sh",
+        "passed": null,
+        "stdout": null,
+        "stderr": null
+      },
       "gate": "human",
       "gate_result": null,
       "gate_mode": null,
@@ -615,7 +841,13 @@
       "loop": "false",
       "started_at": null,
       "completed_at": null,
-      "verify": {"type":"shell","command":"test -s /tmp/morning-brief-decision-red.txt","passed":null,"stdout":null,"stderr":null},
+      "verify": {
+        "type": "shell",
+        "command": "test -s /tmp/morning-brief-decision-red.txt",
+        "passed": null,
+        "stdout": null,
+        "stderr": null
+      },
       "gate": "auto",
       "gate_result": null,
       "gate_mode": null,
@@ -631,7 +863,13 @@
       "loop": "until decision and dashboard suites pass",
       "started_at": null,
       "completed_at": null,
-      "verify": {"type":"shell","command":"bash scripts/decision-alert.test.sh && REPO_ROOT=\"$PWD\" bash scripts/dashboard.test.sh --require-shell && node scripts/dashboard-render-smoke.js .","passed":null,"stdout":null,"stderr":null},
+      "verify": {
+        "type": "shell",
+        "command": "bash scripts/decision-alert.test.sh && REPO_ROOT=\"$PWD\" bash scripts/dashboard.test.sh --require-shell && node scripts/dashboard-render-smoke.js .",
+        "passed": null,
+        "stdout": null,
+        "stderr": null
+      },
       "gate": "auto",
       "gate_result": null,
       "gate_mode": null,
@@ -647,7 +885,13 @@
       "loop": "until integrated brief, graph, decision, and dashboard tests pass",
       "started_at": null,
       "completed_at": null,
-      "verify": {"type":"shell","command":"bash scripts/morning-brief.test.sh && bash scripts/chat-graph.test.sh && bash scripts/decision-alert.test.sh && node scripts/dashboard-render-smoke.js .","passed":null,"stdout":null,"stderr":null},
+      "verify": {
+        "type": "shell",
+        "command": "bash scripts/morning-brief.test.sh && bash scripts/chat-graph.test.sh && bash scripts/decision-alert.test.sh && node scripts/dashboard-render-smoke.js .",
+        "passed": null,
+        "stdout": null,
+        "stderr": null
+      },
       "gate": "auto",
       "gate_result": null,
       "gate_mode": null,
@@ -663,7 +907,13 @@
       "loop": "false",
       "started_at": null,
       "completed_at": null,
-      "verify": {"type":"shell","command":"test -s /tmp/morning-brief-git-facts-red.txt","passed":null,"stdout":null,"stderr":null},
+      "verify": {
+        "type": "shell",
+        "command": "test -s /tmp/morning-brief-git-facts-red.txt",
+        "passed": null,
+        "stdout": null,
+        "stderr": null
+      },
       "gate": "auto",
       "gate_result": null,
       "gate_mode": null,
@@ -679,7 +929,13 @@
       "loop": "until scan contract tests pass",
       "started_at": null,
       "completed_at": null,
-      "verify": {"type":"shell","command":"bash scripts/scan-unfinished-work --self-test","passed":null,"stdout":null,"stderr":null},
+      "verify": {
+        "type": "shell",
+        "command": "bash scripts/scan-unfinished-work --self-test",
+        "passed": null,
+        "stdout": null,
+        "stderr": null
+      },
       "gate": "auto",
       "gate_result": null,
       "gate_mode": null,
@@ -695,7 +951,13 @@
       "loop": "false",
       "started_at": null,
       "completed_at": null,
-      "verify": {"type":"shell","command":"test -s /tmp/morning-brief-runner-red.txt","passed":null,"stdout":null,"stderr":null},
+      "verify": {
+        "type": "shell",
+        "command": "test -s /tmp/morning-brief-runner-red.txt",
+        "passed": null,
+        "stdout": null,
+        "stderr": null
+      },
       "gate": "auto",
       "gate_result": null,
       "gate_mode": null,
@@ -711,7 +973,13 @@
       "loop": "until runner tests pass",
       "started_at": null,
       "completed_at": null,
-      "verify": {"type":"shell","command":"bash scripts/loose-end-runner.test.sh","passed":null,"stdout":null,"stderr":null},
+      "verify": {
+        "type": "shell",
+        "command": "bash scripts/loose-end-runner.test.sh",
+        "passed": null,
+        "stdout": null,
+        "stderr": null
+      },
       "gate": "human",
       "gate_result": null,
       "gate_mode": null,
@@ -727,7 +995,13 @@
       "loop": "false",
       "started_at": null,
       "completed_at": null,
-      "verify": {"type":"shell","command":"test -s /tmp/morning-brief-runner-live-dry-run.jsonl","passed":null,"stdout":null,"stderr":null},
+      "verify": {
+        "type": "shell",
+        "command": "test -s /tmp/morning-brief-runner-live-dry-run.jsonl",
+        "passed": null,
+        "stdout": null,
+        "stderr": null
+      },
       "gate": "auto",
       "gate_result": null,
       "gate_mode": null,
@@ -743,7 +1017,14 @@
       "loop": "until all unsafe proposals are fixed or explicitly removed",
       "started_at": null,
       "completed_at": null,
-      "verify": {"type":"human-review","command":null,"prompt":"Review the real dry-run, live facts, and before/after ref snapshots; automatic push remains disabled regardless of result.","passed":null,"stdout":null,"stderr":null},
+      "verify": {
+        "type": "human-review",
+        "command": null,
+        "prompt": "Review the real dry-run, live facts, and before/after ref snapshots; automatic push remains disabled regardless of result.",
+        "passed": null,
+        "stdout": null,
+        "stderr": null
+      },
       "gate": "human",
       "gate_result": null,
       "gate_mode": null,
@@ -759,7 +1040,13 @@
       "loop": "false",
       "started_at": null,
       "completed_at": null,
-      "verify": {"type":"shell","command":"bash scripts/loose-end-runner.test.sh","passed":null,"stdout":null,"stderr":null},
+      "verify": {
+        "type": "shell",
+        "command": "bash scripts/loose-end-runner.test.sh",
+        "passed": null,
+        "stdout": null,
+        "stderr": null
+      },
       "gate": "auto",
       "gate_result": null,
       "gate_mode": null,
@@ -775,7 +1062,13 @@
       "loop": "until all task-caused failures are fixed",
       "started_at": null,
       "completed_at": null,
-      "verify": {"type":"shell","command":"bash scripts/chat-graph.test.sh && bash scripts/automation-status.test.sh && REPO_ROOT=\"$PWD\" bash scripts/dashboard.test.sh --require-shell && node scripts/dashboard-render-smoke.js . && bash scripts/usage-snapshot.test.sh && bash scripts/scan-unfinished-work --self-test && bash scripts/mission-control-common.test.sh && bash scripts/morning-brief.test.sh && bash scripts/morning-brief-deadman.test.sh && bash scripts/outcome-coverage.test.sh && bash scripts/outcome-extractor.test.sh && bash scripts/decision-alert.test.sh && bash scripts/loose-end-runner.test.sh && DO_NOT_TRACK=1 openspec validate morning-brief --strict && git diff --check","passed":null,"stdout":null,"stderr":null},
+      "verify": {
+        "type": "shell",
+        "command": "bash scripts/chat-graph.test.sh && bash scripts/automation-status.test.sh && REPO_ROOT=\"$PWD\" bash scripts/dashboard.test.sh --require-shell && node scripts/dashboard-render-smoke.js . && bash scripts/usage-snapshot.test.sh && bash scripts/scan-unfinished-work --self-test && bash scripts/mission-control-common.test.sh && bash scripts/morning-brief.test.sh && bash scripts/morning-brief-deadman.test.sh && bash scripts/outcome-coverage.test.sh && bash scripts/outcome-extractor.test.sh && bash scripts/decision-alert.test.sh && bash scripts/loose-end-runner.test.sh && DO_NOT_TRACK=1 openspec validate morning-brief --strict && git diff --check",
+        "passed": null,
+        "stdout": null,
+        "stderr": null
+      },
       "gate": "auto",
       "gate_result": null,
       "gate_mode": null,
@@ -791,7 +1084,15 @@
       "loop": "until installed and browser evidence are nonblank and current",
       "started_at": null,
       "completed_at": null,
-      "verify": {"type":"browser","command":"browser: file:///Users/gillettes/.mission-control/index.html - Home and Automation show current Morning Brief, trust/freshness labels, and decision/job history surfaces without errors.","url":"file:///Users/gillettes/.mission-control/index.html","check":"Home and Automation show current Morning Brief, trust/freshness labels, and decision/job history surfaces without errors.","passed":null,"stdout":null,"stderr":null},
+      "verify": {
+        "type": "browser",
+        "command": "browser: file:///Users/gillettes/.mission-control/index.html - Home and Automation show current Morning Brief, trust/freshness labels, and decision/job history surfaces without errors.",
+        "url": "file:///Users/gillettes/.mission-control/index.html",
+        "check": "Home and Automation show current Morning Brief, trust/freshness labels, and decision/job history surfaces without errors.",
+        "passed": null,
+        "stdout": null,
+        "stderr": null
+      },
       "gate": "human",
       "gate_result": null,
       "gate_mode": null,
@@ -807,7 +1108,13 @@
       "loop": "until no blocking self-audit finding remains",
       "started_at": null,
       "completed_at": null,
-      "verify": {"type":"shell","command":"test -s openspec/changes/morning-brief/verify.md","passed":null,"stdout":null,"stderr":null},
+      "verify": {
+        "type": "shell",
+        "command": "test -s openspec/changes/morning-brief/verify.md",
+        "passed": null,
+        "stdout": null,
+        "stderr": null
+      },
       "gate": "auto",
       "gate_result": null,
       "gate_mode": null,
@@ -823,7 +1130,13 @@
       "loop": "until the reviewer returns a complete evidence-backed audit",
       "started_at": null,
       "completed_at": null,
-      "verify": {"type":"shell","command":"test -s records/morning-brief-independent-codex-audit.md","passed":null,"stdout":null,"stderr":null},
+      "verify": {
+        "type": "shell",
+        "command": "test -s records/morning-brief-independent-codex-audit.md",
+        "passed": null,
+        "stdout": null,
+        "stderr": null
+      },
       "gate": "auto",
       "gate_result": null,
       "gate_mode": null,
@@ -839,7 +1152,13 @@
       "loop": "until review-clean or every residual is explicitly owned and deferred",
       "started_at": null,
       "completed_at": null,
-      "verify": {"type":"shell","command":"rg -n 'review-clean|Residual risk' records/morning-brief-independent-codex-audit.md","passed":null,"stdout":null,"stderr":null},
+      "verify": {
+        "type": "shell",
+        "command": "rg -n 'review-clean|Residual risk' records/morning-brief-independent-codex-audit.md",
+        "passed": null,
+        "stdout": null,
+        "stderr": null
+      },
       "gate": "auto",
       "gate_result": null,
       "gate_mode": null,
@@ -855,7 +1174,13 @@
       "loop": "until project/global validators pass",
       "started_at": null,
       "completed_at": null,
-      "verify": {"type":"shell","command":"DO_NOT_TRACK=1 openspec validate morning-brief --strict && bash '/Users/gillettes/Coding Projects/global-implementations/scripts/verify.sh'","passed":null,"stdout":null,"stderr":null},
+      "verify": {
+        "type": "shell",
+        "command": "DO_NOT_TRACK=1 openspec validate morning-brief --strict && bash '/Users/gillettes/Coding Projects/global-implementations/scripts/verify.sh'",
+        "passed": null,
+        "stdout": null,
+        "stderr": null
+      },
       "gate": "auto",
       "gate_result": null,
       "gate_mode": null,
@@ -871,7 +1196,13 @@
       "loop": "until every task-edited file is committed and every push succeeds",
       "started_at": null,
       "completed_at": null,
-      "verify": {"type":"shell","command":"git status -sb && git log -1 --oneline","passed":null,"stdout":null,"stderr":null},
+      "verify": {
+        "type": "shell",
+        "command": "git status -sb && git log -1 --oneline",
+        "passed": null,
+        "stdout": null,
+        "stderr": null
+      },
       "gate": "human",
       "gate_result": null,
       "gate_mode": null,
@@ -887,7 +1218,13 @@
       "loop": "false",
       "started_at": null,
       "completed_at": null,
-      "verify": {"type":"shell","command":"DO_NOT_TRACK=1 openspec status --change morning-brief","passed":null,"stdout":null,"stderr":null},
+      "verify": {
+        "type": "shell",
+        "command": "DO_NOT_TRACK=1 openspec status --change morning-brief",
+        "passed": null,
+        "stdout": null,
+        "stderr": null
+      },
       "gate": "auto",
       "gate_result": null,
       "gate_mode": null,
@@ -903,11 +1240,19 @@
       "loop": "until five qualifying mornings and final review-clean evidence exist",
       "started_at": null,
       "completed_at": null,
-      "verify": {"type":"human-review","command":null,"prompt":"Confirm five real morning records meet the 60-second comprehension and action criteria, consolidation decisions are durable, and final audit is review-clean.","passed":null,"stdout":null,"stderr":null},
+      "verify": {
+        "type": "human-review",
+        "command": null,
+        "prompt": "Confirm five real morning records meet the 60-second comprehension and action criteria, consolidation decisions are durable, and final audit is review-clean.",
+        "passed": null,
+        "stdout": null,
+        "stderr": null
+      },
       "gate": "human",
       "gate_result": null,
       "gate_mode": null,
       "block_reason": null
     }
-  ]
+  ],
+  "last_update": "2026-07-10T05:30:44+00:00"
 }

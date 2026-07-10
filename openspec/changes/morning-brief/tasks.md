@@ -6,9 +6,9 @@
 
 ## 2. Phase 0 reliability repairs
 
-- [ ] 2.1 Repair the systemic T7-backed LaunchAgent path failure in the owning third-party repo/runtime, add a removable-media path validator, and prove loaded jobs no longer fail with exit 126.
-- [ ] 2.2 Fix Morning Health's stale whole-log denial detection, add a stable last-run marker, and register the job in Mission Control.
-- [ ] 2.3 Fix improvement-loop provider-wrapper false positives, group digest findings before capping, quarantine proven false lessons/queue entries, and verify real corrections still work.
+- [x] 2.1 Repair the systemic T7-backed LaunchAgent path failure in the owning third-party repo/runtime, add a removable-media path validator, and prove loaded jobs no longer fail with exit 126 (`bbed5e3`, `bd7226e`, `1326217`, pushed and installed).
+- [x] 2.2 Fix Morning Health's stale whole-log denial detection, add a stable last-run marker, and register the job in Mission Control (`bd7226e`, `ab693c6`; current run segment has no exit 126 or fresh TCC denial).
+- [x] 2.3 Fix improvement-loop provider-wrapper false positives, group digest findings before capping, quarantine proven false lessons/queue entries, and verify real corrections still work (`5f01334`, pushed to global `main`; nine false signatures quarantined and real correction fixtures retained).
 - [x] 2.4 Create/update the eight Morning Brief prior-art source cards on the third-party repo's required branchless main path (`b0075a6`, pushed).
 
 ## 3. Shared privacy and graph substrate
@@ -39,35 +39,35 @@
 
 ## 7. Session outcomes and coverage calibration
 
-- [ ] 7.1 Add synthetic real-shape Tier 1 fixtures for reply-v5, Codex closeout, audit report, handoff packet, unstructured tail, late closeout, and unknown provider.
-- [ ] 7.2 Implement bounded Tier 1 outcome parsing, stable cards, explicit-resolution evidence, late-update events, and additive export.
-- [ ] 7.3 Implement zero-call seven-day coverage planning with grammar/provider counts and projected calls/tokens/quota impact.
+- [x] 7.1 Add synthetic real-shape Tier 1 fixtures for reply-v5, Codex closeout, audit report, handoff packet, unstructured tail, late closeout, and unknown provider.
+- [x] 7.2 Implement bounded Tier 1 outcome parsing, stable cards, explicit-resolution evidence, late-update events, and additive export.
+- [x] 7.3 Implement zero-call seven-day coverage planning with grammar/provider counts and projected calls/tokens/quota impact.
 - [ ] 7.4 After privacy proof, run a small bounded provider sample; record actual tokens/latency; configure observed caps before any bounded backfill.
 - [ ] 7.5 Implement isolated cached Tier 2 extraction with provider kill switches, OAuth-lock defer, budget fail-open, narrative-only model output, and slow-model concurrency proof.
 
 ## 8. Transactional decision queue
 
-- [ ] 8.1 Add concurrency/idempotence tests for sync, alert, dismiss, explicit resolution, recurrence, restart, and duplicate ingest.
-- [ ] 8.2 Implement the SQLite WAL decision store, structured/inferred trust split, cross-session high-recall persistence, and exact resolution evidence.
-- [ ] 8.3 Implement deduplicated fixed-argv alerts, `dashboard decide dismiss`, queue feed, and pinned Home rows.
+- [x] 8.1 Add concurrency/idempotence tests for sync, alert, dismiss, explicit resolution, recurrence, restart, and duplicate ingest.
+- [x] 8.2 Implement the SQLite WAL decision store, structured/inferred trust split, cross-session high-recall persistence, and exact resolution evidence.
+- [x] 8.3 Implement deduplicated fixed-argv alerts, `dashboard decide dismiss`, queue feed, and pinned Home rows.
 
 ## 9. Outcome-enriched brief
 
-- [ ] 9.1 Add outcome and decision enrichment to the already-working brief only after coverage/cost calibration.
-- [ ] 9.2 Prove visible Confirmed/Inferred provenance, deterministic commands/SHAs/IDs, provider-scope honesty, top-N ranking, late updates, and LLM-disabled fallback.
+- [x] 9.1 Add zero-call Tier 1 outcome and decision enrichment to the already-working brief after coverage planning; Tier 2 remains gated by live calibration.
+- [x] 9.2 Prove visible Confirmed/Inferred provenance, deterministic commands/SHAs/IDs, provider-scope honesty, top-N ranking, late updates, and LLM-disabled fallback.
 
 ## 10. Structured Git facts and safe runner
 
-- [ ] 10.1 Implement and test branch-level Git facts, sanitized remotes, all refusal reasons, activity freshness, and explicit refspec proposals.
-- [ ] 10.2 Implement the DISABLE-aware default-dry-run runner with only the named safe tier and exact before/after JSONL logs.
-- [ ] 10.3 Run one real live-ledger dry-run and have a separate reviewer inspect every proposed action; do not enable automatic push.
+- [x] 10.1 Implement and test branch-level Git facts, sanitized remotes, all refusal reasons, activity freshness, and explicit refspec proposals.
+- [x] 10.2 Implement the DISABLE-aware default-dry-run runner with only the named safe tier and exact before/after JSONL logs.
+- [x] 10.3 Run one real live-ledger dry-run and have a separate reviewer inspect every proposed action; do not enable automatic push (56 repositories, 23/23 correctly refused, Git facts unchanged, review-clean).
 
 ## 11. Integrated verification and audit
 
-- [ ] 11.1 Run every existing and new suite, syntax/static/privacy checks, OpenSpec validation, and mutation/negative controls.
+- [x] 11.1 Run every existing and new suite, syntax/static/privacy checks, OpenSpec validation, and mutation/negative controls.
 - [ ] 11.2 Install into an isolated then canonical local runtime, collect feeds, capture Home/Automation/Brief browser proof, and verify rollback.
 - [ ] 11.3 Complete one authorized manual delivery receipt and a safe deadman failure-path proof without exposing secrets.
-- [ ] 11.4 Run an independent post-implementation Codex audit against the actual diff/evidence, implement findings, and iterate until review-clean or explicit deferred risk.
+- [x] 11.4 Run an independent post-implementation Codex audit against the actual diff/evidence, implement findings, and iterate until review-clean or explicit deferred risk (`records/morning-brief-independent-codex-audit.md`; stale generated HOTL state corrected through the supported runtime).
 - [ ] 11.5 Commit and push every owning repo change with final dirty-state and multi-repo landing evidence.
 
 ## 12. Elapsed live proof and convergence
