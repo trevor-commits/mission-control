@@ -396,14 +396,14 @@ max_iterations: 3
 verify: DO_NOT_TRACK=1 openspec validate morning-brief --strict && bash '/Users/gillettes/Coding Projects/global-implementations/scripts/verify.sh'
 gate: auto
 
-- [ ] **Step 54: Commit and push every owning repo outcome**
+- [x] **Step 54: Commit and push every owning repo outcome**
 action: Inspect owned diffs, stage only task files, make conventional per-outcome commits in Mission Control/global/third-party runtime and branchless-card paths, push, and record SHAs without disturbing unrelated dirt.
 loop: until every task-edited file is committed and every push succeeds
 max_iterations: 3
 verify: git status -sb && git log -1 --oneline
 gate: human
 
-- [ ] **Step 55: Close implementation with honest pending proof**
+- [x] **Step 55: Close implementation with honest pending proof**
 action: Report implemented code/runtime/audits, exact commits/pushes, live evidence, rollback, and the elapsed five-morning proof still required; do not mark the overall goal or ER-107 verified yet.
 loop: false
 max_iterations: 1

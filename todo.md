@@ -292,33 +292,10 @@ Each active branch entry should include:
 - `cleanup command`
 - `linked PR/audit/completion record`
 
-### `codex/morning-brief`
-- status: active
-- created: 2026-07-09
-- base: `origin/main` at `ebfbd50`
-- worktree: `/Users/gillettes/Coding Projects/mission-control-worktrees/morning-brief`
-- source chat: 2026-07-09 `Audit: Mission Control orchestration priorities` (`019f4963-1e75-7600-8a17-1e6f6f8e8ca6`)
-- last refreshed by chat: 2026-07-09 same Codex thread
-- purpose: Implement ER-107 Morning Brief and the approved Fable plan plus U1-U7 audit corrections as one reviewable product lane.
-- linked issue: repo-only disposition; no Mission Control Linear team is configured
-- plugin mirror: none; repo-only mode is explicit in the Linear Issue Ledger
-- merge expectation: merge to `main`
-- merge target: `main`
-- review surface: independent Codex evidence audit, then final adversarial review; PR or direct merge after all blocking findings close
-- exit checklist:
-  - [ ] OpenSpec artifacts, HOTL workflow, and durable plan pointers complete
-  - [ ] Thin brief, outcome extraction, decision queue, delivery proof, and safe dry-run runner complete
-  - [ ] Full local and installed-runtime verification complete
-  - [ ] Independent audit loop reaches review-clean or explicit deferred risk
-  - [ ] Work/Test/Audit records and project memory refreshed
-  - [ ] Branch committed, pushed, merged or explicitly handed off
-- delete when: after merge, remote push, durable closeout, and worktree removal
-- retain reason: n/a
-- cleanup command: `git -C /Users/gillettes/Coding\ Projects/mission-control worktree remove /Users/gillettes/Coding\ Projects/mission-control-worktrees/morning-brief && git -C /Users/gillettes/Coding\ Projects/mission-control branch -d codex/morning-brief`
-- linked PR/audit/completion record: `openspec/changes/morning-brief/`; final record pending
+- None. ER-107 remains active as an OpenSpec verification program on `main`, not as an unmerged branch.
 
 ## Branch History
-- No closed branch entries recorded yet.
+- 2026-07-09 | `codex/morning-brief` | base `ebfbd50` | merged by fast-forward to `main`; implementation and closeout landed through `cf6b536`, pushed, independently review-clean, then local/remote branch and `/Users/gillettes/Coding Projects/mission-control-worktrees/morning-brief` removed | source: Codex `019f4963-1e75-7600-8a17-1e6f6f8e8ca6` | record: `records/2026-07-09-morning-brief-orchestration-convergence.md`.
 
 ## Audit Record Convention
 If it's not here, it isn't remembered.

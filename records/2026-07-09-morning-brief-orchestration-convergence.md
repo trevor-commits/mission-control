@@ -54,6 +54,7 @@ The post-merge installed-browser pass found two more scoped issues: substring re
 - Code-only installed runtime backup: `/private/tmp/mission-control-before-morning-brief-20260709-214023`; the pre-canonical implemented runtime is preserved at `/private/tmp/mission-control-implemented-pre-canonical-20260710T053440Z`.
 - The original backup was restored without a diff and canonical Mission Control `main` at `2432d6e` was reinstalled. LaunchAgent hashes were identical before and after; no new job or Telegram schedule was installed.
 - Final installed browser artifacts are `tmp/playwright/morning-brief-final-{home,brief,automation}.png`. Home, Brief, and Automation rendered nonblank; one coherent pinned decision remains, token-family source prose is absent, and both gated jobs explicitly say `awaiting activation`.
+- Landing proof: Mission Control implementation/polish/closeout commits through `cf6b536` and global ER-107 lifecycle commit `4a3e425` are on their respective `origin/main` branches. The merged `codex/morning-brief` local branch, remote branch, and dedicated worktree were removed; unrelated detached Codex worktrees were left untouched.
 
 ## Deliberately not done
 
