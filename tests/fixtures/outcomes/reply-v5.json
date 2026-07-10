@@ -1,0 +1,19 @@
+{
+  "name": "reply-v5 closeout",
+  "session_id": "11111111-1111-4111-8111-111111111111",
+  "provider": "claude",
+  "messages": [
+    {
+      "role": "assistant",
+      "content": "Re: Morning Brief outcomes\n\n🔴 NEEDS YOU\n- Decide whether to authorize the live delivery.\n\nAnswer\nThe bounded outcome slice is ready.\n\nDone\n- Implemented deterministic Tier 1 parsing.\n- Commit: abcdef1\n\nProblems\n- Five-morning elapsed proof is still pending.\n\nNext\n- Run the privacy review.\n\nDetails\nVerification: `bash scripts/chat-graph.test.sh`"
+    }
+  ],
+  "expected": {
+    "classification": "execution_closeout",
+    "grammar": "reply_v5",
+    "finalized": true,
+    "commit": "abcdef1",
+    "command": "bash scripts/chat-graph.test.sh",
+    "needs_you": "Decide whether to authorize the live delivery."
+  }
+}

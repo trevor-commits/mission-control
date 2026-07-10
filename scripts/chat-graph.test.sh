@@ -28,6 +28,10 @@ new_env() {
   # scanner roots + register MUST be mktemp — never the real ~/.claude corpus.
   export CHAT_GRAPH_CLAUDE_ROOT="$(mktemp -d)"
   export CHAT_GRAPH_CODEX_ROOT="$(mktemp -d)"
+  export CHAT_GRAPH_CURSOR_ROOT="$(mktemp -d)"
+  export CHAT_GRAPH_HERMES_ROOT="$(mktemp -d)"
+  export CHAT_GRAPH_HERMES_STATE_DB="$(mktemp -d)/state.db"
+  export CHAT_GRAPH_COPILOT_ROOT="$(mktemp -d)"
   export CHAT_GRAPH_CODING_ROOT="$(mktemp -d)"
   export CHAT_GRAPH_REPO_ROOTS="$(mktemp -d)"
   export CHAT_GRAPH_NIGHTLY_REPORT_GLOB="$(mktemp -d)/*.md"
@@ -334,6 +338,10 @@ mkdir -p "$(cl_root)"
 for n in 1 2 3 4 5; do umsg "file $n hello" "u18$n" > "$(cl_root)/S18$n.jsonl"; done
 "$CG" ingest --limit-files 2 >/dev/null 2>&1
 ok 2 "$(q "SELECT COUNT(*) FROM file_cursors")" "--limit-files 2 writes exactly 2 cursors"
+"$CG" ingest --limit-files 2 >/dev/null 2>&1
+ok 4 "$(q "SELECT COUNT(*) FROM file_cursors")" "successive bounded ingest advances to the next files"
+"$CG" ingest --limit-files 2 >/dev/null 2>&1
+ok 5 "$(q "SELECT COUNT(*) FROM file_cursors")" "bounded ingest eventually covers the full source set"
 if [ ! -f "$CHAT_GRAPH_HOME/last-ingest" ]; then pass "--limit-files writes NO completion marker"
 else fail "--limit-files wrote a completion marker"; fi
 
@@ -900,6 +908,608 @@ PYEOF
 "$CG" validate-export "$BAD39" >/dev/null 2>&1; RC39=$?
 if [ "$RC39" -ne 0 ]; then pass "validate-export rejects snapshot missing loose_end_changes"
 else fail "validate-export accepted snapshot missing loose_end_changes"; fi
+
+# --- 40. synthetic real-shape Tier 1 fixture grammar -----------------------
+if python3 - "$HERE/chat-graph" "$HERE/../tests/fixtures/outcomes" <<'PYEOF'
+import importlib.machinery, importlib.util, json, os, sys
+sys.path.insert(0, os.path.dirname(sys.argv[1]))
+loader = importlib.machinery.SourceFileLoader("chat_graph", sys.argv[1])
+spec = importlib.util.spec_from_loader(loader.name, loader)
+cg = importlib.util.module_from_spec(spec); loader.exec_module(cg)
+root = sys.argv[2]
+for name in sorted(os.listdir(root)):
+    fixture = json.load(open(os.path.join(root, name)))
+    if "messages" not in fixture:
+        continue
+    card = cg.tier1_parse_outcome(fixture["session_id"], fixture["provider"], fixture["messages"])
+    want = fixture["expected"]
+    assert card["classification"] == want["classification"], (name, card)
+    assert card["grammar"] == want["grammar"], (name, card)
+    if "finalized" in want:
+        assert card["finalized"] is want["finalized"], (name, card)
+    if "provider" in want:
+        assert card["provider"] == want["provider"], (name, card)
+    if "commit" in want:
+        assert want["commit"] in card["anchors"]["commits"], (name, card)
+    if "command" in want:
+        assert want["command"] in card["anchors"]["commands"], (name, card)
+    if "needs_you" in want:
+        assert any(item["section"] == "needs_you" and item["text"] == want["needs_you"]
+                   for item in card["open_work"]), (name, card)
+    if want["classification"] == "authored_handoff":
+        assert card["did"] == ["Authored a handoff packet"]
+        assert not any("Implement SQLite" in item for item in card["did"])
+PYEOF
+then pass "Tier 1 parses reply-v5/Codex/audit/handoff/unstructured/unknown shapes honestly"
+else fail "Tier 1 synthetic grammar fixtures"; fi
+
+# --- 41. bounded parser ignores content outside the assistant tail ---------
+if python3 - "$HERE/chat-graph" <<'PYEOF'
+import importlib.machinery, importlib.util, os, sys
+sys.path.insert(0, os.path.dirname(sys.argv[1]))
+loader = importlib.machinery.SourceFileLoader("chat_graph_bound", sys.argv[1])
+spec = importlib.util.spec_from_loader(loader.name, loader)
+cg = importlib.util.module_from_spec(spec); loader.exec_module(cg)
+messages = [{"role":"assistant", "content":"Outcome\nold should be excluded\nStatus: complete"}]
+messages += [{"role":"user", "content":"tool-like user noise"} for _ in range(15)]
+messages += [{"role":"assistant", "content":"plain tail %d" % i} for i in range(13)]
+card = cg.tier1_parse_outcome("BOUND41", "claude", messages)
+assert card["grammar"] == "unstructured"
+assert "old should be excluded" not in str(card)
+assert card["source_span"]["message_count"] <= 12
+assert card["source_span"]["bytes"] <= 32768
+PYEOF
+then pass "Tier 1 consumes only the bounded assistant tail"
+else fail "Tier 1 assistant-tail bound"; fi
+
+# --- 41b. stable item identity, exact ACTION fields, counters, hard bytes ----
+if python3 - "$HERE/chat-graph" <<'PYEOF'
+import importlib.machinery,importlib.util,os,sys
+sys.path.insert(0,os.path.dirname(sys.argv[1]))
+l=importlib.machinery.SourceFileLoader("chat_graph_edges",sys.argv[1])
+s=importlib.util.spec_from_loader(l.name,l)
+cg=importlib.util.module_from_spec(s); l.exec_module(cg)
+def card(items, suffix=""):
+    body="\n".join("- "+x for x in items)
+    text=("Re: stable\n\nAnswer\nWorking.\n\nDone\n- Safe work.\n\nNext\n"+body+
+          "\n\nDetails\nVerification: `bash /Users/gillettes/Downloads/private/check.sh`"+suffix)
+    return cg.tier1_parse_outcome("STABLE41","claude",[
+        {"id":suffix or "a","role":"assistant","content":text}])
+a=card(["Alpha task","Beta task"])
+b=card(["Beta task","Alpha task"]," ")
+ka={x["text"]:x["item_key"] for x in a["open_work"]}
+kb={x["text"]:x["item_key"] for x in b["open_work"]}
+assert ka==kb
+assert a["anchors"]["commands"]==["bash /Users/gillettes/Downloads/private/check.sh"]
+assert a["egress_counters"]["path_redactions"]>=1
+pa=cg.tier1_parse_outcome("PATH41","claude",[{"id":"pa","role":"assistant",
+ "content":"Outcome\nSafe.\nVerification: `bash /Users/gillettes/Downloads/a.sh`\nStatus: complete"}])
+pb=cg.tier1_parse_outcome("PATH41","claude",[{"id":"pb","role":"assistant",
+ "content":"Outcome\nSafe.\nVerification: `bash /Users/gillettes/Downloads/b.sh`\nStatus: complete"}])
+assert pa["tail_hash"]!=pb["tail_hash"] and pa["anchors"]!=pb["anchors"]
+messages=[{"id":str(i),"role":"assistant","content":"x"*4000} for i in range(12)]
+bounded=cg.tier1_parse_outcome("BYTES41","claude",messages)
+assert bounded["source_span"]["bytes"]<=32768
+expanded=cg.tier1_parse_outcome("EXPAND41","claude",[
+    {"id":"expand","role":"assistant","content":("/tmp/a "*4000)}])
+assert expanded["source_span"]["bytes"]<=32768
+private=cg.tier1_parse_outcome("PRIVATE41","claude",[
+    {"id":"p","role":"assistant","content":"Outcome\nowner@example.com\nStatus: complete"}])
+assert private["egress_counters"]["dropped_fields"]>=1
+multi=cg.tier1_parse_outcome("COHERENT41","codex",[{"id":"m","role":"assistant",
+ "content":"Re: repair\n\nNEEDS YOU\nA token must be rotated.\n1. Run:\n```bash\n# exact operator procedure\nexport API_MODE=safe\ncurl https://example.invalid/health\necho arbitrary fragment\nlaunchctl print gui/501/example \\\n  --verbose\njq '.ok' result.json\ncd /tmp/private\n./rotate-token\n```\n2. Approve browser authorization.\n3. Confirm:\n```bash\n./verify-token\n```\nDo not paste the token.\n\nAnswer: Everything else is complete and must not enter the decision.\n\nDone\n- Repair shipped."}])
+needs=[x for x in multi["open_work"] if x["section"]=="needs_you"]
+assert len(needs)==1, needs
+assert "A token must be rotated" in needs[0]["text"]
+assert "Approve browser authorization" in needs[0]["text"]
+for fragment in ("```","./rotate-token","export API_MODE","curl ","arbitrary fragment"):
+    assert fragment not in needs[0]["text"], needs
+assert "Everything else is complete" not in needs[0]["text"]
+for command in ("export API_MODE=safe","curl https://example.invalid/health",
+                "echo arbitrary fragment","launchctl print gui/501/example --verbose",
+                "jq '.ok' result.json","cd /tmp/private","./rotate-token",
+                "./verify-token"):
+    assert command in multi["anchors"]["commands"], (command,multi["anchors"])
+assert not any("exact operator procedure" in x for x in multi["anchors"]["commands"])
+assert multi["parser_version"]==5
+PYEOF
+then pass "Tier 1 uses stable content keys, field-aware actions/counters, and hard byte cap"
+else fail "Tier 1 stable/action/counter/byte contract"; fi
+
+# Parser-version changes reprocess unchanged source, replace its representation,
+# and explicitly supersede old split items rather than leaving cache/ledger dirt.
+new_env
+if python3 - "$HERE/chat-graph" <<'PYEOF'
+import importlib.machinery,importlib.util,os,sys
+sys.path.insert(0,os.path.dirname(sys.argv[1]))
+l=importlib.machinery.SourceFileLoader("chat_graph_parser_migration",sys.argv[1])
+s=importlib.util.spec_from_loader(l.name,l); cg=importlib.util.module_from_spec(s); l.exec_module(cg)
+con=cg.connect(); sid="PARSER-MIGRATION-41"
+cg.touch_session(con,sid,provider="codex",title="Parser migration")
+messages=[{"id":"same-source","role":"assistant","content":
+ "Re: migration\n\nNEEDS YOU\nRotate the token.\n1. Run:\n```bash\n./rotate-token\n```\n2. Confirm the browser.\n\nDone\n- Repair shipped."}]
+real=cg._coherent_needs_you_items
+cg.TIER1_PARSER_VERSION=1; cg._coherent_needs_you_items=lambda lines: lines
+old=cg._persist_tier1_outcome(con,sid,"codex",messages,"fixture"); con.commit()
+old_keys={x["item_key"] for x in old["open_work"]}
+assert len(old_keys)>1
+cg.TIER1_PARSER_VERSION=5; cg._coherent_needs_you_items=real
+new=cg._persist_tier1_outcome(con,sid,"codex",messages,"fixture"); con.commit()
+new_keys={x["item_key"] for x in new["open_work"]}
+assert len(new_keys)==1 and not (new_keys & old_keys)
+assert con.execute("SELECT COUNT(*) FROM session_outcomes WHERE session_id=?",(sid,)).fetchone()[0]==2
+assert con.execute("SELECT COUNT(*) FROM open_ends WHERE session_id=? AND resolved_at IS NULL",(sid,)).fetchone()[0]==1
+assert con.execute("SELECT COUNT(*) FROM open_ends WHERE session_id=? AND resolution_evidence_type='parser_migration'",(sid,)).fetchone()[0]==len(old_keys)
+# A parser upgrade with a different/unstructured selected source is omission,
+# not compaction evidence, so every prior open fragment stays open.
+sid2="PARSER-OMISSION-41"; cg.touch_session(con,sid2,provider="codex")
+cg.TIER1_PARSER_VERSION=1; cg._coherent_needs_you_items=lambda lines: lines
+old2=cg._persist_tier1_outcome(con,sid2,"codex",messages,"fixture"); con.commit()
+cg.TIER1_PARSER_VERSION=5; cg._coherent_needs_you_items=real
+cg._persist_tier1_outcome(con,sid2,"codex",[
+ {"id":"different-source","role":"assistant","content":"Unstructured later tail."}],"fixture")
+con.commit()
+assert con.execute("SELECT COUNT(*) FROM open_ends WHERE session_id=? AND resolved_at IS NULL",(sid2,)).fetchone()[0]==len(old2["open_work"])
+# Reusing a provider message ID with changed content is still a changed source;
+# message identity alone can never authorize parser_migration resolution.
+sid3="PARSER-REWRITE-41"; cg.touch_session(con,sid3,provider="codex")
+cg.TIER1_PARSER_VERSION=1; cg._coherent_needs_you_items=lambda lines: lines
+old3=cg._persist_tier1_outcome(con,sid3,"codex",[
+ {"id":"rewritten-id","role":"assistant","content":
+  "Re: rewrite\n\nNEEDS YOU\nChoose A.\n1. Confirm A.\n\nDone\n- Waiting."}],"fixture")
+con.commit(); old3_keys={x["item_key"] for x in old3["open_work"]}
+cg.TIER1_PARSER_VERSION=5; cg._coherent_needs_you_items=real
+cg._persist_tier1_outcome(con,sid3,"codex",[
+ {"id":"rewritten-id","role":"assistant","content":
+  "Re: rewrite\n\nNEEDS YOU\nChoose B.\n\nDone\n- Changed."}],"fixture")
+con.commit()
+assert con.execute("SELECT COUNT(*) FROM open_ends WHERE session_id=? AND item_key IN (%s) AND resolved_at IS NULL" % ",".join("?"*len(old3_keys)),(sid3,*old3_keys)).fetchone()[0]==len(old3_keys)
+assert con.execute("SELECT COUNT(*) FROM open_ends WHERE session_id=? AND resolution_evidence_type='parser_migration'",(sid3,)).fetchone()[0]==0
+con.close()
+PYEOF
+then pass "parser version reprocesses source and supersedes split open items"
+else fail "Tier 1 parser-version migration"; fi
+
+# Normal incremental ingestion (not a direct parser call) must reprocess an
+# unchanged file when its stored parser version is older.
+new_env
+mkdir -p "$(cl_root)"
+cat > "$(cl_root)/PARSER-INCREMENTAL-41.jsonl" <<'JSONL'
+{"id":"same-incremental-source","role":"assistant","type":"assistant","content":"Re: migration\n\nNEEDS YOU\nRotate the token.\n1. Run:\n```bash\n./rotate-token\n```\n2. Confirm the browser.\n\nDone\n- Repair shipped."}
+JSONL
+if python3 - "$HERE/chat-graph" <<'PYEOF'
+import importlib.machinery,importlib.util,os,sys
+sys.path.insert(0,os.path.dirname(sys.argv[1]))
+l=importlib.machinery.SourceFileLoader("chat_graph_incremental_migration",sys.argv[1])
+s=importlib.util.spec_from_loader(l.name,l); cg=importlib.util.module_from_spec(s); l.exec_module(cg)
+real=cg._coherent_needs_you_items
+con=cg.connect(); cg.TIER1_PARSER_VERSION=1; cg._coherent_needs_you_items=lambda lines: lines
+cg.scan_transcripts(con,full=True)
+before=con.execute("SELECT COUNT(*) FROM session_outcomes WHERE session_id='PARSER-INCREMENTAL-41'").fetchone()[0]
+assert before==1
+cg.TIER1_PARSER_VERSION=5; cg._coherent_needs_you_items=real
+cg.scan_transcripts(con,full=False)
+assert con.execute("SELECT parser_version FROM file_cursors").fetchone()[0]==5
+assert con.execute("SELECT COUNT(*) FROM session_outcomes WHERE session_id='PARSER-INCREMENTAL-41'").fetchone()[0]==2
+assert con.execute("SELECT COUNT(*) FROM open_ends WHERE session_id='PARSER-INCREMENTAL-41' AND resolved_at IS NULL").fetchone()[0]==1
+assert con.execute("SELECT COUNT(*) FROM open_ends WHERE session_id='PARSER-INCREMENTAL-41' AND resolution_evidence_type='parser_migration'").fetchone()[0]>1
+con.close()
+PYEOF
+then pass "incremental ingest invalidates unchanged sources on parser upgrade"
+else fail "incremental parser-version invalidation"; fi
+
+# --- 42. persisted cards are stable, additive, and emit late updates -------
+new_env
+mkdir -p "$(cl_root)"
+python3 - "$HERE/../tests/fixtures/outcomes/late-closeout.json" "$(cl_root)/66666666-6666-4666-8666-666666666666.jsonl" 0 <<'PYEOF'
+import json, sys
+f = json.load(open(sys.argv[1])); version = f["versions"][int(sys.argv[3])]
+with open(sys.argv[2], "w") as out:
+    for i, m in enumerate(version):
+        out.write(json.dumps({"id":"late-%d" % i,"role":m["role"],"type":m["role"],"content":m["content"]}) + "\n")
+PYEOF
+"$CG" ingest --full >/dev/null 2>&1
+CARD42A="$(q "SELECT json_extract(outcome_json,'$.card_id') FROM session_outcomes WHERE session_id='66666666-6666-4666-8666-666666666666' ORDER BY rowid LIMIT 1")"
+ok 0 "$(q "SELECT finalized FROM session_outcomes WHERE session_id='66666666-6666-4666-8666-666666666666' ORDER BY rowid LIMIT 1")" \
+   "working tail persists a non-finalized outcome card"
+python3 - "$HERE/../tests/fixtures/outcomes/late-closeout.json" "$(cl_root)/66666666-6666-4666-8666-666666666666.jsonl" 1 <<'PYEOF'
+import json, sys
+f = json.load(open(sys.argv[1])); version = f["versions"][int(sys.argv[3])]
+with open(sys.argv[2], "w") as out:
+    for i, m in enumerate(version):
+        out.write(json.dumps({"id":"late-final-%d" % i,"role":m["role"],"type":m["role"],"content":m["content"]}) + "\n")
+PYEOF
+"$CG" ingest --full >/dev/null 2>&1
+CARD42B="$(q "SELECT json_extract(outcome_json,'$.card_id') FROM session_outcomes WHERE session_id='66666666-6666-4666-8666-666666666666' ORDER BY rowid DESC LIMIT 1")"
+ok "$CARD42A" "$CARD42B" "outcome card_id stays stable across changed tails"
+ok 2 "$(q "SELECT COUNT(*) FROM session_outcomes WHERE session_id='66666666-6666-4666-8666-666666666666'")" \
+   "changed late closeout preserves both outcome versions"
+ok 1 "$(q "SELECT finalized FROM session_outcomes WHERE session_id='66666666-6666-4666-8666-666666666666' ORDER BY rowid DESC LIMIT 1")" \
+   "late closeout persists finalized state"
+EXP42="$CHAT_GRAPH_HOME/export/graph.json"
+"$CG" export --json --catchup-limit 0 >/dev/null 2>&1
+if python3 - "$EXP42" <<'PYEOF'
+import json, sys
+d = json.load(open(sys.argv[1])); data = d["data"]
+cards = [x for x in data["outcomes"] if x["session_id"].startswith("66666666")]
+updates = [x for x in data["outcome_updates"] if x["session_id"].startswith("66666666")]
+assert len(cards) == 1 and cards[0]["finalized"] is True
+assert len(updates) >= 1 and updates[-1]["change_type"] == "late_update"
+assert updates[-1]["previous_finalized"] is False and updates[-1]["finalized"] is True
+PYEOF
+then pass "additive export emits latest outcome and late-update event"
+else fail "outcome/late-update export contract"; fi
+
+# A rewind A -> B -> A keeps immutable versions but makes the latest observation A.
+new_env
+if python3 - "$HERE/chat-graph" <<'PYEOF'
+import importlib.machinery,importlib.util,os,sys,time
+sys.path.insert(0,os.path.dirname(sys.argv[1]))
+l=importlib.machinery.SourceFileLoader("chat_graph_rewind",sys.argv[1]); s=importlib.util.spec_from_loader(l.name,l)
+cg=importlib.util.module_from_spec(s); l.exec_module(cg)
+con=cg.connect()
+def messages(label,mid):
+    return [{"id":mid,"role":"assistant","content":
+      "Outcome\n%s\nStatus: complete" % label}]
+cg._persist_tier1_outcome(con,"REWIND42","claude",messages("A","a"),"fixture")
+cg._persist_tier1_outcome(con,"REWIND42","claude",messages("B","b"),"fixture")
+cg._persist_tier1_outcome(con,"REWIND42","claude",messages("A","a"),"fixture")
+con.commit()
+cards,updates=cg._outcome_export(con,0)
+card=[x for x in cards if x["session_id"]=="REWIND42"][0]
+assert con.execute("SELECT COUNT(*) FROM session_outcomes WHERE session_id='REWIND42'").fetchone()[0]==2
+assert con.execute("SELECT COUNT(*) FROM session_outcome_observations WHERE session_id='REWIND42'").fetchone()[0]==3
+assert card["did"]==["A"] and len([u for u in updates if u["session_id"]=="REWIND42"])==2
+PYEOF
+then pass "outcome observations preserve A-B-A current ordering"
+else fail "outcome A-B-A observation ordering"; fi
+
+# --- 43. chat open work resolves only through exact explicit evidence ------
+new_env
+mkdir -p "$(cl_root)"
+cat > "$(cl_root)/ORIGIN43.jsonl" <<'JSONL'
+{"id":"o43","role":"assistant","type":"assistant","content":"Re: parser\n\nAnswer\nWorking.\n\nDone\n- Added the grammar.\n\nNext\n- Finish the privacy review."}
+JSONL
+"$CG" ingest --full >/dev/null 2>&1
+ITEM43="$(q "SELECT item_key FROM open_ends WHERE session_id='ORIGIN43' AND kind='chat_open_end' AND resolved_at IS NULL LIMIT 1")"
+ok 1 "$(q "SELECT COUNT(*) FROM open_ends WHERE session_id='ORIGIN43' AND kind='chat_open_end' AND resolved_at IS NULL")" \
+   "Tier 1 creates stable chat_open_end item"
+# Omission is not evidence.
+cat > "$(cl_root)/ORIGIN43.jsonl" <<'JSONL'
+{"id":"o43b","role":"assistant","type":"assistant","content":"A later message omits the open item."}
+JSONL
+"$CG" ingest --full >/dev/null 2>&1
+ok 1 "$(q "SELECT COUNT(*) FROM open_ends WHERE session_id='ORIGIN43' AND kind='chat_open_end' AND resolved_at IS NULL")" \
+   "later omission does not resolve outcome open work"
+# Unverified downstream mention is not evidence.
+cat > "$(cl_root)/CHILD43.jsonl" <<JSONL
+{"id":"c43","role":"assistant","type":"assistant","content":"Resolves: $ITEM43"}
+JSONL
+"$CG" ingest --full >/dev/null 2>&1
+ok 1 "$(q "SELECT COUNT(*) FROM open_ends WHERE session_id='ORIGIN43' AND item_key='$ITEM43' AND resolved_at IS NULL")" \
+   "unlinked downstream marker cannot resolve an item"
+# Verified spawn edge plus exact key resolves and records the downstream source.
+mk_delegation dlg43 ORIGIN43 CHILD43 yes
+touch "$(cl_root)/CHILD43.jsonl"
+"$CG" ingest --full >/dev/null 2>&1
+ok downstream_explicit "$(q "SELECT resolution_evidence_type FROM open_ends WHERE session_id='ORIGIN43' AND item_key='$ITEM43'")" \
+   "verified downstream exact key stores explicit evidence type"
+ok CHILD43 "$(q "SELECT resolution_evidence_ref FROM open_ends WHERE session_id='ORIGIN43' AND item_key='$ITEM43'")" \
+   "verified downstream exact key stores resolving session"
+
+new_env
+if python3 - "$HERE/chat-graph" <<'PYEOF'
+import importlib.machinery,importlib.util,os,sys
+sys.path.insert(0,os.path.dirname(sys.argv[1]))
+l=importlib.machinery.SourceFileLoader("chat_graph_exact",sys.argv[1]); s=importlib.util.spec_from_loader(l.name,l)
+cg=importlib.util.module_from_spec(s); l.exec_module(cg)
+con=cg.connect(); cg.touch_session(con,"DUP43",provider="claude")
+cg._upsert_open_end(con,"DUP43","chat_open_end","same text",source_key="first")
+cg._upsert_open_end(con,"DUP43","chat_open_end","same text",source_key="second")
+key=con.execute("SELECT item_key FROM open_ends WHERE session_id='DUP43' ORDER BY id LIMIT 1").fetchone()[0]
+assert cg._resolve_open_end_key(con,"DUP43",key,"same_session_explicit","DUP43")==1
+assert con.execute("SELECT COUNT(*) FROM open_ends WHERE session_id='DUP43' AND resolved_at IS NULL").fetchone()[0]==1
+PYEOF
+then pass "exact item-key resolution never fans out through duplicate text"
+else fail "exact item-key resolution fanout"; fi
+
+# --- 44. same-session exact Resolved marker resolves; near-match does not --
+new_env
+mkdir -p "$(cl_root)"
+cat > "$(cl_root)/SAME44.jsonl" <<'JSONL'
+{"id":"s44","role":"assistant","type":"assistant","content":"Re: explicit\n\nAnswer\nWorking.\n\nDone\n- Added one test.\n\nNext\n- Run the exact check."}
+JSONL
+"$CG" ingest --full >/dev/null 2>&1
+ITEM44="$(q "SELECT item_key FROM open_ends WHERE session_id='SAME44' AND kind='chat_open_end' LIMIT 1")"
+cat > "$(cl_root)/SAME44.jsonl" <<JSONL
+{"id":"s44b","role":"assistant","type":"assistant","content":"Resolved: ${ITEM44}x"}
+JSONL
+"$CG" ingest --full >/dev/null 2>&1
+ok 1 "$(q "SELECT COUNT(*) FROM open_ends WHERE session_id='SAME44' AND item_key='$ITEM44' AND resolved_at IS NULL")" \
+   "near-match resolution marker is rejected"
+cat > "$(cl_root)/SAME44.jsonl" <<JSONL
+{"id":"s44a","role":"assistant","type":"assistant","content":"Re: exact\n\nAnswer\nWorking.\n\nDone\n- Asked.\n\nNext\n- Keep this item open."}
+{"id":"s44c","role":"assistant","type":"assistant","content":"Resolved: $ITEM44"}
+JSONL
+"$CG" ingest --full >/dev/null 2>&1
+ok same_session_explicit "$(q "SELECT resolution_evidence_type FROM open_ends WHERE session_id='SAME44' AND item_key='$ITEM44'")" \
+   "same-session exact key stores explicit resolution evidence"
+
+# A structured closeout may carry its own explicit marker in Details. Equality
+# with the selected message is valid; only an older message is stale.
+new_env
+mkdir -p "$(cl_root)"
+cat > "$(cl_root)/SAMEMSG44.jsonl" <<'JSONL'
+{"id":"sm44a","role":"assistant","type":"assistant","content":"Re: same message\n\nAnswer\nWorking.\n\nDone\n- Asked.\n\nNext\n- Keep this item open."}
+JSONL
+"$CG" ingest --full >/dev/null 2>&1
+SAME_MSG_KEY="$(q "SELECT item_key FROM open_ends WHERE session_id='SAMEMSG44' AND kind='chat_open_end' LIMIT 1")"
+cat > "$(cl_root)/SAMEMSG44.jsonl" <<JSONL
+{"id":"sm44b","role":"assistant","type":"assistant","content":"Re: same message\n\nAnswer\nCompleted.\n\nDone\n- Closed it.\n\nDetails\nResolved: $SAME_MSG_KEY"}
+JSONL
+"$CG" ingest --full >/dev/null 2>&1
+ok same_session_explicit "$(q "SELECT resolution_evidence_type FROM open_ends WHERE session_id='SAMEMSG44' AND item_key='$SAME_MSG_KEY'")" \
+   "same-message exact marker resolves its existing item"
+
+new_env
+mkdir -p "$(cl_root)"
+cat > "$(cl_root)/CONTRADICT44.jsonl" <<'JSONL'
+{"id":"co44a","role":"assistant","type":"assistant","content":"Re: contradiction\n\nAnswer\nWorking.\n\nDone\n- Asked.\n\nNext\n- Keep this item open."}
+JSONL
+"$CG" ingest --full >/dev/null 2>&1
+CONTRADICT_KEY="$(q "SELECT item_key FROM open_ends WHERE session_id='CONTRADICT44' AND kind='chat_open_end' LIMIT 1")"
+cat > "$(cl_root)/CONTRADICT44.jsonl" <<JSONL
+{"id":"co44b","role":"assistant","type":"assistant","content":"Re: contradiction\n\nAnswer\nConflicting evidence.\n\nDone\n- Reopened.\n\nNext\n- Keep this item open.\n\nDetails\nResolved: $CONTRADICT_KEY"}
+JSONL
+"$CG" ingest --full >/dev/null 2>&1
+ok 1 "$(q "SELECT COUNT(*) FROM open_ends WHERE session_id='CONTRADICT44' AND item_key='$CONTRADICT_KEY' AND resolved_at IS NULL")" \
+   "contradictory same-message reopen and resolve fails closed"
+
+# --- 45. appended chatter preserves card without reopening resolved work ----
+new_env
+mkdir -p "$(cl_root)"
+cat > "$(cl_root)/CHATTER45.jsonl" <<'JSONL'
+{"id":"ch45a","role":"assistant","type":"assistant","content":"Re: explicit\n\nAnswer\nWorking.\n\nDone\n- Added one test.\n\nNext\n- Run the exact check."}
+JSONL
+"$CG" ingest --full >/dev/null 2>&1
+ITEM45="$(q "SELECT item_key FROM open_ends WHERE session_id='CHATTER45' AND kind='chat_open_end' LIMIT 1")"
+cat >> "$(cl_root)/CHATTER45.jsonl" <<JSONL
+{"id":"ch45b","role":"assistant","type":"assistant","content":"Resolved: $ITEM45"}
+JSONL
+cat >> "$(cl_root)/CHATTER45.jsonl" <<'JSONL'
+{"id":"ch45c","role":"assistant","type":"assistant","content":"Thanks — I will keep that context in mind."}
+JSONL
+"$CG" ingest --full >/dev/null 2>&1
+ok 0 "$(q "SELECT COUNT(*) FROM open_ends WHERE session_id='CHATTER45' AND item_key='$ITEM45' AND resolved_at IS NULL")" \
+   "later chatter does not reopen explicitly resolved work from an older closeout"
+"$CG" export --json --catchup-limit 0 >/dev/null 2>&1
+EXP45="$CHAT_GRAPH_HOME/export/graph.json"
+if python3 - "$EXP45" <<'PYEOF'
+import json, sys
+d = json.load(open(sys.argv[1]))["data"]
+cards = [c for c in d["outcomes"] if c["session_id"] == "CHATTER45"]
+updates = [u for u in d["outcome_updates"] if u["session_id"] == "CHATTER45"]
+assert len(cards) == 1 and cards[0]["grammar"] == "reply_v5"
+assert updates == []
+PYEOF
+then pass "newer chatter preserves newest structured card without false late update"
+else fail "appended chatter outcome stability"; fi
+cat >> "$(cl_root)/CHATTER45.jsonl" <<'JSONL'
+{"id":"ch45d","role":"assistant","type":"assistant","content":"Re: explicit\n\nAnswer\nNew evidence.\n\nDone\n- Added another test.\n\nNext\n- Run the exact check."}
+JSONL
+"$CG" ingest --full >/dev/null 2>&1
+ok 1 "$(q "SELECT COUNT(*) FROM open_ends WHERE session_id='CHATTER45' AND item_key='$ITEM45' AND resolved_at IS NULL")" \
+   "old marker does not re-resolve a newly reopened item"
+
+# Marker and newer reopening closeout can arrive in one collector interval; the
+# older marker must not close the newer source occurrence.
+new_env
+mkdir -p "$(cl_root)"
+cat > "$(cl_root)/ORDER45.jsonl" <<'JSONL'
+{"id":"order-open","role":"assistant","type":"assistant","content":"Re: order\n\nAnswer\nWorking.\n\nDone\n- Asked.\n\nNext\n- Keep this item open."}
+JSONL
+"$CG" ingest --full >/dev/null 2>&1
+ORDER_KEY="$(q "SELECT item_key FROM open_ends WHERE session_id='ORDER45' AND kind='chat_open_end' LIMIT 1")"
+cat > "$(cl_root)/ORDER45.jsonl" <<JSONL
+{"id":"order-marker","role":"assistant","type":"assistant","content":"Resolved: $ORDER_KEY"}
+{"id":"order-new","role":"assistant","type":"assistant","content":"Re: order\n\nAnswer\nNew evidence.\n\nDone\n- Reopened.\n\nNext\n- Keep this item open."}
+JSONL
+"$CG" ingest --full >/dev/null 2>&1
+ok 1 "$(q "SELECT COUNT(*) FROM open_ends WHERE session_id='ORDER45' AND item_key='$ORDER_KEY' AND resolved_at IS NULL")" \
+   "older marker cannot resolve newer closeout in one ingest"
+
+# A new structured closeout followed by chatter is still persisted.
+new_env
+mkdir -p "$(cl_root)"
+cat > "$(cl_root)/NEWCHATTER45.jsonl" <<'JSONL'
+{"id":"nc-old","role":"assistant","type":"assistant","content":"Earlier unstructured message."}
+JSONL
+"$CG" ingest --full >/dev/null 2>&1
+cat >> "$(cl_root)/NEWCHATTER45.jsonl" <<'JSONL'
+{"id":"nc-close","role":"assistant","type":"assistant","content":"Re: new closeout\n\nAnswer\nWorking.\n\nDone\n- New closeout.\n\nNext\n- Preserve this item."}
+{"id":"nc-chat","role":"assistant","type":"assistant","content":"Thanks."}
+JSONL
+"$CG" ingest --full >/dev/null 2>&1
+ok 1 "$(q "SELECT COUNT(*) FROM open_ends WHERE session_id='NEWCHATTER45' AND kind='chat_open_end' AND resolved_at IS NULL")" \
+   "new structured closeout persists open work despite later chatter"
+
+# An exact user Answers marker produces graph-backed answering-turn evidence.
+new_env
+mkdir -p "$(cl_root)"
+cat > "$(cl_root)/ANSWER45.jsonl" <<'JSONL'
+{"id":"answer-open","role":"assistant","type":"assistant","content":"Re: answer\n\nAnswer\nWaiting.\n\nDone\n- Asked.\n\nNeeds you\n- Choose the window."}
+JSONL
+"$CG" ingest --full >/dev/null 2>&1
+ANSWER_KEY="$(q "SELECT item_key FROM open_ends WHERE session_id='ANSWER45' AND kind='chat_open_end' LIMIT 1")"
+cat >> "$(cl_root)/ANSWER45.jsonl" <<JSONL
+{"id":"answer-user","role":"user","type":"user","content":"Answers: $ANSWER_KEY"}
+JSONL
+"$CG" ingest --full >/dev/null 2>&1
+ok answering_user_turn "$(q "SELECT resolution_evidence_type FROM open_ends WHERE session_id='ANSWER45' AND item_key='$ANSWER_KEY'")" \
+   "exact user answer marker produces graph-backed resolution evidence"
+
+new_env
+mkdir -p "$(cl_root)"
+cat > "$(cl_root)/ANSWERORDER45.jsonl" <<'JSONL'
+{"id":"ao-open","role":"assistant","type":"assistant","content":"Re: answer order\n\nAnswer\nWaiting.\n\nDone\n- Asked.\n\nNeeds you\n- Choose the window."}
+JSONL
+"$CG" ingest --full >/dev/null 2>&1
+ANSWER_ORDER_KEY="$(q "SELECT item_key FROM open_ends WHERE session_id='ANSWERORDER45' AND kind='chat_open_end' LIMIT 1")"
+cat > "$(cl_root)/ANSWERORDER45.jsonl" <<JSONL
+{"id":"ao-user","role":"user","type":"user","content":"Answers: $ANSWER_ORDER_KEY"}
+{"id":"ao-new","role":"assistant","type":"assistant","content":"Re: answer order\n\nAnswer\nNew evidence.\n\nDone\n- Reopened.\n\nNeeds you\n- Choose the window."}
+JSONL
+"$CG" ingest --full >/dev/null 2>&1
+ok 1 "$(q "SELECT COUNT(*) FROM open_ends WHERE session_id='ANSWERORDER45' AND item_key='$ANSWER_ORDER_KEY' AND resolved_at IS NULL")" \
+   "older user answer cannot resolve newer decision occurrence"
+
+# --- 46. outcome storage/export fail closed on sensitive tail fields -------
+if python3 - "$HERE/chat-graph" <<'PYEOF'
+import importlib.machinery, importlib.util, json, os, sys
+sys.path.insert(0, os.path.dirname(sys.argv[1]))
+loader = importlib.machinery.SourceFileLoader("chat_graph_privacy", sys.argv[1])
+spec = importlib.util.spec_from_loader(loader.name, loader)
+cg = importlib.util.module_from_spec(spec); loader.exec_module(cg)
+secret = "sk-abcdefghijklmnopqrstuvwxyz123456"
+email = "private.person@example.com"
+card = cg.tier1_parse_outcome("PRIVATE46", "claude", [{"role":"assistant", "content":
+    "Outcome\nSafe statement.\nVerification: `bash run --token %s`\nContact %s\nStatus: complete" % (secret, email)}])
+blob = json.dumps(card)
+assert secret not in blob and email not in blob
+assert card["anchors"]["commands"] == []
+assert card["grammar"] == "unstructured" and card["source_span"]["bytes"] < 64
+PYEOF
+then pass "Tier 1 drops secret/PII fields before card storage or anchor extraction"
+else fail "Tier 1 privacy boundary"; fi
+
+# --- 47. validate-export requires additive outcomes/update arrays ----------
+"$CG" export --json --catchup-limit 0 >/dev/null 2>&1
+EXP47="$CHAT_GRAPH_HOME/export/graph.json"
+"$CG" validate-export "$EXP47" >/dev/null 2>&1
+ok 0 "$?" "validate-export accepts outcome arrays"
+BAD47="$CHAT_GRAPH_HOME/export/bad-outcomes.json"
+python3 - "$EXP47" "$BAD47" <<'PYEOF'
+import json, sys
+d = json.load(open(sys.argv[1])); d["data"].pop("outcomes", None)
+json.dump(d, open(sys.argv[2], "w"))
+PYEOF
+"$CG" validate-export "$BAD47" >/dev/null 2>&1; RC47=$?
+if [ "$RC47" -ne 0 ]; then pass "validate-export rejects snapshot missing outcomes"
+else fail "validate-export accepted snapshot missing outcomes"; fi
+
+# --- 47b. newer Claude subagent file cannot replace parent transcript -------
+new_env
+PARENT47="77777777-7777-4777-8777-777777777777"
+mkdir -p "$CHAT_GRAPH_CLAUDE_ROOT/project/$PARENT47/subagents"
+printf '%s\n' '{"id":"parent","role":"assistant","content":"parent"}' > \
+  "$CHAT_GRAPH_CLAUDE_ROOT/project/$PARENT47.jsonl"
+printf '%s\n' '{"id":"child","role":"assistant","content":"child"}' > \
+  "$CHAT_GRAPH_CLAUDE_ROOT/project/$PARENT47/subagents/agent-child.jsonl"
+touch "$CHAT_GRAPH_CLAUDE_ROOT/project/$PARENT47/subagents/agent-child.jsonl"
+if python3 - "$HERE/chat-graph" "$CHAT_GRAPH_CLAUDE_ROOT/project/$PARENT47.jsonl" <<'PYEOF'
+import importlib.machinery,importlib.util,os,sys
+sys.path.insert(0,os.path.dirname(sys.argv[1]))
+l=importlib.machinery.SourceFileLoader("chat_graph_enum",sys.argv[1]); s=importlib.util.spec_from_loader(l.name,l)
+cg=importlib.util.module_from_spec(s); l.exec_module(cg)
+rows=[r for r in cg._enumerate_files() if r[1]=="claude" and r[2].startswith("77777777")]
+assert len(rows)==1 and rows[0][0]==sys.argv[2], rows
+PYEOF
+then pass "Claude subagent transcript cannot replace parent session source"
+else fail "Claude parent/subagent enumeration"; fi
+
+# --- 48. provider-native transcript stores persist allowlisted cards --------
+new_env
+mkdir -p "$CHAT_GRAPH_CURSOR_ROOT/project" "$CHAT_GRAPH_HERMES_ROOT" \
+         "$CHAT_GRAPH_COPILOT_ROOT/88888888-8888-4888-8888-888888888888"
+cat > "$CHAT_GRAPH_CURSOR_ROOT/project/99999999-9999-4999-8999-999999999999.jsonl" <<'JSONL'
+{"id":"cursor48","role":"assistant","type":"assistant","content":"Outcome\nCursor closeout parsed.\nStatus: complete"}
+JSONL
+python3 - "$CHAT_GRAPH_HERMES_STATE_DB" <<'PYEOF'
+import sqlite3,sys,time
+c=sqlite3.connect(sys.argv[1])
+c.execute("CREATE TABLE sessions(id TEXT PRIMARY KEY,title TEXT,cwd TEXT,started_at REAL)")
+c.execute("""CREATE TABLE messages(id INTEGER PRIMARY KEY,session_id TEXT,role TEXT,
+ content TEXT,timestamp REAL,active INTEGER)""")
+c.execute("INSERT INTO sessions VALUES(?,?,?,?)",
+          ("20260709_123456_abcdef","Hermes fixture","/tmp",time.time()))
+c.execute("INSERT INTO messages VALUES(?,?,?,?,?,1)",
+          (1,"20260709_123456_abcdef","assistant",
+           "Outcome\nHermes closeout parsed.\nStatus: complete",time.time()))
+c.commit()
+PYEOF
+cat > "$CHAT_GRAPH_COPILOT_ROOT/88888888-8888-4888-8888-888888888888/events.jsonl" <<'JSONL'
+{"type":"assistant.message","data":{"content":"Outcome\nCopilot closeout parsed.\nStatus: complete"}}
+JSONL
+"$CG" ingest --full >/dev/null 2>&1
+ok 1 "$(q "SELECT COUNT(*) FROM session_outcomes WHERE provider='cursor'")" \
+   "Cursor transcript store persists Tier 1 card"
+ok 1 "$(q "SELECT COUNT(*) FROM session_outcomes WHERE provider='hermes'")" \
+   "Hermes state.db store persists Tier 1 card"
+ok 1 "$(q "SELECT COUNT(*) FROM session_outcomes WHERE provider='copilot'")" \
+   "Copilot assistant.message store persists Tier 1 card"
+
+# A message committed after the pinned Hermes high-water belongs to the next
+# ingest; the first ingest must not advance its cursor past that unseen row.
+if python3 - "$HERE/chat-graph" "$CHAT_GRAPH_HERMES_STATE_DB" <<'PYEOF'
+import importlib.machinery,importlib.util,os,sqlite3,sys,time
+tool,db=sys.argv[1:]
+writer=sqlite3.connect(db); writer.execute("PRAGMA journal_mode=WAL"); writer.close()
+sys.path.insert(0,os.path.dirname(tool))
+l=importlib.machinery.SourceFileLoader("chat_graph_hermes_race",tool)
+s=importlib.util.spec_from_loader(l.name,l); cg=importlib.util.module_from_spec(s); l.exec_module(cg)
+con=cg.connect()
+con.execute("DELETE FROM session_outcomes WHERE provider='hermes'")
+con.execute("DELETE FROM session_outcome_observations WHERE session_id LIKE 'hermes-race-%'")
+con.execute("DELETE FROM sessions WHERE id LIKE 'hermes-race-%'")
+con.execute("DELETE FROM meta WHERE key='hermes_message_cursor'"); con.commit()
+source=sqlite3.connect(db)
+source.execute("DELETE FROM messages"); source.execute("DELETE FROM sessions")
+source.execute("INSERT INTO sessions VALUES(?,?,?,?)",("hermes-race-1","One","/tmp",time.time()))
+source.execute("INSERT INTO messages VALUES(?,?,?,?,?,1)",(1,"hermes-race-1","assistant",
+ "Outcome\nFirst snapshot.\nStatus: complete",time.time()))
+source.commit(); source.close()
+real_connect=cg.sqlite3.connect; injected=[False]
+def hooked_connect(*args,**kwargs):
+    c=real_connect(*args,**kwargs)
+    if args and str(args[0]).startswith("file:"):
+        def trace(sql):
+            if not injected[0] and "SELECT DISTINCT session_id" in sql:
+                injected[0]=True
+                w=real_connect(db)
+                w.execute("INSERT INTO sessions VALUES(?,?,?,?)",("hermes-race-2","Two","/tmp",time.time()))
+                w.execute("INSERT INTO messages VALUES(?,?,?,?,?,1)",(2,"hermes-race-2","assistant",
+                 "Outcome\nSecond snapshot.\nStatus: complete",time.time()))
+                w.commit(); w.close()
+        c.set_trace_callback(trace)
+    return c
+cg.sqlite3.connect=hooked_connect
+try:
+    assert cg._scan_hermes_state(con,full=True)==1
+finally:
+    cg.sqlite3.connect=real_connect
+con.commit()
+assert cg._get_meta(con,"hermes_message_cursor")=="1"
+assert con.execute("SELECT COUNT(*) FROM session_outcomes WHERE session_id='hermes-race-2'").fetchone()[0]==0
+assert cg._scan_hermes_state(con,full=False)==1
+con.commit()
+assert cg._get_meta(con,"hermes_message_cursor")=="2"
+assert con.execute("SELECT COUNT(*) FROM session_outcomes WHERE session_id='hermes-race-2'").fetchone()[0]==1
+# Replace the source corpus with lower/reused IDs. The stored cursor anchor must
+# force a rebuild and ingest the restored session instead of skipping it.
+w=real_connect(db)
+w.execute("DELETE FROM messages"); w.execute("DELETE FROM sessions")
+w.execute("INSERT INTO sessions VALUES(?,?,?,?)",("hermes-restored","Restored","/tmp",time.time()))
+w.execute("INSERT INTO messages VALUES(?,?,?,?,?,1)",(1,"hermes-restored","assistant",
+ "Outcome\nRestored snapshot.\nStatus: complete",time.time()))
+w.commit(); w.close()
+assert cg._scan_hermes_state(con,full=False)==1
+con.commit()
+assert cg._get_meta(con,"hermes_message_cursor")=="1"
+assert con.execute("SELECT COUNT(*) FROM session_outcomes WHERE session_id='hermes-restored'").fetchone()[0]==1
+con.close()
+PYEOF
+then pass "Hermes pinned high-water handles concurrency and source reset"
+else fail "Hermes incremental high-water race"; fi
 
 echo "----"
 if [ "$FAILS" -eq 0 ]; then echo "ALL PASS"; exit 0; else echo "$FAILS FAILED"; exit 1; fi

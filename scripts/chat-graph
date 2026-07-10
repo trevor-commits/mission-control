@@ -10,8 +10,10 @@ runs write-sandboxed and its tests use mktemp dirs. See docs/MISSION_CONTROL_PLA
 §"Part A" + §"Hardening addenda" for the authoritative design.
 """
 import glob, hashlib, json, os, re, shutil, sqlite3, subprocess, sys, time
+from collections import deque
 
-from mission_control_common import NARRATIVE, safe_text
+from mission_control_common import (ACTION, NARRATIVE, EgressCounters,
+                                    safe_text, sanitize_text)
 
 SCHEMA_VERSION = 5
 STALE_INGEST_S = 30 * 60  # show/doctor staleness threshold
@@ -29,6 +31,8 @@ SESSION_INDEX = lambda: _env("CHAT_GRAPH_SESSION_INDEX", "~/.codex/session_index
 CHAT_SOURCE   = lambda: _env("CHAT_GRAPH_CHAT_SOURCE", "~/.codex/scripts/chat-source")
 CODING_ROOT   = lambda: _env("CHAT_GRAPH_CODING_ROOT", "/Users/gillettes/Coding Projects")
 NIGHTLY_GLOB  = lambda: _env("CHAT_GRAPH_NIGHTLY_REPORT_GLOB", "~/.claude/nightly-review/reports/*.md")
+HERMES_STATE_DB = lambda: _env("CHAT_GRAPH_HERMES_STATE_DB", "~/.hermes/state.db")
+TIER1_PARSER_VERSION = 5
 
 def db_path():      return os.path.join(HOME_DIR(), "graph.db")
 def journal_path(): return os.path.join(HOME_DIR(), "journal", "manual.jsonl")
@@ -200,11 +204,24 @@ def _migrate(con):
         source_start TEXT, source_end TEXT, source_span TEXT,
         evidence_fingerprint TEXT, created_at INTEGER,
         UNIQUE(session_id, tail_hash));
+      CREATE TABLE IF NOT EXISTS session_outcome_observations(
+        observation_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        session_id TEXT NOT NULL, outcome_id TEXT NOT NULL,
+        tail_hash TEXT NOT NULL, observed_at INTEGER NOT NULL,
+        finalized INTEGER DEFAULT 0, evidence_fingerprint TEXT,
+        UNIQUE(session_id, observation_id));
+      CREATE INDEX IF NOT EXISTS idx_outcome_observation_session
+        ON session_outcome_observations(session_id, observation_id);
+      CREATE TABLE IF NOT EXISTS outcome_resolution_markers(
+        marker_ref TEXT PRIMARY KEY, session_id TEXT NOT NULL,
+        item_key TEXT NOT NULL, marker_type TEXT NOT NULL,
+        applied_at INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS collector_state(
         collector TEXT PRIMARY KEY, cursor TEXT, last_run INTEGER,
         row_count INTEGER DEFAULT 0);
       CREATE TABLE IF NOT EXISTS file_cursors(
-        path TEXT PRIMARY KEY, mtime INTEGER, size INTEGER);
+        path TEXT PRIMARY KEY, mtime INTEGER, size INTEGER,
+        parser_version INTEGER DEFAULT 0);
     """)
     # additive columns (idempotent; ALTER has no IF NOT EXISTS pre-3.35)
     for col, decl in (("first_msg_uuid", "TEXT"), ("enriched_at", "INTEGER"),
@@ -213,12 +230,24 @@ def _migrate(con):
             con.execute("ALTER TABLE sessions ADD COLUMN %s %s" % (col, decl))
         except sqlite3.OperationalError:
             pass
+    try:
+        con.execute("ALTER TABLE file_cursors ADD COLUMN parser_version INTEGER DEFAULT 0")
+    except sqlite3.OperationalError:
+        pass
     open_cols = {r["name"] for r in con.execute("PRAGMA table_info('open_ends')")}
     if "first_seen_at" not in open_cols:
         con.execute("ALTER TABLE open_ends ADD COLUMN first_seen_at INTEGER")
     if not _open_end_schema_v5(con):
         _rebuild_open_ends_v5(con)
     con.execute("CREATE INDEX IF NOT EXISTS idx_open_ends_updated ON open_ends(updated_at, item_key)")
+    if _get_meta(con, "outcome_observations_backfilled", "0") != "1":
+        if con.execute("SELECT COUNT(*) FROM session_outcome_observations").fetchone()[0] == 0:
+            con.execute("""INSERT INTO session_outcome_observations(
+                session_id,outcome_id,tail_hash,observed_at,finalized,evidence_fingerprint)
+                SELECT session_id,id,tail_hash,COALESCE(created_at,updated_at,?),
+                       finalized,evidence_fingerprint FROM session_outcomes
+                ORDER BY COALESCE(created_at,updated_at,0),rowid""", (int(time.time()),))
+        _set_meta(con, "outcome_observations_backfilled", "1")
     con.execute("UPDATE open_ends SET first_seen_at=COALESCE(first_seen_at, ?), "
                 "updated_at=COALESCE(updated_at, resolved_at, first_seen_at, ?), "
                 "last_change_type=COALESCE(last_change_type, CASE WHEN resolved_at IS NULL "
@@ -319,6 +348,17 @@ def _resolve_open_end(con, sid, text_hash, evidence_type, evidence_ref):
                 last_change_type='resolved'
                 WHERE session_id=? AND text_hash=? AND resolved_at IS NULL""",
                 (now, now, evidence_type, evidence_ref, sid, text_hash))
+
+
+def _resolve_open_end_key(con, sid, item_key, evidence_type, evidence_ref):
+    """Resolve one exact parsed item; shared text must never fan resolution out."""
+    now = int(time.time())
+    return con.execute("""UPDATE open_ends SET resolved_at=?, updated_at=?,
+                resolution_evidence_type=?, resolution_evidence_ref=?,
+                last_change_type='resolved'
+                WHERE session_id=? AND kind='chat_open_end' AND item_key=?
+                  AND resolved_at IS NULL""",
+                (now, now, evidence_type, evidence_ref, sid, item_key)).rowcount
 
 def _apply_resolve(con, sid, text_hash):
     _resolve_open_end(con, sid, text_hash, "manual", "journal")
@@ -569,6 +609,9 @@ COLLECTORS = {
 # ---- transcript scanner ---------------------------------------------------
 CLAUDE_ROOT = lambda: _env("CHAT_GRAPH_CLAUDE_ROOT", "~/.claude/projects")
 CODEX_ROOT  = lambda: _env("CHAT_GRAPH_CODEX_ROOT", "~/.codex/sessions")
+CURSOR_ROOT = lambda: _env("CHAT_GRAPH_CURSOR_ROOT", "~/.cursor/projects")
+HERMES_ROOT = lambda: _env("CHAT_GRAPH_HERMES_ROOT", "~/.hermes/sessions")
+COPILOT_ROOT = lambda: _env("CHAT_GRAPH_COPILOT_ROOT", "~/.copilot/session-state")
 def _default_register():
     gi = os.path.expanduser("~/Coding Projects/global-implementations/ENFORCEMENT_REQUESTS.md")
     if os.path.isfile(gi):
@@ -580,12 +623,17 @@ REGISTER    = lambda: _env("CHAT_GRAPH_REGISTER", _default_register())
 
 MAX_FILE_BYTES = 200 * 1024 * 1024
 TOPIC_CAP = 8
+TIER1_MAX_MESSAGES = 12
+TIER1_MAX_BYTES = 32 * 1024
 
 _UUID_RE = re.compile(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
 _CODE_RE = re.compile(r"\b(?:ER|GR|HB|HR)-\d{3}\b")
 _SPAWNED_BY_RE    = re.compile(r"Spawned-by:\s*parent_provider=(\S+)\s+parent_id=(\S+)")
 _SPAWNED_CHILD_RE = re.compile(r"Spawned-child:\s*provider=(\S+)\s+child_id=(\S+)")
 _HANDOFF_RE = re.compile(r"Handoff:\s*(.+)")
+_EXPLICIT_RESOLVED_RE = re.compile(r"(?im)^\s*Resolved:\s*([0-9a-f]{40})\s*$")
+_EXPLICIT_RESOLVES_RE = re.compile(r"(?im)^\s*Resolves:\s*([0-9a-f]{40})\s*$")
+_EXPLICIT_ANSWERS_RE = re.compile(r"(?im)^\s*Answers:\s*([0-9a-f]{40})\s*$")
 # line prefilter: skip json.loads unless the raw line could carry a signal.
 _PREFILTER = ("Spawned-", "Session Closeout", "ER-", "GR-")
 
@@ -695,12 +743,15 @@ def _msg_text(rec):
     hook/tool text must never feed signal extraction."""
     if not isinstance(rec, dict):
         return None
-    msg, payload = rec.get("message"), rec.get("payload")
+    msg, payload, data = rec.get("message"), rec.get("payload"), rec.get("data")
     role, typ, content = rec.get("role"), rec.get("type"), None
     if isinstance(msg, dict):
         role = role or msg.get("role"); content = msg.get("content")
     elif isinstance(payload, dict):
         role = role or payload.get("role"); content = payload.get("content")
+    elif isinstance(data, dict) and typ in ("assistant.message", "user.message"):
+        role = "assistant" if typ == "assistant.message" else "user"
+        content = data.get("content")
     elif "content" in rec:
         content = rec.get("content")
     if role not in ("user", "assistant") and typ not in ("user", "assistant"):
@@ -716,6 +767,503 @@ def _msg_text(rec):
                 parts.append(b)
         return "\n".join(parts)
     return None
+
+def _assistant_role(rec):
+    """Return True only for a first-party assistant message, never tool output."""
+    if not isinstance(rec, dict):
+        return False
+    msg, payload = rec.get("message"), rec.get("payload")
+    role, typ = rec.get("role"), rec.get("type")
+    if isinstance(msg, dict):
+        role = role or msg.get("role")
+    elif isinstance(payload, dict):
+        role = role or payload.get("role")
+    return role == "assistant" or typ in ("assistant", "assistant.message")
+
+
+def _user_role(rec):
+    if not isinstance(rec, dict):
+        return False
+    msg, payload = rec.get("message"), rec.get("payload")
+    role, typ = rec.get("role"), rec.get("type")
+    if isinstance(msg, dict):
+        role = role or msg.get("role")
+    elif isinstance(payload, dict):
+        role = role or payload.get("role")
+    return role == "user" or typ in ("user", "user.message")
+
+def _utf8_tail(value, limit):
+    data = (value or "").encode("utf-8", "replace")
+    if len(data) <= limit:
+        return value or ""
+    data = data[-limit:]
+    while data:
+        try:
+            return data.decode("utf-8")
+        except UnicodeDecodeError:
+            data = data[1:]
+    return ""
+
+
+def _assistant_message_ref(rec, raw):
+    for key in ("uuid", "id", "message_id", "platform_message_id", "timestamp"):
+        value = rec.get(key) if isinstance(rec, dict) else None
+        if value not in (None, ""):
+            return _sha1("assistant-message:%s" % value)
+    payload = rec.get("payload") if isinstance(rec, dict) else None
+    if isinstance(payload, dict):
+        for key in ("id", "message_id", "timestamp"):
+            if payload.get(key) not in (None, ""):
+                return _sha1("assistant-message:%s" % payload[key])
+    return _sha1("assistant-message-content:%s" % raw)
+
+def bounded_assistant_tail(messages, max_messages=TIER1_MAX_MESSAGES,
+                           max_bytes=TIER1_MAX_BYTES, counters=None):
+    """Return a sanitized, chronological assistant tail within both hard caps."""
+    counters = counters if counters is not None else EgressCounters()
+    selected, remaining = [], max(0, int(max_bytes))
+    for rec in reversed(list(messages or [])):
+        if len(selected) >= max(0, int(max_messages)) or remaining <= 0:
+            break
+        if not _assistant_role(rec):
+            continue
+        raw = _msg_text(rec)
+        if raw is None:
+            continue
+        separator = 2 if selected else 0
+        available = max(0, remaining - separator)
+        raw = _utf8_tail(raw, available)
+        if not raw:
+            continue
+        narrative = sanitize_text(raw, NARRATIVE, counters=counters)
+        text = _utf8_tail(narrative.value, available)
+        raw = _utf8_tail(raw, available)
+        field_bytes = max(len(text.encode("utf-8")), len(raw.encode("utf-8")))
+        selected.append({"role": "assistant", "content": text,
+                         "action_content": raw,
+                         "message_ref": _assistant_message_ref(rec, raw)})
+        remaining -= field_bytes + separator
+    selected.reverse()
+    return selected
+
+def read_assistant_messages(path, max_messages=TIER1_MAX_MESSAGES):
+    """Read only the bounded assistant-message window from one JSONL transcript."""
+    tail = deque(maxlen=max(1, int(max_messages)))
+    with open(path, errors="strict") as f:
+        for raw in f:
+            raw = raw.strip()
+            if not raw:
+                continue
+            try:
+                rec = json.loads(raw)
+            except ValueError:
+                continue
+            if _assistant_role(rec) and _msg_text(rec) is not None:
+                tail.append(rec)
+    return list(tail)
+
+def _section_lines(text, heading):
+    """Extract simple Markdown/plain-text section lines up to the next heading."""
+    names = ("Re", "Answer", "Done", "Problems", "Next", "Details", "Outcome",
+             "Verification", "Status", "Findings", "Residual risk", "Needs you")
+    line_re = re.compile(r"(?im)^\s*(?:#{1,6}\s*)?(?:🔴\s*)?(?:\*\*)?%s"
+                         r"(?:\*\*)?\s*:?[ \t]*$" % re.escape(heading))
+    match = line_re.search(text or "")
+    if not match:
+        return []
+    end = len(text)
+    following = re.compile(r"(?im)^\s*(?:#{1,6}\s*)?(?:🔴\s*)?(?:\*\*)?"
+                           r"(?:%s)(?:\*\*)?(?:\s*:[ \t]*.*|[ \t]*)$" %
+                           "|".join(re.escape(n) for n in names))
+    next_match = following.search(text, match.end())
+    if next_match:
+        end = next_match.start()
+    out = []
+    for raw in text[match.end():end].splitlines():
+        line = re.sub(r"^\s*(?:[-*]|\d+[.)])\s+", "", raw).strip()
+        if line:
+            out.append(line)
+    return out
+
+def _prefixed_value_lines(text, heading):
+    pattern = re.compile(r"(?im)^\s*(?:[-*]\s*)?%s\s*:\s*(.+?)\s*$" % re.escape(heading))
+    return [m.group(1).strip() for m in pattern.finditer(text or "") if m.group(1).strip()]
+
+def _structured_commands(text, counters=None):
+    commands = []
+    command_prefix = re.compile(
+        r"^(?:(?:bash|sh|zsh|python3?|node|git|pnpm|npm|yarn|pytest|codex|"
+        r"claude|chat-graph|cd|export|curl)(?:\s|$)|\./|/)", re.I)
+
+    def add(value, allow_any=False):
+        value = re.sub(r"^\s*\$\s*", "", value or "").strip()
+        if (not value or value.startswith("#") or
+                (not allow_any and not command_prefix.match(value))):
+            return
+        result = sanitize_text(value, ACTION, counters=counters)
+        if not result.dropped and result.value not in commands:
+            commands.append(result.value)
+
+    for match in re.finditer(r"`([^`\r\n]{1,1000})`", text or ""):
+        add(match.group(1))
+    for match in re.finditer(
+            r"```(?:bash|sh|zsh|shell)[ \t]*\n(.*?)\n?```", text or "",
+            re.I | re.S):
+        continued = ""
+        for line in match.group(1).splitlines():
+            if len(commands) >= 20:
+                break
+            value = line.strip()
+            if not value or value.startswith("#"):
+                continue
+            if value.endswith("\\"):
+                continued += value[:-1].rstrip() + " "
+                continue
+            add(continued + value, allow_any=True)
+            continued = ""
+        if continued and len(commands) < 20:
+            add(continued.rstrip(), allow_any=True)
+    return commands[:20]
+
+def _structured_commits(text):
+    commits = []
+    pattern = re.compile(r"(?im)^\s*(?:[-*]\s*)?(?:Commit(?:s)?|SHA)\s*:\s*(.+)$")
+    for line in pattern.findall(text or ""):
+        for commit in re.findall(r"(?<![0-9a-f])[0-9a-f]{7,40}(?![0-9a-f])", line, re.I):
+            value = commit.lower()
+            if value not in commits:
+                commits.append(value)
+    return commits[:20]
+
+def _structured_ids(text):
+    ids = []
+    for value in _UUID_RE.findall(text or "") + _CODE_RE.findall(text or ""):
+        if value not in ids:
+            ids.append(value)
+    return ids[:40]
+
+def _narrative_items(lines):
+    """Keep claims, not status/commit/verification metadata, in `did`."""
+    return [line for line in lines
+            if not re.match(r"(?i)^(?:status|commit(?:s)?|sha|push|provenance|verification)\s*:",
+                            line)][:20]
+
+
+def _coherent_needs_you_items(lines):
+    """Collapse one operator request block into one readable decision.
+
+    Exact commands remain in structured anchors. Narrative cards keep the
+    human instruction and omit fence/label/command fragments so one numbered
+    procedure never becomes a dozen unrelated decisions.
+    """
+    narrative = []
+    in_fence = False
+    command = re.compile(
+        r"^(?:```|Run:|Confirm:|cd\s|\./|/|(?:bash|sh|zsh|python3?|node|git|"
+        r"pnpm|npm|yarn|pytest|codex|claude|chat-graph)(?:\s|$))", re.I)
+    for value in lines:
+        value = re.sub(r"\s+", " ", value or "").strip()
+        if value.startswith("```"):
+            in_fence = not in_fence
+            continue
+        if in_fence:
+            continue
+        if not value or command.match(value):
+            continue
+        narrative.append(value)
+    if not narrative:
+        return ["Review the source chat for the exact operator action."] if lines else []
+    return [" ".join(narrative)[:2000]]
+
+
+def _tier1_source_key(grammar, heading, text, occurrences):
+    normalized = re.sub(r"\s+", " ", text or "").strip().casefold()
+    digest = _sha1(normalized)
+    key = (heading, digest)
+    occurrence = occurrences.get(key, 0)
+    occurrences[key] = occurrence + 1
+    return "tier1:%s:%s:%s:%d" % (grammar, heading, digest, occurrence)
+
+def _outcome_grammar(text):
+    if (re.search(r"(?im)^\s*Goal\s*:\s*\S", text) and
+            re.search(r"(?im)^\s*Runner\s*:\s*\S", text) and
+            re.search(r"(?im)^\s*Model\s*:\s*\S", text)):
+        return "handoff_packet", "authored_handoff"
+    if (re.search(r"(?im)^\s*(?:#{1,6}\s*)?(?:\*\*)?Audited Chat(?:\*\*)?\s*$", text) or
+            (re.search(r"(?im)^\s*(?:#{1,6}\s*)?(?:\*\*)?Findings(?:\*\*)?\s*$", text) and
+             re.search(r"(?im)review(?: result)?\s*:", text))):
+        return "audit_report", "audit_report"
+    if (re.search(r"(?im)^\s*(?:#{1,6}\s*)?(?:\*\*)?Re\s*:(?:\*\*)?", text) and
+            re.search(r"(?im)^\s*(?:#{1,6}\s*)?(?:\*\*)?Done(?:\*\*)?\s*:?[ \t]*$", text)):
+        return "reply_v5", "execution_closeout"
+    if (re.search(r"(?im)^\s*(?:#{1,6}\s*)?(?:\*\*)?(?:Outcome|Session Closeout)"
+                  r"(?:\*\*)?\s*:?[ \t]*$", text) or
+            (re.search(r"(?im)^\s*(?:[-*]\s*)?Status\s*:\s*\S", text) and
+             re.search(r"(?im)^\s*(?:[-*]\s*)?(?:Commit|Verification|Provenance)\s*:", text))):
+        return "codex_closeout", "execution_closeout"
+    return "unstructured", "unstructured"
+
+def tier1_parse_outcome(session_id, provider, messages):
+    """Parse a deterministic outcome card from a bounded assistant-only tail.
+
+    This function performs no I/O, model, or network work. Narrative and anchors
+    are derived only from the supplied structured source text.
+    """
+    counters = EgressCounters()
+    tail = bounded_assistant_tail(messages, counters=counters)
+    texts = [m["content"] for m in tail]
+    action_texts = [m["action_content"] for m in tail]
+    joined = "\n\n".join(texts)
+    tail_bytes = len(joined.encode("utf-8"))
+    selected_index = len(texts) - 1
+    selected_text = texts[-1] if texts else ""
+    grammar, classification = _outcome_grammar(selected_text)
+    if grammar == "unstructured":
+        # Tool chatter is already excluded, but a later conversational assistant
+        # turn can follow a real closeout. Keep the newest structured card in the
+        # bounded window while hashing the full tail for cache/version identity.
+        for index in range(len(texts) - 2, -1, -1):
+            candidate_grammar, candidate_class = _outcome_grammar(texts[index])
+            if candidate_grammar != "unstructured":
+                selected_index, selected_text = index, texts[index]
+                grammar, classification = candidate_grammar, candidate_class
+                break
+    safe_provider = provider if provider in CHAT_PROVIDERS else "unknown"
+    card_id = _sha1("outcome-card:%s" % session_id)
+    did = []
+    open_work = []
+    occurrences = {}
+
+    if classification == "authored_handoff":
+        did = ["Authored a handoff packet"]
+    elif classification == "audit_report":
+        did = ["Completed an audit report"]
+    elif grammar == "reply_v5":
+        did = _narrative_items(_section_lines(selected_text, "Done"))
+        for heading in ("Needs you", "Problems", "Next"):
+            section = heading.lower().replace(" ", "_")
+            values = _section_lines(selected_text, heading)[:20]
+            if heading == "Needs you":
+                values = _coherent_needs_you_items(values)
+            for value in values:
+                source_key = _tier1_source_key(grammar, section, value, occurrences)
+                open_work.append({
+                    "item_key": _open_item_key("chat_open_end", session_id, source_key),
+                    "source_key": source_key,
+                    "section": section,
+                    "text": safe_text(value, NARRATIVE, counters=counters),
+                })
+    elif grammar == "codex_closeout":
+        did = _narrative_items(_section_lines(selected_text, "Outcome"))
+        if not did:
+            did = _narrative_items(_prefixed_value_lines(selected_text, "Outcome"))
+        if not did:
+            did = ["Reported a structured execution closeout"]
+        for heading in ("Problems", "Next"):
+            section = heading.lower()
+            for value in _section_lines(selected_text, heading)[:20]:
+                source_key = _tier1_source_key(grammar, section, value, occurrences)
+                open_work.append({
+                    "item_key": _open_item_key("chat_open_end", session_id, source_key),
+                    "source_key": source_key,
+                    "section": section,
+                    "text": safe_text(value, NARRATIVE, counters=counters),
+                })
+
+    finalized = False
+    if grammar in ("reply_v5", "audit_report", "handoff_packet"):
+        finalized = True
+    elif grammar == "codex_closeout":
+        finalized = bool(re.search(
+            r"(?im)^\s*(?:[-*]\s*)?Status\s*:\s*(?:complete|completed|done|pass|passed|review-clean)\s*$",
+            selected_text))
+
+    selected_action_text = action_texts[selected_index] if action_texts else ""
+    anchors = {
+        "commits": _structured_commits(selected_text),
+        "commands": _structured_commands(selected_action_text, counters=counters),
+        "ids": _structured_ids(selected_text),
+    }
+    markers = [
+        {"type": marker_type, "item_key": item_key,
+         "marker_ref": "%s:%s:%s" % (message["message_ref"], marker_type, item_key),
+         "message_index": message_index}
+        for message_index, message in enumerate(tail)
+        for marker_type, regex in (("same_session", _EXPLICIT_RESOLVED_RE),
+                                   ("downstream", _EXPLICIT_RESOLVES_RE))
+        for item_key in regex.findall(message["action_content"])
+    ]
+    tail_hash = _sha1(json.dumps({
+        "parser_version": TIER1_PARSER_VERSION,
+        "narrative": joined,
+        "anchors": anchors,
+        "markers": markers,
+        "selected_message_ref": (tail[selected_index]["message_ref"] if tail else None),
+    }, ensure_ascii=True, sort_keys=True))
+    evidence = {
+        "grammar": grammar,
+        "did": did,
+        "open_work": open_work,
+        "anchors": anchors,
+    }
+    return {
+        "card_id": card_id,
+        "session_id": session_id,
+        "provider": safe_provider,
+        "parser_version": TIER1_PARSER_VERSION,
+        "classification": classification,
+        "grammar": grammar,
+        "did": did,
+        "open_work": open_work,
+        "anchors": anchors,
+        "tail_hash": tail_hash,
+        "extraction_status": "structured" if grammar != "unstructured" else "unparsed",
+        "finalized": finalized,
+        "method": "tier1",
+        "confidence": 1.0 if grammar != "unstructured" else 0.0,
+        "source_span": {"message_count": len(tail), "bytes": tail_bytes,
+                        "selected_message_index": selected_index,
+                        "selected_is_latest": selected_index == len(texts) - 1,
+                        "selected_message_ref": (tail[selected_index]["message_ref"]
+                                                 if tail else None),
+                        "selected_content_hash": (_sha1(selected_text)
+                                                  if tail else None),
+                        "selected_bytes": len(selected_text.encode("utf-8"))},
+        "evidence_fingerprint": _sha1(json.dumps(evidence, sort_keys=True)),
+        "egress_counters": counters.snapshot(),
+        "resolution_markers": markers,
+    }
+
+def _apply_outcome_resolutions(con, sid, card):
+    current_open_keys = {
+        item.get("item_key") for item in (card.get("open_work") or [])
+        if isinstance(item, dict) and item.get("item_key")
+    }
+    for marker in card.get("resolution_markers") or []:
+        if not isinstance(marker, dict):
+            continue
+        item_key = marker.get("item_key")
+        marker_type = marker.get("type")
+        marker_ref = marker.get("marker_ref")
+        if (not item_key or not marker_ref or con.execute(
+                "SELECT 1 FROM outcome_resolution_markers WHERE marker_ref=?",
+                (marker_ref,)).fetchone()):
+            continue
+        if (marker_type == "same_session" and
+                int(marker.get("message_index", -1)) < int(
+                    card.get("source_span", {}).get("selected_message_index", -1))):
+            continue
+        if (marker_type == "same_session" and
+                int(marker.get("message_index", -1)) == int(
+                    card.get("source_span", {}).get("selected_message_index", -1)) and
+                item_key in current_open_keys):
+            # One selected card cannot both reopen and resolve the same key.
+            # Preserve it as open until a non-contradictory later marker.
+            continue
+        resolved_sid = None
+        if marker_type == "same_session":
+            if _resolve_open_end_key(con, sid, item_key,
+                                     "same_session_explicit", sid):
+                resolved_sid = sid
+        elif marker_type == "downstream":
+            row = con.execute("""SELECT o.session_id FROM open_ends o
+            WHERE o.item_key=? AND o.resolved_at IS NULL AND o.session_id != ?
+              AND EXISTS(
+                SELECT 1 FROM edges e
+                WHERE e.status='active' AND e.confidence >= 0.95
+                  AND e.type IN ('spawned','continues')
+                  AND ((e.type='spawned' AND e.src=o.session_id AND e.dst=?)
+                    OR (e.type='continues' AND e.src=? AND e.dst=o.session_id))
+                  AND NOT EXISTS(SELECT 1 FROM suppressions s
+                    WHERE s.src=e.src AND s.dst=e.dst AND s.type=e.type))
+            ORDER BY o.id LIMIT 1""", (item_key, sid, sid, sid)).fetchone()
+            if row and _resolve_open_end_key(
+                    con, row["session_id"], item_key, "downstream_explicit", sid):
+                resolved_sid = row["session_id"]
+        if resolved_sid:
+            con.execute("""INSERT INTO outcome_resolution_markers(
+                marker_ref,session_id,item_key,marker_type,applied_at)
+                VALUES(?,?,?,?,?)""",
+                (marker_ref, resolved_sid, item_key, marker_type, int(time.time())))
+
+def _persist_tier1_outcome(con, sid, provider, messages, path):
+    card = tier1_parse_outcome(sid, provider, messages)
+    if card["source_span"]["message_count"] == 0:
+        return None
+    now = int(time.time())
+    version_id = _sha1("outcome-version:%s:%s" % (sid, card["tail_hash"]))
+    prior_observation = con.execute("""SELECT o.tail_hash,v.outcome_json
+        FROM session_outcome_observations o
+        JOIN session_outcomes v ON v.id=o.outcome_id
+        WHERE o.session_id=? ORDER BY o.observation_id DESC LIMIT 1""",
+        (sid,)).fetchone()
+    exists = con.execute("SELECT id FROM session_outcomes WHERE session_id=? AND tail_hash=?",
+                         (sid, card["tail_hash"])).fetchone()
+    if not exists:
+        con.execute("""INSERT INTO session_outcomes(
+                    id, session_id, provider, tail_hash, outcome_json,
+                    extraction_status, finalized, updated_at, method, confidence,
+                    source_start, source_end, source_span, evidence_fingerprint, created_at)
+                    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    (version_id, sid, card["provider"], card["tail_hash"],
+                     json.dumps(card, sort_keys=True), card["extraction_status"],
+                     1 if card["finalized"] else 0, now, "tier1", card["confidence"],
+                     "assistant-tail", "assistant-tail-end",
+                     json.dumps(card["source_span"], sort_keys=True),
+                     card["evidence_fingerprint"], now))
+    if prior_observation is None or prior_observation["tail_hash"] != card["tail_hash"]:
+        con.execute("""INSERT INTO session_outcome_observations(
+            session_id,outcome_id,tail_hash,observed_at,finalized,evidence_fingerprint)
+            VALUES(?,?,?,?,?,?)""",
+            (sid, version_id, card["tail_hash"], now,
+             1 if card["finalized"] else 0, card["evidence_fingerprint"]))
+    prior_selected = None
+    prior_card = None
+    if prior_observation is not None:
+        try:
+            prior_card = json.loads(prior_observation["outcome_json"])
+            prior_selected = prior_card.get("source_span", {}).get(
+                "selected_message_ref")
+        except (TypeError, ValueError):
+            prior_selected, prior_card = None, None
+    prior_parser_version = int((prior_card or {}).get("parser_version") or 1)
+    parser_changed = prior_parser_version < TIER1_PARSER_VERSION
+    same_selected_source = bool(
+        prior_selected and
+        prior_selected == card["source_span"].get("selected_message_ref") and
+        (prior_card or {}).get("source_span", {}).get("selected_content_hash") and
+        (prior_card or {}).get("source_span", {}).get("selected_content_hash") ==
+        card["source_span"].get("selected_content_hash"))
+    # Persist a genuinely new structured closeout even if harmless chatter
+    # follows it; do not reuse an older selected closeout merely because the
+    # surrounding bounded tail changed.
+    if (prior_observation is None or
+            prior_selected != card["source_span"].get("selected_message_ref") or
+            parser_changed):
+        for item in card.get("open_work", []):
+            _upsert_open_end(con, sid, "chat_open_end", item["text"],
+                             source_key=item["source_key"])
+    old_needs = [item for item in (prior_card or {}).get("open_work", [])
+                 if isinstance(item, dict) and item.get("section") == "needs_you"]
+    new_needs = [item for item in card.get("open_work", [])
+                 if isinstance(item, dict) and item.get("section") == "needs_you"]
+    migration_compaction = (
+        parser_changed and same_selected_source and
+        (prior_card or {}).get("grammar") == "reply_v5" and
+        card.get("grammar") == "reply_v5" and
+        len(old_needs) >= 1 and len(new_needs) == 1 and
+        {item.get("item_key") for item in old_needs} !=
+        {item.get("item_key") for item in new_needs})
+    if migration_compaction:
+        current_keys = {item.get("item_key") for item in card.get("open_work", [])}
+        for old_item in old_needs:
+            old_key = old_item.get("item_key") if isinstance(old_item, dict) else None
+            if old_key and old_key not in current_keys:
+                _resolve_open_end_key(
+                    con, sid, old_key, "parser_migration",
+                    "tier1:v%d-to-v%d" % (prior_parser_version, TIER1_PARSER_VERSION))
+    _apply_outcome_resolutions(con, sid, card)
+    return card
 
 def _rec_uuid(rec):
     for k in ("uuid", "id", "message_id"):
@@ -757,28 +1305,123 @@ def _get_meta(con, k, default=None):
 
 def _enumerate_files():
     """(path, provider, sid, mtime_ns, size), newest-first."""
-    out = []
-    for path in glob.glob(os.path.join(CLAUDE_ROOT(), "**", "*.jsonl"), recursive=True):
-        try:
-            st = os.stat(path)
-        except OSError:
+    newest = {}
+    specs = (
+        ("claude", CLAUDE_ROOT(), "*.jsonl"),
+        ("codex", CODEX_ROOT(), "rollout-*.jsonl"),
+        ("cursor", CURSOR_ROOT(), "*.jsonl"),
+        ("copilot", COPILOT_ROOT(), "*.jsonl"),
+    )
+    for provider, root, pattern in specs:
+        if not os.path.isdir(root):
             continue
-        out.append((path, "claude", os.path.basename(path)[:-6], st.st_mtime_ns, st.st_size))
-    for path in glob.glob(os.path.join(CODEX_ROOT(), "**", "rollout-*.jsonl"), recursive=True):
-        try:
-            st = os.stat(path)
-        except OSError:
-            continue
-        name = os.path.basename(path)
-        m = _UUID_RE.search(name)
-        sid = m.group(0) if m else name[len("rollout-"):-6]
-        out.append((path, "codex", sid, st.st_mtime_ns, st.st_size))
+        for path in glob.glob(os.path.join(root, "**", pattern), recursive=True):
+            if provider == "claude" and "subagents" in os.path.relpath(
+                    path, root).split(os.sep):
+                continue
+            try:
+                st = os.stat(path)
+            except OSError:
+                continue
+            match = _UUID_RE.search(path)
+            name = os.path.basename(path)
+            stem = name[:-6] if name.endswith(".jsonl") else name
+            if match:
+                sid = match.group(0)
+            elif provider == "copilot" and stem == "events":
+                sid = os.path.basename(os.path.dirname(path))
+            elif provider == "codex" and stem.startswith("rollout-"):
+                sid = stem[len("rollout-"):]
+            else:
+                sid = stem
+            key = (provider, sid)
+            current = newest.get(key)
+            row = (path, provider, sid, st.st_mtime_ns, st.st_size)
+            if current is None or st.st_mtime_ns > current[3]:
+                newest[key] = row
+    out = list(newest.values())
     out.sort(key=lambda t: t[3], reverse=True)
     return out
+
+
+def _scan_hermes_state(con, full=False):
+    """Ingest changed Hermes sessions from its real read-only SQLite store."""
+    path = HERMES_STATE_DB()
+    if not os.path.isfile(path):
+        return 0
+    stored_parser = int(_get_meta(con, "hermes_parser_version", 0) or 0)
+    parser_upgrade = stored_parser < TIER1_PARSER_VERSION
+    cursor = 0 if full or parser_upgrade else int(
+        _get_meta(con, "hermes_message_cursor", 0) or 0)
+    try:
+        source = sqlite3.connect("file:%s?mode=ro" % path, uri=True, timeout=5)
+        source.row_factory = sqlite3.Row
+        # Pin one read snapshot and its exact high-water before discovering
+        # changed sessions. A concurrent insert after this point belongs to the
+        # next ingest and must never be advanced past unseen.
+        source.execute("BEGIN")
+        max_row = source.execute(
+            "SELECT COALESCE(MAX(id),0) AS n FROM messages").fetchone()
+        high_water = int(max_row["n"])
+        stored_anchor = _get_meta(con, "hermes_message_cursor_anchor")
+        if cursor:
+            anchor_row = source.execute("""SELECT id,session_id,role,content,
+                timestamp,active FROM messages WHERE id=?""", (cursor,)).fetchone()
+            current_anchor = (_sha1(json.dumps([
+                anchor_row["id"], anchor_row["session_id"], anchor_row["role"],
+                anchor_row["content"], anchor_row["timestamp"], anchor_row["active"],
+            ], ensure_ascii=True)) if anchor_row else None)
+            # A replaced/restored database may restart IDs or reuse the prior
+            # high-water. Missing or changed anchor evidence forces one bounded
+            # rebuild instead of silently skipping the restored corpus.
+            if high_water < cursor or not stored_anchor or current_anchor != stored_anchor:
+                cursor = 0
+        rows = source.execute("""SELECT DISTINCT session_id FROM messages
+            WHERE active=1 AND role='assistant' AND id>? AND id<=?
+            ORDER BY session_id""", (cursor, high_water)).fetchall()
+        scanned = 0
+        for session in rows:
+            sid = session["session_id"]
+            meta = source.execute("""SELECT title,cwd,started_at FROM sessions
+                WHERE id=?""", (sid,)).fetchone()
+            tail = source.execute("""SELECT id,role,content,timestamp FROM messages
+                WHERE session_id=? AND active=1 AND role='assistant' AND id<=?
+                ORDER BY id DESC LIMIT ?""",
+                (sid, high_water, TIER1_MAX_MESSAGES)).fetchall()
+            messages = [dict(row) for row in reversed(tail)]
+            if not messages:
+                continue
+            touch_session(con, sid, provider="hermes",
+                          title=(meta["title"] if meta else None))
+            last_activity = int(float(messages[-1].get("timestamp") or 0))
+            repo = os.path.basename((meta["cwd"] if meta else "") or "")
+            con.execute("""UPDATE sessions SET last_activity=?,
+                repo=COALESCE(NULLIF(repo,''),?) WHERE id=?""",
+                (str(last_activity), repo, sid))
+            _persist_tier1_outcome(con, sid, "hermes", messages, path)
+            scanned += 1
+        _set_meta(con, "hermes_message_cursor", high_water)
+        high_row = source.execute("""SELECT id,session_id,role,content,
+            timestamp,active FROM messages WHERE id=?""", (high_water,)).fetchone()
+        high_anchor = (_sha1(json.dumps([
+            high_row["id"], high_row["session_id"], high_row["role"],
+            high_row["content"], high_row["timestamp"], high_row["active"],
+        ], ensure_ascii=True)) if high_row else "")
+        _set_meta(con, "hermes_message_cursor_anchor", high_anchor)
+        _set_meta(con, "hermes_parser_version", TIER1_PARSER_VERSION)
+        source.rollback()
+        source.close()
+        return scanned
+    except sqlite3.Error:
+        _STALE_PROVIDERS.add("hermes")
+        return 0
 
 def _scan_one(con, path, provider, sid, known, mtime_s):
     """Scan one transcript file into the DB. Returns (n_signals, n_line_errors)."""
     blob_parts, spawn_targets, first_uuid = [], set(), None
+    assistant_tail = deque(maxlen=TIER1_MAX_MESSAGES)
+    answer_markers = []
+    record_positions = {}
     n_lerr, got_first = 0, False
     with open(path, errors="strict") as f:
         for lineno, raw in enumerate(f, 1):
@@ -796,6 +1439,12 @@ def _scan_one(con, path, provider, sid, known, mtime_s):
             txt = _msg_text(rec)
             if txt is None:
                 continue
+            if _assistant_role(rec):
+                assistant_tail.append(rec)
+                record_positions[_assistant_message_ref(rec, txt)] = lineno
+            elif _user_role(rec):
+                for item_key in _EXPLICIT_ANSWERS_RE.findall(txt):
+                    answer_markers.append((item_key, _assistant_message_ref(rec, txt), lineno))
             if not got_first:
                 u = _rec_uuid(rec)
                 if u:
@@ -841,6 +1490,24 @@ def _scan_one(con, path, provider, sid, known, mtime_s):
     con.execute("UPDATE sessions SET provider=COALESCE(NULLIF(provider,''),?), "
                 "last_activity=?, first_msg_uuid=COALESCE(first_msg_uuid,?) WHERE id=?",
                 (provider, str(mtime_s), first_uuid, sid))
+    persisted_card = None
+    if assistant_tail:
+        persisted_card = _persist_tier1_outcome(con, sid, provider, list(assistant_tail), path)
+    selected_ref = ((persisted_card or {}).get("source_span") or {}).get(
+        "selected_message_ref")
+    selected_position = record_positions.get(selected_ref, -1)
+    for item_key, marker_ref, marker_position in answer_markers:
+        if marker_position <= selected_position:
+            continue
+        evidence_ref = "%s:answer:%s" % (sid, marker_ref)
+        if con.execute("SELECT 1 FROM outcome_resolution_markers WHERE marker_ref=?",
+                       (evidence_ref,)).fetchone():
+            continue
+        if _resolve_open_end_key(con, sid, item_key, "answering_user_turn", evidence_ref):
+            con.execute("""INSERT INTO outcome_resolution_markers(
+                marker_ref,session_id,item_key,marker_type,applied_at)
+                VALUES(?,?,?,?,?)""",
+                (evidence_ref, sid, item_key, "answering_user_turn", int(time.time())))
     return n_sig, n_lerr
 
 def _resume_fork(con):
@@ -886,11 +1553,13 @@ def scan_transcripts(con, full=False, limit_files=None):
     """One incremental pass. Returns (files_errored, files_considered)."""
     ensure_dir(os.path.dirname(scanlog_path()))
     files = _enumerate_files()
+    cur = {r["path"]: (r["mtime"], r["size"], int(r["parser_version"] or 0))
+           for r in con.execute(
+               "SELECT path, mtime, size, parser_version FROM file_cursors")}
+    todo = [t for t in files if full or cur.get(t[0]) != (
+        t[3], t[4], TIER1_PARSER_VERSION)]
     if limit_files is not None:
-        files = files[:limit_files]
-    cur = {r["path"]: (r["mtime"], r["size"])
-           for r in con.execute("SELECT path, mtime, size FROM file_cursors")}
-    todo = [t for t in files if full or cur.get(t[0]) != (t[3], t[4])]
+        todo = todo[:limit_files]
     if not todo:
         sys.stderr.write("[scan] 0 new/changed files\n")
     known = set(t[2] for t in files)
@@ -912,9 +1581,11 @@ def scan_transcripts(con, full=False, limit_files=None):
             _log_scan_error(path, 0, "file error: %s" % e)
             con.rollback()
             continue
-        con.execute("INSERT INTO file_cursors(path, mtime, size) VALUES(?,?,?) "
-                    "ON CONFLICT(path) DO UPDATE SET mtime=excluded.mtime, size=excluded.size",
-                    (path, mtime, size))
+        con.execute("""INSERT INTO file_cursors(path,mtime,size,parser_version)
+                    VALUES(?,?,?,?) ON CONFLICT(path) DO UPDATE SET
+                    mtime=excluded.mtime,size=excluded.size,
+                    parser_version=excluded.parser_version""",
+                    (path, mtime, size, TIER1_PARSER_VERSION))
         con.commit()  # ONE transaction per file -> Ctrl-C-safe, resumable
         scanned += 1
         if n_sig > 0:
@@ -922,8 +1593,9 @@ def scan_transcripts(con, full=False, limit_files=None):
         if time.time() - t_last >= 2 or i == total:
             _progress(i, total, ferr, time.time() - start, tty)
             t_last = time.time()
+    hermes_scanned = _scan_hermes_state(con, full=full)
     _resume_fork(con)
-    _set_meta(con, "scan_files_scanned", scanned)
+    _set_meta(con, "scan_files_scanned", scanned + hermes_scanned)
     _set_meta(con, "scan_files_yield", yield_n)
     con.commit()
     return ferr, total
@@ -1141,6 +1813,60 @@ def _last_full_ingest_epoch():
     except OSError:
         return None
 
+def _outcome_export(con, cutoff):
+    """Return current observed cards plus bounded observation-change events."""
+    grouped = {}
+    rows = con.execute("""SELECT o.observation_id,o.session_id,o.tail_hash,
+                       o.observed_at,o.finalized AS observed_finalized,
+                       o.evidence_fingerprint AS observed_fingerprint,
+                       v.id,v.provider,v.outcome_json,v.extraction_status,
+                       v.method,v.confidence,v.source_start,v.source_end,v.source_span
+                       FROM session_outcome_observations o
+                       JOIN session_outcomes v ON v.id=o.outcome_id
+                       ORDER BY o.session_id,o.observation_id""").fetchall()
+    for row in rows:
+        grouped.setdefault(row["session_id"], []).append(row)
+    latest, updates = [], []
+    for sid in sorted(grouped):
+        previous, latest_card = None, None
+        for row in grouped[sid]:
+            try:
+                card = json.loads(row["outcome_json"])
+            except (TypeError, ValueError):
+                continue
+            card["provider"] = _safe_provider(row["provider"], "chat")
+            card["tail_hash"] = row["tail_hash"]
+            card["extraction_status"] = row["extraction_status"] or card.get("extraction_status")
+            card["finalized"] = bool(row["observed_finalized"])
+            card["updated_at"] = row["observed_at"]
+            card["method"] = row["method"] or card.get("method")
+            card["confidence"] = row["confidence"]
+            card["evidence_fingerprint"] = row["observed_fingerprint"]
+            card.pop("resolution_markers", None)
+            changed = (previous is not None and
+                       (previous["observed_fingerprint"] != row["observed_fingerprint"] or
+                        bool(previous["observed_finalized"]) != bool(row["observed_finalized"])))
+            if changed and row["observed_at"] >= cutoff:
+                updates.append({
+                    "id": "%s:observation:%s" % (
+                        card.get("card_id") or sid, row["observation_id"]),
+                    "stable_id": card.get("card_id") or _sha1("outcome-card:%s" % sid),
+                    "session_id": sid,
+                    "provider": card["provider"],
+                    "change_type": "late_update",
+                    "previous_tail_hash": previous["tail_hash"],
+                    "tail_hash": row["tail_hash"],
+                    "previous_finalized": bool(previous["observed_finalized"]),
+                    "finalized": bool(row["observed_finalized"]),
+                    "updated_at": row["observed_at"],
+                    "method": row["method"] or "tier1",
+                })
+            previous, latest_card = row, card
+        if latest_card is not None:
+            latest.append(latest_card)
+    updates.sort(key=lambda item: (item.get("updated_at") or 0, item["id"]))
+    return latest, updates[-500:]
+
 def _build_export(con, ingest_skipped=False):
     now = int(time.time())
     last_full = _last_full_ingest_epoch()
@@ -1232,6 +1958,12 @@ def _build_export(con, ingest_skipped=False):
             "resolution_evidence_type": o["resolution_evidence_type"],
             "resolution_evidence_ref": o["resolution_evidence_ref"],
         })
+    outcomes, outcome_updates = _outcome_export(con, cutoff)
+    outcome_egress = {}
+    for card in outcomes:
+        for key, value in (card.get("egress_counters") or {}).items():
+            if isinstance(value, int):
+                outcome_egress[key] = outcome_egress.get(key, 0) + value
     edges = []
     excluded_lineage = 0
     # suppressions is source-independent: hide any (src,dst,type) an unlink
@@ -1271,12 +2003,18 @@ def _build_export(con, ingest_skipped=False):
         "ingest_skipped": bool(ingest_skipped),
         "unknown_provider_nodes": sum(1 for n in nodes if n["node_kind"] == "unknown"),
         "excluded_lineage_edges": excluded_lineage,
+        "outcome_cards": len(outcomes),
+        "outcome_updates": len(outcome_updates),
+        "unknown_outcome_providers": sum(1 for card in outcomes
+                                         if card.get("provider") == "unknown"),
     }
     return {
         "schema": 1, "feed": "chats",
         "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now)),
         "generated_epoch": now, "cadence_s": 1800, "ok": True, "error": None,
         "data": {"nodes": nodes, "edges": edges, "topics": topics,
+                 "outcomes": outcomes, "outcome_updates": outcome_updates,
+                 "outcome_egress_counters": outcome_egress,
                  "loose_ends": loose_ends, "loose_end_changes": loose_end_changes,
                  "repo_annotations": repo_annotations,
                  "stale_providers": sorted(_STALE_PROVIDERS), "notes": notes, "counts": counts},
@@ -1322,9 +2060,14 @@ def cmd_validate_export(args):
     if d.get("schema") != 1:
         errs.append("schema != 1")
     data = d.get("data") or {}
-    for k in ("nodes", "edges", "topics", "loose_ends", "loose_end_changes", "counts"):
+    for k in ("nodes", "edges", "topics", "outcomes", "outcome_updates",
+              "loose_ends", "loose_end_changes", "counts"):
         if k not in data:
             errs.append("missing data key: %s" % k)
+    if "outcomes" in data and not isinstance(data.get("outcomes"), list):
+        errs.append("data.outcomes is not a list")
+    if "outcome_updates" in data and not isinstance(data.get("outcome_updates"), list):
+        errs.append("data.outcome_updates is not a list")
     if "loose_ends" in data and not isinstance(data.get("loose_ends"), list):
         errs.append("data.loose_ends is not a list")
     if "loose_end_changes" in data and not isinstance(data.get("loose_end_changes"), list):
@@ -1360,6 +2103,19 @@ def cmd_validate_export(args):
             errs.append("loose_end_change missing %s: %r" % (",".join(missing), c)); continue
         if c.get("change_type") not in ("new", "updated", "resolved", "reopened"):
             errs.append("loose_end_change invalid change_type: %r" % c.get("change_type"))
+    for card in data.get("outcomes", []):
+        missing = [k for k in ("card_id", "session_id", "provider", "classification",
+                               "grammar", "tail_hash", "finalized", "method") if k not in card]
+        if missing:
+            errs.append("outcome missing %s: %r" % (",".join(missing), card)); continue
+        if card.get("provider") not in CHAT_PROVIDERS | {"unknown"}:
+            errs.append("outcome has unsafe provider: %r" % card.get("provider"))
+    for update in data.get("outcome_updates", []):
+        missing = [k for k in ("id", "stable_id", "session_id", "change_type",
+                               "previous_tail_hash", "tail_hash", "updated_at")
+                   if k not in update]
+        if missing:
+            errs.append("outcome_update missing %s: %r" % (",".join(missing), update))
     if errs:
         for e in errs:
             print("FAIL: %s" % e)

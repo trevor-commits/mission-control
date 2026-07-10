@@ -1,0 +1,16 @@
+{
+  "name": "unstructured assistant tail",
+  "session_id": "55555555-5555-4555-8555-555555555555",
+  "provider": "cursor",
+  "messages": [
+    {
+      "role": "assistant",
+      "content": "I looked around and there are probably a few things worth revisiting tomorrow."
+    }
+  ],
+  "expected": {
+    "classification": "unstructured",
+    "grammar": "unstructured",
+    "finalized": false
+  }
+}

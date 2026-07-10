@@ -1,0 +1,253 @@
+#!/usr/bin/env python3
+"""Plan deterministic outcome coverage and Tier 2 load without model calls."""
+
+import argparse
+import glob
+import importlib.machinery
+import importlib.util
+import json
+import math
+import os
+import re
+import sqlite3
+import sys
+import time
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+LOADER = importlib.machinery.SourceFileLoader("mission_chat_graph", os.path.join(HERE, "chat-graph"))
+SPEC = importlib.util.spec_from_loader(LOADER.name, LOADER)
+CHAT_GRAPH = importlib.util.module_from_spec(SPEC)
+LOADER.exec_module(CHAT_GRAPH)
+
+PROVIDERS = ("claude", "codex", "cursor", "hermes", "copilot")
+GRAMMARS = ("reply_v5", "codex_closeout", "audit_report", "handoff_packet", "unstructured")
+UUID_RE = re.compile(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
+MAX_FILE_BYTES = 200 * 1024 * 1024
+MODELED_OUTPUT_TOKENS_PER_CALL = 256
+
+
+def _root(provider):
+    defaults = {
+        "claude": os.path.expanduser("~/.claude/projects"),
+        "codex": os.path.expanduser("~/.codex/sessions"),
+        "cursor": os.path.expanduser("~/.cursor/projects"),
+        "hermes": os.path.expanduser("~/.hermes/sessions"),
+        "copilot": os.path.expanduser("~/.copilot/session-state"),
+    }
+    return os.path.expanduser(os.environ.get("OUTCOME_COVERAGE_%s_ROOT" % provider.upper(),
+                                             defaults[provider]))
+
+
+def _hermes_db():
+    return os.path.expanduser(os.environ.get(
+        "OUTCOME_COVERAGE_HERMES_DB", "~/.hermes/state.db"))
+
+
+def _session_id(path, root):
+    match = UUID_RE.search(path)
+    if match:
+        return match.group(0)
+    relative = os.path.relpath(path, root)
+    return relative[:-6] if relative.endswith(".jsonl") else relative
+
+
+def _recent_sources(days):
+    cutoff = time.time() - days * 86400
+    latest = {}
+    source_status = {}
+    for provider in PROVIDERS:
+        if provider == "hermes":
+            continue
+        root = _root(provider)
+        seen = 0
+        skipped_large = 0
+        if os.path.isdir(root):
+            pattern = "rollout-*.jsonl" if provider == "codex" else "*.jsonl"
+            paths = glob.glob(os.path.join(root, "**", pattern), recursive=True)
+        else:
+            paths = []
+        for path in paths:
+            if provider == "claude" and "subagents" in os.path.relpath(
+                    path, root).split(os.sep):
+                continue
+            try:
+                stat = os.stat(path)
+            except OSError:
+                continue
+            if stat.st_mtime < cutoff:
+                continue
+            seen += 1
+            if stat.st_size > MAX_FILE_BYTES:
+                skipped_large += 1
+                continue
+            key = (provider, _session_id(path, root))
+            current = latest.get(key)
+            if current is None or stat.st_mtime_ns > current[1]:
+                latest[key] = (path, stat.st_mtime_ns)
+        source_status[provider] = {
+            "root_present": os.path.isdir(root),
+            "recent_files": seen,
+            "skipped_large": skipped_large,
+        }
+    sources = [(provider, sid, {"kind": "jsonl", "path": value[0]})
+               for (provider, sid), value in sorted(latest.items())]
+    hermes_path = _hermes_db()
+    hermes_sessions = 0
+    try:
+        con = sqlite3.connect("file:%s?mode=ro" % hermes_path, uri=True, timeout=5)
+        con.row_factory = sqlite3.Row
+        session_rows = con.execute("""SELECT DISTINCT session_id FROM messages
+            WHERE active=1 AND role='assistant' AND timestamp>=?
+            ORDER BY session_id""", (cutoff,)).fetchall()
+        for row in session_rows:
+            sid = row["session_id"]
+            tail = con.execute("""SELECT id,role,content,timestamp FROM messages
+                WHERE session_id=? AND active=1 AND role='assistant'
+                ORDER BY id DESC LIMIT ?""",
+                (sid, CHAT_GRAPH.TIER1_MAX_MESSAGES)).fetchall()
+            messages = [dict(item) for item in reversed(tail)]
+            if messages:
+                sources.append(("hermes", sid, {"kind": "messages", "messages": messages}))
+                hermes_sessions += 1
+        con.close()
+        hermes_present = True
+        hermes_error = False
+    except sqlite3.Error:
+        hermes_present = os.path.isfile(hermes_path)
+        hermes_error = True
+    source_status["hermes"] = {
+        "root_present": hermes_present,
+        "recent_files": 0,
+        "recent_sessions": hermes_sessions,
+        "skipped_large": 0,
+        "read_error": hermes_error,
+        "storage": "state.db",
+    }
+    sources.sort(key=lambda item: (item[0], item[1]))
+    return sources, source_status
+
+
+def _number_env(name):
+    raw = os.environ.get(name)
+    if raw in (None, ""):
+        return None
+    try:
+        return float(raw)
+    except ValueError:
+        return None
+
+
+def build_report(days):
+    sources, source_status = _recent_sources(days)
+    providers = {provider: {"sessions": 0, "tail_bytes": 0, "tail_tokens_estimate": 0,
+                            "structured": 0, "unparseable": 0, "no_assistant_tail": 0}
+                 for provider in PROVIDERS}
+    grammars = {grammar: 0 for grammar in GRAMMARS}
+    errors, packet_tails = 0, 0
+    eligible_calls, eligible_tokens, total_bytes = 0, 0, 0
+    for provider, sid, source in sources:
+        try:
+            messages = (source["messages"] if source["kind"] == "messages"
+                        else CHAT_GRAPH.read_assistant_messages(source["path"]))
+            card = CHAT_GRAPH.tier1_parse_outcome(sid, provider, messages)
+        except (OSError, UnicodeDecodeError, ValueError):
+            errors += 1
+            continue
+        tail_bytes = int(card["source_span"]["bytes"])
+        token_estimate = int(math.ceil(tail_bytes / 4.0)) if tail_bytes else 0
+        providers[provider]["sessions"] += 1
+        providers[provider]["tail_bytes"] += tail_bytes
+        providers[provider]["tail_tokens_estimate"] += token_estimate
+        total_bytes += tail_bytes
+        if card["source_span"]["message_count"] == 0:
+            providers[provider]["no_assistant_tail"] += 1
+            continue
+        grammar = card["grammar"] if card["grammar"] in grammars else "unstructured"
+        grammars[grammar] += 1
+        if grammar == "handoff_packet":
+            packet_tails += 1
+        if grammar == "unstructured":
+            providers[provider]["unparseable"] += 1
+            eligible_calls += 1
+            eligible_tokens += token_estimate
+        else:
+            providers[provider]["structured"] += 1
+
+    calls_day = eligible_calls / float(days)
+    input_day = eligible_tokens / float(days)
+    output_window = eligible_calls * MODELED_OUTPUT_TOKENS_PER_CALL
+    output_day = output_window / float(days)
+    call_cap = _number_env("OUTCOME_COVERAGE_DAILY_CALL_CAP")
+    token_cap = _number_env("OUTCOME_COVERAGE_DAILY_TOKEN_CAP")
+    input_price = _number_env("OUTCOME_COVERAGE_MODELED_INPUT_USD_PER_MILLION")
+    output_price = _number_env("OUTCOME_COVERAGE_MODELED_OUTPUT_USD_PER_MILLION")
+    equivalent_day = None
+    if input_price is not None and output_price is not None:
+        equivalent_day = (input_day * input_price + output_day * output_price) / 1_000_000.0
+
+    projection = {
+        "basis": "modeled",
+        "billing_route": "subscription-backed-or-unknown",
+        "eligible_calls_window": eligible_calls,
+        "input_tokens_window": eligible_tokens,
+        "output_tokens_window": output_window,
+        "calls_day": round(calls_day, 3),
+        "input_tokens_day": round(input_day, 3),
+        "output_tokens_day": round(output_day, 3),
+        "calls_month_30d": round(calls_day * 30, 3),
+        "input_tokens_month_30d": round(input_day * 30, 3),
+        "output_tokens_month_30d": round(output_day * 30, 3),
+        "charged_api_dollars": None,
+        "api_equivalent_usd_day": (round(equivalent_day, 6)
+                                    if equivalent_day is not None else None),
+    }
+    quota = {
+        "daily_call_cap": call_cap,
+        "daily_token_cap": token_cap,
+        "modeled_call_headroom": (round(call_cap - calls_day, 3) if call_cap is not None else None),
+        "modeled_input_token_headroom": (round(token_cap - input_day, 3)
+                                          if token_cap is not None else None),
+    }
+    return {
+        "schema": 1,
+        "mode": "plan",
+        "generated_epoch": int(time.time()),
+        "window_days": days,
+        "model_calls_made": 0,
+        "providers": providers,
+        "source_status": source_status,
+        "grammar_counts": grammars,
+        "packet_tails": packet_tails,
+        "unparseable_sessions": eligible_calls,
+        "no_assistant_tail_sessions": sum(row["no_assistant_tail"]
+                                          for row in providers.values()),
+        "eligible_model_calls": eligible_calls,
+        "tail_bytes": total_bytes,
+        "tail_tokens_estimate": int(math.ceil(total_bytes / 4.0)) if total_bytes else 0,
+        "read_errors": errors,
+        "projection": projection,
+        "quota": quota,
+    }
+
+
+def main(argv):
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--days", type=int, default=7)
+    parser.add_argument("--json", action="store_true")
+    args = parser.parse_args(argv)
+    if args.days <= 0 or args.days > 365:
+        parser.error("--days must be between 1 and 365")
+    report = build_report(args.days)
+    if args.json:
+        json.dump(report, sys.stdout, sort_keys=True, indent=2)
+        sys.stdout.write("\n")
+    else:
+        print("Outcome coverage: %d sessions / %d days / zero model calls" %
+              (sum(row["sessions"] for row in report["providers"].values()), args.days))
+        print("Tier 2 eligible: %d (modeled %.3f calls/day)" %
+              (report["eligible_model_calls"], report["projection"]["calls_day"]))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

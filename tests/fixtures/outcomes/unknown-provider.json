@@ -1,0 +1,16 @@
+{
+  "name": "unknown provider with safe content",
+  "session_id": "77777777-7777-4777-8777-777777777777",
+  "provider": "${PARENT_PROVIDER}",
+  "messages": [
+    {
+      "role": "assistant",
+      "content": "Outcome\nPreserved safe content while rejecting the malformed provider label.\nStatus: complete"
+    }
+  ],
+  "expected": {
+    "provider": "unknown",
+    "classification": "execution_closeout",
+    "grammar": "codex_closeout"
+  }
+}

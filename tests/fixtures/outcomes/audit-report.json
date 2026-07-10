@@ -1,0 +1,16 @@
+{
+  "name": "audit report",
+  "session_id": "33333333-3333-4333-8333-333333333333",
+  "provider": "claude",
+  "messages": [
+    {
+      "role": "assistant",
+      "content": "Audited Chat\nAudited chat name: Mission Control orchestration priorities\nProvider: claude\n\nFindings\n- No material privacy defects remain.\n\nReview result: review-clean\nResidual risk: natural scheduled execution has not elapsed."
+    }
+  ],
+  "expected": {
+    "classification": "audit_report",
+    "grammar": "audit_report",
+    "finalized": true
+  }
+}

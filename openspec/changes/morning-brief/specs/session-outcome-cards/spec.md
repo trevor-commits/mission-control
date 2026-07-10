@@ -15,11 +15,15 @@ Chat outcome/lineage processing MUST allow only `claude`, `codex`, `cursor`, `he
 - **THEN** garbage values never become lineage/render labels, the repo node remains an Open work source, and safe unknown content is labeled only `Unknown source`
 
 ### Requirement: Bounded Tier 1 parsing
-Tier 1 MUST parse only bounded assistant-tail content for reply-v5/closeout, Codex closeout, audit-report, provenance/status/commit, and packet/handoff shapes; packet-shaped tails MUST be classified `authored_handoff` rather than accomplishments.
+Tier 1 MUST parse only bounded assistant-tail content for reply-v5/closeout, Codex closeout, audit-report, provenance/status/commit, and packet/handoff shapes; packet-shaped tails MUST be classified `authored_handoff` rather than accomplishments. One structured `NEEDS YOU` block MUST remain one coherent operator decision, fenced command fragments MUST stay out of narrative, deterministic safe commands MUST remain structured anchors, and a parser-version change MUST invalidate unchanged-source cursors for both file and Hermes inputs.
 
 #### Scenario: Handoff packet does not claim execution
 - **WHEN** a tail ends with Goal/Runner/Model and paste-ready instructions
 - **THEN** the card records an authored handoff and does not place the requested future work in `did`
+
+#### Scenario: Numbered operator procedure stays coherent
+- **WHEN** one `NEEDS YOU` block contains narrative plus a fenced multi-step shell procedure
+- **THEN** Tier 1 emits one readable decision, omits fence/command fragments from narrative, and retains allowlisted safe commands only in deterministic anchors
 
 ### Requirement: Isolated Tier 2 extraction
 Tier 2 MUST run only in `extract-outcomes`, MUST never be invoked by ingest or export, MUST close DB connections and release collector locks before model calls, and MUST write cards in short per-card WAL transactions.
@@ -43,11 +47,15 @@ Tier 2 MUST cache by sanitized tail hash, enforce daily call/token caps, use the
 - **THEN** no model call occurs, structured outcomes remain available, and the budget skip is visible in machinery health
 
 ### Requirement: Explicit evidence resolves open work
-Each `chat_open_end` MUST have a kind-salted source-derived stable item key and MUST resolve only through an exact same-session resolution marker, an exact downstream `Resolves: <item-key>` on a verified continuation/spawn edge, or an explicit manual resolution/suppression; omission is never evidence.
+Each `chat_open_end` MUST have a kind-salted source-derived stable item key and MUST resolve only through an exact same-session resolution marker, an exact downstream `Resolves: <item-key>` on a verified continuation/spawn edge, an explicit manual resolution/suppression, or a versioned deterministic parser supersession that replaces prior `NEEDS YOU` representations from the same selected source message and same sanitized content hash with one coherent item. Parser migration MUST NOT treat a changed, missing, unstructured, rewritten-under-the-same-ID, or merely omitting source message as resolution evidence.
 
 #### Scenario: Finalized extraction omits an item
 - **WHEN** a later finalized successful extraction does not contain an existing item
 - **THEN** the item remains open with no resolution evidence
+
+#### Scenario: Parser upgrade compacts only the same selected source
+- **WHEN** a new parser version reprocesses the same structured source message and replaces multiple prior `NEEDS YOU` fragments with one coherent item
+- **THEN** only those superseded fragments resolve with `parser_migration` evidence; a changed or omitted source leaves prior work open
 
 #### Scenario: Exact downstream key resolves
 - **WHEN** a verified downstream session contains `Resolves: <item-key>`

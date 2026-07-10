@@ -1,0 +1,24 @@
+{
+  "name": "late closeout versions",
+  "session_id": "66666666-6666-4666-8666-666666666666",
+  "provider": "claude",
+  "versions": [
+    [
+      {
+        "role": "assistant",
+        "content": "Status: working\nNext: finish the parser tests."
+      }
+    ],
+    [
+      {
+        "role": "assistant",
+        "content": "Outcome\nThe parser tests are complete.\n\nVerification\n- `bash scripts/chat-graph.test.sh` passed.\n\nCommit: fedcba9\nStatus: complete"
+      }
+    ]
+  ],
+  "expected": {
+    "first_finalized": false,
+    "second_finalized": true,
+    "second_grammar": "codex_closeout"
+  }
+}

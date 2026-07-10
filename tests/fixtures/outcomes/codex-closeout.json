@@ -1,0 +1,18 @@
+{
+  "name": "Codex implementation closeout",
+  "session_id": "22222222-2222-4222-8222-222222222222",
+  "provider": "codex",
+  "messages": [
+    {
+      "role": "assistant",
+      "content": "Outcome\nAdded the resumable delivery guardrails.\n\nVerification\n- `bash scripts/morning-brief-delivery.test.sh` passed.\n\nCommit: 1234567890abcdef\nPush: origin/codex/morning-brief\nStatus: complete"
+    }
+  ],
+  "expected": {
+    "classification": "execution_closeout",
+    "grammar": "codex_closeout",
+    "finalized": true,
+    "commit": "1234567890abcdef",
+    "command": "bash scripts/morning-brief-delivery.test.sh"
+  }
+}

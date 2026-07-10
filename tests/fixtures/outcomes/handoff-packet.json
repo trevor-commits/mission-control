@@ -1,0 +1,17 @@
+{
+  "name": "authored handoff packet",
+  "session_id": "44444444-4444-4444-8444-444444444444",
+  "provider": "claude",
+  "messages": [
+    {
+      "role": "assistant",
+      "content": "Goal: Implement the decision queue.\nRunner: Codex\nModel: gpt-5.5\nReasoning: high\n\nPaste-ready instructions\nImplement SQLite WAL storage, then run `bash scripts/decision-alert.test.sh`."
+    }
+  ],
+  "expected": {
+    "classification": "authored_handoff",
+    "grammar": "handoff_packet",
+    "finalized": true,
+    "command": "bash scripts/decision-alert.test.sh"
+  }
+}
