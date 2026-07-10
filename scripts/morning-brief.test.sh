@@ -52,6 +52,10 @@ changes = [
      "text": "Old decision was answered", "change_type": "resolved", "updated_at": now-20,
      "resolved_at": now-20, "resolution_evidence_type": "manual", "resolution_evidence_ref": "journal"}
 ]
+changes.append({"id": "unsafe", "stable_id": "operator@example.com", "source_id": "chat-unsafe",
+ "source_node": "codex:chat-unsafe", "kind": "chat_open_end", "item_key": "unsafe",
+ "text": "This item must fail closed", "change_type": "new", "updated_at": now-10,
+ "resolved_at": None, "resolution_evidence_type": None, "resolution_evidence_ref": None})
 write("chats", {"nodes": [], "edges": [], "topics": [], "counts": {},
      "loose_end_changes": changes,
      "loose_ends": [
@@ -78,8 +82,12 @@ if [ -s "$LATEST" ] && python3 - "$LATEST" "$MARKDOWN" <<'PY'
 import json, os, sys
 d=json.load(open(sys.argv[1])); md=open(sys.argv[2]).read()
 assert d["schema"] == 1 and d["brief_id"]
+assert len(d["markdown_sha256"]) == 64
 assert d["delivery"]["state"] == "not_sent"
 assert d["selection_high_water"]["loose_end_changes"] == [1783673980, "chat-1:item-b"]
+assert "operator@example.com" not in json.dumps(d)
+assert d["egress_counters"]["compose"]["dropped_fields"] >= 1
+assert d["egress_counters"]["compose"]["reason_email"] >= 1
 assert set(d["inputs"]) == {"automation", "usage", "git", "chats"}
 assert d["inputs"]["usage"]["state"] == "fresh", d["inputs"]["usage"]
 assert not d["stale_required_inputs"]

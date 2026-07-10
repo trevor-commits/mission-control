@@ -9,11 +9,14 @@ Normal compose atomically writes latest.md + latest.json; --print is preview.
 import hashlib
 import json
 import os
+import re
 import subprocess
 import sys
 import time
 
-from mission_control_common import ACTION, IDENTIFIER, NARRATIVE, sanitize_text, safe_text
+from mission_control_common import (ACTION, IDENTIFIER, NARRATIVE, NOTIFICATION,
+                                    EgressCounters, sanitize_chunks,
+                                    sanitize_text, safe_text)
 
 SCHEMA = 1
 INPUTS = {
@@ -26,6 +29,12 @@ SECTION_ORDER = (
     "NEEDS YOU", "What happened", "Open work changes",
     "Machinery health", "Usage headroom",
 )
+_EGRESS_COUNTERS = EgressCounters()
+
+
+def _reset_egress_counters():
+    global _EGRESS_COUNTERS
+    _EGRESS_COUNTERS = EgressCounters()
 
 
 def _now():
@@ -99,16 +108,16 @@ def _payload(feed):
 
 
 def _sanitize_line(text, trust="Confirmed", source="", action_cmd=None):
-    result = sanitize_text(text, NARRATIVE)
+    result = sanitize_text(text, NARRATIVE, counters=_EGRESS_COUNTERS)
     if result.dropped or not result.value.strip():
         return None
     line = {
         "text": result.value.strip(),
         "trust": trust,
-        "source": safe_text(source, IDENTIFIER) if source else "",
+        "source": safe_text(source, IDENTIFIER, counters=_EGRESS_COUNTERS) if source else "",
     }
     if action_cmd:
-        action = sanitize_text(action_cmd, ACTION)
+        action = sanitize_text(action_cmd, ACTION, counters=_EGRESS_COUNTERS)
         if not action.dropped and action.value.strip():
             line["action_cmd"] = action.value.strip()
     return line
@@ -123,7 +132,10 @@ def _read_delivery_cursor():
     value = _load_json(os.path.join(_brief_home(), "delivery-cursor.json")) or {}
     cursor = value.get("loose_end_changes") or [0, ""]
     try:
-        return int(cursor[0]), str(cursor[1])
+        stable = sanitize_text(str(cursor[1]), IDENTIFIER, counters=_EGRESS_COUNTERS)
+        if stable.dropped:
+            return 0, ""
+        return int(cursor[0]), stable.value
     except (IndexError, TypeError, ValueError):
         return 0, ""
 
@@ -168,11 +180,13 @@ def _recent_git(snapshot, top_n):
     for repo in _payload(snapshot.get("git")).get("repos") or []:
         if not isinstance(repo, dict):
             continue
-        repo_name = safe_text(repo.get("repo") or "unknown repo", IDENTIFIER)
+        repo_name = safe_text(repo.get("repo") or "unknown repo", IDENTIFIER,
+                              counters=_EGRESS_COUNTERS)
         for commit in repo.get("recent_commits") or []:
             if not isinstance(commit, dict) or not commit.get("sha"):
                 continue
-            sha = safe_text(str(commit["sha"]), IDENTIFIER)
+            sha = safe_text(str(commit["sha"]), IDENTIFIER,
+                            counters=_EGRESS_COUNTERS)
             key = (sha, repo_name)
             commits[key] = {
                 "sha": sha, "repo": repo_name,
@@ -196,7 +210,11 @@ def _open_changes(snapshot, top_n, cursor):
         if not isinstance(change, dict):
             continue
         try:
-            mark = (int(change.get("updated_at") or 0), str(change.get("stable_id") or change.get("id") or ""))
+            stable = sanitize_text(str(change.get("stable_id") or change.get("id") or ""),
+                                   IDENTIFIER, counters=_EGRESS_COUNTERS)
+            if stable.dropped or not stable.value:
+                continue
+            mark = (int(change.get("updated_at") or 0), stable.value)
         except (TypeError, ValueError):
             continue
         if mark <= cursor:
@@ -307,8 +325,271 @@ def _atomic_write(path, content):
             pass
 
 
-def compose(preview=False):
+def _atomic_json(path, value):
+    _atomic_write(path, json.dumps(value, ensure_ascii=True, indent=2,
+                                   sort_keys=True) + "\n")
+
+
+def _same_local_day(epoch, now):
+    try:
+        return time.strftime("%Y-%m-%d", time.localtime(int(epoch))) == time.strftime(
+            "%Y-%m-%d", time.localtime(int(now)))
+    except (TypeError, ValueError):
+        return False
+
+
+def _chat_id():
+    configured = os.environ.get("MORNING_BRIEF_CHAT_ID", "").strip()
+    if re.match(r"^-?\d+$", configured):
+        return configured
+    path = os.path.expanduser(os.environ.get(
+        "MOBILE_CONNECT_CONFIG", "~/.mobile-connect/config"))
+    try:
+        with open(path) as handle:
+            for line in handle:
+                match = re.match(r"^\s*ALLOWED_USER_ID\s*=\s*['\"]?(-?\d+)['\"]?\s*$", line)
+                if match:
+                    return match.group(1)
+    except OSError:
+        pass
+    return None
+
+
+def _sender_bin():
+    return os.path.expanduser(os.environ.get(
+        "MORNING_BRIEF_SEND_BIN",
+        "/Users/gillettes/Coding Projects/mobile-connect/mobile-connect.sh"))
+
+
+def _send_message(message):
+    sender, chat_id = _sender_bin(), _chat_id()
+    if not chat_id or not os.path.isfile(sender) or not os.access(sender, os.X_OK):
+        return False
+    try:
+        completed = subprocess.run([sender, "send", chat_id, message],
+                                   stdout=subprocess.DEVNULL,
+                                   stderr=subprocess.DEVNULL, timeout=30)
+        return completed.returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
+def _split_utf8(value, limit):
+    out, current, size = [], [], 0
+    for char in value:
+        width = len(char.encode("utf-8"))
+        if current and size + width > limit:
+            out.append("".join(current)); current, size = [], 0
+        current.append(char); size += width
+    if current:
+        out.append("".join(current))
+    return out
+
+
+def _chunk_markdown(markdown, limit):
+    # Reserve room for identity header, then preserve line boundaries whenever
+    # possible. Oversized lines are split on valid UTF-8 character boundaries.
+    body_limit = max(80, int(limit) - 100)
+    units = []
+    for line in markdown.splitlines(True):
+        units.extend(_split_utf8(line, body_limit))
+    bodies, current, size = [], [], 0
+    for unit in units:
+        width = len(unit.encode("utf-8"))
+        if current and size + width > body_limit:
+            bodies.append("".join(current).rstrip()); current, size = [], 0
+        current.append(unit); size += width
+    if current:
+        bodies.append("".join(current).rstrip())
+    return [body for body in bodies if body]
+
+
+def _receipt_path(brief_id):
+    safe_id = re.sub(r"[^A-Za-z0-9_.-]", "_", str(brief_id))
+    return os.path.join(_brief_home(), "delivery", safe_id + ".json")
+
+
+def _delivery_chunks(brief_id, markdown):
+    try:
+        limit = int(os.environ.get("MORNING_BRIEF_CHUNK_BYTES", "3500"))
+    except ValueError:
+        limit = 3500
+    limit = min(3900, max(200, limit))
+    # Screen the complete notification before division so a secret/PII value
+    # cannot evade detection by straddling two otherwise-safe chunk bodies.
+    whole = sanitize_text(markdown, NOTIFICATION, counters=_EGRESS_COUNTERS)
+    if whole.dropped:
+        return None
+    bodies = _chunk_markdown(whole.value, limit)
+    scrubbed = sanitize_chunks(bodies, counters=_EGRESS_COUNTERS)
+    if len(scrubbed) != len(bodies) or not scrubbed:
+        return None
+    total, out = len(scrubbed), []
+    for index, body in enumerate(scrubbed, 1):
+        digest = hashlib.sha256(body.encode("utf-8")).hexdigest()
+        header = "Morning Brief %s · chunk %d/%d · %s" % (
+            brief_id, index, total, digest[:12])
+        out.append({"index": index, "content_hash": digest,
+                    "message": header + "\n\n" + body})
+    return out
+
+
+def _update_latest_delivery(sidecar, state, confirmed, total):
+    sidecar["delivery"] = {"state": state, "confirmed_chunks": confirmed,
+                           "total_chunks": total}
+    _atomic_json(os.path.join(_brief_home(), "latest.json"), sidecar)
+
+
+def _acquire_delivery_lock():
+    os.makedirs(_brief_home(), mode=0o700, exist_ok=True)
+    lock = os.path.join(_brief_home(), "delivery.lock")
+    deadline = time.monotonic() + 60
+    while True:
+        try:
+            os.mkdir(lock, 0o700)
+            return lock
+        except FileExistsError:
+            try:
+                if time.time() - os.path.getmtime(lock) > 600:
+                    os.rmdir(lock)
+                    continue
+            except OSError:
+                pass
+            if time.monotonic() >= deadline:
+                return None
+            time.sleep(0.05)
+
+
+def deliver():
+    lock = _acquire_delivery_lock()
+    if not lock:
+        sys.stderr.write("morning-brief: delivery lock busy\n")
+        return 75
+    try:
+        return _deliver_locked()
+    finally:
+        try:
+            os.rmdir(lock)
+        except OSError:
+            pass
+
+
+def _deliver_locked():
+    _reset_egress_counters()
     now = _now()
+    latest_path = os.path.join(_brief_home(), "latest.json")
+    sidecar = _load_json(latest_path)
+    prior_receipt = (_load_json(_receipt_path(sidecar.get("brief_id")))
+                     if sidecar and sidecar.get("brief_id") else None)
+    try:
+        compose_age = now - int(sidecar.get("generated_epoch") or 0) if sidecar else 10**12
+        max_compose_age = int(os.environ.get("MORNING_BRIEF_SEND_MAX_COMPOSE_AGE_S", "3600"))
+    except (TypeError, ValueError):
+        compose_age, max_compose_age = 10**12, 3600
+    retrying = bool(prior_receipt and prior_receipt.get("state") in
+                    ("failed", "partial", "pending"))
+    if (not sidecar or not _same_local_day(sidecar.get("generated_epoch"), now) or
+            (not retrying and prior_receipt is None and
+             (compose_age > max_compose_age or not sidecar.get("markdown_sha256")))):
+        rc = _compose_locked(preview=False)
+        if rc:
+            return rc
+        sidecar = _load_json(latest_path)
+        _reset_egress_counters()
+    if not sidecar or not sidecar.get("brief_id"):
+        sys.stderr.write("morning-brief: delivery unavailable\n")
+        return 1
+    brief_id = sidecar["brief_id"]
+    receipt_path = _receipt_path(brief_id)
+    receipt = _load_json(receipt_path)
+    if receipt and receipt.get("state") == "delivered":
+        _update_latest_delivery(sidecar, "delivered", receipt.get("confirmed_chunks", 0),
+                                receipt.get("total_chunks", 0))
+        print("delivery already complete: %s" % brief_id)
+        return 0
+    try:
+        with open(os.path.join(_brief_home(), "latest.md")) as handle:
+            markdown = handle.read()
+    except OSError:
+        sys.stderr.write("morning-brief: delivery unavailable\n")
+        return 1
+    actual_hash = hashlib.sha256(markdown.encode("utf-8")).hexdigest()
+    if sidecar.get("markdown_sha256") != actual_hash:
+        sys.stderr.write("morning-brief: delivery content mismatch\n")
+        return 1
+    chunks = _delivery_chunks(brief_id, markdown)
+    sidecar.setdefault("egress_counters", {})["delivery"] = _EGRESS_COUNTERS.snapshot()
+    if not chunks:
+        _atomic_json(latest_path, sidecar)
+        sys.stderr.write("morning-brief: notification content rejected\n")
+        return 1
+    expected = [{"index": row["index"], "content_hash": row["content_hash"],
+                 "state": "pending", "attempts": 0} for row in chunks]
+    if not receipt or receipt.get("total_chunks") != len(chunks) or [
+            row.get("content_hash") for row in receipt.get("chunks", [])] != [
+                row["content_hash"] for row in expected]:
+        receipt = {"schema": 1, "brief_id": brief_id, "state": "pending",
+                   "confirmed_chunks": 0, "total_chunks": len(chunks),
+                   "chunks": expected, "created_at": now, "updated_at": now}
+        _atomic_json(receipt_path, receipt)
+
+    failed = False
+    for message, state in zip(chunks, receipt["chunks"]):
+        if state.get("state") == "confirmed":
+            continue
+        state["attempts"] = int(state.get("attempts") or 0) + 1
+        state["last_attempt_at"] = now
+        if _send_message(message["message"]):
+            state["state"] = "confirmed"
+            state["confirmed_at"] = now
+            state.pop("last_error", None)
+        else:
+            state["state"] = "failed"
+            state["last_error"] = "sender_failed"
+            failed = True
+        receipt["confirmed_chunks"] = sum(
+            1 for row in receipt["chunks"] if row.get("state") == "confirmed")
+        receipt["updated_at"] = now
+        receipt["state"] = "failed" if failed else "partial"
+        _atomic_json(receipt_path, receipt)
+        if failed:
+            break
+
+    complete = receipt["confirmed_chunks"] == receipt["total_chunks"]
+    if complete:
+        receipt["state"] = "delivered"
+        receipt["delivered_at"] = now
+        receipt["updated_at"] = now
+        _atomic_json(receipt_path, receipt)
+        mark = sidecar.get("selection_high_water", {}).get("loose_end_changes") or [0, ""]
+        _atomic_json(os.path.join(_brief_home(), "delivery-cursor.json"), {
+            "schema": 1, "brief_id": brief_id, "delivered_at": now,
+            "loose_end_changes": mark,
+        })
+        _update_latest_delivery(sidecar, "delivered", receipt["confirmed_chunks"],
+                                receipt["total_chunks"])
+        print("delivered %s (%d chunks)" % (brief_id, receipt["total_chunks"]))
+        return 0
+    _update_latest_delivery(sidecar, "failed", receipt["confirmed_chunks"],
+                            receipt["total_chunks"])
+    sys.stderr.write("morning-brief: delivery incomplete\n")
+    return 1
+
+
+def _compose_locked(preview=False):
+    _reset_egress_counters()
+    now = _now()
+    if not preview:
+        existing = _load_json(os.path.join(_brief_home(), "latest.json"))
+        existing_id = existing.get("brief_id") if existing else None
+        receipt = _load_json(_receipt_path(existing_id)) if existing_id else None
+        delivery_state = ((receipt or {}).get("state") or
+                          (existing or {}).get("delivery", {}).get("state"))
+        if (existing and _same_local_day(existing.get("generated_epoch"), now) and
+                delivery_state in ("pending", "partial", "failed", "delivered")):
+            print("compose deferred while delivery state is %s: %s" %
+                  (delivery_state, existing_id))
+            return 0
     snapshot = _snapshot_inputs()
     # Test seam proves input selection is a snapshot. Fixed argv; never a shell.
     hook = os.environ.get("MORNING_BRIEF_TEST_AFTER_SNAPSHOT_HOOK")
@@ -345,8 +626,10 @@ def compose(preview=False):
         "selection_high_water": {"loose_end_changes": [high_water[0], high_water[1]]},
         "sections": sections,
         "delivery": {"state": "not_sent", "confirmed_chunks": 0, "total_chunks": 0},
+        "egress_counters": {"compose": _EGRESS_COUNTERS.snapshot()},
     }
     markdown = _render_markdown(sidecar)
+    sidecar["markdown_sha256"] = hashlib.sha256(markdown.encode("utf-8")).hexdigest()
     if preview:
         sys.stdout.write(markdown)
         return 0
@@ -355,16 +638,41 @@ def compose(preview=False):
                   json.dumps(sidecar, ensure_ascii=True, indent=2, sort_keys=True) + "\n")
     dated = os.path.join(_brief_home(), time.strftime("%Y-%m-%d.md", time.localtime(now)))
     _atomic_write(dated, markdown)
+    _atomic_json(os.path.join(_brief_home(), "last-compose.json"), {
+        "schema": 1, "run_key": brief_id, "brief_id": brief_id,
+        "completed_at": now, "result": "composed",
+    })
     print("composed %s" % brief_id)
     return 0
 
 
+def compose(preview=False):
+    if preview:
+        return _compose_locked(preview=True)
+    lock = _acquire_delivery_lock()
+    if not lock:
+        sys.stderr.write("morning-brief: state lock busy\n")
+        return 75
+    try:
+        return _compose_locked(preview=False)
+    finally:
+        try:
+            os.rmdir(lock)
+        except OSError:
+            pass
+
+
 def main(argv):
-    allowed = {"--print"}
+    allowed = {"--print", "--send"}
     unknown = [arg for arg in argv if arg not in allowed]
     if unknown:
-        sys.stderr.write("usage: morning-brief [--print]\n")
+        sys.stderr.write("usage: morning-brief [--print|--send]\n")
         return 2
+    if "--print" in argv and "--send" in argv:
+        sys.stderr.write("usage: morning-brief [--print|--send]\n")
+        return 2
+    if "--send" in argv:
+        return deliver()
     return compose(preview="--print" in argv)
 
 

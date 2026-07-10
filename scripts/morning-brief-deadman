@@ -1,0 +1,218 @@
+#!/usr/bin/env python3
+"""Independent Morning Brief delivery deadman.
+
+Reads only durable compose/delivery state, sends a category-only alert through
+mobile-connect, and never imports or invokes the composer.
+"""
+
+import hashlib
+import json
+import os
+import re
+import subprocess
+import sys
+import time
+
+from mission_control_common import NOTIFICATION, sanitize_text
+
+
+def _now():
+    raw = os.environ.get("MORNING_BRIEF_DEADMAN_NOW_EPOCH")
+    try:
+        return int(raw) if raw else int(time.time())
+    except ValueError:
+        return int(time.time())
+
+
+def _home():
+    state = os.path.expanduser(os.environ.get(
+        "MISSION_CONTROL_HOME", "~/.mission-control"))
+    return os.path.join(state, "morning-brief")
+
+
+def _load(path):
+    try:
+        with open(path) as handle:
+            value = json.load(handle)
+        return value if isinstance(value, dict) else None
+    except (OSError, ValueError):
+        return None
+
+
+def _atomic_json(path, value):
+    parent = os.path.dirname(path)
+    os.makedirs(parent, mode=0o700, exist_ok=True)
+    os.chmod(parent, 0o700)
+    tmp = "%s.tmp.%d" % (path, os.getpid())
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        with os.fdopen(fd, "w") as handle:
+            json.dump(value, handle, ensure_ascii=True, sort_keys=True)
+            handle.write("\n"); handle.flush(); os.fsync(handle.fileno())
+        os.replace(tmp, path); os.chmod(path, 0o600)
+    finally:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+
+
+def _chat_id():
+    configured = os.environ.get("MORNING_BRIEF_CHAT_ID", "").strip()
+    if re.match(r"^-?\d+$", configured):
+        return configured
+    path = os.path.expanduser(os.environ.get(
+        "MOBILE_CONNECT_CONFIG", "~/.mobile-connect/config"))
+    try:
+        with open(path) as handle:
+            for line in handle:
+                match = re.match(r"^\s*ALLOWED_USER_ID\s*=\s*['\"]?(-?\d+)['\"]?\s*$", line)
+                if match:
+                    return match.group(1)
+    except OSError:
+        pass
+    return None
+
+
+def _send(category):
+    raw = "Morning Brief deadman: %s. Check Mission Control delivery." % category
+    sanitized = sanitize_text(raw, NOTIFICATION)
+    if sanitized.dropped:
+        return False
+    sender = os.path.expanduser(os.environ.get(
+        "MORNING_BRIEF_SEND_BIN",
+        "/Users/gillettes/Coding Projects/mobile-connect/mobile-connect.sh"))
+    chat_id = _chat_id()
+    if not chat_id or not os.path.isfile(sender) or not os.access(sender, os.X_OK):
+        return False
+    try:
+        result = subprocess.run([sender, "send", chat_id, sanitized.value],
+                                stdout=subprocess.DEVNULL,
+                                stderr=subprocess.DEVNULL, timeout=30)
+        return result.returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
+def _same_local_day(epoch, now):
+    try:
+        return time.strftime("%Y-%m-%d", time.localtime(int(epoch))) == time.strftime(
+            "%Y-%m-%d", time.localtime(int(now)))
+    except (TypeError, ValueError):
+        return False
+
+
+def _as_int(value, default=None):
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _problem(now):
+    home = _home()
+    latest = _load(os.path.join(home, "latest.json"))
+    if not latest:
+        return "missing", "none"
+    brief_id = str(latest.get("brief_id") or "unknown")
+    max_age = _as_int(os.environ.get("MORNING_BRIEF_MAX_AGE_S", "93600"), 93600)
+    generated = _as_int(latest.get("generated_epoch"))
+    age = now - generated if generated is not None else 10**12
+    if age < 0 or age > max_age or not _same_local_day(generated, now):
+        return "stale", brief_id
+    markdown = os.path.join(home, "latest.md")
+    try:
+        if os.path.getsize(markdown) <= 0:
+            return "empty", brief_id
+    except OSError:
+        return "empty", brief_id
+    delivery = latest.get("delivery") or {}
+    state = delivery.get("state")
+    confirmed = _as_int(delivery.get("confirmed_chunks"), 0)
+    total = _as_int(delivery.get("total_chunks"), 0)
+    receipt = _load(os.path.join(home, "delivery", re.sub(
+        r"[^A-Za-z0-9_.-]", "_", brief_id) + ".json")) or {}
+    if receipt:
+        state = receipt.get("state", state)
+        confirmed = _as_int(receipt.get("confirmed_chunks"), confirmed)
+        total = _as_int(receipt.get("total_chunks"), total)
+    if (receipt and receipt.get("brief_id") == brief_id and state == "delivered" and
+            total > 0 and confirmed == total and
+            _same_local_day(receipt.get("delivered_at"), now)):
+        return None, brief_id
+    if confirmed > 0 and (total == 0 or confirmed < total):
+        return "partial", brief_id
+    if state in ("failed", "partial"):
+        return "partial", brief_id
+    return "unsent", brief_id
+
+
+def _acquire_lock():
+    home = _home(); os.makedirs(home, mode=0o700, exist_ok=True)
+    lock = os.path.join(home, "deadman.lock")
+    deadline = time.monotonic() + 30
+    while True:
+        try:
+            os.mkdir(lock, 0o700)
+            return lock
+        except FileExistsError:
+            try:
+                if time.time() - os.path.getmtime(lock) > 600:
+                    os.rmdir(lock); continue
+            except OSError:
+                pass
+            if time.monotonic() >= deadline:
+                return None
+            time.sleep(0.05)
+
+
+def main():
+    lock = _acquire_lock()
+    if not lock:
+        sys.stderr.write("morning-brief-deadman: lock busy\n")
+        return 75
+    try:
+        return _main_locked()
+    finally:
+        try:
+            os.rmdir(lock)
+        except OSError:
+            pass
+
+
+def _main_locked():
+    now = _now(); home = _home()
+    category, brief_id = _problem(now)
+    fingerprint = hashlib.sha256(("%s:%s" % (category or "healthy", brief_id)).encode(
+        "utf-8")).hexdigest()
+    alert_state_path = os.path.join(home, "deadman-alert-state.json")
+    previous = _load(alert_state_path) or {}
+    alerted = False
+    throttled = False
+    if category:
+        try:
+            throttle = int(os.environ.get("MORNING_BRIEF_DEADMAN_THROTTLE_S", "21600"))
+        except ValueError:
+            throttle = 21600
+        last = int(previous.get("alerted_at") or 0)
+        throttled = previous.get("fingerprint") == fingerprint and now - last < throttle
+        if not throttled and _send(category):
+            alerted = True
+            _atomic_json(alert_state_path, {
+                "schema": 1, "fingerprint": fingerprint, "alerted_at": now,
+                "category": category,
+            })
+    _atomic_json(os.path.join(home, "deadman-last-check.json"), {
+        "schema": 1, "checked_at": now, "brief_id": brief_id,
+        "result": category or "healthy", "alerted": alerted,
+        "throttled": throttled,
+    })
+    if category:
+        sys.stderr.write("morning-brief-deadman: %s\n" % category)
+        return 1
+    print("morning-brief-deadman: healthy")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

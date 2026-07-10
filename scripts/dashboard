@@ -35,6 +35,13 @@ import json, os, re, shlex, shutil, subprocess, sys, time
 HOME = os.environ["MISSION_CONTROL_HOME"]
 REPO = os.environ.get("REPO_ROOT", ".")
 DATA = os.path.join(HOME, "data")
+sys.path.insert(0, os.path.join(REPO, "scripts"))
+try:
+    from mission_control_common import ERROR, EgressCounters, sanitize_text
+except ImportError:
+    ERROR = "error"
+    EgressCounters = None
+    sanitize_text = None
 
 _SHELL_FORBIDDEN = re.compile(r'[;|&`$<>]')
 
@@ -64,7 +71,7 @@ FEEDS = [
     # LAST by design so its slow scan never delays the other three tabs.
     ("chats",      1800, "", "DASHBOARD_CMD_CHATS", 150),
     # Brief consumes the stable snapshots above and therefore MUST run last.
-    ("brief",     86400, "", "DASHBOARD_CMD_BRIEF", 30),
+    ("brief",       300, "", "DASHBOARD_CMD_BRIEF", 30),
 ]
 FEED_CADENCE = dict((n, c) for n, c, _, _, _ in FEEDS)
 
@@ -115,8 +122,18 @@ def _wrap(name, cadence, obj):
     env["schema"] = 1
     env["feed"] = name
     env["cadence_s"] = cadence
-    env["generated_at"] = _iso(now)
-    env["generated_epoch"] = now
+    if name == "brief":
+        # Reading an old sidecar now must not relabel it as a newly composed
+        # brief. The compose timestamp is a trust field, so malformed, boolean,
+        # missing, or non-positive values fail this feed closed.
+        epoch = obj.get("generated_epoch") if isinstance(obj, dict) else None
+        if type(epoch) is not int or epoch <= 0:
+            raise ValueError("brief generated_epoch must be a positive integer")
+        env["generated_epoch"] = epoch
+        env["generated_at"] = obj.get("generated_at") or _iso(epoch)
+    else:
+        env["generated_at"] = _iso(now)
+        env["generated_epoch"] = now
     return env
 
 
@@ -128,15 +145,32 @@ def _write_feed(name, env):
     err = os.path.join(DATA, name + ".error.json")
     if os.path.exists(err):
         os.remove(err)  # good collection clears a prior error note
+    err_js = os.path.join(DATA, name + ".error.js")
+    if os.path.exists(err_js):
+        os.remove(err_js)
 
 
 def _write_error(name, cadence, msg):
     """Record a feeder failure WITHOUT clobbering the last-good .json/.js."""
     now = _now()
+    counters = EgressCounters() if EgressCounters else None
+    if sanitize_text:
+        result = sanitize_text(msg, ERROR, counters=counters)
+        safe_error = result.value
+    else:
+        # A missing shared policy must never turn into permission to persist raw
+        # feeder stderr. Installed and repo runtimes normally import the module.
+        safe_error = "feeder error detail unavailable"
     env = {"schema": 1, "feed": name, "generated_at": _iso(now),
            "generated_epoch": now, "cadence_s": cadence,
-           "ok": False, "error": msg, "data": None}
-    _atomic_write(os.path.join(DATA, name + ".error.json"), _dumps(env))
+           "ok": False, "error": safe_error, "data": None,
+           "egress_counters": counters.snapshot() if counters else {
+               "dropped_fields": 1, "policy_unavailable": 1}}
+    canon = _dumps(env)
+    _atomic_write(os.path.join(DATA, name + ".error.json"), canon)
+    js = ("window.MC=window.MC||{feeds:{}};window.MC.feedErrors="
+          "window.MC.feedErrors||{};window.MC.feedErrors.%s=%s;" % (name, canon))
+    _atomic_write(os.path.join(DATA, name + ".error.js"), js)
 
 
 def _run_builtin_chats(timeout_s):
@@ -160,15 +194,19 @@ def _run_builtin_chats(timeout_s):
 
 def _run_builtin_brief(timeout_s):
     composer = os.path.join(REPO, "scripts", "morning-brief")
-    try:
-        p = subprocess.run([composer], capture_output=True, text=True, timeout=timeout_s)
-    except subprocess.TimeoutExpired:
-        return None, "morning-brief timed out after %ds" % timeout_s
-    except OSError as e:
-        return None, "cannot start morning-brief: %s" % e
-    if p.returncode != 0:
-        return None, "morning-brief exit %d: %s" % (p.returncode, (p.stderr or "").strip()[:200])
     path = os.path.join(HOME, "morning-brief", "latest.json")
+    # Collection is a reader after the first bootstrap. Re-composing on every
+    # 5-minute dashboard poll would overwrite a delivered sidecar with not_sent
+    # before the 7:20 deadman checks it.
+    if not os.path.isfile(path):
+        try:
+            p = subprocess.run([composer], capture_output=True, text=True, timeout=timeout_s)
+        except subprocess.TimeoutExpired:
+            return None, "morning-brief timed out after %ds" % timeout_s
+        except OSError as e:
+            return None, "cannot start morning-brief: %s" % e
+        if p.returncode != 0:
+            return None, "morning-brief exit %d: %s" % (p.returncode, (p.stderr or "").strip()[:200])
     try:
         with open(path) as f:
             return json.load(f), None
@@ -220,7 +258,12 @@ def _collect_one(name, cadence, defcmd, envvar, timeout_s):
         if err:
             _write_error(name, cadence, err)
             return "error"
-        _write_feed(name, _wrap(name, cadence, obj))
+        try:
+            env = _wrap(name, cadence, obj)
+        except (TypeError, ValueError) as exc:
+            _write_error(name, cadence, "invalid feeder payload: %s" % exc)
+            return "error"
+        _write_feed(name, env)
         return "ok"
     finally:
         try:
@@ -264,6 +307,34 @@ def _load(name):
             return json.load(f)
     except Exception:
         return None
+
+
+def _load_error(name):
+    p = os.path.join(DATA, name + ".error.json")
+    if not os.path.exists(p):
+        return None
+    try:
+        with open(p) as f:
+            value = json.load(f)
+        return value if isinstance(value, dict) and value.get("ok") is False else None
+    except Exception:
+        return None
+
+
+def _current_status_env(name):
+    good = _load(name)
+    error = _load_error(name)
+    try:
+        error_epoch = int(error.get("generated_epoch") or 0) if error else 0
+    except (TypeError, ValueError):
+        error_epoch = _now()
+    try:
+        good_epoch = int(good.get("generated_epoch") or 0) if good else 0
+    except (TypeError, ValueError):
+        good_epoch = 0
+    if error and (good is None or error_epoch >= good_epoch):
+        return error
+    return good
 
 
 def _verdict(env, cadence):
@@ -313,7 +384,7 @@ def cmd_status(argv):
     red = False
     print("%-12s %-9s %-6s %s" % ("FEED", "AGE", "OK", "VERDICT"))
     for name, cadence, _, _, _ in FEEDS:
-        env = _load(name)
+        env = _current_status_env(name)
         verdict, is_red = _verdict(env, cadence)
         if name == "automation" and _automation_red(env):
             is_red = True
@@ -334,7 +405,7 @@ def cmd_status(argv):
 def cmd_freshness(argv):
     now = _now()
     for name, cadence, _, _, _ in FEEDS:
-        env = _load(name)
+        env = _current_status_env(name)
         verdict, _ = _verdict(env, cadence)
         if env is None:
             print("%-12s no data" % name)
@@ -439,6 +510,14 @@ do_install() {
     "$SCRIPT_DIR/dashboard" > "$MISSION_CONTROL_HOME/bin/dashboard"
   chmod +x "$MISSION_CONTROL_HOME/bin/dashboard"
   echo "installed runtime -> $MISSION_CONTROL_HOME/bin/dashboard (REPO_ROOT=$REPO_ROOT)"
+  local runtime
+  for runtime in morning-brief morning-brief-deadman mission_control_common.py; do
+    if [ -f "$REPO_ROOT/scripts/$runtime" ]; then
+      cp "$REPO_ROOT/scripts/$runtime" "$MISSION_CONTROL_HOME/bin/$runtime"
+      case "$runtime" in *.py) chmod 600 "$MISSION_CONTROL_HOME/bin/$runtime" ;; *) chmod +x "$MISSION_CONTROL_HOME/bin/$runtime" ;; esac
+      echo "installed runtime -> $MISSION_CONTROL_HOME/bin/$runtime"
+    fi
+  done
   if [ -f "$REPO_ROOT/dashboard/index.html" ]; then
     cp "$REPO_ROOT/dashboard/index.html" "$MISSION_CONTROL_HOME/index.html"
     # vendored graph engine for the connection Map (local, offline; loaded via relative src)
@@ -450,9 +529,11 @@ do_install() {
   else
     echo "skip: dashboard/index.html not present yet"
   fi
-  local tmpl="$REPO_ROOT/launchd/com.gillettes.mission-control.plist.template"
-  local dest="$HOME/Library/LaunchAgents/com.gillettes.mission-control.plist"
-  if [ -f "$tmpl" ]; then
+  local tmpl dest label
+  for tmpl in "$REPO_ROOT"/launchd/*.plist.template; do
+    [ -f "$tmpl" ] || continue
+    dest="$HOME/Library/LaunchAgents/$(basename "${tmpl%.template}")"
+    label="$(basename "${tmpl%.plist.template}")"
     mkdir -p "$HOME/Library/LaunchAgents"
     # __MCHOME__ = the COMPLETE mission-control home (already includes .mission-control);
     # the template must not re-append it (the double-prefix bug the fresh-eyes audit
@@ -462,17 +543,15 @@ do_install() {
       "$tmpl" > "$dest"
     echo "installed plist -> $dest"
     if command -v launchctl >/dev/null 2>&1; then
-      if launchctl list 2>/dev/null | grep -q "com.gillettes.mission-control"; then
-        echo "already bootstrapped: com.gillettes.mission-control"
+      if launchctl print "gui/$(id -u)/$label" >/dev/null 2>&1; then
+        echo "already bootstrapped: $label"
       elif launchctl bootstrap "gui/$(id -u)" "$dest" 2>/dev/null; then
-        echo "bootstrapped com.gillettes.mission-control"
+        echo "bootstrapped $label"
       else
         echo "bootstrap skipped/failed (non-fatal)"
       fi
     fi
-  else
-    echo "skip: launchd template not present yet"
-  fi
+  done
 }
 
 do_demo() {

@@ -238,6 +238,13 @@ c7() { # defaults must resolve repo-sibling feeders WITHOUT env overrides (live 
   cgh="$(mktemp -d)"
   printf '#!/bin/sh\nmkdir -p "${CHAT_GRAPH_HOME}/export"\necho "{\\"stub\\": \\"chats\\"}" > "${CHAT_GRAPH_HOME}/export/graph.json"\n' > "$fr/scripts/chat-graph"
   chmod +x "$fr/scripts/chat-graph"
+  cat > "$fr/scripts/morning-brief" <<'EOF'
+#!/bin/sh
+mkdir -p "$MISSION_CONTROL_HOME/morning-brief"
+printf '%s\n' '{"schema":1,"brief_id":"stub","generated_epoch":1,"delivery":{"state":"not_sent"},"sections":[],"inputs":{},"stale_required_inputs":[],"selection_high_water":{"loose_end_changes":[0,""]}}' > "$MISSION_CONTROL_HOME/morning-brief/latest.json"
+printf '# stub\n' > "$MISSION_CONTROL_HOME/morning-brief/latest.md"
+EOF
+  chmod +x "$fr/scripts/morning-brief"
   echo '{}' > "$fr/dashboard/jobs.json"
   local mch; mch="$(mktemp -d)"
   if env -u DASHBOARD_CMD_USAGE -u DASHBOARD_CMD_GIT -u DASHBOARD_CMD_CHATS -u DASHBOARD_CMD_AUTOMATION \
@@ -336,7 +343,8 @@ c9() { # install copies a RUNNABLE runtime with REPO_ROOT baked in (headless pli
          MISSION_CONTROL_HOME="$mch" CHAT_GRAPH_HOME="$cgh" \
          bash "$mch/bin/dashboard" collect --force >/dev/null 2>&1 \
      && [ -f "$mch/data/usage.json" ] && [ -f "$mch/data/git.json" ] \
-     && [ -f "$mch/data/chats.json" ] && [ -f "$mch/data/automation.json" ]; then
+     && [ -f "$mch/data/chats.json" ] && [ -f "$mch/data/automation.json" ] \
+     && [ -f "$mch/data/brief.json" ]; then
     ok "install: baked bin/dashboard resolves feeders headless + writes all feeds"
   else
     no "install: baked copy did not write feeds headless"
@@ -399,7 +407,113 @@ c13() { # FIX 6: the data/ dir must be 0700, not world-readable
   [ "$p" = "700" ] && ok "data dir perms 700 (got $p)" || no "data dir world-readable (got $p, want 700)"
 }
 
-c1; c2; c3; c4; c5; c6; c7; c8; c8a; c8b; c9; c10; c11; c12; c13
+c14() { # isolated install wires composer/deadman/common + all three plists
+  local h mch sbin; h="$(mktemp -d)"; mch="$h/state"; sbin="$(mktemp -d)"
+  cat > "$sbin/launchctl" <<'EOF'
+#!/bin/sh
+case "$1" in
+  print) case "$2" in *morning-brief-deadman) exit 0;; *) exit 1;; esac ;;
+  bootstrap) basename "$3" >> "$LAUNCH_CAPTURE"; exit 0 ;;
+esac
+exit 0
+EOF
+  chmod +x "$sbin/launchctl"
+  HOME="$h" PATH="$sbin:$PATH" REPO_ROOT="$REPO" MISSION_CONTROL_HOME="$mch" LAUNCH_CAPTURE="$h/bootstrapped" \
+    bash "$DASH" install >/dev/null 2>&1
+  local miss=0 p
+  [ -x "$mch/bin/morning-brief" ] || miss=1
+  [ -x "$mch/bin/morning-brief-deadman" ] || miss=1
+  [ -f "$mch/bin/mission_control_common.py" ] || miss=1
+  for p in com.gillettes.mission-control.plist com.gillettes.morning-brief.plist com.gillettes.morning-brief-deadman.plist; do
+    [ -f "$h/Library/LaunchAgents/$p" ] || miss=1
+    plutil -lint "$h/Library/LaunchAgents/$p" >/dev/null 2>&1 || miss=1
+    grep -q '__MCHOME__\|__HOME__' "$h/Library/LaunchAgents/$p" && miss=1
+  done
+  grep -qx 'com.gillettes.morning-brief.plist' "$h/bootstrapped" || miss=1
+  if [ "$miss" = 0 ]; then ok "install: composer, deadman, common policy, and plists wire in isolation"
+  else no "install: Morning Brief runtime/plist wiring incomplete"; fi
+}
+
+c15() { # reading an old sidecar must preserve compose age instead of refreshing it
+  local mch old_epoch out; mch="$(mktemp -d)"; old_epoch="$(( $(date +%s) - 172800 ))"
+  mkdir -p "$mch/morning-brief"
+  python3 - "$mch/morning-brief/latest.json" "$old_epoch" <<'PY'
+import json, sys
+path, epoch = sys.argv[1], int(sys.argv[2])
+json.dump({"brief_id": "stale-fixture", "generated_epoch": epoch,
+           "generated_at": "2000-01-01T00:00:00Z", "sections": {}}, open(path, "w"))
+PY
+  env -u DASHBOARD_CMD_BRIEF MISSION_CONTROL_HOME="$mch" \
+    bash "$DASH" collect --force brief >/dev/null 2>&1
+  out="$(MISSION_CONTROL_HOME="$mch" bash "$DASH" status 2>/dev/null || true)"
+  if [ "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["generated_epoch"])' "$mch/data/brief.json")" = "$old_epoch" ] \
+     && printf '%s\n' "$out" | grep -Eqi 'brief.*(stale|red|aging)'; then
+    ok "brief freshness preserves the sidecar compose age"
+  else
+    no "brief freshness relabeled a stale sidecar as current"
+  fi
+}
+
+c16() { # malformed Brief compose timestamps fail one feed without replacing last-good
+  local mch before value out miss=0; mch="$(mktemp -d)"; mkdir -p "$mch/morning-brief"
+  python3 - "$mch/morning-brief/latest.json" <<'PY'
+import json, sys, time
+now = int(time.time())
+json.dump({"brief_id": "valid-fixture", "generated_epoch": now,
+           "generated_at": "2026-07-10T09:00:00Z", "sections": {}}, open(sys.argv[1], "w"))
+PY
+  env -u DASHBOARD_CMD_BRIEF MISSION_CONTROL_HOME="$mch" \
+    bash "$DASH" collect --force brief >/dev/null 2>&1
+  before="$(shasum -a 256 "$mch/data/brief.json" | awk '{print $1}')"
+  for value in '"oops"' '["oops"]' '[]' '{}' 'null' '0' 'true'; do
+    python3 - "$mch/morning-brief/latest.json" "$value" <<'PY'
+import json, sys
+json.dump({"brief_id": "bad-fixture", "generated_epoch": json.loads(sys.argv[2]),
+           "sections": {}}, open(sys.argv[1], "w"))
+PY
+    env -u DASHBOARD_CMD_BRIEF MISSION_CONTROL_HOME="$mch" \
+      bash "$DASH" collect --force brief >/dev/null 2>&1
+    [ -f "$mch/data/brief.error.json" ] || miss=1
+    [ -f "$mch/data/brief.error.js" ] && grep -q 'feedErrors.brief' "$mch/data/brief.error.js" || miss=1
+    [ "$(shasum -a 256 "$mch/data/brief.json" | awk '{print $1}')" = "$before" ] || miss=1
+    out="$(MISSION_CONTROL_HOME="$mch" bash "$DASH" status 2>/dev/null || true)"
+    printf '%s\n' "$out" | grep -Eqi 'brief.*error' || miss=1
+  done
+  grep -q 'data/brief.error.js' "$REPO/dashboard/index.html" || miss=1
+  grep -q 'MC.feedErrors' "$REPO/dashboard/index.html" || miss=1
+  if [ "$miss" = 0 ]; then ok "brief rejects malformed timestamps and surfaces last-good refresh errors"
+  else no "brief accepted malformed compose timestamps or replaced last-good"; fi
+}
+
+c17() { # feeder stderr is sanitized before JSON/JS error persistence
+  local mch stub status miss=0; mch="$(mktemp -d)"; stub="$ROOT/sensitive-error-stub"
+  cat > "$stub" <<'EOF'
+#!/bin/sh
+printf '%s\n' 'failed sk-abcdefghijklmnopqrstuvwxyz123456 operator@example.com 415-555-1212 forbidden-term' >&2
+exit 2
+EOF
+  chmod +x "$stub"
+  MISSION_CONTROL_EGRESS_DENYLIST='forbidden-term' DASHBOARD_CMD_USAGE="$stub" \
+    MISSION_CONTROL_HOME="$mch" bash "$DASH" collect --force usage >/dev/null 2>&1
+  for artifact in "$mch/data/usage.error.json" "$mch/data/usage.error.js"; do
+    [ -f "$artifact" ] || miss=1
+    grep -Eq 'sk-abcdefghijklmnopqrstuvwxyz123456|operator@example.com|415-555-1212|forbidden-term' "$artifact" && miss=1
+  done
+  python3 - "$mch/data/usage.error.json" <<'PY' || miss=1
+import json,sys
+d=json.load(open(sys.argv[1])); c=d["egress_counters"]
+assert d["ok"] is False
+assert c["dropped_fields"] == 1
+assert c["reason_secret"] == c["reason_email"] == c["reason_phone"] == c["reason_denylist"] == 1
+PY
+  status="$(MISSION_CONTROL_HOME="$mch" bash "$DASH" status 2>/dev/null || true)"
+  printf '%s\n' "$status" | grep -Eqi 'usage.*error' || miss=1
+  printf '%s\n' "$status" | grep -Eq 'sk-abcdefghijklmnopqrstuvwxyz123456|operator@example.com|415-555-1212|forbidden-term' && miss=1
+  if [ "$miss" = 0 ]; then ok "error persistence sanitizes secrets, PII, and denylisted terms"
+  else no "error persistence leaked sensitive feeder stderr"; fi
+}
+
+c1; c2; c3; c4; c5; c6; c7; c8; c8a; c8b; c9; c10; c11; c12; c13; c14; c15; c16; c17
 shell_contract
 echo "----"
 echo "PASS=$PASS FAIL=$FAIL"

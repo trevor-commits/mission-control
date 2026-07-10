@@ -181,35 +181,35 @@ verify:
   check: Home shows a NEEDS-YOU-first Morning Brief summary with source freshness and no raw markdown parsing.
 gate: auto
 
-- [ ] **Step 25: Write red delivery receipt tests**
+- [x] **Step 25: Write red delivery receipt tests**
 action: Add stub-send tests for fixed argv, chunk identity/hash, partial confirmation, retry-only-unconfirmed, completed no-op, failed-send cursor retention, and duplicate recognition.
 loop: false
 max_iterations: 1
 verify: test -s /tmp/morning-brief-delivery-red.txt
 gate: auto
 
-- [ ] **Step 26: Implement resumable delivery status**
+- [x] **Step 26: Implement resumable delivery status**
 action: Add `--send`, fixed-argv mobile-connect use, line-bounded chunks, per-chunk receipts, atomic delivery state, cursor commit on complete success, and safe retry.
 loop: until delivery tests pass
 max_iterations: 3
 verify: bash scripts/morning-brief.test.sh
 gate: auto
 
-- [ ] **Step 27: Write red deadman tests**
+- [x] **Step 27: Write red deadman tests**
 action: Add missing/stale/empty/unsent/partial/throttled/token-leak and independent-path fixtures under a scrubbed launchd-like environment.
 loop: false
 max_iterations: 1
 verify: test -s /tmp/morning-brief-deadman-red.txt
 gate: human
 
-- [ ] **Step 28: Implement independent deadman and plists**
+- [x] **Step 28: Implement independent deadman and plists**
 action: Add the minimal direct failure notifier, fully expanded 7:00/7:20 launchd templates, explicit HOME/PATH, throttling, job registry, and installer wiring.
 loop: until deadman, dashboard, and automation tests pass
 max_iterations: 3
 verify: bash scripts/morning-brief-deadman.test.sh && bash scripts/automation-status.test.sh && REPO_ROOT="$PWD" bash scripts/dashboard.test.sh --require-shell
 gate: auto
 
-- [ ] **Step 29: Review privacy and external side effects before live proof**
+- [x] **Step 29: Review privacy and external side effects before live proof**
 action: Run a threat pass over transcript egress, notification payloads, tokens, temp files, logs, permissions, retries, idempotency, and rollback; close every blocking finding.
 loop: until no blocking privacy or delivery finding remains
 max_iterations: 3

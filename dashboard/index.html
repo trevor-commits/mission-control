@@ -12,6 +12,11 @@
 <script src="data/chats.js"></script>
 <script src="data/automation.js"></script>
 <script src="data/brief.js"></script>
+<script src="data/usage.error.js"></script>
+<script src="data/git.error.js"></script>
+<script src="data/chats.error.js"></script>
+<script src="data/automation.error.js"></script>
+<script src="data/brief.error.js"></script>
 <!-- vendored graph engine (local, offline, no CDN) for the connection Map -->
 <script src="vendor/cytoscape.min.js"></script>
 
@@ -444,6 +449,7 @@ body {
   "use strict";
   var MC = window.MC || (window.MC = { feeds: {} });
   MC.feeds = MC.feeds || {};
+  MC.feedErrors = MC.feedErrors || {};
 
   var LOAD_EPOCH = Math.floor(Date.now() / 1000);
   function nowS() { return Math.floor(Date.now() / 1000); }
@@ -469,6 +475,7 @@ body {
   }
   // redact every feed's display text once at load — one choke point, all render paths covered
   for (var _f in MC.feeds) if (MC.feeds.hasOwnProperty(_f)) MC.feeds[_f] = redactDeep(MC.feeds[_f]);
+  for (var _e in MC.feedErrors) if (MC.feedErrors.hasOwnProperty(_e)) MC.feedErrors[_e] = redactDeep(MC.feedErrors[_e]);
 
   // --- tiny DOM helper: all text via textContent, never raw HTML injection ---
   function h(tag, attrs) {
@@ -528,7 +535,13 @@ body {
   // --- per-feed guard: schema/staleness/skew ---------------------------------
   function guard(name) {
     var env = MC.feeds[name];
-    if (!env || typeof env !== "object") return { ok: false, reason: "no data source", env: null };
+    var currentError = MC.feedErrors[name];
+    if (!env || typeof env !== "object") {
+      if (currentError && currentError.ok === false) {
+        return { ok: false, reason: currentError.error || "feeder error", env: null, hard: true };
+      }
+      return { ok: false, reason: "no data source", env: null };
+    }
     if (env.schema !== 1) return { ok: false, reason: "unsupported schema " + env.schema + " — keeping last good", env: env, hard: true };
     var epoch = +env.generated_epoch || 0;
     var cadence = +env.cadence_s || 0;
@@ -536,8 +549,13 @@ body {
     var flag = null;
     if (age < 0) flag = "skew";
     else if (cadence && age > 2 * cadence) flag = "stale";
+    var feedError = env.ok === false ? (env.error || "feeder error") : null;
+    if (currentError && currentError.ok === false &&
+        (+currentError.generated_epoch || 0) >= epoch) {
+      feedError = currentError.error || "feeder error";
+    }
     return { ok: true, env: env, data: env.data, epoch: epoch, cadence: cadence, age: age,
-             flag: flag, feedError: env.ok === false ? (env.error || "feeder error") : null };
+             flag: flag, feedError: feedError };
   }
   // a panel wrapper: banner(s) + optional desaturation + data-age
   function panel(g, titleText) {

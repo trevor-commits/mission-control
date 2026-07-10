@@ -122,6 +122,36 @@
     {
       "evidence": [
         {
+          "path": "/Users/gillettes/.mission-control/morning-brief/last-compose.json",
+          "role": "run",
+          "run_key": true
+        }
+      ],
+      "err_log": "/Users/gillettes/.mission-control/logs/morning-brief.err.log",
+      "expected_freshness_s": 93600,
+      "kind": "calendar",
+      "label": "Morning Brief",
+      "name": "com.gillettes.morning-brief",
+      "schedule": "07:00 daily"
+    },
+    {
+      "evidence": [
+        {
+          "path": "/Users/gillettes/.mission-control/morning-brief/deadman-last-check.json",
+          "role": "run",
+          "run_key": true
+        }
+      ],
+      "err_log": "/Users/gillettes/.mission-control/logs/morning-brief-deadman.err.log",
+      "expected_freshness_s": 93600,
+      "kind": "calendar",
+      "label": "Morning Brief Deadman",
+      "name": "com.gillettes.morning-brief-deadman",
+      "schedule": "07:20 daily"
+    },
+    {
+      "evidence": [
+        {
           "expected_offline": true,
           "path": "/Users/gillettes/.mission-control/data/automation.json",
           "role": "run",
