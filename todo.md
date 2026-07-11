@@ -510,7 +510,7 @@ Each active branch entry should include:
 - `linked PR/audit/completion record`
 
 ### `feature/morning-brief-activation`
-- status: active; round-8 hardening and direct deadman transport are implemented, pushed, and independently review-clean; live install remains at `67e493e`, so the final merged SHA still requires code-only reinstall and stamp verification.
+- status: active and merge-held; round-8 hardening plus direct deadman are pushed through `b8e9cbe`, but independent review found additional fail-closed and deployment-provenance blockers. The live installed runtime is still stamped at `1c6a380`, so the final reviewed/merged SHA requires code-only reinstall and stamp verification.
 - created: 2026-07-10
 - base: `main` at `420a629`
 - worktree: `/Users/gillettes/Coding Projects/mission-control`
@@ -535,6 +535,25 @@ Each active branch entry should include:
 - retain reason: n/a
 - cleanup command: `git branch -d feature/morning-brief-activation && git push origin --delete feature/morning-brief-activation`
 - linked PR/audit/completion record: Work Record `2026-07-11 — Morning Brief merge-gate round 8`.
+
+### `codex/morning-brief-final-gate-20260711`
+- status: active; isolated final merge-gate repair and independent re-audit in progress.
+- created: 2026-07-11
+- base: `62bf905` from `feature/morning-brief-activation`; direct-deadman commit `b8e9cbe` was replayed as `f00c476`.
+- worktree: `/Users/gillettes/Coding Projects/mc-worktrees/morning-brief-final-gate-20260711`
+- source chat: Codex `019f4f6c-e506-7551-876e-d9bb31f56c36`, auditing Claude `faad4dbe-5829-46de-8d3e-93d3392dc6c4`.
+- last refreshed by chat: 2026-07-11 Codex `019f4f6c-e506-7551-876e-d9bb31f56c36`.
+- purpose: isolate and close the strict freshness wire contract, extreme timestamp handling, install-stamp/status/deadman fail-closed behavior, installed-common import provenance, and launchd plist deployment integrity findings without colliding with concurrent activation-branch governors.
+- linked issue: repo-only merge-gate repair; no Mission Control Linear team is configured.
+- plugin mirror: none; repo-only mode.
+- merge expectation: replay only review-clean commits onto the activation landing, then fast-forward canonical `main` after immutable audit proof.
+- merge target: `main` through the activation closeout.
+- review surface: exact branch diff from `62bf905`, focused RED/GREEN regressions, full cold suite, installed-runtime dry/live proof without an external send, and separate challenger audit.
+- exit checklist: [x] isolated from concurrent writers; [x] direct deadman replayed; [ ] all confirmed blockers fixed with regressions; [ ] full cold suite green; [ ] independent immutable re-audit clean; [ ] canonical `main` contains reviewed tree; [ ] live install stamp matches canonical SHA; [ ] worktree/local/remote branch cleanup complete.
+- delete when: after canonical containment, live proof, durable closeout, and cleanup verification.
+- retain reason: n/a
+- cleanup command: `git worktree remove "/Users/gillettes/Coding Projects/mc-worktrees/morning-brief-final-gate-20260711" && git branch -d codex/morning-brief-final-gate-20260711 && git push origin --delete codex/morning-brief-final-gate-20260711`
+- linked PR/audit/completion record: global audit record `records/verification/2026-07-11-audit-faad4dbe-orchestration-conclusions.md`.
 
 ## Branch History
 - 2026-07-11 | `feature/morning-brief-p9-job-history` | commit `796cc26` is already an ancestor of `feature/morning-brief-activation` | containment disposition: not an active retained branch; P9 job history/streaks/next-run behavior is carried by the activation branch, so no separate cherry-pick or merge is required | cleanup disposition: delete the local/remote P9 branch only after `origin/main` contains the activation branch's carried P9 work | source: Codex `019f4f3d-3034-7283-b63c-e4e8890b51f1`; reconciled by Codex `019f5056-bc55-7043-88ad-b87b1ac48a6f` under Claude governor `e85411a1-b74b-4556-9939-8eaf5d8f2ea9` | record: Work Record `2026-07-11 — Morning Brief P9 job history slice` plus `2026-07-11 — Morning Brief merge-gate round 8`.
