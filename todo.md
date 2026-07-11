@@ -339,7 +339,7 @@ Each active branch entry should include:
   - [x] Implementation/docs complete
   - [x] Required verification complete
   - [x] `todo.md` updated
-  - [ ] Commit pushed
+  - [x] Commit pushed
   - [ ] Merge or explicit no-merge closeout decided
   - [ ] Local/remote branch cleanup complete
 - delete when: after merge/closeout and branch cleanup completes.
