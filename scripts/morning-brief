@@ -124,7 +124,10 @@ def _headline(text, limit):
     return clipped + " … (options in dashboard)"
 
 
-def _sanitize_line(text, trust="Confirmed", source="", action_cmd=None):
+def _sanitize_line(text, trust="Confirmed", source="", action_cmd=None, clip=None):
+    # Sanitize the RAW line against the shared egress policy BEFORE any clip, so
+    # a secret/PII value that sits past a headline boundary still drops the whole
+    # row instead of surviving inside a shortened "safe" headline.
     result = sanitize_text(text, NARRATIVE, counters=_EGRESS_COUNTERS)
     if result.dropped or not result.value.strip():
         return None
@@ -132,8 +135,11 @@ def _sanitize_line(text, trust="Confirmed", source="", action_cmd=None):
     # never a real session outcome; the fix belongs in chat-graph, this is a guard.
     if "Spawned-by:" in result.value:
         return None
+    value = result.value.strip()
+    if clip is not None:
+        value = _headline(value, clip)
     line = {
-        "text": result.value.strip(),
+        "text": value,
         "trust": trust,
         "source": safe_text(source, IDENTIFIER, counters=_EGRESS_COUNTERS) if source else "",
     }
@@ -146,12 +152,15 @@ def _sanitize_line(text, trust="Confirmed", source="", action_cmd=None):
 
 def _section(title, lines, collapsed=0):
     # Drop identical rendered lines within a section (e.g. repeated late-closeout
-    # notices) — an exact duplicate carries no extra information.
+    # notices) — an exact duplicate carries no extra information. Provenance is
+    # part of the identity: rows with the same text but different trust, source,
+    # or nesting depth are distinct and must never silently collapse together.
     unique, seen = [], set()
     for line in lines:
         if not line:
             continue
-        key = (line.get("text"), line.get("action_cmd"))
+        key = (line.get("text"), line.get("action_cmd"),
+               line.get("trust"), line.get("source"), line.get("depth"))
         if key in seen:
             continue
         seen.add(key)
@@ -183,7 +192,7 @@ def _needs_you(snapshot, health, cap):
         decision_id = safe_text(item.get("id") or "", IDENTIFIER,
                                 counters=_EGRESS_COUNTERS)
         lines.append(_sanitize_line(
-            _headline(item.get("text") or "A confirmed decision requires review.", chars),
+            item.get("text") or "A confirmed decision requires review.", clip=chars,
             source=item.get("provenance") or "decision queue",
             action_cmd=("dashboard decide dismiss %s" % decision_id)
             if decision_id else None))
@@ -202,7 +211,7 @@ def _needs_you(snapshot, health, cap):
         streak = job.get("failure_streak")
         suffix = " (failure streak %s)" % streak if isinstance(streak, int) and streak else ""
         lines.append(_sanitize_line(
-            _headline("%s is failing%s." % (name, suffix), chars),
+            "%s is failing%s." % (name, suffix), clip=chars,
             source="automation-status", action_cmd=job.get("run_cmd")))
 
     chats = _payload(snapshot.get("chats"))
@@ -210,10 +219,14 @@ def _needs_you(snapshot, health, cap):
         if not isinstance(item, dict) or item.get("severity") != "red":
             continue
         lines.append(_sanitize_line(
-            _headline("%s: %s" % (item.get("title") or "Open work",
-                                  item.get("text") or "needs review"), chars),
+            "%s: %s" % (item.get("title") or "Open work",
+                        item.get("text") or "needs review"), clip=chars,
             source="chat-graph", action_cmd=item.get("resolve_cmd")))
 
+    # Drop rows the egress policy rejected (None) before the empty check so a
+    # feed of only-sensitive candidates still shows the reassuring placeholder
+    # and the collapsed count reflects renderable rows, not silent holes.
+    lines = [line for line in lines if line]
     if not lines:
         lines.append(_sanitize_line("No confirmed operator decision is required from current inputs.",
                                     source="deterministic feeds"))
@@ -509,11 +522,13 @@ def _render_markdown(sidecar):
         out.extend(["## %s" % section["title"], ""])
         for line in section["lines"]:
             indent = "  " * max(0, min(1, int(line.get("depth") or 0)))
-            out.append("%s- **%s:** %s" % (indent, line["trust"], line["text"]))
+            source = line.get("source")
+            suffix = " _(%s)_" % source if source else ""
+            out.append("%s- **%s:** %s%s" % (indent, line["trust"], line["text"], suffix))
             if line.get("action_cmd"):
                 out.append("  - Action: `%s`" % line["action_cmd"].replace("`", ""))
         if section["collapsed_count"]:
-            out.append("- %s lower-value item(s) collapsed." % section["collapsed_count"])
+            out.append("- +%s more: dashboard" % section["collapsed_count"])
         out.append("")
     return "\n".join(out).rstrip() + "\n"
 
@@ -812,7 +827,7 @@ def _compose_locked(preview=False):
 
     health = {name: _input_health(name, snapshot[name], now) for name in INPUTS}
     top_n = _bounded_int("MORNING_BRIEF_TOP_N", 8)
-    needs_cap = _bounded_int("MORNING_BRIEF_NEEDS_YOU_MAX", 5, maximum=10)
+    needs_cap = _bounded_int("MORNING_BRIEF_NEEDS_YOU_MAX", 3, maximum=10)
     cursor = _read_delivery_cursor()
     needs, needs_collapsed, stale = _needs_you(snapshot, health, needs_cap)
     happened, happened_collapsed = _what_happened(snapshot, top_n)

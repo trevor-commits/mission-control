@@ -218,6 +218,55 @@ PY
 then pass "missing required input warns and configurable caps collapse volume"
 else fail "missing required input warns and configurable caps collapse volume"; fi
 
+# P1 regression: sanitize runs on the RAW NEEDS YOU line BEFORE any headline
+# clip. A decision whose secret sits PAST a short clip boundary must drop the
+# whole row — never survive as a shortened, "safe"-looking clipped headline.
+REG="$TMP/reg"; mkdir -p "$REG/state/data"
+python3 - "$REG/state/data" <<'PY'
+import json, os, sys
+root=sys.argv[1]; now=1783674000
+def write(name, data, cadence):
+    json.dump({"schema":1,"feed":name,"generated_epoch":now,"cadence_s":cadence,
+               "ok":True,"error":None,"data":data}, open(os.path.join(root,name+".json"),"w"))
+# Safe words fit under the 40-char clip; the secret only appears far past it.
+secret_line="Pick the deploy window " + ("x"*120) + " sk-livesecrettoken1234567890abcdef"
+write("automation", {"jobs": [], "counts": {"red":0,"green":1}}, 300)
+write("git", {"repos": []}, 900)
+write("chats", {"nodes":[],"edges":[],"loose_ends":[],"loose_end_changes":[]}, 1800)
+write("decisions", {"pinned":[
+  {"id":"decision:"+"9"*24,"text":secret_line,"trust":"structured",
+   "provenance":"chat-graph tier1"}], "inferred":[]}, 300)
+PY
+if MISSION_CONTROL_HOME="$REG/state" MORNING_BRIEF_NEEDS_YOU_CHARS=40 \
+   MORNING_BRIEF_NOW_EPOCH=1783674000 "$BRIEF" >/dev/null 2>&1 && \
+   python3 - "$REG/state/morning-brief/latest.json" "$REG/state/morning-brief/latest.md" <<'PY'
+import json, sys
+d=json.load(open(sys.argv[1])); md=open(sys.argv[2]).read()
+needs=next(s for s in d["sections"] if s["title"]=="NEEDS YOU")
+# The sensitive row must not render at all — not even a clipped safe prefix.
+assert all("Pick the deploy window" not in r["text"] for r in needs["lines"]), needs["lines"]
+assert "Pick the deploy window" not in md, "clipped prefix of a dropped row leaked to markdown"
+assert "sk-livesecrettoken" not in json.dumps(d) and "sk-livesecrettoken" not in md
+# Fail-closed still shows the reassuring placeholder and counts the secret drop.
+assert any("No confirmed operator decision" in r["text"] for r in needs["lines"]), needs["lines"]
+assert d["egress_counters"]["compose"]["reason_secret"] >= 1, d["egress_counters"]
+PY
+then pass "NEEDS YOU sanitizes raw line before clip: past-boundary secret drops the whole row"
+else fail "NEEDS YOU sanitizes raw line before clip: past-boundary secret drops the whole row"; fi
+
+# Unit invariant: a row the egress policy drops stays dropped — a clip never rescues it.
+if PYTHONPATH="$ROOT/scripts" python3 - "$BRIEF" <<'PY'
+import importlib.machinery, sys
+m=importlib.machinery.SourceFileLoader("mb", sys.argv[1]).load_module()
+raw="safe prefix " + ("y"*80) + " sk-anothersecrettoken0987654321zz"
+assert m._sanitize_line(raw) is None, "raw sensitive line must sanitize to None"
+assert m._sanitize_line(raw, clip=20) is None, "clip must not rescue a dropped row"
+clipped=m._sanitize_line("plain safe headline that is quite long", clip=8)
+assert clipped and clipped["text"].endswith("(options in dashboard)"), clipped
+PY
+then pass "_sanitize_line clip cannot rescue a row the egress policy drops"
+else fail "_sanitize_line clip cannot rescue a row the egress policy drops"; fi
+
 printf '%s\n' "----"
 if [ "$FAIL" -eq 0 ]; then echo "ALL PASS"; exit 0; fi
 echo "$FAIL FAILED"; exit 1
