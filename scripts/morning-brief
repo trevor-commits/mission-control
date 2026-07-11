@@ -108,9 +108,29 @@ def _payload(feed):
     return data if isinstance(data, dict) else {}
 
 
+def _headline(text, limit):
+    """Collapse a raw line to a scannable one-phone-screen headline.
+
+    Table pipes and runs of whitespace are flattened; over-length text is cut
+    at a word boundary and marked so the reader knows the full body (e.g. a
+    DECISION NEEDED options table) still lives in the dashboard.
+    """
+    flat = re.sub(r"\s+", " ", str(text).replace("|", " ")).strip()
+    if len(flat) <= limit:
+        return flat
+    clipped = flat[:limit].rstrip()
+    if " " in clipped:
+        clipped = clipped[:clipped.rfind(" ")].rstrip()
+    return clipped + " … (options in dashboard)"
+
+
 def _sanitize_line(text, trust="Confirmed", source="", action_cmd=None):
     result = sanitize_text(text, NARRATIVE, counters=_EGRESS_COUNTERS)
     if result.dropped or not result.value.strip():
+        return None
+    # ponytail: drop upstream extraction noise — a raw worker handshake line is
+    # never a real session outcome; the fix belongs in chat-graph, this is a guard.
+    if "Spawned-by:" in result.value:
         return None
     line = {
         "text": result.value.strip(),
@@ -125,8 +145,18 @@ def _sanitize_line(text, trust="Confirmed", source="", action_cmd=None):
 
 
 def _section(title, lines, collapsed=0):
-    return {"title": title, "lines": [line for line in lines if line],
-            "collapsed_count": max(0, int(collapsed))}
+    # Drop identical rendered lines within a section (e.g. repeated late-closeout
+    # notices) — an exact duplicate carries no extra information.
+    unique, seen = [], set()
+    for line in lines:
+        if not line:
+            continue
+        key = (line.get("text"), line.get("action_cmd"))
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(line)
+    return {"title": title, "lines": unique, "collapsed_count": max(0, int(collapsed))}
 
 
 def _read_delivery_cursor():
@@ -142,6 +172,9 @@ def _read_delivery_cursor():
 
 
 def _needs_you(snapshot, health, cap):
+    # Every NEEDS YOU line is a scannable headline so the whole block fits one
+    # phone screen without scroll; the action command and full body are kept.
+    chars = _bounded_int("MORNING_BRIEF_NEEDS_YOU_CHARS", 160, minimum=40, maximum=400)
     lines = []
     decisions = _payload(snapshot.get("decisions"))
     for item in decisions.get("pinned") or []:
@@ -150,7 +183,7 @@ def _needs_you(snapshot, health, cap):
         decision_id = safe_text(item.get("id") or "", IDENTIFIER,
                                 counters=_EGRESS_COUNTERS)
         lines.append(_sanitize_line(
-            item.get("text") or "A confirmed decision requires review.",
+            _headline(item.get("text") or "A confirmed decision requires review.", chars),
             source=item.get("provenance") or "decision queue",
             action_cmd=("dashboard decide dismiss %s" % decision_id)
             if decision_id else None))
@@ -169,15 +202,16 @@ def _needs_you(snapshot, health, cap):
         streak = job.get("failure_streak")
         suffix = " (failure streak %s)" % streak if isinstance(streak, int) and streak else ""
         lines.append(_sanitize_line(
-            "%s is failing%s." % (name, suffix), source="automation-status",
-            action_cmd=job.get("run_cmd")))
+            _headline("%s is failing%s." % (name, suffix), chars),
+            source="automation-status", action_cmd=job.get("run_cmd")))
 
     chats = _payload(snapshot.get("chats"))
     for item in chats.get("loose_ends") or []:
         if not isinstance(item, dict) or item.get("severity") != "red":
             continue
         lines.append(_sanitize_line(
-            "%s: %s" % (item.get("title") or "Open work", item.get("text") or "needs review"),
+            _headline("%s: %s" % (item.get("title") or "Open work",
+                                  item.get("text") or "needs review"), chars),
             source="chat-graph", action_cmd=item.get("resolve_cmd")))
 
     if not lines:

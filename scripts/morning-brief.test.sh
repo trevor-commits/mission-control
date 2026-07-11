@@ -34,6 +34,9 @@ write("usage", {"providers": [
 ]}, cadence=604800, age=6*86400)
 write("decisions", {"pinned": [
     {"id": "decision:" + "1"*24, "text": "Choose the rollout window",
+     "trust": "structured", "provenance": "chat-graph tier1"},
+    {"id": "decision:" + "3"*24,
+     "text": "DECISION NEEDED: Which rollout path? " + "| Option | Meaning " * 12,
      "trust": "structured", "provenance": "chat-graph tier1"}],
     "inferred": [
       {"id":"decision:"+"2"*24,"text":"Trevor needs to review the evidence.",
@@ -137,6 +140,14 @@ assert d["sections"][0]["lines"][0]["text"] == "Choose the rollout window"
 assert d["sections"][0]["lines"][0]["action_cmd"].startswith("dashboard decide dismiss decision:")
 needs=next(s for s in d["sections"] if s["title"]=="NEEDS YOU")
 possible=next(s for s in d["sections"] if s["title"]=="Possible follow-ups — Inferred")
+# NEEDS YOU headlines fit one phone screen: no pipes, bounded length, and an
+# over-length decision is clipped with a marker pointing to the full body.
+assert all("|" not in row["text"] for row in needs["lines"]), needs["lines"]
+assert all(len(row["text"]) <= 200 for row in needs["lines"]), needs["lines"]
+long_line=next(r for r in needs["lines"] if r["text"].startswith("DECISION NEEDED: Which rollout path?"))
+assert long_line["text"].endswith("(options in dashboard)"), long_line["text"]
+short_line=next(r for r in needs["lines"] if r["text"]=="Choose the rollout window")
+assert "options in dashboard" not in short_line["text"]
 assert all("Trevor needs to review the evidence" not in row["text"] for row in needs["lines"])
 assert any("Trevor needs to review the evidence" in row["text"] for row in possible["lines"])
 assert "Morning Brief implementation" in md and "Implemented the verified outcome" in md

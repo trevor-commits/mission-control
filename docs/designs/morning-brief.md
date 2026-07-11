@@ -24,6 +24,7 @@ When this ships, Trevor can open one local brief or its short Telegram lead, ide
 
 - Not a new dashboard or replacement for Mission Control.
 - Not a rewrite of nightly review, delegation audit, Screenpipe brief, or repo-state watcher; they are inputs until consolidation decisions are proven.
+  - Live-proof consolidation note (2026-07-10, activation): the new launchd label `com.gillettes.morning-brief` shares its base name with the existing Screenpipe agent `com.screenpipe.morning-brief` (both live in `~/Library/LaunchAgents/`). Labels are deliberately kept distinct now; the naming collision is a consideration for the Phase 6 notification-consolidation decision. Do not consolidate yet.
 - Not semantic search or a general transcript-memory rebuild.
 - Not full lineage support for providers whose graph evidence does not exist.
 - Not autonomous merging, force-pushing, deletion, branch cleanup, document editing, or worker delegation.
