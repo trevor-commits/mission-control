@@ -11,6 +11,7 @@
 const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
+const childProcess = require('child_process');
 
 const REPO = process.argv[2] || path.resolve(__dirname, '..');
 const html = fs.readFileSync(path.join(REPO, 'dashboard', 'index.html'), 'utf8');
@@ -461,6 +462,75 @@ for (const tab of TABS) {
     }
     console.log('PASS: hard-expiry ' + c.label + ' -> stale banner ' + (isStale ? 'shown' : 'absent'));
   }
+})();
+
+// One table drives both actual runtimes so the browser and CLI cannot silently
+// assign different age states to the same valid envelope.  This locks the
+// strict > boundaries at 1x and 6x cadence as well as a representative 2x case.
+(function crossRuntimeAgeLadderParity() {
+  const NOW = 1783674000;
+  const CADENCE = 300;
+  const cases = [
+    { age: 300, label: 'exactly 1x' },
+    { age: 301, label: 'just over 1x' },
+    { age: 600, label: 'exactly 2x' },
+    { age: 1800, label: 'exactly 6x' },
+    { age: 1801, label: 'just over 6x' },
+  ];
+  const py = [
+    'import json, sys',
+    'from mission_control_common import feed_health',
+    'cases=json.loads(sys.argv[1]); now=int(sys.argv[2]); cadence=int(sys.argv[3])',
+    'def state(row):',
+    '  env={"schema":1,"feed":"automation","ok":True,"generated_epoch":now-int(row["age"]),"cadence_s":cadence,"data":{}}',
+    '  return feed_health(env,cadence,now)["state"]',
+    'print(json.dumps([state(row) for row in cases]))',
+  ].join('\n');
+  const probe = childProcess.spawnSync('python3', ['-c', py, JSON.stringify(cases), String(NOW), String(CADENCE)], {
+    encoding: 'utf8',
+    env: Object.assign({}, process.env, { PYTHONPATH: path.join(REPO, 'scripts') }),
+  });
+  if (probe.status !== 0) {
+    console.error('FAIL: Python age-ladder probe failed: ' + String(probe.stderr || '').trim());
+    fails++; return;
+  }
+  let pythonStates;
+  try { pythonStates = JSON.parse(probe.stdout); }
+  catch (e) { console.error('FAIL: Python age-ladder probe returned malformed JSON'); fails++; return; }
+
+  for (let i = 0; i < cases.length; i++) {
+    const row = cases[i];
+    const ageFeeds = JSON.parse(JSON.stringify(feeds));
+    ageFeeds.automation.schema = 1;
+    ageFeeds.automation.ok = true;
+    ageFeeds.automation.cadence_s = CADENCE;
+    ageFeeds.automation.generated_epoch = NOW - row.age;
+    delete ageFeeds.automation.valid_until;
+    const FixedDate = new Proxy(Date, {
+      get(t, p) { return p === 'now' ? () => NOW * 1000 : t[p]; },
+      construct(t, a) { return a.length ? new t(...a) : new t(NOW * 1000); },
+    });
+    resetDom(); locationShim.hash = '#automation';
+    const sandbox = {
+      window: { MC: { feeds: ageFeeds }, addEventListener() {}, removeEventListener() {} },
+      document: documentShim, location: locationShim,
+      setInterval() { return 0; }, clearInterval() {}, setTimeout(fn) { if (typeof fn === 'function') fn(); return 0; }, clearTimeout() {},
+      Math: Math, Date: FixedDate, JSON: JSON, console: { log() {}, warn() {}, error() {} },
+      Array: Array, Object: Object, String: String, Number: Number, isFinite: isFinite, parseInt: parseInt, parseFloat: parseFloat,
+      cytoscape() { return { on() {}, destroy() {}, $() { return { select() { return this; } }; } }; },
+    };
+    sandbox.window.window = sandbox.window; sandbox.globalThis = sandbox;
+    try { vm.runInNewContext(scriptBody, sandbox, { timeout: 5000 }); }
+    catch (e) { console.error('FAIL: JS age-ladder ' + row.label + ' THREW: ' + e.message); fails++; continue; }
+    const txt = (byId['mc-main'] && byId['mc-main'].textContent) || '';
+    const browserState = txt.indexOf('Data is older than expected') !== -1 ? 'stale' :
+      (txt.indexOf('Data is aging') !== -1 ? 'aging' : 'fresh');
+    if (browserState !== pythonStates[i]) {
+      console.error('FAIL: age ladder ' + row.label + ' differs: browser=' + browserState + ' python=' + pythonStates[i]);
+      fails++; continue;
+    }
+  }
+  console.log('PASS: browser and Python share the 1x/2x/6x age-state ladder');
 })();
 
 // ER-109 round 6: clock skew (a FUTURE chats generated_epoch) must render the SAME

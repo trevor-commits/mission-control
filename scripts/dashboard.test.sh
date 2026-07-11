@@ -4,6 +4,12 @@
 # Optional flag: --require-shell makes the shell-contract checks mandatory.
 set -uo pipefail
 
+# Every nested dashboard invocation must use the same interpreter as this test
+# process.  Calling bare `bash` otherwise follows PATH and silently switches a
+# `/bin/bash` (macOS 3.2) gate back to Homebrew Bash 5.x.
+DASHBOARD_TEST_BASH="$BASH"
+bash() { command "$DASHBOARD_TEST_BASH" "$@"; }
+
 HERE="$(cd "$(dirname "$0")" && pwd)"
 REPO="$(dirname "$HERE")"
 DASH="$HERE/dashboard"
@@ -996,7 +1002,7 @@ c26() { # production install never silently downgrades to an uncommitted worktre
 }
 
 c27() { # committed plist source + checked atomic launchd reload/failure behavior
-  local gr h mch sbin capture loaded rc out sentinel h2 mch2 h3 mch3 fails=0
+  local gr h mch sbin capture loaded rc out sentinel h2 mch2 h3 mch3 h4 mch4 failbin real_chmod mode fails=0
   gr="$(mktemp -d)/repo"; mkdir -p "$gr/scripts" "$gr/dashboard/vendor" "$gr/launchd"
   local n
   for n in dashboard mission_control_common.py morning-brief morning-brief-deadman decision-alert; do
@@ -1040,10 +1046,21 @@ PY
   grep -q 'VERSION_TWO' "$out" || fails=1
   ! grep -q 'DIRTY_THREE' "$out" || fails=1
   [ "$(tr '\n' ' ' < "$capture")" = "print bootout bootstrap " ] || fails=1
+  # Content equality must not hide mode drift. Reinstall repairs an unchanged
+  # selected plist back to the install contract's private 0600 mode.
+  python3 - "$out" <<'PY'
+import os, sys
+os.chmod(sys.argv[1], 0o666)
+PY
   : > "$capture"
   HOME="$h" PATH="$sbin:$PATH" LAUNCH_CAPTURE="$capture" LAUNCH_STATE="$loaded" \
     REPO_ROOT="$gr" MISSION_CONTROL_HOME="$mch" bash "$gr/scripts/dashboard" install >/dev/null 2>&1 || fails=1
   [ "$(tr '\n' ' ' < "$capture")" = "print " ] || fails=1
+  [ "$(python3 - "$out" <<'PY'
+import os, stat, sys
+print(oct(stat.S_IMODE(os.stat(sys.argv[1]).st_mode))[2:])
+PY
+)" = "600" ] || fails=1
 
   # Unsafe destination is rejected before any launchd state move.
   h2="$(mktemp -d)"; mch2="$h2/state"; mkdir -p "$h2/Library/LaunchAgents"; sentinel="$h2/outside"
@@ -1061,6 +1078,33 @@ PY
   [ "$rc" -ne 0 ] && [ ! -e "$mch3/bin/install-stamp.json" ] || fails=1
   HOME="$h3" PATH="$sbin:$PATH" LAUNCH_CAPTURE="$capture" LAUNCH_STATE="$h3/loaded" \
     REPO_ROOT="$gr" MISSION_CONTROL_HOME="$mch3" bash "$gr/scripts/dashboard" install >/dev/null 2>&1 || fails=1
+
+  # A plist chmod failure is fatal even after bytes land; the next unchanged-byte
+  # retry must enforce 0600, bootstrap, and stamp successfully.
+  h4="$(mktemp -d)"; mch4="$h4/state"; failbin="$(mktemp -d)"; real_chmod="$(command -v chmod)"
+  cp "$sbin/launchctl" "$failbin/launchctl"
+  cat > "$failbin/chmod" <<'EOF'
+#!/bin/sh
+case "$*" in
+  *"/Library/LaunchAgents/"*)
+    if [ ! -e "$CHMOD_FAILED_ONCE" ]; then : > "$CHMOD_FAILED_ONCE"; exit 1; fi ;;
+esac
+exec "$REAL_CHMOD" "$@"
+EOF
+  chmod +x "$failbin/launchctl" "$failbin/chmod"
+  HOME="$h4" PATH="$failbin:$PATH" LAUNCH_CAPTURE="$h4/calls" LAUNCH_STATE="$h4/loaded" \
+    CHMOD_FAILED_ONCE="$h4/chmod-failed" REAL_CHMOD="$real_chmod" \
+    REPO_ROOT="$gr" MISSION_CONTROL_HOME="$mch4" bash "$gr/scripts/dashboard" install >/dev/null 2>&1; rc=$?
+  [ "$rc" -ne 0 ] && [ ! -e "$mch4/bin/install-stamp.json" ] || fails=1
+  HOME="$h4" PATH="$failbin:$PATH" LAUNCH_CAPTURE="$h4/calls" LAUNCH_STATE="$h4/loaded" \
+    CHMOD_FAILED_ONCE="$h4/chmod-failed" REAL_CHMOD="$real_chmod" \
+    REPO_ROOT="$gr" MISSION_CONTROL_HOME="$mch4" bash "$gr/scripts/dashboard" install >/dev/null 2>&1 || fails=1
+  mode="$(python3 - "$h4/Library/LaunchAgents/com.gillettes.mission-control.plist" <<'PY'
+import os, stat, sys
+print(oct(stat.S_IMODE(os.stat(sys.argv[1]).st_mode))[2:])
+PY
+)"
+  [ "$mode" = "600" ] && [ -e "$mch4/bin/install-stamp.json" ] || fails=1
 
   # A failed bootout leaves the old bytes and loaded definition untouched.
   git -C "$gr" restore launchd/com.gillettes.mission-control.plist.template

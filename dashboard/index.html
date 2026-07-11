@@ -588,7 +588,11 @@ body {
     // A daily product (valid_until set) stays fresh for its whole valid day
     // instead of aging out on the poll cadence.
     else if (validOk && nowS() < validUntil) flag = null;
-    else if (cadence && age > 2 * cadence) flag = "stale";
+    // Mirror feed_health's dashboard ladder exactly: one missed cadence is an
+    // amber aging warning; only >6x cadence is stale/red. Boundary comparisons
+    // are strict on both sides (1x and 6x remain in the younger state).
+    else if (cadence && age > 6 * cadence) flag = "stale";
+    else if (cadence && age > cadence) flag = "aging";
     var feedError = env.ok === false ? (env.error || "feeder error") : null;
     if (currentError && currentError.ok === false &&
         (+currentError.generated_epoch || 0) >= epoch) {
@@ -610,7 +614,8 @@ body {
     if (g.feedError) wrap.appendChild(h("div", { class: "mc-banner mc-banner-red" }, "Data refresh problem: " + g.feedError + " — showing last good data"));
     if (g.flag === "skew") wrap.appendChild(h("div", { class: "mc-banner mc-banner-amber" }, "clock skew: this feed's timestamp is in the future"));
     else if (g.flag === "stale") wrap.appendChild(h("div", { class: "mc-banner mc-banner-amber" }, "Data is older than expected — treat this tab as a warning, not the latest truth."));
-    var body = h("div", { class: g.flag === "stale" ? "mc-desaturated" : "" });
+    else if (g.flag === "aging") wrap.appendChild(h("div", { class: "mc-banner mc-banner-amber" }, "Data is aging — refresh before treating this tab as current."));
+    var body = h("div", { class: (g.flag === "stale" || g.flag === "aging") ? "mc-desaturated" : "" });
     wrap.appendChild(body);
     return { wrap: wrap, body: body };
   }
@@ -797,6 +802,7 @@ body {
     if (!g || !g.ok) return "missing";
     if (g.feedError) return "last refresh had a problem";
     if (g.flag === "stale") return "stale";
+    if (g.flag === "aging") return "aging";
     if (g.flag === "skew") return "clock skew";
     if (name === "usage") {
       var providers = (g.data && g.data.providers) || [];
@@ -1161,7 +1167,7 @@ body {
     var dots = h("span", { class: "mc-strip-dots" });
     ["usage", "git", "chats", "automation"].forEach(function (n) {
       var g = guard(n);
-      var st = !g.ok ? "grey" : (g.feedError || g.flag === "stale" ? "red" : (g.flag === "skew" ? "amber" : "green"));
+      var st = !g.ok ? "grey" : (g.feedError || g.flag === "stale" ? "red" : ((g.flag === "skew" || g.flag === "aging") ? "amber" : "green"));
       if (n === "chats" && g.ok && g.data && g.data.counts &&
           (g.data.counts.ingest_skipped === true ||
            fullIngestState(g.data.counts) === "stale")) st = "red";

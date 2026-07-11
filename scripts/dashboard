@@ -877,8 +877,14 @@ PYEOF
         [ "$was_loaded" = 1 ] && launchctl bootstrap "$domain" "$dest" >/dev/null 2>&1 || true
         rm -f "$source_tmp" "$rendered"; return 1
       fi
-      chmod 600 "$dest" || { rm -f "$source_tmp" "$rendered"; return 1; }
       echo "installed plist -> $dest"
+    fi
+    # Content equality does not prove deployment integrity: repair/reject mode
+    # drift on every selected plist, including unchanged bytes and retries after
+    # an earlier chmod failure.
+    if ! chmod 600 "$dest"; then
+      echo "install: could not secure LaunchAgent: $dest" >&2
+      rm -f "$source_tmp" "$rendered"; return 1
     fi
     if [ "$loaded" = 0 ]; then
       if ! launchctl bootstrap "$domain" "$dest" >/dev/null 2>&1; then

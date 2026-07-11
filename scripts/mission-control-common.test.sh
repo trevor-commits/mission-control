@@ -48,20 +48,27 @@ assert safe("contains private-customer-x", NARRATIVE,
             denylist=("private-customer-x",)).dropped
 
 # Narrative strips ordinary host paths, but approved repo/tool roots survive.
-ordinary = safe("read /Users/gillettes/Downloads/private/raw.txt", NARRATIVE)
-assert not ordinary.dropped and "/Users/" not in ordinary.value
-approved_repo = safe("changed /Users/gillettes/Coding Projects/mission-control/scripts/chat-graph", NARRATIVE)
-assert "Coding Projects/mission-control" in approved_repo.value
-approved_tool = safe("run /Users/gillettes/.codex/scripts/chat-source", NARRATIVE)
-assert "/Users/gillettes/.codex/scripts/chat-source" in approved_tool.value
+# Derive fixtures from HOME so the privacy gate remains valid in an isolated
+# test home instead of accidentally testing Trevor's production path only.
+home = os.environ["HOME"]
+ordinary_path = os.path.join(home, "Downloads", "private", "raw.txt")
+ordinary = safe("read " + ordinary_path, NARRATIVE)
+assert not ordinary.dropped and ordinary_path not in ordinary.value
+approved_repo_root = os.path.join(home, "Coding Projects", "mission-control")
+approved_repo_path = os.path.join(approved_repo_root, "scripts", "chat-graph")
+approved_repo = safe("changed " + approved_repo_path, NARRATIVE)
+assert approved_repo_root in approved_repo.value
+approved_tool_path = os.path.join(home, ".codex", "scripts", "chat-source")
+approved_tool = safe("run " + approved_tool_path, NARRATIVE)
+assert approved_tool_path in approved_tool.value
 
 # Structured actions retain required local paths after sensitive screening.
-action = safe('cd "/Users/gillettes/Coding Projects/mission-control" && git status', ACTION)
-assert not action.dropped and "/Users/gillettes/Coding Projects/mission-control" in action.value
+action = safe('cd "' + approved_repo_root + '" && git status', ACTION)
+assert not action.dropped and approved_repo_root in action.value
 
 # Model preparation excludes raw tool results and records source metadata only.
 messages = [
-    {"role": "assistant", "text": "Done in /Users/gillettes/Downloads/secret.txt"},
+    {"role": "assistant", "text": "Done in " + os.path.join(home, "Downloads", "secret.txt")},
     {"role": "tool", "text": "raw output sk-abcdefghijklmnopqrstuvwxyz123456"},
     {"type": "tool_result", "content": "also raw"},
     {"role": "user", "text": "Trevor said proceed"},
