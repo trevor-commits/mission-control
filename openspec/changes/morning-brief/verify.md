@@ -1,7 +1,7 @@
 # Morning Brief verification
 
-Date: 2026-07-09
-State: deterministic Tier 1 and code-only Tier 2 are implemented; live egress, activation, delivery, and elapsed gates remain open
+Date: 2026-07-09 implementation snapshot, with a 2026-07-11 addendum below
+State at the original snapshot: deterministic Tier 1 and code-only Tier 2 were implemented; live egress, activation, delivery, and elapsed gates remained open
 
 ## Scope verified
 
@@ -70,11 +70,19 @@ The Tier 2 suite uses synthetic transcripts and a fixed local model stub. It mak
 - Rollback: restore the private runtime backup, reinstall the prior code, and preserve graph/decision archives rather than deleting state.
 - Coherence: the same outcome/decision feeds drive the dashboard and brief; no parallel tracker was introduced.
 
+## 2026-07-11 activation and final-gate addendum
+
+- Authorized deterministic delivery completed on 2026-07-10: brief `20260710-e0b7a9ca4b16` reached Telegram with a 2/2 local receipt; the 7:00 AM brief and 7:20 AM deadman LaunchAgents were installed; an isolated scratch state proved the deadman failure path. The Outcome Extractor remained inactive and no live Tier 2 provider calibration ran.
+- The current final-gate candidate replaces the deadman's default mobile-connect dependency with a fixed-argv, category-only, Keychain-capable standard-library Telegram transport. Its transport/security suite is 14/14 using loopback/stubs. Provider delivery remains at-least-once because provider acceptance before local receipt persistence is ambiguous.
+- The final-gate hardening also makes feed/stamp wire values strict, required fresh inputs non-empty, install verification total, installed imports adjacent, source reads pinned to one immutable commit, and plist deployment linted/atomic/checked. Missing or invalid install provenance is red in status and deadman without creating an install-integrity Telegram category.
+- Audit side effect: `dashboard install --verify` was mistakenly invoked against the live installed command. That version ignored arguments and performed a real install from `1c6a380` (five runtimes plus two render assets); it did not activate gated jobs or intentionally send externally. The final-gate candidate rejects unsupported install arguments with rc 2 before mutation and carries a no-mutation regression.
+- Audit side effect: at 02:23:09 PDT, one worker's unstubbed deadman probe invoked the then-default mobile-connect sender, which returned rc 0. It is therefore strongly inferred—not provider-receipt-confirmed—that Telegram received exactly `Morning Brief deadman: stale. Check Mission Control delivery.` No repo, runtime, or LaunchAgent file changed from that probe. All later transport checks used loopback or stubs.
+- The live code/render stamp remains `1c6a380`. That is not the final reviewed candidate. The current final-gate tree remains merge-held until it is committed, reconciled once with the frozen activation history, independently audited at one immutable SHA, landed on canonical `main`, and reinstalled from that exact SHA without a provider send.
+
 ## Open proof gates
 
-1. Authorize and record one real Telegram delivery receipt plus a safe deadman failure-path proof.
-2. Approve and measure a small privacy-screened provider sample, review content-free token/latency evidence, and apply observed caps before any live Tier 2 backfill.
-3. Explicitly decide whether to activate the Outcome Extractor, Morning Brief, and deadman LaunchAgents; no schedule was installed by this work.
-4. Record approximately five natural mornings of comprehension/action evidence, decide which older notifications to subsume/keep/fold, rerun the final audit, then mark the OpenSpec change verified and archive it.
+1. Commit and push one final-gate candidate, reconcile once with the frozen activation history, obtain independent current-SHA review-clean evidence, land that exact tree on canonical `main`, and reinstall/verify its exact stamp and launchd state without provider delivery.
+2. Approve and measure a small privacy-screened provider sample, review content-free token/latency evidence, apply observed caps before any live Tier 2 backfill, and explicitly decide whether to activate the Outcome Extractor.
+3. Record approximately five natural mornings of comprehension/action evidence, decide which older notifications to subsume/keep/fold, rerun the elapsed-proof audit, then mark the OpenSpec change verified and archive it.
 
 These are external, authorization, or elapsed-evidence gates. They do not invalidate the completed deterministic implementation, but they prevent claiming the overall Morning Brief program verified.

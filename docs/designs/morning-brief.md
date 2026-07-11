@@ -73,7 +73,7 @@ Left untouched except for named repair: nightly-review, delegation-audit, provid
 | **L3** | Five-morning proof with notification consolidation decision | Medium | Comprehension criteria and receipt/action evidence hold; noise tuned |
 | **L4** | Reviewed safe runner allowed beyond dry-run | High | A live-ledger dry-run is independently reviewed clean and Trevor explicitly accepts activation |
 
-**Current state:** L1 is implemented. L2 deterministic delivery is activated and delivery/deadman proof exists; bounded provider calibration remains deferred until explicitly authorized. L3 remains pending the five-morning comprehension proof and notification-consolidation decision.
+**Current state:** L1 is implemented. L2 deterministic delivery is activated and delivery/deadman proof exists; bounded provider calibration remains deferred until explicitly authorized. The 2026-07-11 final-gate candidate is merge-held pending its own immutable re-audit and exact-SHA reinstall; older review-clean results do not certify the current tree. L3 remains pending the five-morning comprehension proof and notification-consolidation decision.
 **Target for this initiative:** L3; L4 remains gated even though the dry-run implementation is in scope.
 
 ## 7. Phase breakdown

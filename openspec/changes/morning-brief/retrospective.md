@@ -36,4 +36,4 @@ The implementation therefore shipped a deterministic, zero-call spine first. Tha
 
 ## Next retrospective trigger
 
-Extend this record only after the authorized delivery proof, bounded Tier 2 calibration decision, and approximately five natural mornings. At that point record noise/comprehension results and the final notification consolidation decisions before archiving the OpenSpec change.
+Authorized delivery and the isolated deadman failure proof completed on 2026-07-10. Extend this record after the 2026-07-11 final gate lands, the bounded Tier 2 calibration/Outcome Extractor disposition is explicit, and approximately five natural mornings have elapsed. At that point record noise/comprehension results and the final notification consolidation decisions before archiving the OpenSpec change.

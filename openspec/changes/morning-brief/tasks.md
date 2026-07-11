@@ -42,8 +42,8 @@
 - [x] 7.1 Add synthetic real-shape Tier 1 fixtures for reply-v5, Codex closeout, audit report, handoff packet, unstructured tail, late closeout, and unknown provider.
 - [x] 7.2 Implement bounded Tier 1 outcome parsing, stable cards, explicit-resolution evidence, late-update events, and additive export.
 - [x] 7.3 Implement zero-call seven-day coverage planning with grammar/provider counts and projected calls/tokens/quota impact.
-- [ ] 7.4 After privacy proof, run a small bounded provider sample; record actual tokens/latency; configure observed caps before any bounded backfill.
-- [x] 7.5 Implement isolated cached Tier 2 extraction with provider kill switches, OAuth-lock defer, budget fail-open, closed taxonomy output, deterministic session/repo/lineage context, inferred-only queue lifecycle, bounded sample/calibration tooling, scheduled-job template, and slow-model concurrency proof. Live provider sampling and activation remain in 7.4/11.3 rather than being implied by code completion.
+- [ ] 7.4 After privacy proof and explicit provider authorization, run a small bounded provider sample; record actual tokens/latency; configure observed caps before any bounded backfill. Outcome Extractor activation remains a separate explicit decision; deterministic scheduled brief delivery does not imply it.
+- [x] 7.5 Implement isolated cached Tier 2 extraction with provider kill switches, OAuth-lock defer, budget fail-open, closed taxonomy output, deterministic session/repo/lineage context, inferred-only queue lifecycle, bounded sample/calibration tooling, scheduled-job template, and slow-model concurrency proof. Live provider sampling and Outcome Extractor activation remain gated rather than being implied by code completion.
 
 ## 8. Transactional decision queue
 
@@ -66,9 +66,10 @@
 
 - [x] 11.1 Run every existing and new suite, syntax/static/privacy checks, OpenSpec validation, and mutation/negative controls.
 - [x] 11.2 Install into an isolated then canonical local runtime, collect feeds, capture Home/Automation/Brief browser proof, and verify rollback (final installed code from `main` at `2432d6e`; LaunchAgent manifests unchanged).
-- [ ] 11.3 Complete one authorized manual delivery receipt and a safe deadman failure-path proof without exposing secrets.
+- [x] 11.3 Complete one authorized manual delivery receipt and a safe deadman failure-path proof without exposing secrets (2026-07-10 brief `20260710-e0b7a9ca4b16`, 2/2 receipt; isolated scratch deadman proof).
 - [x] 11.4 Run independent post-implementation Codex audits against the actual diff/evidence, implement findings, and iterate until review-clean or explicit deferred risk (`records/morning-brief-independent-codex-audit.md`; Tier 2 iteration ledger `records/morning-brief-tier2-codex-audit.md`).
-- [x] 11.5 Commit and push every owning repo change with final dirty-state and multi-repo landing evidence (original Mission Control convergence through `cf6b536`; bounded Tier 2 implementation `df991b4`; Tier 2 audit records `ef281a5`; global ER-107 `4a3e425`; all pushed on `origin/main`, with the prior topic branch/worktree removed after merge).
+- [x] 11.5 Commit and push every owning repo change for the original 2026-07-09 implementation closeout with final dirty-state and multi-repo landing evidence (original Mission Control convergence through `cf6b536`; bounded Tier 2 implementation `df991b4`; Tier 2 audit records `ef281a5`; global ER-107 `4a3e425`; all pushed on `origin/main`, with the prior topic branch/worktree removed after merge).
+- [ ] 11.6 Complete the 2026-07-11 final-gate immutable audit, land the exact reviewed candidate on canonical `main`, reinstall and verify that exact SHA/stamp without provider delivery, and clean superseded branches/worktrees.
 
 ## 12. Elapsed live proof and convergence
 
