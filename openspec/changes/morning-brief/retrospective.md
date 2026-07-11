@@ -1,7 +1,7 @@
 # Morning Brief implementation retrospective
 
 Date: 2026-07-09
-State: implementation closeout; final live-proof retrospective remains pending
+State: deterministic implementation closeout; elapsed live-proof retrospective remains pending
 
 ## What changed the plan
 
@@ -39,4 +39,4 @@ The implementation therefore shipped a deterministic, zero-call spine first. Tha
 
 ## Next retrospective trigger
 
-Authorized delivery and the isolated deadman failure proof completed on 2026-07-10. Extend this record after the 2026-07-11 final gate lands, the bounded Tier 2 calibration/Outcome Extractor disposition is explicit, and approximately five natural mornings have elapsed. At that point record noise/comprehension results and the final notification consolidation decisions before archiving the OpenSpec change.
+Authorized delivery and the isolated deadman failure proof completed on 2026-07-10, and the independently audited final safety gate landed on 2026-07-11. Extend this record after the bounded Tier 2 calibration/Outcome Extractor disposition is explicit and approximately five natural mornings have elapsed. At that point record noise/comprehension results and the final notification consolidation decisions before archiving the OpenSpec change.

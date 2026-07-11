@@ -69,7 +69,7 @@
 - [x] 11.3 Complete one authorized manual delivery receipt and a safe deadman failure-path proof without exposing secrets (2026-07-10 brief `20260710-e0b7a9ca4b16`, 2/2 receipt; isolated scratch deadman proof).
 - [x] 11.4 Run independent post-implementation Codex audits against the actual diff/evidence, implement findings, and iterate until review-clean or explicit deferred risk (`records/morning-brief-independent-codex-audit.md`; Tier 2 iteration ledger `records/morning-brief-tier2-codex-audit.md`).
 - [x] 11.5 Commit and push every owning repo change for the original 2026-07-09 implementation closeout with final dirty-state and multi-repo landing evidence (original Mission Control convergence through `cf6b536`; bounded Tier 2 implementation `df991b4`; Tier 2 audit records `ef281a5`; global ER-107 `4a3e425`; all pushed on `origin/main`, with the prior topic branch/worktree removed after merge).
-- [ ] 11.6 Complete the 2026-07-11 final-gate immutable audit, land the exact reviewed candidate on canonical `main`, reinstall and verify that exact SHA/stamp without provider delivery, and clean superseded branches/worktrees.
+- [x] 11.6 Complete the 2026-07-11 final-gate immutable audit, land the exact reviewed candidate on canonical `main`, reinstall and verify the exact current-main SHA/stamp without provider delivery, and clean superseded branches/worktrees (`1261c48` independently code/runtime `READY` and records/provenance `review-clean`; exact closeout commit installed before push).
 
 ## 12. Elapsed live proof and convergence
 
