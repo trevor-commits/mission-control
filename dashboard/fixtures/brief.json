@@ -3,7 +3,7 @@
   "feed": "brief",
   "generated_at": "2026-07-10T09:00:00Z",
   "generated_epoch": 1783674000,
-  "cadence_s": 86400,
+  "cadence_s": 300,
   "ok": true,
   "error": null,
   "data": {

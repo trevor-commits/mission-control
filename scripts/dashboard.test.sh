@@ -214,13 +214,18 @@ c5() {
 # --- case 6: demo builds from fixtures into temp dir, does NOT open ------------
 c6() {
   rm -f "$STUB/open-called"
-  local out dir
+  local out dir brief_cadence
   out="$(PATH="$STUB/bin:$PATH" DASHBOARD_NO_OPEN=1 bash "$DASH" demo 2>&1)"
   dir="$(printf '%s\n' "$out" | sed -n 's/^demo state: //p')"
+  brief_cadence="$(python3 - "$dir/data/brief.json" <<'PY' 2>/dev/null
+import json, sys
+print(json.load(open(sys.argv[1])).get("cadence_s", ""))
+PY
+)"
   if [ -n "$dir" ] && [ -f "$dir/data/chats.json" ]; then
-    if [ ! -f "$STUB/open-called" ]; then
-      ok "demo builds fixtures into temp dir, no open under DASHBOARD_NO_OPEN=1"
-    else no "demo invoked open despite DASHBOARD_NO_OPEN=1"; fi
+    if [ ! -f "$STUB/open-called" ] && [ "$brief_cadence" = "300" ]; then
+      ok "demo builds contract-valid fixtures into temp dir, no open under DASHBOARD_NO_OPEN=1"
+    else no "demo opened unexpectedly or Brief fixture cadence was invalid (cadence=$brief_cadence)"; fi
   else no "demo did not build fixture feeds (dir=$dir)"; fi
   [ -n "$dir" ] && rm -rf "$dir"
 }
@@ -1104,7 +1109,8 @@ import os, stat, sys
 print(oct(stat.S_IMODE(os.stat(sys.argv[1]).st_mode))[2:])
 PY
 )"
-  [ "$mode" = "600" ] && [ -e "$mch4/bin/install-stamp.json" ] || fails=1
+  [ "$mode" = "600" ] && [ -e "$mch4/bin/install-stamp.json" ] && \
+    [ -e "$h4/loaded" ] || fails=1
 
   # A failed bootout leaves the old bytes and loaded definition untouched.
   git -C "$gr" restore launchd/com.gillettes.mission-control.plist.template

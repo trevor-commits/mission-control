@@ -601,6 +601,24 @@ body {
     return { ok: true, env: env, data: env.data, epoch: epoch, cadence: cadence, age: age,
              flag: flag, feedError: feedError };
   }
+  var TONE_RANK = { green: 0, grey: 1, amber: 2, red: 3 };
+  function worstTone(a, b) {
+    return (TONE_RANK[b] || 0) > (TONE_RANK[a] || 0) ? b : a;
+  }
+  function guardTone(g) {
+    if (!g || !g.ok) return "grey";
+    if (g.feedError || g.flag === "stale") return "red";
+    if (g.flag === "skew" || g.flag === "aging") return "amber";
+    return "green";
+  }
+  function guardStatusLine(g) {
+    if (!g || !g.ok) return null;
+    if (g.feedError) return "last refresh had a problem";
+    if (g.flag === "stale") return "feed data is stale";
+    if (g.flag === "aging") return "feed data is aging";
+    if (g.flag === "skew") return "clock skew: feed timestamp is in the future";
+    return null;
+  }
   // a panel wrapper: banner(s) + optional desaturation + data-age
   function panel(g, titleText) {
     var wrap = h("section", { class: "mc-panel" });
@@ -1119,29 +1137,29 @@ body {
       var staleIngest = ingestState === "stale";
       var unknownIngest = ingestState === "unknown";
       var ingestSkipped = cnt.ingest_skipped === true;
-      // Match the banner/dot/card: a skewed (future) feed timestamp is not green.
-      s.chats = { state: (owe || staleIngest || unknownIngest || ingestSkipped || gc.flag === "skew") ? "amber" : "green", count: owe };
+      var chatsTone = (owe || staleIngest || unknownIngest || ingestSkipped) ? "amber" : "green";
+      s.chats = { state: worstTone(chatsTone, guardTone(gc)), count: owe };
     } else s.chats = { state: "grey", count: 0 };
 
     var gg = guard("git");
     if (gg.ok && gg.data && Array.isArray(gg.data.repos)) {
       var bad = gg.data.repos.map(gitAction).filter(function (a) { return a.state !== "green"; });
       var worst = bad.some(function (a) { return a.state === "red"; }) ? "red" : (bad.length ? "amber" : "green");
-      s.git = { state: worst, count: bad.length };
+      s.git = { state: worstTone(worst, guardTone(gg)), count: bad.length };
     } else s.git = { state: "grey", count: 0 };
 
     var gu = guard("usage");
     if (gu.ok && gu.data && Array.isArray(gu.data.providers)) {
       var states = normUsageProviders(gu.data).rows.map(usageState);
       var w = states.indexOf("red") >= 0 ? "red" : (states.indexOf("amber") >= 0 ? "amber" : "green");
-      s.usage = { state: w, count: states.filter(function (x) { return x === "red" || x === "amber"; }).length };
+      s.usage = { state: worstTone(w, guardTone(gu)), count: states.filter(function (x) { return x === "red" || x === "amber"; }).length };
     } else s.usage = { state: "grey", count: 0 };
 
     var ga = guard("automation");
     if (ga.ok && ga.data && Array.isArray(ga.data.jobs)) {
       var ex = ga.data.jobs.filter(function (j) { return j.state === "red" || j.state === "degraded" || j.state === "yellow"; });
       var wa = ga.data.jobs.some(function (j) { return j.state === "red"; }) ? "red" : (ex.length ? "amber" : "green");
-      s.automation = { state: wa, count: ex.length };
+      s.automation = { state: worstTone(wa, guardTone(ga)), count: ex.length };
     } else s.automation = { state: "grey", count: 0 };
     return s;
   }
@@ -1167,7 +1185,7 @@ body {
     var dots = h("span", { class: "mc-strip-dots" });
     ["usage", "git", "chats", "automation"].forEach(function (n) {
       var g = guard(n);
-      var st = !g.ok ? "grey" : (g.feedError || g.flag === "stale" ? "red" : ((g.flag === "skew" || g.flag === "aging") ? "amber" : "green"));
+      var st = guardTone(g);
       if (n === "chats" && g.ok && g.data && g.data.counts &&
           (g.data.counts.ingest_skipped === true ||
            fullIngestState(g.data.counts) === "stale")) st = "red";
@@ -1354,18 +1372,15 @@ body {
     var staleIngest = ingestState === "stale";
     var unknownIngest = ingestState === "unknown";
     var ingestSkipped = cnt.ingest_skipped === true;
-    // Clock skew (feed timestamp in the future) is the same untrustworthy state the
-    // banner and the strip dot already flag; the card/summary must agree, not stay
-    // green. guard()'s g.flag is the single source (round-5 exported full_ingest_stale
-    // the same way; skew is inherently render-time so it lives on the guard, not the feed).
-    var skew = g.flag === "skew";
     var lines = [owe + " open work item" + (owe === 1 ? "" : "s")];
     if (scanErr > 0) lines.push(scanErr + " chat" + (scanErr > 1 ? "s" : "") + " couldn't be read today");
     if (staleIngest) lines.push("full chat scan is stale");
     if (unknownIngest) lines.push("full chat scan freshness unknown");
     if (ingestSkipped) lines.push("chat refresh skipped — another scan is running");
-    if (skew) lines.push("clock skew: this feed's timestamp is in the future");
-    return summaryCard("Chats", (owe || scanErr || staleIngest || unknownIngest || ingestSkipped || skew) ? "amber" : "green", nodes.length,
+    var healthLine = guardStatusLine(g);
+    if (healthLine) lines.push(healthLine);
+    var contentTone = (owe || scanErr || staleIngest || unknownIngest || ingestSkipped) ? "amber" : "green";
+    return summaryCard("Chats", worstTone(contentTone, guardTone(g)), nodes.length,
       lines, g.epoch, pulse);
   }
   function cardGit() {
@@ -1376,9 +1391,9 @@ body {
     var bad = acts.filter(function (a) { return a.state !== "green"; });
     var st = bad.some(function (a) { return a.state === "red"; }) ? "red" : (bad.length ? "amber" : "green");
     var clean = repos.length - bad.length;
-    return summaryCard("Git", st, bad.length,
+    return summaryCard("Git", worstTone(st, guardTone(g)), bad.length,
       [bad.length === 1 ? "1 project needs a hand" : bad.length + " projects need a hand",
-       clean + " of " + repos.length + " are clean"], g.epoch);
+       clean + " of " + repos.length + " are clean", guardStatusLine(g)], g.epoch);
   }
   function cardUsage() {
     var g = guard("usage");
@@ -1389,9 +1404,9 @@ body {
     var st = ps.map(usageState).indexOf("red") >= 0 ? "red" : (ps.map(usageState).indexOf("amber") >= 0 ? "amber" : "green");
     var head = worst ? (worst.pct + "%") : "OK";
     var hot = ps.filter(function (p) { return p.pace; }).map(function (p) { return p.name + " " + p.pace; })[0];
-    return summaryCard("Usage", st, head,
+    return summaryCard("Usage", worstTone(st, guardTone(g)), head,
       [worst ? "most used: " + worst.p.name : ps.length + " AI sources tracked",
-       hot ? "running hot: " + hot : "nothing running hot"], g.epoch);
+       hot ? "running hot: " + hot : "nothing running hot", guardStatusLine(g)], g.epoch);
   }
   function cardAutomation() {
     var g = guard("automation");
@@ -1401,9 +1416,9 @@ body {
     var ex = jobs.filter(function (j) { return j.state === "red" || j.state === "degraded" || j.state === "yellow"; }).length;
     var st = jobs.some(function (j) { return j.state === "red"; }) ? "red" : (ex ? "amber" : "green");
     var unreg = (g.data.unregistered || []).length;
-    return summaryCard("Automation", st, green,
+    return summaryCard("Automation", worstTone(st, guardTone(g)), green,
       [(ex ? ex + " need attention" : "all " + jobs.length + " watched jobs healthy"),
-       unreg ? unreg + " running but not watched yet" : null], g.epoch);
+       unreg ? unreg + " running but not watched yet" : null, guardStatusLine(g)], g.epoch);
   }
 
   function sessionMonitorState(n, gitByRepo) {

@@ -73,6 +73,10 @@ for (const name of ['usage', 'git', 'chats', 'automation', 'decisions', 'brief']
   if (!fs.existsSync(p)) { console.error('FAIL: missing fixture ' + p); process.exit(1); }
   feeds[name] = JSON.parse(fs.readFileSync(p, 'utf8'));
 }
+if (!feeds.brief || feeds.brief.cadence_s !== 300) {
+  console.error('FAIL: committed Brief fixture cadence must match the real 300s envelope contract');
+  process.exit(1);
+}
 if (feeds.chats && feeds.chats.data && feeds.chats.data.counts) {
   feeds.chats.data.counts.ingest_skipped = true;
 }
@@ -95,7 +99,6 @@ function nextLocalMidnightJS(sec) { // mirrors the page's nextLocalMidnight
 if (feeds.brief) {
   const composedAt = localMidnightOf(NOW_S);
   feeds.brief.generated_epoch = composedAt;
-  feeds.brief.cadence_s = 300;
   feeds.brief.valid_until = nextLocalMidnightJS(composedAt);
 }
 if (feeds.automation && feeds.automation.data && Array.isArray(feeds.automation.data.jobs)) {
@@ -468,6 +471,25 @@ for (const tab of TABS) {
 // assign different age states to the same valid envelope.  This locks the
 // strict > boundaries at 1x and 6x cadence as well as a representative 2x case.
 (function crossRuntimeAgeLadderParity() {
+  function collectClass(el, pred, out) {
+    if (!el || typeof el !== 'object') return out;
+    if (typeof el.className === 'string' && pred(el)) out.push(el);
+    (el.children || []).forEach(c => collectClass(c, pred, out));
+    return out;
+  }
+  function renderAgeFeeds(ageFeeds, FixedDate, tab) {
+    resetDom(); locationShim.hash = '#' + tab;
+    const sandbox = {
+      window: { MC: { feeds: ageFeeds }, addEventListener() {}, removeEventListener() {} },
+      document: documentShim, location: locationShim,
+      setInterval() { return 0; }, clearInterval() {}, setTimeout(fn) { if (typeof fn === 'function') fn(); return 0; }, clearTimeout() {},
+      Math: Math, Date: FixedDate, JSON: JSON, console: { log() {}, warn() {}, error() {} },
+      Array: Array, Object: Object, String: String, Number: Number, isFinite: isFinite, parseInt: parseInt, parseFloat: parseFloat,
+      cytoscape() { return { on() {}, destroy() {}, $() { return { select() { return this; } }; } }; },
+    };
+    sandbox.window.window = sandbox.window; sandbox.globalThis = sandbox;
+    vm.runInNewContext(scriptBody, sandbox, { timeout: 5000 });
+  }
   const NOW = 1783674000;
   const CADENCE = 300;
   const cases = [
@@ -506,21 +528,12 @@ for (const tab of TABS) {
     ageFeeds.automation.cadence_s = CADENCE;
     ageFeeds.automation.generated_epoch = NOW - row.age;
     delete ageFeeds.automation.valid_until;
+    ((ageFeeds.automation.data || {}).jobs || []).forEach(j => { j.state = 'green'; });
     const FixedDate = new Proxy(Date, {
       get(t, p) { return p === 'now' ? () => NOW * 1000 : t[p]; },
       construct(t, a) { return a.length ? new t(...a) : new t(NOW * 1000); },
     });
-    resetDom(); locationShim.hash = '#automation';
-    const sandbox = {
-      window: { MC: { feeds: ageFeeds }, addEventListener() {}, removeEventListener() {} },
-      document: documentShim, location: locationShim,
-      setInterval() { return 0; }, clearInterval() {}, setTimeout(fn) { if (typeof fn === 'function') fn(); return 0; }, clearTimeout() {},
-      Math: Math, Date: FixedDate, JSON: JSON, console: { log() {}, warn() {}, error() {} },
-      Array: Array, Object: Object, String: String, Number: Number, isFinite: isFinite, parseInt: parseInt, parseFloat: parseFloat,
-      cytoscape() { return { on() {}, destroy() {}, $() { return { select() { return this; } }; } }; },
-    };
-    sandbox.window.window = sandbox.window; sandbox.globalThis = sandbox;
-    try { vm.runInNewContext(scriptBody, sandbox, { timeout: 5000 }); }
+    try { renderAgeFeeds(ageFeeds, FixedDate, 'automation'); }
     catch (e) { console.error('FAIL: JS age-ladder ' + row.label + ' THREW: ' + e.message); fails++; continue; }
     const txt = (byId['mc-main'] && byId['mc-main'].textContent) || '';
     const browserState = txt.indexOf('Data is older than expected') !== -1 ? 'stale' :
@@ -529,8 +542,24 @@ for (const tab of TABS) {
       console.error('FAIL: age ladder ' + row.label + ' differs: browser=' + browserState + ' python=' + pythonStates[i]);
       fails++; continue;
     }
+
+    try { renderAgeFeeds(ageFeeds, FixedDate, 'home'); }
+    catch (e) { console.error('FAIL: Home age-state ' + row.label + ' THREW: ' + e.message); fails++; continue; }
+    const expectedTone = pythonStates[i] === 'stale' ? 'red' : (pythonStates[i] === 'aging' ? 'amber' : 'green');
+    const segments = collectClass(byId['mc-strip'], el => el.className.indexOf('mc-strip-seg') !== -1, []);
+    const jobsSegment = segments.find(el => el.textContent.indexOf('Jobs') !== -1);
+    const cards = collectClass(byId['mc-main'], el => el.className.split(/\s+/).indexOf('mc-card') !== -1, []);
+    const automationCard = cards.find(el => el.textContent.indexOf('Automation') !== -1);
+    const segmentClasses = jobsSegment ? collectClass(jobsSegment, () => true, []).map(el => el.className).join(' ') : '';
+    const cardHeadline = automationCard && collectClass(automationCard, el => el.className.indexOf('mc-card-headline') !== -1, [])[0];
+    const expectedClass = 'mc-state-' + expectedTone;
+    if (segmentClasses.indexOf(expectedClass) === -1 || !cardHeadline || cardHeadline.className.indexOf(expectedClass) === -1) {
+      console.error('FAIL: Home age-state ' + row.label + ' expected ' + expectedTone +
+        ' on Jobs segment/card (segment=' + (segmentClasses || 'none') + ', card=' + (cardHeadline ? cardHeadline.className : 'none') + ')');
+      fails++; continue;
+    }
   }
-  console.log('PASS: browser and Python share the 1x/2x/6x age-state ladder');
+  console.log('PASS: browser, Python, Home cards, and named segments share the 1x/2x/6x age-state ladder');
 })();
 
 // ER-109 round 6: clock skew (a FUTURE chats generated_epoch) must render the SAME
