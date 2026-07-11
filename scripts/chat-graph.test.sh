@@ -281,6 +281,36 @@ rm -rf "$CHAT_GRAPH_HOME/journal"
 "$CG" doctor >/dev/null; RC=$?
 ok 1 "$RC" "doctor with missing journal dir exits 1"
 
+# --- 11a. full-ingest health uses the nightly SLA, not catch-up cadence -------
+new_env
+"$CG" link DA DB --type related_manual >/dev/null
+"$CG" ingest >/dev/null
+python3 - "$CHAT_GRAPH_HOME/last-ingest" <<'PYEOF'
+import os, sys, time
+stamp = time.time() - 3 * 3600
+os.utime(sys.argv[1], (stamp, stamp))
+PYEOF
+"$CG" doctor >/dev/null; RC=$?
+ok 0 "$RC" "doctor accepts a 3h-old full ingest inside the 30h nightly SLA"
+if "$CG" show DA 2>&1 | grep -q "warning: last ingest"; then
+  fail "show warns for a healthy 3h-old nightly full ingest"
+else
+  pass "show accepts a 3h-old full ingest inside the 30h nightly SLA"
+fi
+python3 - "$CHAT_GRAPH_HOME/last-ingest" <<'PYEOF'
+import os, sys, time
+stamp = time.time() - 31 * 3600
+os.utime(sys.argv[1], (stamp, stamp))
+PYEOF
+"$CG" doctor >/dev/null; RC=$?
+ok 1 "$RC" "doctor rejects a 31h-old full ingest outside the 30h nightly SLA"
+"$CG" show DA 2>&1 | grep -q "warning: last ingest" \
+  && pass "show warns for a genuinely stale 31h-old full ingest" \
+  || fail "show omits warning for a stale 31h-old full ingest"
+rm -f "$CHAT_GRAPH_HOME/last-ingest"
+"$CG" doctor >/dev/null; RC=$?
+ok 1 "$RC" "doctor rejects a missing full-ingest marker"
+
 # --- 11b. FIX 7: transient scan-errors WARN (exit 0); large count FAILs ------
 new_env
 "$CG" link DA DB --type related_manual >/dev/null   # journal dir + healthy home

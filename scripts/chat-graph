@@ -19,7 +19,7 @@ from mission_control_common import (ACTION, NARRATIVE, EgressCounters,
                                     sanitize_text)
 
 SCHEMA_VERSION = 7
-STALE_INGEST_S = 30 * 60  # show/doctor staleness threshold
+STALE_INGEST_S = 30 * 60  # incremental export catch-up threshold only
 LOCK_STALE_S = 30 * 60      # ingest.lock older than this is treated as crashed
 _INGEST_SKIPPED = False     # set when export's catch-up ingest could not acquire lock
 _INGEST_LOCK_OWNER = None
@@ -2636,7 +2636,9 @@ def cmd_show(args):
         print("    [%s] %s (%s)" % (o["kind"] or "?", redact(o["text"] or ""), o["text_hash"]))
     con.close()
     age = _ingest_age()
-    if age is not None and age > STALE_INGEST_S:
+    if age is None:
+        print("warning: no completed full ingest — run 'chat-graph ingest' to initialize")
+    elif age > full_ingest_sla_s():
         print("warning: last ingest %d min ago — run 'chat-graph ingest' to refresh" % int(age // 60))
     return 0
 
@@ -2691,8 +2693,10 @@ def cmd_doctor(args):
     except Exception as e:
         check(False, "db open: %s" % e)
     age = _ingest_age()
-    check(age is None or age <= STALE_INGEST_S,
-          "last-ingest age: %s" % ("never" if age is None else "%dm" % int(age // 60)))
+    full_sla = full_ingest_sla_s()
+    check(age is not None and age <= full_sla,
+          "last-full-ingest age: %s (SLA %dm)" %
+          ("never" if age is None else "%dm" % int(age // 60), int(full_sla // 60)))
     try:
         free_gb = shutil.disk_usage(home).free / 1e9
         check(free_gb > 1.0, "free disk > 1 GB (%.1f GB)" % free_gb)
