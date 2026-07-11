@@ -103,8 +103,8 @@ if [ "$RC" -eq 0 ]; then pass "field-aware privacy matrix"; else fail "field-awa
 PYTHONPATH="$ROOT/scripts" python3 - <<'PY'
 import json, os, tempfile, time
 from mission_control_common import (
-    feed_health, nested_ingest_stale, write_install_stamp, verify_install_stamp,
-    next_local_midnight,
+    feed_health, nested_ingest_stale, nested_ingest_state, write_install_stamp,
+    verify_install_stamp, next_local_midnight,
 )
 
 NOW = 1783674000
@@ -171,7 +171,7 @@ assert h["state"] == "stale" and h["red"] is True, h
 def chats(age_s, **counts):
     c = {"last_full_ingest_age_s": age_s}
     c.update(counts)
-    return env(generated_epoch=NOW, data={"counts": c})
+    return env(feed="chats", generated_epoch=NOW, data={"counts": c})
 assert nested_ingest_stale(chats(7 * 3600)) is False        # healthy last-night
 assert nested_ingest_stale(chats(26 * 3600)) is False       # within nightly band
 assert nested_ingest_stale(chats(50 * 3600)) is True        # missed nightly
@@ -180,6 +180,20 @@ assert nested_ingest_stale(env(feed="chats", generated_epoch=NOW, data={"counts"
 assert nested_ingest_stale(chats("not-an-int")) is True
 assert nested_ingest_stale(chats(-60)) is True
 assert nested_ingest_stale(chats(9999, ingest_skipped=True)) is True
+# A derived green flag cannot launder missing, malformed, negative, or
+# contradictory raw evidence into a trusted state.
+assert nested_ingest_state(chats(-60, full_ingest_state="fresh")) == "unknown"
+assert nested_ingest_state(chats(-60, full_ingest_stale=False)) == "unknown"
+assert nested_ingest_state(chats("bad", full_ingest_state="fresh")) == "unknown"
+assert nested_ingest_state(env(feed="chats", generated_epoch=NOW, data={"counts": {
+    "full_ingest_state": "fresh"}})) == "unknown"
+assert nested_ingest_state(chats(50 * 3600, full_ingest_state="fresh")) == "unknown"
+assert nested_ingest_state(chats(7 * 3600, full_ingest_state="fresh",
+                                  full_ingest_stale=True)) == "unknown"
+# Consumers fail closed when a rolling-upgrade feed has raw age but no derived
+# state/legacy flag; the producer-only helper may still compute the canonical flag.
+h = feed_health(chats(7 * 3600), 1800, NOW)
+assert h["nested_state"] == "unknown" and h["nested_stale"] is True, h
 # envelope may override with its own completion SLA
 assert nested_ingest_stale(chats(2 * 3600, full_ingest_sla_s=3600)) is True
 # env override tightens the default

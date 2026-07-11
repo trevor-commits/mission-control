@@ -74,7 +74,8 @@ write("chats", {"nodes": [
      "edges": [
        {"src":"claude:chat-audit","dst":"codex:chat-outcome","type":"audits",
         "source":"titles","confidence":0.7}],
-     "topics": [], "counts": {"full_ingest_state": "fresh",
+     "topics": [], "counts": {"last_full_ingest_age_s": 0,
+       "full_ingest_state": "fresh",
        "full_ingest_stale": False},
      "outcome_extraction_health": {"day":"2026-07-09","successes":2,
        "cache_hits":3,"deferred":1,"failures":0,"budget_skips":1,
@@ -332,8 +333,11 @@ def write(name, data, cadence):
 write("automation", {"jobs": [], "counts": {"red":0,"green":1}}, 300)
 write("git", {"repos": []}, 900)
 # envelope fresh (generated_epoch == now); nested full-ingest age varies.
+state = "stale" if age > 30 * 3600 else "fresh"
 write("chats", {"nodes":[],"edges":[],"loose_ends":[],"loose_end_changes":[],
-                "counts":{"last_full_ingest_age_s": age}}, 1800)
+                "counts":{"last_full_ingest_age_s": age,
+                          "full_ingest_state": state,
+                          "full_ingest_stale": state == "stale"}}, 1800)
 write("decisions", {"pinned":[],"inferred":[]}, 300)
 PY
 }

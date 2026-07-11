@@ -38,7 +38,8 @@ w("chats.json", {"schema": 1, "feed": "chats",
                  "data": {"nodes": [{"id": "x:1",
                           "title": "Tre'vor \U0001F600 </script> chat"}],
                           "edges": [], "topics": [],
-                          "counts": {"full_ingest_state": "fresh",
+                          "counts": {"last_full_ingest_age_s": 0,
+                                     "full_ingest_state": "fresh",
                                      "full_ingest_stale": False}}})
 # automation envelopes; counts carries a "red" COUNT key on purpose (false-match trap)
 def auto(jobs, red):
@@ -734,7 +735,7 @@ c23() { # a same-day delivered brief composed before valid_until existed is
   NOW="$(python3 -c 'import time;lt=time.localtime();print(int(time.mktime((lt.tm_year,lt.tm_mon,lt.tm_mday,12,0,0,0,0,-1))))')"
   GEN=$((NOW - 7200))   # 10:00 local: same day, but > 6x brief cadence (1800s) old
   RAWCHATS="$H/chats_raw.json"
-  printf '{"nodes":[],"edges":[],"topics":[],"counts":{"full_ingest_state":"fresh","full_ingest_stale":false}}\n' > "$RAWCHATS"
+  printf '{"nodes":[],"edges":[],"topics":[],"counts":{"last_full_ingest_age_s":0,"full_ingest_state":"fresh","full_ingest_stale":false}}\n' > "$RAWCHATS"
   mkdir -p "$H/morning-brief/delivery"
   python3 /dev/stdin "$H/morning-brief" "$GEN" <<'PYEOF'
 import json, os, sys

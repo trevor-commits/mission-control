@@ -57,12 +57,16 @@ Only allowlisted chat providers may be lineage-grouped; repo nodes remain valid 
 - **WHEN** a `repo:<name>` node contributes open work
 - **THEN** it remains in Open work but never becomes a chat lineage node
 
-### Requirement: Chunk delivery is resumable and idempotent
-Each notification chunk MUST carry brief ID, chunk index, total, and content hash; confirmed chunks MUST be recorded; partial retry MUST send only unconfirmed chunks; and resending an already completed brief MUST be a no-op.
+### Requirement: Chunk delivery is at-least-once with local receipt resume
+Each notification chunk MUST carry brief ID, chunk index, total, and content hash; locally confirmed chunks MUST be recorded; partial retry MUST send only chunks missing a local confirmation; and resending an already locally completed brief MUST be a no-op. The current provider contract is at-least-once: a provider-accepted chunk followed by a local crash before receipt write is ambiguous and MAY be resent on retry. Exactly-once or provider-idempotent delivery MUST NOT be claimed until an inflight/reconciliation state machine is designed and implemented.
 
 #### Scenario: Second chunk fails
 - **WHEN** chunk one is confirmed and chunk two fails
 - **THEN** delivery remains failed, the cursor does not advance, the deadman treats it as unsent, and retry starts with chunk two
+
+#### Scenario: Provider accepts before local receipt write
+- **WHEN** a provider accepts a chunk but the local process crashes before recording the confirmation
+- **THEN** the current implementation treats that chunk as unconfirmed on retry and MAY resend it, and the inflight/reconciliation state machine remains queued work rather than part of the round-8 fix
 
 ### Requirement: Independent delivery deadman
 The deadman MUST check missing, stale, empty, failed, and partially delivered status independently from the composer, MUST throttle alerts, and MUST not log or expose tokens.

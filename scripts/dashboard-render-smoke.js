@@ -524,6 +524,27 @@ function renderHomeWithChatsCounts(overrides) {
   }
   console.log('PASS: unknown full-ingest freshness renders an honest warning');
 })();
+(function contradictoryFullIngestGreenCannotOverrideBadAge() {
+  const cases = [
+    { last_full_ingest_age_s: -60, full_ingest_state: 'fresh', full_ingest_stale: false },
+    { last_full_ingest_age_s: 'bad', full_ingest_state: 'fresh', full_ingest_stale: false },
+    { last_full_ingest_age_s: null, full_ingest_state: 'fresh', full_ingest_stale: false },
+  ];
+  for (const counts of cases) {
+    let txt;
+    try {
+      txt = renderHomeWithChatsCounts(counts);
+    } catch (e) {
+      console.error('FAIL: contradictory full-ingest envelope THREW: ' + (e && e.message));
+      fails++; return;
+    }
+    if (txt.indexOf('full chat scan freshness unknown') === -1) {
+      console.error('FAIL: derived green flag overrode malformed full-ingest age: ' + JSON.stringify(counts));
+      fails++; return;
+    }
+  }
+  console.log('PASS: malformed full-ingest age overrides contradictory green flags');
+})();
 
 if (fails) { console.error('render-smoke: ' + fails + ' tab(s) FAILED'); process.exit(1); }
 console.log('render-smoke: all ' + TABS.length + ' tabs render over fixtures');

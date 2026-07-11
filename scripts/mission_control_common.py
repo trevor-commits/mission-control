@@ -365,12 +365,6 @@ def nested_ingest_state(env):
         return "fresh"
     if counts.get("ingest_skipped"):
         return "stale"
-    if counts.get("full_ingest_state") in ("fresh", "stale", "unknown"):
-        return counts["full_ingest_state"]
-    if counts.get("full_ingest_stale") is True:
-        return "stale"
-    if counts.get("full_ingest_stale") is False:
-        return "fresh"
     if "last_full_ingest_age_s" not in counts:
         return "unknown"
     age = counts.get("last_full_ingest_age_s")
@@ -386,7 +380,27 @@ def nested_ingest_state(env):
         sla = int(counts["full_ingest_sla_s"])
     except (KeyError, TypeError, ValueError):
         sla = _full_ingest_sla_s()
-    return "stale" if age > sla else "fresh"
+    if sla <= 0:
+        sla = _full_ingest_sla_s()
+    computed = "stale" if age > sla else "fresh"
+
+    # Derived producer flags are useful to non-Python consumers, but they cannot
+    # override malformed raw evidence. A contradictory envelope is unknown,
+    # never green: this catches partial writes and rolling-version mismatches.
+    declared = counts.get("full_ingest_state")
+    legacy = counts.get("full_ingest_stale")
+    if declared in ("fresh", "stale", "unknown"):
+        if declared == "unknown":
+            return "unknown"
+        if declared != computed:
+            return "unknown"
+        if isinstance(legacy, bool) and legacy != (declared == "stale"):
+            return "unknown"
+        return declared
+    if isinstance(legacy, bool):
+        legacy_state = "stale" if legacy else "fresh"
+        return legacy_state if legacy_state == computed else "unknown"
+    return computed
 
 
 def nested_ingest_stale(env):
@@ -422,6 +436,14 @@ def feed_health(env, cadence, now, stale_multiple=6, aging=True):
     except (TypeError, ValueError):
         valid_until = None
     nested_state = nested_ingest_state(env)
+    counts = env.get("data", {}).get("counts") if isinstance(env.get("data"), dict) else None
+    # A chats consumer must see the producer's derived state. Raw age alone is
+    # insufficient during a rolling upgrade because JS intentionally does not
+    # duplicate the 30-hour policy threshold.
+    if (env.get("feed") == "chats" and isinstance(counts, dict) and
+            "full_ingest_state" not in counts and
+            "full_ingest_stale" not in counts):
+        nested_state = "unknown"
     out = {"age_s": (max(0, age) if age is not None else None),
            "nested_stale": nested_state != "fresh", "nested_state": nested_state,
            "ok": ok,
