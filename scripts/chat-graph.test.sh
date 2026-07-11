@@ -613,6 +613,7 @@ assert "last_full_ingest_epoch" in c
 assert "last_full_ingest_age_s" in c
 assert c["last_full_ingest_epoch"] is None
 assert c["last_full_ingest_age_s"] is None
+assert c["full_ingest_sla_s"] == 30 * 3600, c
 assert c["full_ingest_state"] == "unknown", c
 assert c["full_ingest_stale"] is True, c
 PYEOF

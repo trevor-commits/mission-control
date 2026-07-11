@@ -13,6 +13,7 @@ from __future__ import print_function
 
 import hashlib
 import json
+import math
 import os
 import re
 import time
@@ -338,11 +339,13 @@ def next_local_midnight(epoch):
 # export lag), while a genuinely missed nightly is >=~31.5h at the 07:00 brief
 # (~48h general). 30h separates the two; an envelope may override with its own
 # completion SLA via counts.full_ingest_sla_s.
-def _full_ingest_sla_s():
+def full_ingest_sla_s():
+    default = 30 * 3600
     try:
-        return int(os.environ.get("MISSION_CONTROL_FULL_INGEST_SLA_S", 30 * 3600))
+        value = int(os.environ.get("MISSION_CONTROL_FULL_INGEST_SLA_S", default))
     except (TypeError, ValueError):
-        return 30 * 3600
+        return default
+    return value if value > 0 else default
 
 
 def nested_ingest_state(env):
@@ -368,20 +371,16 @@ def nested_ingest_state(env):
     if "last_full_ingest_age_s" not in counts:
         return "unknown"
     age = counts.get("last_full_ingest_age_s")
-    if age is None:
+    if (isinstance(age, bool) or not isinstance(age, (int, float)) or
+            not math.isfinite(age) or age < 0):
         return "unknown"
-    try:
-        age = int(age)
-    except (TypeError, ValueError):
-        return "unknown"
-    if age < 0:
-        return "unknown"
-    try:
-        sla = int(counts["full_ingest_sla_s"])
-    except (KeyError, TypeError, ValueError):
-        sla = _full_ingest_sla_s()
-    if sla <= 0:
-        sla = _full_ingest_sla_s()
+    if "full_ingest_sla_s" in counts:
+        sla = counts.get("full_ingest_sla_s")
+        if (isinstance(sla, bool) or not isinstance(sla, (int, float)) or
+                not math.isfinite(sla) or sla <= 0):
+            return "unknown"
+    else:
+        sla = full_ingest_sla_s()
     computed = "stale" if age > sla else "fresh"
 
     # Derived producer flags are useful to non-Python consumers, but they cannot

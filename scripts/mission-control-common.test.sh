@@ -103,8 +103,8 @@ if [ "$RC" -eq 0 ]; then pass "field-aware privacy matrix"; else fail "field-awa
 PYTHONPATH="$ROOT/scripts" python3 - <<'PY'
 import json, os, tempfile, time
 from mission_control_common import (
-    feed_health, nested_ingest_stale, nested_ingest_state, write_install_stamp,
-    verify_install_stamp, next_local_midnight,
+    feed_health, full_ingest_sla_s, nested_ingest_stale, nested_ingest_state,
+    write_install_stamp, verify_install_stamp, next_local_midnight,
 )
 
 NOW = 1783674000
@@ -185,11 +185,18 @@ assert nested_ingest_stale(chats(9999, ingest_skipped=True)) is True
 assert nested_ingest_state(chats(-60, full_ingest_state="fresh")) == "unknown"
 assert nested_ingest_state(chats(-60, full_ingest_stale=False)) == "unknown"
 assert nested_ingest_state(chats("bad", full_ingest_state="fresh")) == "unknown"
+for malformed_age in (True, "60", float("inf"), float("-inf"), float("nan")):
+    assert nested_ingest_state(chats(malformed_age, full_ingest_state="fresh",
+                                      full_ingest_stale=False)) == "unknown"
 assert nested_ingest_state(env(feed="chats", generated_epoch=NOW, data={"counts": {
     "full_ingest_state": "fresh"}})) == "unknown"
 assert nested_ingest_state(chats(50 * 3600, full_ingest_state="fresh")) == "unknown"
 assert nested_ingest_state(chats(7 * 3600, full_ingest_state="fresh",
                                   full_ingest_stale=True)) == "unknown"
+for malformed_sla in (True, "3600", float("inf"), float("nan"), 0, -1):
+    assert nested_ingest_state(chats(2 * 3600, full_ingest_sla_s=malformed_sla,
+                                      full_ingest_state="fresh",
+                                      full_ingest_stale=False)) == "unknown"
 # Consumers fail closed when a rolling-upgrade feed has raw age but no derived
 # state/legacy flag; the producer-only helper may still compute the canonical flag.
 h = feed_health(chats(7 * 3600), 1800, NOW)
@@ -199,6 +206,9 @@ assert nested_ingest_stale(chats(2 * 3600, full_ingest_sla_s=3600)) is True
 # env override tightens the default
 os.environ["MISSION_CONTROL_FULL_INGEST_SLA_S"] = "3600"
 assert nested_ingest_stale(chats(2 * 3600)) is True
+assert full_ingest_sla_s() == 3600
+os.environ["MISSION_CONTROL_FULL_INGEST_SLA_S"] = "-1"
+assert full_ingest_sla_s() == 30 * 3600
 del os.environ["MISSION_CONTROL_FULL_INGEST_SLA_S"]
 
 # --- install stamp covers deployment assets (index.html, vendor/*) -----------

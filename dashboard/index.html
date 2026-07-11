@@ -1068,8 +1068,9 @@ body {
     if (!Object.prototype.hasOwnProperty.call(cnt, "last_full_ingest_age_s")) return "unknown";
     var age = cnt.last_full_ingest_age_s;
     if (typeof age !== "number" || !isFinite(age) || age < 0) return "unknown";
-    var sla = cnt.full_ingest_sla_s;
-    if (typeof sla !== "number" || !isFinite(sla) || sla <= 0) sla = 30 * 3600;
+    var hasSla = Object.prototype.hasOwnProperty.call(cnt, "full_ingest_sla_s");
+    var sla = hasSla ? cnt.full_ingest_sla_s : 30 * 3600;
+    if (typeof sla !== "number" || !isFinite(sla) || sla <= 0) return "unknown";
     var computed = age > sla ? "stale" : "fresh";
     if (cnt.full_ingest_state === "fresh" || cnt.full_ingest_state === "stale" ||
         cnt.full_ingest_state === "unknown") {

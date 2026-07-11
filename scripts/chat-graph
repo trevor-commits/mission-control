@@ -13,8 +13,9 @@ import glob, hashlib, json, os, re, shutil, sqlite3, subprocess, sys, time
 from collections import deque
 
 from mission_control_common import (ACTION, NARRATIVE, EgressCounters,
-                                    nested_ingest_stale, nested_ingest_state,
-                                    safe_text, sanitize_text)
+                                    full_ingest_sla_s, nested_ingest_stale,
+                                    nested_ingest_state, safe_text,
+                                    sanitize_text)
 
 SCHEMA_VERSION = 7
 STALE_INGEST_S = 30 * 60  # show/doctor staleness threshold
@@ -2157,6 +2158,7 @@ def _build_export(con, ingest_skipped=False):
         "signal_yield": "%d/%d" % (yld, scanned),
         "last_full_ingest_epoch": last_full,
         "last_full_ingest_age_s": (now - last_full if last_full is not None else None),
+        "full_ingest_sla_s": full_ingest_sla_s(),
         "ingest_skipped": bool(ingest_skipped),
         "unknown_provider_nodes": sum(1 for n in nodes if n["node_kind"] == "unknown"),
         "excluded_lineage_edges": excluded_lineage,
@@ -2165,10 +2167,9 @@ def _build_export(con, ingest_skipped=False):
         "unknown_outcome_providers": sum(1 for card in outcomes
                                          if card.get("provider") == "unknown"),
     }
-    # Single source of policy: mission_control_common.nested_ingest_stale() applies
-    # the nightly SLA (not the 1800s envelope cadence). Stamped here at generation
-    # time so consumers (dashboard JS, status, brief) read one computed flag instead
-    # of each re-implementing the threshold.
+    # The producer stamps the effective nightly SLA plus its derived state. Each
+    # consumer can therefore verify that the raw age and derived flags agree
+    # without guessing an environment-specific threshold.
     counts["full_ingest_state"] = nested_ingest_state({"data": {"counts": counts}})
     counts["full_ingest_stale"] = nested_ingest_stale({"data": {"counts": counts}})
     return {
