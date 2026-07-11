@@ -20,7 +20,7 @@ STUB="$ROOT/stubs"
 mkdir -p "$STUB/bin"
 
 # --- stub feeder payloads, written via python so unicode/hostile text is safe -
-python3 /dev/stdin "$STUB" <<'PYEOF'
+python3 - "$STUB" <<'PYEOF'
 import json, os, sys, time
 d = sys.argv[1]
 def w(name, obj):
@@ -73,6 +73,23 @@ export DASHBOARD_CMD_DECISIONS="cat '$STUB/decisions.json'"
 export DASHBOARD_CMD_BRIEF="cat '$STUB/brief.json'"
 
 newhome() { mktemp -d "$ROOT/home.XXXXXX"; }
+make_valid_stamp() {
+  PYTHONPATH="$REPO/scripts" python3 - "$1" <<'PY'
+import os,sys
+from mission_control_common import write_install_stamp
+home=sys.argv[1]; bindir=os.path.join(home,"bin"); os.makedirs(bindir,exist_ok=True)
+for name in ("dashboard","morning-brief","morning-brief-deadman","decision-alert","mission_control_common.py"):
+    open(os.path.join(bindir,name),"w").write("runtime "+name+"\n")
+    if name != "mission_control_common.py": os.chmod(os.path.join(bindir,name),0o700)
+os.makedirs(os.path.join(home,"vendor"),exist_ok=True)
+open(os.path.join(home,"index.html"),"w").write("<html></html>\n")
+open(os.path.join(home,"vendor","cytoscape.min.js"),"w").write("//vendor\n")
+write_install_stamp(bindir,"a"*40,"head",
+  ["dashboard","morning-brief","morning-brief-deadman","decision-alert","mission_control_common.py"],
+  1783674000,assets={"index.html":os.path.join(home,"index.html"),
+  "vendor/cytoscape.min.js":os.path.join(home,"vendor","cytoscape.min.js")})
+PY
+}
 
 # --- case 1: collect --force writes 12 files, every .json envelope-valid -------
 c1() {
@@ -84,7 +101,7 @@ c1() {
     [ -f "$H/data/$f.js" ] || miss=1
   done
   if [ "$miss" != 0 ]; then no "collect --force writes 12 files (some missing)"; return; fi
-  if python3 /dev/stdin "$H/data" <<'PYEOF'
+  if python3 - "$H/data" <<'PYEOF'
 import json, os, sys
 d = sys.argv[1]
 keys = {"schema", "feed", "generated_at", "generated_epoch", "cadence_s", "ok", "error", "data"}
@@ -102,7 +119,7 @@ PYEOF
 c2() {
   local H; H="$(newhome)"
   MISSION_CONTROL_HOME="$H" bash "$DASH" collect --force >/dev/null 2>&1
-  if python3 /dev/stdin "$H/data" <<'PYEOF'
+  if python3 - "$H/data" <<'PYEOF'
 import json, os, sys
 d = sys.argv[1]
 for f in ("usage", "git", "chats", "automation", "decisions", "brief"):
@@ -133,7 +150,7 @@ c3() {
   MISSION_CONTROL_HOME="$H" DASHBOARD_CMD_GIT="false" \
     bash "$DASH" collect --force >/dev/null 2>&1
   local after; after="$(cat "$H/data/git.json")"
-  if python3 /dev/stdin "$H/data" <<'PYEOF'
+  if python3 - "$H/data" <<'PYEOF'
 import json, os, sys
 d = sys.argv[1]
 err = json.load(open(os.path.join(d, "git.error.json")))
@@ -159,7 +176,7 @@ c4() {
   python3 -c 'import json,sys;p=sys.argv[1];e=json.load(open(p));e["generated_epoch"]=1;json.dump(e,open(p,"w"))' "$H/data/git.json"
   MISSION_CONTROL_HOME="$H" DASHBOARD_CMD_GIT="cat '$STUB/git2.json'" \
     bash "$DASH" collect --due >/dev/null 2>&1
-  if python3 /dev/stdin "$H/data" "$usage_before" <<'PYEOF'
+  if python3 - "$H/data" "$usage_before" <<'PYEOF'
 import json, os, sys
 d, ub = sys.argv[1], int(sys.argv[2])
 git = json.load(open(os.path.join(d, "git.json")))
@@ -176,6 +193,7 @@ c5() {
   local H rc
   H="$(newhome)"
   MISSION_CONTROL_HOME="$H" bash "$DASH" collect --force >/dev/null 2>&1
+  make_valid_stamp "$H"
   MISSION_CONTROL_HOME="$H" bash "$DASH" status >/dev/null 2>&1; rc=$?
   if [ "$rc" -eq 0 ]; then ok "status exit 0 on all-green feeds"
   else no "status nonzero on all-green (rc=$rc)"; fi
@@ -225,7 +243,7 @@ shell_contract() {
     else ok "shell: no external http(s) resource loads"; fi
   fi
   # fixtures parse against the envelope — always (independent of index.html)
-  if python3 /dev/stdin "$REPO/dashboard/fixtures" <<'PYEOF'
+  if python3 - "$REPO/dashboard/fixtures" <<'PYEOF'
 import glob, json, os, sys
 d = sys.argv[1]
 keys = {"schema", "feed", "generated_at", "generated_epoch", "cadence_s", "ok", "data"}
@@ -341,7 +359,11 @@ PYEOF
 
 c9() { # install copies a RUNNABLE runtime with REPO_ROOT baked in (headless plist path)
   local fr; fr="$(mktemp -d)/fixrepo"
-  mkdir -p "$fr/scripts" "$fr/dashboard"
+  mkdir -p "$fr/scripts" "$fr/dashboard/vendor"
+  cp "$REPO/scripts/dashboard" "$fr/scripts/dashboard"
+  cp "$REPO/scripts/mission_control_common.py" "$fr/scripts/mission_control_common.py"
+  cp "$REPO/scripts/morning-brief" "$fr/scripts/morning-brief"
+  cp "$REPO/scripts/morning-brief-deadman" "$fr/scripts/morning-brief-deadman"
   for n in usage-snapshot scan-unfinished-work automation-status; do
     printf '#!/bin/sh\necho "{\\"stub\\": \\"%s\\"}"\n' "$n" > "$fr/scripts/$n"
     chmod +x "$fr/scripts/$n"
@@ -355,11 +377,15 @@ cat "$FIXTURE_DECISIONS"
 EOF
   chmod +x "$fr/scripts/decision-alert"
   echo '{}' > "$fr/dashboard/jobs.json"
+  cp "$REPO/dashboard/index.html" "$fr/dashboard/index.html"
+  cp "$REPO/dashboard/vendor/cytoscape.min.js" "$fr/dashboard/vendor/cytoscape.min.js"
+  ( cd "$fr" && git init -q && git add -A && \
+    git -c user.email=t@t -c user.name=t commit -qm fixture ) >/dev/null 2>&1
   # stub launchctl on PATH so any bootstrap no-ops (fixture has no plist template)
   local sbin; sbin="$(mktemp -d)"
   printf '#!/bin/sh\nexit 0\n' > "$sbin/launchctl"; chmod +x "$sbin/launchctl"
   local mch; mch="$(mktemp -d)"
-  PATH="$sbin:$PATH" REPO_ROOT="$fr" MISSION_CONTROL_HOME="$mch" \
+  PATH="$sbin:$PATH" REPO_ROOT="$fr" MISSION_CONTROL_HOME="$mch" DASHBOARD_INSTALL_NO_LAUNCHD=1 \
     bash "$DASH" install >/dev/null 2>&1
   if [ ! -x "$mch/bin/dashboard" ]; then
     no "install: bin/dashboard missing or not executable"; return; fi
@@ -381,6 +407,17 @@ EOF
     ok "install: baked bin/dashboard resolves feeders headless + writes all feeds"
   else
     no "install: baked copy did not write feeds headless"
+  fi
+  # The installed engine must import its adjacent stamped common module, not a
+  # later dirty checkout copy at the baked feeder root.
+  printf 'raise RuntimeError("POISONED_REPO_COMMON")\n' > "$fr/scripts/mission_control_common.py"
+  local status_out; status_out="$(env -u REPO_ROOT MISSION_CONTROL_HOME="$mch" \
+    MISSION_CONTROL_NOW_EPOCH="$(date +%s)" bash "$mch/bin/dashboard" status 2>&1 || true)"
+  if printf '%s\n' "$status_out" | grep -q '^install' && \
+     ! printf '%s\n' "$status_out" | grep -q 'POISONED_REPO_COMMON\|Traceback'; then
+    ok "install: dashboard imports adjacent stamped common despite repo drift"
+  else
+    no "install: dashboard loaded the dirty repo common instead of adjacent bin"
   fi
 }
 
@@ -690,6 +727,12 @@ assert "vendor/cytoscape.min.js" in (stamp.get("assets") or {}), stamp
 assert not os.path.exists(os.path.join(os.path.dirname(bindir), "vendor", "removed-upstream.js")), \
        "install must remove stale vendor assets not present in HEAD"
 assert verify_install_stamp(bindir)["ok"], "clean install must verify"
+# mode drift is operational drift even when bytes still hash-match.
+os.chmod(os.path.join(bindir, "morning-brief"), 0o600)
+v = verify_install_stamp(bindir)
+assert not v["ok"] and "morning-brief" in v["mismatches"], v
+os.chmod(os.path.join(bindir, "morning-brief"), 0o700)
+assert verify_install_stamp(bindir)["ok"], "restored executable mode must verify"
 # drift: mutate an installed runtime — verify must catch it
 with open(os.path.join(bindir, "morning-brief"), "a") as fh:
     fh.write("\n# drift\n")
@@ -731,13 +774,14 @@ c23() { # a same-day delivered brief composed before valid_until existed is
   # instead of stale — regression for the "brief stale all day" trust defect.
   local H rc BRIEF NOW GEN RAWCHATS EXPECTED AFTER out send_out
   H="$(newhome)"; BRIEF="$REPO/scripts/morning-brief"
+  make_valid_stamp "$H"
   # Anchor to local noon today so same-local-day + valid_until are TZ/date-proof.
   NOW="$(python3 -c 'import time;lt=time.localtime();print(int(time.mktime((lt.tm_year,lt.tm_mon,lt.tm_mday,12,0,0,0,0,-1))))')"
   GEN=$((NOW - 7200))   # 10:00 local: same day, but > 6x brief cadence (1800s) old
   RAWCHATS="$H/chats_raw.json"
   printf '{"nodes":[],"edges":[],"topics":[],"counts":{"last_full_ingest_age_s":0,"full_ingest_state":"fresh","full_ingest_stale":false}}\n' > "$RAWCHATS"
   mkdir -p "$H/morning-brief/delivery"
-  python3 /dev/stdin "$H/morning-brief" "$GEN" <<'PYEOF'
+  python3 - "$H/morning-brief" "$GEN" <<'PYEOF'
 import json, os, sys
 home, gen = sys.argv[1], int(sys.argv[2])
 bid = "legacy-brief"
@@ -776,7 +820,7 @@ PYEOF
     DASHBOARD_CMD_CHATS="cat '$RAWCHATS'" bash "$DASH" collect --force >/dev/null 2>&1
   env -u DASHBOARD_CMD_BRIEF MISSION_CONTROL_HOME="$H" MISSION_CONTROL_NOW_EPOCH="$NOW" \
     bash "$DASH" status >/dev/null 2>&1; rc=$?
-  if ! python3 /dev/stdin "$H" "$GEN" <<'PYEOF'
+  if ! python3 - "$H" "$GEN" <<'PYEOF'
 import json, os, sys, time
 home, gen = sys.argv[1], int(sys.argv[2])
 latest = json.load(open(os.path.join(home, "morning-brief", "latest.json")))
@@ -908,7 +952,289 @@ c24() { # ER-109 round 6: installer honesty + safety. Each pathological input mu
   [ "$fails" = 0 ] && ok "install-safety: missing required runtime/asset, deleted asset, unwritable file/stamp, and symlink dests all fail loud; clean install still green"
 }
 
-c1; c2; c3; c4; c5; c6; c7; c8; c8a; c8b; c9; c10; c11; c12; c13; c14; c14a; c15; c16; c17; c18; c19; c20; c21; c22; c23; c24
+c25() { # install integrity is always visible and fail-closed in status
+  local mch now out rc; mch="$(mktemp -d)"; now=1783674000
+  mkdir -p "$mch/data"
+  python3 - "$mch/data" "$now" <<'PY'
+import json, os, sys
+root, now = sys.argv[1], int(sys.argv[2])
+cadences={"automation":300,"usage":1800,"git":900,"chats":1800,"decisions":300,"brief":300}
+for name,cadence in cadences.items():
+    data={"counts":{}} if name != "automation" else {"jobs":[],"counts":{}}
+    if name == "chats":
+        data={"nodes":[],"counts":{"last_full_ingest_age_s":0,
+              "full_ingest_state":"fresh","full_ingest_stale":False}}
+    env={"schema":1,"feed":name,"generated_epoch":now,"cadence_s":cadence,
+         "ok":True,"error":None,"data":data}
+    json.dump(env,open(os.path.join(root,name+".json"),"w"))
+PY
+  out="$(MISSION_CONTROL_HOME="$mch" MISSION_CONTROL_NOW_EPOCH="$now" bash "$DASH" status 2>&1)"; rc=$?
+  if [ "$rc" -ne 0 ] && printf '%s\n' "$out" | grep -E '^install' | grep -q 'UNVERIFIED: missing'; then
+    ok "status: missing install stamp is an explicit red row"
+  else
+    no "status: missing install stamp was omitted or green (rc=$rc out=$out)"
+  fi
+  mkdir -p "$mch/bin"; printf '[]\n' > "$mch/bin/install-stamp.json"
+  out="$(MISSION_CONTROL_HOME="$mch" MISSION_CONTROL_NOW_EPOCH="$now" bash "$DASH" status 2>&1)"; rc=$?
+  if [ "$rc" -ne 0 ] && printf '%s\n' "$out" | grep -E '^install' | grep -q 'UNVERIFIED: malformed' && \
+     ! printf '%s\n' "$out" | grep -q 'Traceback'; then
+    ok "status: malformed install stamp fails closed without traceback"
+  else
+    no "status: malformed install stamp did not return a structured red row (rc=$rc out=$out)"
+  fi
+}
+
+c26() { # production install never silently downgrades to an uncommitted worktree
+  local fr mch rc; fr="$(mktemp -d)"; mch="$(mktemp -d)"
+  REPO_ROOT="$fr" MISSION_CONTROL_HOME="$mch" DASHBOARD_INSTALL_NO_LAUNCHD=1 \
+    bash "$DASH" install >/dev/null 2>&1; rc=$?
+  if [ "$rc" -ne 0 ] && [ ! -e "$mch/bin/install-stamp.json" ]; then
+    ok "install: missing git HEAD fails closed without a stamp"
+  else
+    no "install: non-git source silently installed as verified worktree"
+  fi
+}
+
+c27() { # committed plist source + checked atomic launchd reload/failure behavior
+  local gr h mch sbin capture loaded rc out sentinel h2 mch2 h3 mch3 fails=0
+  gr="$(mktemp -d)/repo"; mkdir -p "$gr/scripts" "$gr/dashboard/vendor" "$gr/launchd"
+  local n
+  for n in dashboard mission_control_common.py morning-brief morning-brief-deadman decision-alert; do
+    cp "$REPO/scripts/$n" "$gr/scripts/$n"
+  done
+  cp "$REPO/dashboard/index.html" "$gr/dashboard/index.html"
+  cp "$REPO/dashboard/vendor/cytoscape.min.js" "$gr/dashboard/vendor/cytoscape.min.js"
+  cp "$REPO/launchd/com.gillettes.mission-control.plist.template" "$gr/launchd/com.gillettes.mission-control.plist.template"
+  python3 - "$gr/launchd/com.gillettes.mission-control.plist.template" <<'PY'
+import sys
+p=sys.argv[1]; s=open(p).read(); open(p,"w").write(s.replace("</dict>","<!-- VERSION_ONE -->\n</dict>"))
+PY
+  ( cd "$gr" && git init -q && git add -A && git -c user.email=t@t -c user.name=t commit -qm v1 )
+  h="$(mktemp -d)"; mch="$h/state"; sbin="$(mktemp -d)"; capture="$h/calls"; loaded="$h/loaded"
+  cat > "$sbin/launchctl" <<'EOF'
+#!/bin/sh
+echo "$1" >> "$LAUNCH_CAPTURE"
+case "$1" in
+  print) [ -f "$LAUNCH_STATE" ] ;;
+  bootout) [ "${FAIL_BOOTOUT:-0}" != 1 ] || exit 1; rm -f "$LAUNCH_STATE" ;;
+  bootstrap) [ "${FAIL_BOOTSTRAP:-0}" != 1 ] || exit 1; : > "$LAUNCH_STATE" ;;
+esac
+EOF
+  chmod +x "$sbin/launchctl"
+  HOME="$h" PATH="$sbin:$PATH" LAUNCH_CAPTURE="$capture" LAUNCH_STATE="$loaded" \
+    REPO_ROOT="$gr" MISSION_CONTROL_HOME="$mch" bash "$gr/scripts/dashboard" install >/dev/null 2>&1 || fails=1
+  # Commit v2, then dirty the worktree with a third marker. Install must deploy v2.
+  python3 - "$gr/launchd/com.gillettes.mission-control.plist.template" <<'PY'
+import sys
+p=sys.argv[1]; s=open(p).read(); open(p,"w").write(s.replace("VERSION_ONE","VERSION_TWO"))
+PY
+  ( cd "$gr" && git add launchd && git -c user.email=t@t -c user.name=t commit -qm v2 )
+  python3 - "$gr/launchd/com.gillettes.mission-control.plist.template" <<'PY'
+import sys
+p=sys.argv[1]; s=open(p).read(); open(p,"w").write(s.replace("</dict>","<!-- DIRTY_THREE -->\n</dict>"))
+PY
+  : > "$capture"
+  HOME="$h" PATH="$sbin:$PATH" LAUNCH_CAPTURE="$capture" LAUNCH_STATE="$loaded" \
+    REPO_ROOT="$gr" MISSION_CONTROL_HOME="$mch" bash "$gr/scripts/dashboard" install >/dev/null 2>&1 || fails=1
+  out="$h/Library/LaunchAgents/com.gillettes.mission-control.plist"
+  grep -q 'VERSION_TWO' "$out" || fails=1
+  ! grep -q 'DIRTY_THREE' "$out" || fails=1
+  [ "$(tr '\n' ' ' < "$capture")" = "print bootout bootstrap " ] || fails=1
+  : > "$capture"
+  HOME="$h" PATH="$sbin:$PATH" LAUNCH_CAPTURE="$capture" LAUNCH_STATE="$loaded" \
+    REPO_ROOT="$gr" MISSION_CONTROL_HOME="$mch" bash "$gr/scripts/dashboard" install >/dev/null 2>&1 || fails=1
+  [ "$(tr '\n' ' ' < "$capture")" = "print " ] || fails=1
+
+  # Unsafe destination is rejected before any launchd state move.
+  h2="$(mktemp -d)"; mch2="$h2/state"; mkdir -p "$h2/Library/LaunchAgents"; sentinel="$h2/outside"
+  printf 'DO-NOT-TOUCH\n' > "$sentinel"
+  ln -s "$sentinel" "$h2/Library/LaunchAgents/com.gillettes.mission-control.plist"
+  : > "$capture"
+  HOME="$h2" PATH="$sbin:$PATH" LAUNCH_CAPTURE="$capture" LAUNCH_STATE="$h2/loaded" \
+    REPO_ROOT="$gr" MISSION_CONTROL_HOME="$mch2" bash "$gr/scripts/dashboard" install >/dev/null 2>&1; rc=$?
+  [ "$rc" -ne 0 ] && [ "$(cat "$sentinel")" = "DO-NOT-TOUCH" ] && [ ! -s "$capture" ] || fails=1
+
+  # Bootstrap failure is fatal and leaves no stamp; retry applies unchanged bytes.
+  h3="$(mktemp -d)"; mch3="$h3/state"; : > "$capture"
+  HOME="$h3" PATH="$sbin:$PATH" LAUNCH_CAPTURE="$capture" LAUNCH_STATE="$h3/loaded" FAIL_BOOTSTRAP=1 \
+    REPO_ROOT="$gr" MISSION_CONTROL_HOME="$mch3" bash "$gr/scripts/dashboard" install >/dev/null 2>&1; rc=$?
+  [ "$rc" -ne 0 ] && [ ! -e "$mch3/bin/install-stamp.json" ] || fails=1
+  HOME="$h3" PATH="$sbin:$PATH" LAUNCH_CAPTURE="$capture" LAUNCH_STATE="$h3/loaded" \
+    REPO_ROOT="$gr" MISSION_CONTROL_HOME="$mch3" bash "$gr/scripts/dashboard" install >/dev/null 2>&1 || fails=1
+
+  # A failed bootout leaves the old bytes and loaded definition untouched.
+  git -C "$gr" restore launchd/com.gillettes.mission-control.plist.template
+  python3 - "$gr/launchd/com.gillettes.mission-control.plist.template" <<'PY'
+import sys
+p=sys.argv[1]; s=open(p).read(); open(p,"w").write(s.replace("VERSION_TWO","VERSION_FOUR"))
+PY
+  ( cd "$gr" && git add launchd && git -c user.email=t@t -c user.name=t commit -qm v4 )
+  : > "$capture"
+  HOME="$h" PATH="$sbin:$PATH" LAUNCH_CAPTURE="$capture" LAUNCH_STATE="$loaded" FAIL_BOOTOUT=1 \
+    REPO_ROOT="$gr" MISSION_CONTROL_HOME="$mch" bash "$gr/scripts/dashboard" install >/dev/null 2>&1; rc=$?
+  [ "$rc" -ne 0 ] || fails=1
+  grep -q 'VERSION_TWO' "$out" || fails=1
+  ! grep -q 'VERSION_FOUR' "$out" || fails=1
+  [ "$(tr '\n' ' ' < "$capture")" = "print bootout " ] || fails=1
+  [ ! -e "$mch/bin/install-stamp.json" ] || fails=1
+
+  if [ "$fails" = 0 ]; then
+    ok "plist install: committed bytes, atomic safety, checked reload, and fatal launchd failures"
+  else
+    no "plist install: provenance/reload/failure contract regressed"
+  fi
+}
+
+c28() { # malformed feed envelopes are red, never a status/freshness traceback
+  local h out rc kind fails=0; h="$(newhome)"
+  make_valid_stamp "$h"
+  for kind in epoch ok cadence cadence_huge data; do
+    MISSION_CONTROL_HOME="$h" bash "$DASH" collect --force >/dev/null 2>&1
+    python3 - "$h/data/usage.json" "$kind" <<'PY'
+import json,sys
+p,kind=sys.argv[1:]; d=json.load(open(p))
+if kind == "epoch": d["generated_epoch"] = float("inf")
+elif kind == "ok": d["ok"] = "false"
+elif kind == "cadence": d["cadence_s"] = True
+elif kind == "cadence_huge": d["cadence_s"] = 1000000000
+elif kind == "data": d["data"] = []
+json.dump(d,open(p,"w"))
+PY
+    out="$(MISSION_CONTROL_HOME="$h" bash "$DASH" status 2>&1)"; rc=$?
+    [ "$rc" -ne 0 ] && ! printf '%s\n' "$out" | grep -q 'Traceback' || fails=1
+  done
+  if [ "$fails" = 0 ]; then
+    ok "status: malformed epoch/ok/cadence/data fields fail closed without traceback"
+  else
+    no "status: malformed feed envelope crashed or remained green"
+  fi
+}
+
+c29() { # unsupported install flags are rejected before any mutation
+  local gr mch sentinel before rc; gr="$(_mkrepo)"; mch="$(mktemp -d)"
+  mkdir -p "$mch/bin"
+  sentinel="$mch/bin/install-stamp.json"
+  printf 'DO-NOT-INVALIDATE\n' > "$sentinel"
+  before="$(find "$mch" -type f -print -exec shasum -a 256 {} \; | sort)"
+  REPO_ROOT="$gr" MISSION_CONTROL_HOME="$mch" DASHBOARD_INSTALL_NO_LAUNCHD=1 \
+    bash "$gr/scripts/dashboard" install --verify >/dev/null 2>&1; rc=$?
+  if [ "$rc" -eq 2 ] && [ "$before" = "$(find "$mch" -type f -print -exec shasum -a 256 {} \; | sort)" ]; then
+    ok "install: unsupported flags fail before filesystem or launchd mutation"
+  else
+    no "install: unsupported flag mutated state or returned the wrong status (rc=$rc)"
+  fi
+}
+
+c30() { # one captured commit pins every installed byte even if HEAD moves
+  local gr mch sbin marker real_git old_sha stamped rc
+  gr="$(_mkrepo)"; mch="$(mktemp -d)"; sbin="$(mktemp -d)"
+  marker="$sbin/moved"; real_git="$(command -v git)"; old_sha="$($real_git -C "$gr" rev-parse HEAD)"
+  cat > "$sbin/git" <<'EOF'
+#!/bin/sh
+if [ "$1" = "-C" ] && [ "$2" = "$RACE_REPO" ] && [ "$3" = "rev-parse" ] && [ ! -e "$RACE_MARKER" ]; then
+  old="$($RACE_REAL_GIT "$@")" || exit $?
+  printf '%s\n' "$old"
+  : > "$RACE_MARKER"
+  printf '\n<!-- MOVED_HEAD_V2 -->\n' >> "$RACE_REPO/dashboard/index.html"
+  "$RACE_REAL_GIT" -C "$RACE_REPO" add dashboard/index.html || exit $?
+  "$RACE_REAL_GIT" -C "$RACE_REPO" -c user.email=t@t -c user.name=t commit -qm moved-head || exit $?
+  exit 0
+fi
+exec "$RACE_REAL_GIT" "$@"
+EOF
+  chmod +x "$sbin/git"
+  PATH="$sbin:$PATH" RACE_REPO="$gr" RACE_MARKER="$marker" RACE_REAL_GIT="$real_git" \
+    REPO_ROOT="$gr" MISSION_CONTROL_HOME="$mch" DASHBOARD_INSTALL_NO_LAUNCHD=1 \
+    bash "$gr/scripts/dashboard" install >/dev/null 2>&1; rc=$?
+  stamped="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["head_sha"])' "$mch/bin/install-stamp.json" 2>/dev/null)"
+  if [ "$rc" -eq 0 ] && [ "$stamped" = "$old_sha" ] && \
+     ! grep -q 'MOVED_HEAD_V2' "$mch/index.html" && [ "$($real_git -C "$gr" rev-parse HEAD)" != "$old_sha" ]; then
+    ok "install: captured immutable commit survives concurrent HEAD movement"
+  else
+    no "install: moving HEAD produced mixed bytes or false provenance (rc=$rc stamp=$stamped)"
+  fi
+}
+
+c31() { # the real macOS Bash 3.2 path executes embedded Python, not EOF
+  local h count rc; h="$(newhome)"
+  MISSION_CONTROL_HOME="$h" /bin/bash "$DASH" collect --force >/dev/null 2>&1; rc=$?
+  count="$(find "$h/data" -type f \( -name '*.json' -o -name '*.js' \) 2>/dev/null | wc -l | tr -d ' ')"
+  if [ "$rc" -eq 0 ] && [ "$count" = 12 ]; then
+    ok "bash-3.2: system /bin/bash executes the embedded Python engine"
+  else
+    no "bash-3.2: dashboard returned rc=$rc with $count/12 feed files"
+  fi
+}
+
+c32() { # a runtime chmod failure is fatal and cannot receive a green stamp
+  local gr mch sbin real_chmod rc; gr="$(_mkrepo)"; mch="$(mktemp -d)"; sbin="$(mktemp -d)"
+  real_chmod="$(command -v chmod)"
+  cat > "$sbin/chmod" <<'EOF'
+#!/bin/sh
+case "$*" in
+  *"/bin/dashboard"*) exit 1 ;;
+esac
+exec "$REAL_CHMOD" "$@"
+EOF
+  chmod +x "$sbin/chmod"
+  PATH="$sbin:$PATH" REAL_CHMOD="$real_chmod" REPO_ROOT="$gr" \
+    MISSION_CONTROL_HOME="$mch" DASHBOARD_INSTALL_NO_LAUNCHD=1 \
+    bash "$gr/scripts/dashboard" install >/dev/null 2>&1; rc=$?
+  if [ "$rc" -ne 0 ] && [ ! -e "$mch/bin/install-stamp.json" ]; then
+    ok "install: runtime chmod failure is fatal and leaves no green stamp"
+  else
+    no "install: runtime chmod failure was ignored (rc=$rc)"
+  fi
+}
+
+c33() { # concurrent installers cannot interleave bytes and provenance stamps
+  local ga gb mch sbin real_python ready release loops apid arc brc final_sha fails=0
+  ga="$(_mkrepo)"; gb="$(mktemp -d)/repo"; mch="$(mktemp -d)"; sbin="$(mktemp -d)"
+  git clone -q "$ga" "$gb" || { no "install-lock: could not build second commit fixture"; return; }
+  printf '\n<!-- INSTALLER_B -->\n' >> "$gb/dashboard/index.html"
+  ( cd "$gb" && git add dashboard/index.html && \
+    git -c user.email=t@t -c user.name=t commit -qm installer-b ) || { no "install-lock: could not commit second fixture"; return; }
+  real_python="$(command -v python3)"; ready="$sbin/ready"; release="$sbin/release"
+  cat > "$sbin/python3" <<'EOF'
+#!/bin/sh
+: > "$STAMP_READY"
+i=0
+while [ ! -e "$STAMP_RELEASE" ] && [ "$i" -lt 200 ]; do
+  sleep 0.05
+  i=$((i+1))
+done
+[ -e "$STAMP_RELEASE" ] || exit 70
+exec "$REAL_PYTHON3" "$@"
+EOF
+  chmod +x "$sbin/python3"
+  PATH="$sbin:$PATH" REAL_PYTHON3="$real_python" STAMP_READY="$ready" STAMP_RELEASE="$release" \
+    REPO_ROOT="$ga" MISSION_CONTROL_HOME="$mch" DASHBOARD_INSTALL_NO_LAUNCHD=1 \
+    bash "$ga/scripts/dashboard" install >/dev/null 2>&1 &
+  apid=$!
+  loops=0
+  while [ ! -e "$ready" ] && [ "$loops" -lt 200 ]; do sleep 0.05; loops=$((loops+1)); done
+  [ -e "$ready" ] || fails=1
+  REPO_ROOT="$gb" MISSION_CONTROL_HOME="$mch" DASHBOARD_INSTALL_NO_LAUNCHD=1 \
+    bash "$gb/scripts/dashboard" install >/dev/null 2>&1; brc=$?
+  : > "$release"
+  wait "$apid"; arc=$?
+  final_sha="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["head_sha"])' "$mch/bin/install-stamp.json" 2>/dev/null)"
+  [ "$brc" -eq 75 ] || fails=1
+  [ "$arc" -eq 0 ] || fails=1
+  [ "$final_sha" = "$(git -C "$ga" rev-parse HEAD)" ] || fails=1
+  ! grep -q 'INSTALLER_B' "$mch/index.html" || fails=1
+  [ ! -e "$mch/.install.lock" ] || fails=1
+  PYTHONPATH="$REPO/scripts" python3 -c \
+    'import sys; from mission_control_common import verify_install_stamp; assert verify_install_stamp(sys.argv[1])["ok"]' \
+    "$mch/bin" || fails=1
+  if [ "$fails" = 0 ]; then
+    ok "install-lock: concurrent commit cannot interleave files and stamp"
+  else
+    no "install-lock: concurrent installers were not isolated (A=$arc B=$brc sha=$final_sha)"
+  fi
+}
+
+c1; c2; c3; c4; c5; c6; c7; c8; c8a; c8b; c9; c10; c11; c12; c13; c14; c14a; c15; c16; c17; c18; c19; c20; c21; c22; c23; c24; c25; c26; c27; c28; c29; c30; c31; c32; c33
 shell_contract
 echo "----"
 echo "PASS=$PASS FAIL=$FAIL"

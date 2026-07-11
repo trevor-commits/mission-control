@@ -9,6 +9,26 @@ fail(){ printf 'FAIL: %s\n' "$1"; FAIL=$((FAIL+1)); }
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT
 HOME_T="$T/home"; STATE="$T/state"; mkdir -p "$HOME_T" "$STATE/morning-brief"
 
+# Existing delivery-health cases use a valid exact code/render stamp; dedicated
+# cases below remove/malformed it to exercise the independent install gate.
+PYTHONPATH="$ROOT/scripts" python3 - "$STATE" <<'PY'
+import os, sys
+from mission_control_common import write_install_stamp
+home=sys.argv[1]; bindir=os.path.join(home,"bin"); os.makedirs(bindir)
+for name in ("dashboard","morning-brief","morning-brief-deadman",
+             "decision-alert","mission_control_common.py"):
+    open(os.path.join(bindir,name),"w").write("runtime "+name+"\n")
+    if name != "mission_control_common.py": os.chmod(os.path.join(bindir,name),0o700)
+os.makedirs(os.path.join(home,"vendor"))
+open(os.path.join(home,"index.html"),"w").write("<html></html>\n")
+open(os.path.join(home,"vendor","cytoscape.min.js"),"w").write("//vendor\n")
+write_install_stamp(bindir,"a"*40,"head",
+  ["dashboard","morning-brief","morning-brief-deadman","decision-alert",
+   "mission_control_common.py"],1783675000,
+  assets={"index.html":os.path.join(home,"index.html"),
+          "vendor/cytoscape.min.js":os.path.join(home,"vendor","cytoscape.min.js")})
+PY
+
 SENDER="$T/sender.py"
 cat > "$SENDER" <<'PY'
 #!/usr/bin/env python3
@@ -108,6 +128,65 @@ run_deadman 1783675900; RM=$?
 if [ "$RM" -ne 0 ] && [ "$(calls)" = 6 ]; then pass "malformed delivery state fails safely"
 else fail "malformed delivery state fails safely"; fi
 
+# Every persisted-JSON shape fails to a category instead of crashing the
+# scheduled check. Keep this in-process and stub all outward effects.
+if PYTHONPATH="$ROOT/scripts" python3 - "$DEADMAN" <<'PY'
+import importlib.machinery, json, os, sys, tempfile
+m=importlib.machinery.SourceFileLoader("deadman_shapes", sys.argv[1]).load_module()
+now=1783676000
+def state(latest=None, previous=None):
+    root=tempfile.mkdtemp(); home=os.path.join(root,"morning-brief")
+    os.makedirs(os.path.join(home,"delivery"))
+    os.environ["MISSION_CONTROL_HOME"]=root
+    if latest is not None:
+        json.dump(latest,open(os.path.join(home,"latest.json"),"w"))
+        open(os.path.join(home,"latest.md"),"w").write("# fixture\n")
+    if previous is not None:
+        json.dump(previous,open(os.path.join(home,"deadman-alert-state.json"),"w"))
+    return root
+
+root=state({"brief_id":"bad-container","generated_epoch":now,
+            "delivery":"not-a-map"})
+assert m._problem(now)[0] == "unsent"
+root=state({"brief_id":"bad-count","generated_epoch":now,
+            "delivery":{"state":"delivered","confirmed_chunks":float("inf"),
+                        "total_chunks":1}})
+assert m._problem(now)[0] == "unsent"
+root=state(None,{"fingerprint":"x","alerted_at":"not-an-int"})
+m._send=lambda category: False
+m.verify_install_stamp=lambda path: {"present":False,"ok":False,
+  "head_sha":None,"provenance":None}
+assert m._main_locked() == 1
+
+# Future persisted throttle state is invalid, never permission to suppress the
+# current real failure. Keep the sender in-process and capture category only.
+fingerprint=m.hashlib.sha256(b"missing:none").hexdigest()
+root=state(None,{"fingerprint":fingerprint,"alerted_at":now+3600})
+os.environ["MORNING_BRIEF_DEADMAN_NOW_EPOCH"]=str(now)
+sent=[]
+m._send=lambda category: sent.append(category) or True
+m.verify_install_stamp=lambda path: {"present":True,"ok":True,"reason":"verified",
+  "head_sha":"a"*40,"provenance":"head"}
+assert m._main_locked() == 1 and sent == ["missing"]
+marker=json.load(open(os.path.join(root,"morning-brief","deadman-last-check.json")))
+assert marker["alerted"] is True and marker["throttled"] is False, marker
+
+# Delivery timestamps must be monotonic and not future-dated. Same-local-day is
+# necessary but not sufficient proof of a completed current delivery.
+def delivered_problem(delivered_at):
+    root=state({"brief_id":"time-order","generated_epoch":now-60,
+                "delivery":{"state":"delivered","confirmed_chunks":1,"total_chunks":1}})
+    home=os.path.join(root,"morning-brief"); os.makedirs(os.path.join(home,"delivery"),exist_ok=True)
+    json.dump({"brief_id":"time-order","state":"delivered","confirmed_chunks":1,
+               "total_chunks":1,"delivered_at":delivered_at},
+              open(os.path.join(home,"delivery","time-order.json"),"w"))
+    return m._problem(now)[0]
+assert delivered_problem(now+3600) == "unsent"
+assert delivered_problem(now-120) == "unsent"
+PY
+then pass "malformed deadman containers, counts, and throttle state fail safely"
+else fail "malformed deadman containers, counts, and throttle state fail safely"; fi
+
 # Sensitive source content is never copied into the direct failure message.
 if python3 - "$CAP" <<'PY'
 import json,sys
@@ -131,11 +210,50 @@ if python3 - "$MARKER" <<'PY'
 import json,sys
 m=json.load(open(sys.argv[1]))
 s=m["install_stamp"]
-assert set(s)=={"present","ok","head_sha","provenance"}, s
+assert set(s)=={"present","ok","head_sha","provenance","reason"}, s
 assert isinstance(s["present"],bool) and isinstance(s["ok"],bool)
 PY
 then pass "deadman marker records install_stamp provenance fields"
 else fail "deadman marker missing install_stamp provenance fields"; fi
+
+# Install integrity is an independent local health gate. It must return nonzero
+# and record a reason, but must never create a Telegram delivery category.
+STAMP_STATE="$T/stamp-state"; STAMP_CAP="$T/stamp-send.json"; mkdir -p "$STAMP_STATE/morning-brief/delivery" "$STAMP_STATE/bin"
+python3 - "$STAMP_STATE/morning-brief" <<'PY'
+import json, os, sys
+p=sys.argv[1]; bid="stamp-health"; now=1783676000
+json.dump({"schema":1,"brief_id":bid,"generated_epoch":now,
+ "delivery":{"state":"delivered","confirmed_chunks":1,"total_chunks":1}},
+ open(os.path.join(p,"latest.json"),"w"))
+open(os.path.join(p,"latest.md"),"w").write("# healthy\n")
+json.dump({"brief_id":bid,"state":"delivered","confirmed_chunks":1,
+ "total_chunks":1,"delivered_at":now},open(os.path.join(p,"delivery",bid+".json"),"w"))
+PY
+run_stamp_deadman(){
+  env -i HOME="$HOME_T" PATH="/usr/bin:/bin" MISSION_CONTROL_HOME="$STAMP_STATE" \
+    MORNING_BRIEF_DEADMAN_NOW_EPOCH=1783676000 MORNING_BRIEF_CHAT_ID=12345 \
+    MORNING_BRIEF_SEND_BIN="$SENDER" SEND_CAPTURE="$STAMP_CAP" PYTHONPATH="$ROOT/scripts" \
+    "$DEADMAN" >/dev/null 2>"$T/stamp-err"
+}
+run_stamp_deadman; SM=$?
+if [ "$SM" -ne 0 ] && [ ! -e "$STAMP_CAP" ] && \
+   python3 - "$STAMP_STATE/morning-brief/deadman-last-check.json" <<'PY'
+import json,sys
+m=json.load(open(sys.argv[1])); assert m["result"]=="install-unverified",m
+assert m["install_stamp"]["reason"]=="missing",m
+PY
+then pass "deadman: missing install stamp fails locally without Telegram alert"
+else fail "deadman: missing install stamp was green or sent an alert"; fi
+printf '[]\n' > "$STAMP_STATE/bin/install-stamp.json"; rm -f "$STAMP_STATE/morning-brief/deadman-alert-state.json" "$STAMP_CAP"
+run_stamp_deadman; SX=$?
+if [ "$SX" -ne 0 ] && [ ! -e "$STAMP_CAP" ] && \
+   python3 - "$STAMP_STATE/morning-brief/deadman-last-check.json" <<'PY'
+import json,sys
+m=json.load(open(sys.argv[1])); assert m["result"]=="install-unverified",m
+assert m["install_stamp"]["reason"]=="malformed",m
+PY
+then pass "deadman: malformed install stamp fails locally without traceback or alert"
+else fail "deadman: malformed install stamp did not fail closed"; fi
 
 # Concurrent checks serialize; only the first alert crosses the external boundary.
 STATE_C="$T/concurrent-state"; CAP_C="$T/concurrent-send.json"; mkdir -p "$STATE_C/morning-brief"

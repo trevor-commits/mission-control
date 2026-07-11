@@ -289,7 +289,7 @@ for (const tab of TABS) {
   const negFeeds = JSON.parse(JSON.stringify(feeds));
   negFeeds.brief.generated_epoch = 1000000000;   // year 2001, age >> 2x cadence
   negFeeds.brief.valid_until = 4102444800;        // year 2100, absurdly far future
-  negFeeds.brief.cadence_s = 86400;               // nonzero so the stale branch can fire
+  negFeeds.brief.cadence_s = 300;                  // trusted brief cadence
   resetDom();
   locationShim.hash = '#brief';
   const sandbox = {
@@ -325,7 +325,7 @@ for (const tab of TABS) {
   const negFeeds = JSON.parse(JSON.stringify(feeds));
   negFeeds.brief.generated_epoch = NOW_S - 40 * 3600;   // 40h old
   negFeeds.brief.valid_until = NOW_S + 7 * 3600;         // 7h out -> 47h span (<=48h)
-  negFeeds.brief.cadence_s = 3600;                        // 2x cadence = 2h << 40h age
+  negFeeds.brief.cadence_s = 300;                         // trusted brief cadence
   resetDom();
   locationShim.hash = '#brief';
   const sandbox = {
@@ -350,6 +350,67 @@ for (const tab of TABS) {
     fails++; return;
   }
   console.log('PASS: ~47h valid_until on a 40h-old brief is rejected — brief shows stale banner');
+})();
+
+(function malformedEnvelopeEpochsFailClosed() {
+  const cases = [
+    { field: 'generated_epoch', value: '1783674000' },
+    { field: 'generated_epoch', value: Infinity },
+    { field: 'valid_until', value: '1783680000' },
+    { field: 'valid_until', value: Infinity },
+  ];
+  for (const c of cases) {
+    const badFeeds = JSON.parse(JSON.stringify(feeds));
+    badFeeds.brief[c.field] = c.value;
+    resetDom(); locationShim.hash = '#brief';
+    const sandbox = {
+      window: { MC: { feeds: badFeeds }, addEventListener() {}, removeEventListener() {} },
+      document: documentShim, location: locationShim,
+      setInterval() { return 0; }, clearInterval() {}, setTimeout(fn) { if (typeof fn === 'function') fn(); return 0; }, clearTimeout() {},
+      Math: Math, Date: Date, JSON: JSON, console: { log() {}, warn() {}, error() {} },
+      Array: Array, Object: Object, String: String, Number: Number, isFinite: isFinite, parseInt: parseInt, parseFloat: parseFloat,
+      cytoscape() { return { on() {}, destroy() {}, $() { return { select() { return this; } }; } }; },
+    };
+    sandbox.window.window = sandbox.window; sandbox.globalThis = sandbox;
+    try { vm.runInNewContext(scriptBody, sandbox, { timeout: 5000 }); }
+    catch (e) { console.error('FAIL: malformed ' + c.field + ' render THREW: ' + e.message); fails++; continue; }
+    const txt = (byId['mc-main'] && byId['mc-main'].textContent) || '';
+    if (txt.indexOf('Data is older than expected') === -1) {
+      console.error('FAIL: malformed ' + c.field + ' rendered without stale warning'); fails++; continue;
+    }
+  }
+  console.log('PASS: malformed generated/valid-until wire values fail closed in browser guard');
+})();
+
+(function malformedEnvelopeShapeFailsClosed() {
+  const cases = [
+    { label: 'ok string', mutate: f => { f.brief.ok = 'false'; } },
+    { label: 'boolean cadence', mutate: f => { f.brief.cadence_s = true; } },
+    { label: 'fractional cadence', mutate: f => { f.brief.cadence_s = 300.5; } },
+    { label: 'forged huge cadence', mutate: f => { f.brief.cadence_s = 1000000000; } },
+    { label: 'array data', mutate: f => { f.brief.data = []; } },
+  ];
+  for (const c of cases) {
+    const badFeeds = JSON.parse(JSON.stringify(feeds));
+    c.mutate(badFeeds);
+    resetDom(); locationShim.hash = '#brief';
+    const sandbox = {
+      window: { MC: { feeds: badFeeds }, addEventListener() {}, removeEventListener() {} },
+      document: documentShim, location: locationShim,
+      setInterval() { return 0; }, clearInterval() {}, setTimeout(fn) { if (typeof fn === 'function') fn(); return 0; }, clearTimeout() {},
+      Math: Math, Date: Date, JSON: JSON, console: { log() {}, warn() {}, error() {} },
+      Array: Array, Object: Object, String: String, Number: Number, isFinite: isFinite, parseInt: parseInt, parseFloat: parseFloat,
+      cytoscape() { return { on() {}, destroy() {}, $() { return { select() { return this; } }; } }; },
+    };
+    sandbox.window.window = sandbox.window; sandbox.globalThis = sandbox;
+    try { vm.runInNewContext(scriptBody, sandbox, { timeout: 5000 }); }
+    catch (e) { console.error('FAIL: malformed envelope ' + c.label + ' THREW: ' + e.message); fails++; continue; }
+    const txt = (byId['mc-main'] && byId['mc-main'].textContent) || '';
+    if (txt.indexOf('malformed feed envelope') === -1) {
+      console.error('FAIL: malformed envelope ' + c.label + ' rendered without a hard warning'); fails++; continue;
+    }
+  }
+  console.log('PASS: malformed ok/cadence/data wire shapes fail closed in browser guard');
 })();
 
 // ER-109 round 7: valid_until is a HARD expiry across the exact-midnight rollover.
@@ -485,7 +546,8 @@ function renderHomeWithChatsCounts(overrides) {
 (function fullIngestFreshnessHealthy() {
   let txt;
   try {
-    txt = renderHomeWithChatsCounts({ last_full_ingest_age_s: 3286, full_ingest_stale: false });
+    txt = renderHomeWithChatsCounts({ last_full_ingest_age_s: 3286,
+      full_ingest_state: 'fresh', full_ingest_stale: false });
   } catch (e) {
     console.error('FAIL: healthy full-ingest home render THREW: ' + (e && e.message));
     fails++; return;
@@ -494,12 +556,17 @@ function renderHomeWithChatsCounts(overrides) {
     console.error('FAIL: healthy nightly ingest (age 3286s, full_ingest_stale=false) rendered stale');
     fails++; return;
   }
+  if (txt.indexOf('full chat scan freshness unknown') !== -1) {
+    console.error('FAIL: healthy nightly ingest (age 3286s, full_ingest_stale=false) rendered unknown');
+    fails++; return;
+  }
   console.log('PASS: healthy nightly full ingest (age 3286s) renders NOT-stale');
 })();
 (function fullIngestFreshnessMissed() {
   let txt;
   try {
-    txt = renderHomeWithChatsCounts({ last_full_ingest_age_s: 111600, full_ingest_stale: true }); // ~31h
+    txt = renderHomeWithChatsCounts({ last_full_ingest_age_s: 111600,
+      full_ingest_state: 'stale', full_ingest_stale: true }); // ~31h
   } catch (e) {
     console.error('FAIL: missed full-ingest home render THREW: ' + (e && e.message));
     fails++; return;
@@ -513,7 +580,8 @@ function renderHomeWithChatsCounts(overrides) {
 (function fullIngestFreshnessUnknown() {
   let txt;
   try {
-    txt = renderHomeWithChatsCounts({ last_full_ingest_age_s: -60, full_ingest_stale: undefined, full_ingest_state: 'unknown' });
+    txt = renderHomeWithChatsCounts({ last_full_ingest_age_s: -60,
+      full_ingest_stale: true, full_ingest_state: 'unknown' });
   } catch (e) {
     console.error('FAIL: unknown full-ingest home render THREW: ' + (e && e.message));
     fails++; return;
@@ -541,6 +609,16 @@ function renderHomeWithChatsCounts(overrides) {
     { last_full_ingest_age_s: 2 * 3600, full_ingest_sla_s: '3600',
       full_ingest_state: 'fresh', full_ingest_stale: false },
     { last_full_ingest_age_s: 2 * 3600, full_ingest_sla_s: Infinity,
+      full_ingest_state: 'fresh', full_ingest_stale: false },
+    { last_full_ingest_age_s: 7 * 3600, full_ingest_state: 'bogus',
+      full_ingest_stale: false },
+    { last_full_ingest_age_s: 7 * 3600, full_ingest_state: 'fresh',
+      full_ingest_stale: 'false' },
+    { last_full_ingest_age_s: 7 * 3600, full_ingest_state: 'fresh' },
+    { last_full_ingest_age_s: 7 * 3600, full_ingest_stale: false },
+    { last_full_ingest_age_s: 7 * 3600, ingest_skipped: 'false',
+      full_ingest_state: 'fresh', full_ingest_stale: false },
+    { last_full_ingest_age_s: 30 * 3600 + 0.1,
       full_ingest_state: 'fresh', full_ingest_stale: false },
   ];
   for (const counts of cases) {

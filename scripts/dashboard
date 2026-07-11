@@ -23,19 +23,23 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT_DEFAULT=""
 REPO_ROOT="${REPO_ROOT:-${REPO_ROOT_DEFAULT:-$(dirname "$SCRIPT_DIR")}}"  # pre-set respected (tests point it at a fixture repo)
 MISSION_CONTROL_HOME="${MISSION_CONTROL_HOME:-$HOME/.mission-control}"
-export MISSION_CONTROL_HOME REPO_ROOT
+MISSION_CONTROL_RUNTIME_DIR="$SCRIPT_DIR"
+export MISSION_CONTROL_HOME REPO_ROOT MISSION_CONTROL_RUNTIME_DIR
 
 # --- python3 engine (collect/status/demo/freshness) -------------------------
-# Code read from /dev/stdin so the python body may use any quoting freely;
+# Code read from stdin (`python3 -`) so the body may use any quoting freely and
+# macOS system Bash 3.2 does not reopen an already-consumed /dev/stdin as EOF;
 # subcommand + args arrive as argv.
 engine() {
-  python3 /dev/stdin "$@" <<'PYEOF'
-import json, os, re, shlex, shutil, subprocess, sys, time
+  python3 - "$@" <<'PYEOF'
+import json, math, os, re, shlex, shutil, subprocess, sys, time
 
 HOME = os.environ["MISSION_CONTROL_HOME"]
 REPO = os.environ.get("REPO_ROOT", ".")
+RUNTIME_DIR = os.environ.get("MISSION_CONTROL_RUNTIME_DIR",
+                             os.path.join(REPO, "scripts"))
 DATA = os.path.join(HOME, "data")
-sys.path.insert(0, os.path.join(REPO, "scripts"))
+sys.path.insert(0, RUNTIME_DIR)
 try:
     from mission_control_common import (ERROR, EgressCounters, feed_health,
                                         sanitize_text, verify_install_stamp)
@@ -89,6 +93,14 @@ def _now():
         return int(raw) if raw else int(time.time())
     except ValueError:
         return int(time.time())
+
+
+def _wire_epoch(value):
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    if isinstance(value, float) and (not math.isfinite(value) or not value.is_integer()):
+        return None
+    return int(value)
 
 
 def _iso(epoch):
@@ -209,7 +221,9 @@ def _run_builtin_chats(timeout_s):
 
 
 def _run_builtin_brief(timeout_s):
-    composer = os.path.join(REPO, "scripts", "morning-brief")
+    installed = os.path.join(HOME, "bin", "morning-brief")
+    composer = installed if os.path.isfile(installed) and os.access(installed, os.X_OK) \
+        else os.path.join(REPO, "scripts", "morning-brief")
     path = os.path.join(HOME, "morning-brief", "latest.json")
     # Collection is a reader after the first bootstrap. Re-composing on every
     # 5-minute dashboard poll would overwrite a delivered sidecar with not_sent
@@ -366,15 +380,13 @@ def _load_error(name):
 
 def _current_status_env(name):
     good = _load(name)
+    if not isinstance(good, dict):
+        good = None
     error = _load_error(name)
-    try:
-        error_epoch = int(error.get("generated_epoch") or 0) if error else 0
-    except (TypeError, ValueError):
-        error_epoch = _now()
-    try:
-        good_epoch = int(good.get("generated_epoch") or 0) if good else 0
-    except (TypeError, ValueError):
-        good_epoch = 0
+    error_epoch = _wire_epoch(error.get("generated_epoch")) if error else 0
+    good_epoch = _wire_epoch(good.get("generated_epoch")) if good else 0
+    error_epoch = error_epoch if error_epoch is not None else _now()
+    good_epoch = good_epoch if good_epoch is not None else 0
     if error and (good is None or error_epoch >= good_epoch):
         return error
     return good
@@ -429,24 +441,33 @@ def cmd_status(argv):
         if env is None:
             age, oks = "-", "-"
         else:
-            age = "%ds" % (now - int(env.get("generated_epoch", 0)))
-            oks = "ok" if env.get("ok", True) else "error"
+            epoch = _wire_epoch(env.get("generated_epoch"))
+            age = ("%ds" % (now - epoch)) if epoch is not None else "-"
+            oks = "ok" if env.get("ok") is True else "error"
         red = red or is_red
         print("%-12s %-9s %-6s %s" % (name, age, oks, verdict))
-    if verify_install_stamp is not None:
+    if verify_install_stamp is None:
+        stamp = {"present": False, "ok": False, "head_sha": None,
+                 "provenance": None, "reason": "verifier-unavailable",
+                 "mismatches": [], "missing": [], "unexpected": []}
+    else:
         stamp = verify_install_stamp(os.path.join(HOME, "bin"))
-        if stamp["present"]:
-            sha = (stamp["head_sha"] or "unknown")[:12]
-            prov = stamp["provenance"] or "unknown"
-            if stamp["ok"]:
-                print("%-12s %-9s %-6s %s" % ("install", sha, "ok",
-                      "verified (%s)" % prov))
-            else:
-                red = True
-                drift = ",".join(stamp["mismatches"] + stamp["missing"] +
-                                 stamp.get("unexpected", [])) or "?"
-                print("%-12s %-9s %-6s %s" % ("install", sha, "error",
-                      "DRIFT: %s (%s)" % (drift, prov)))
+    sha_value = stamp.get("head_sha")
+    sha = (sha_value[:12] if isinstance(sha_value, str) and sha_value
+           else "unknown")
+    prov = stamp.get("provenance") or "unknown"
+    if stamp["ok"]:
+        print("%-12s %-9s %-6s %s" % ("install", sha, "ok",
+              "verified (%s)" % prov))
+    else:
+        red = True
+        reason = stamp.get("reason") or "unverified"
+        details = ",".join(stamp.get("mismatches", []) +
+                           stamp.get("missing", []) +
+                           stamp.get("unexpected", []))
+        suffix = (" (%s)" % details) if details else ""
+        print("%-12s %-9s %-6s %s" % ("install", sha, "error",
+              "UNVERIFIED: %s%s" % (reason, suffix)))
     return 1 if red else 0
 
 
@@ -458,8 +479,9 @@ def cmd_freshness(argv):
         if env is None:
             print("%-12s no data" % name)
         else:
-            print("%-12s %s (%ds ago)"
-                  % (name, verdict, now - int(env.get("generated_epoch", 0))))
+            epoch = _wire_epoch(env.get("generated_epoch"))
+            age = ("%ds ago" % (now - epoch)) if epoch is not None else "unknown age"
+            print("%-12s %s (%s)" % (name, verdict, age))
     return 0
 
 
@@ -519,7 +541,7 @@ usage: dashboard <command>
   extract-outcomes [options]       run bounded Tier 2 outcome enrichment
   decide dismiss <decision-id>     dismiss one queued decision; execute no action
   open [--serve]                   collect --due, open the shell (--serve: local http)
-  install                          install shell + launchd job (idempotent)
+  install                          install shell + launchd job (no flags; idempotent)
   demo                             build feeds from fixtures into a temp dir + open
 EOF
 }
@@ -527,7 +549,7 @@ EOF
 do_serve() {
   mkdir -p "$MISSION_CONTROL_HOME/data"
   chmod 700 "$MISSION_CONTROL_HOME" 2>/dev/null || true
-  python3 /dev/stdin "$MISSION_CONTROL_HOME" <<'PYEOF'
+  python3 - "$MISSION_CONTROL_HOME" <<'PYEOF'
 import http.server, os, socketserver, sys
 root = sys.argv[1]
 os.chdir(root)
@@ -551,9 +573,44 @@ do_open() {
 }
 
 do_install() {
-  mkdir -p "$MISSION_CONTROL_HOME/data" "$MISSION_CONTROL_HOME/bin" "$MISSION_CONTROL_HOME/logs"
-  chmod 700 "$MISSION_CONTROL_HOME"
+  if [ "$#" -ne 0 ]; then
+    echo "install: unexpected argument: $1 (install accepts no flags; use 'dashboard status' to verify)" >&2
+    return 2
+  fi
+  if ! mkdir -p "$MISSION_CONTROL_HOME" || ! chmod 700 "$MISSION_CONTROL_HOME"; then
+    echo "install: could not create or secure runtime home" >&2
+    return 1
+  fi
+  local install_lock="$MISSION_CONTROL_HOME/.install.lock"
+  if ! mkdir "$install_lock" 2>/dev/null; then
+    echo "install: another install is active (or a prior crash left $install_lock); verify no installer is running before removing it" >&2
+    return 75
+  fi
+  DASHBOARD_INSTALL_LOCK_HELD="$install_lock"
+  _release_install_lock() {
+    if [ -n "${DASHBOARD_INSTALL_LOCK_HELD:-}" ]; then
+      rm -f "$DASHBOARD_INSTALL_LOCK_HELD/owner" 2>/dev/null || true
+      rmdir "$DASHBOARD_INSTALL_LOCK_HELD" 2>/dev/null || true
+      DASHBOARD_INSTALL_LOCK_HELD=""
+    fi
+  }
+  if ! printf '%s\n' "$$" > "$install_lock/owner"; then
+    _release_install_lock
+    return 1
+  fi
+  trap '_release_install_lock' EXIT
+  trap '_release_install_lock; exit 130' HUP INT TERM
+  if ! mkdir -p "$MISSION_CONTROL_HOME/data" "$MISSION_CONTROL_HOME/bin" "$MISSION_CONTROL_HOME/logs"; then
+    echo "install: could not create runtime directories" >&2
+    return 1
+  fi
+  if ! chmod 700 "$MISSION_CONTROL_HOME" "$MISSION_CONTROL_HOME/data" \
+      "$MISSION_CONTROL_HOME/bin" "$MISSION_CONTROL_HOME/logs"; then
+    echo "install: could not secure runtime directories" >&2
+    return 1
+  fi
   local install_failed=0
+  local stamp_path="$MISSION_CONTROL_HOME/bin/install-stamp.json"
   local required_runtimes="dashboard morning-brief morning-brief-deadman decision-alert mission_control_common.py"
   local required_assets="index.html vendor/cytoscape.min.js"
   # Safe file install: refuse a symlink or non-regular-file destination (never
@@ -580,19 +637,33 @@ do_install() {
     fi
     return 0
   }
-  # Provenance: install runtimes from the committed HEAD SHA, never an uncommitted
-  # working tree, so what runs always matches a pushed commit. A non-git tree
-  # (e.g. a test fixture) falls back to the working copy, stamped as "worktree".
-  local head_sha="" provenance="worktree"
-  if head_sha="$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null)"; then
+  # Production installs require a committed HEAD. A worktree source is available
+  # only behind an explicit fixture/development opt-in and never verifies green.
+  local head_sha="" provenance="head"
+  if head_sha="$(git -C "$REPO_ROOT" rev-parse --verify 'HEAD^{commit}' 2>/dev/null)"; then
     provenance="head"
+  elif [ "${DASHBOARD_INSTALL_ALLOW_WORKTREE:-0}" = "1" ]; then
+    head_sha="worktree"
+    provenance="worktree"
   else
-    head_sha=""
+    echo "install: committed git HEAD required (set DASHBOARD_INSTALL_ALLOW_WORKTREE=1 only for fixtures)" >&2
+    return 1
+  fi
+  # Once the source is proven usable, the upgrade remains unverified until every
+  # selected surface lands. Remove the prior regular stamp before the first write
+  # so a partial code/plist failure cannot leave an old green attestation behind.
+  if [ -L "$stamp_path" ] || { [ -e "$stamp_path" ] && [ ! -f "$stamp_path" ]; }; then
+    echo "install: stamp destination is not a regular file: $stamp_path" >&2
+    return 1
+  fi
+  if [ -f "$stamp_path" ] && ! rm -f "$stamp_path"; then
+    echo "install: could not invalidate prior stamp: $stamp_path" >&2
+    return 1
   fi
   # Copy the dashboard to a STABLE runtime path the plist execs, baking the
   # resolved REPO_ROOT into the copy so `collect --due` finds repo-sibling feeders
   # even though the copy's own SCRIPT_DIR is ~/.mission-control/bin (not the repo).
-  if [ "$provenance" = "head" ] && ! git -C "$REPO_ROOT" cat-file -e "HEAD:scripts/dashboard" 2>/dev/null; then
+  if [ "$provenance" = "head" ] && ! git -C "$REPO_ROOT" cat-file -e "$head_sha:scripts/dashboard" 2>/dev/null; then
     # provenance=head promises every shipped file comes from the committed SHA;
     # a missing source must fail loud, never silently fall back to the worktree
     # and then get stamped "head" (that would be a provenance lie).
@@ -600,22 +671,26 @@ do_install() {
     install_failed=1
   else
     { if [ "$provenance" = "head" ]; then
-        git -C "$REPO_ROOT" show "HEAD:scripts/dashboard"
+        git -C "$REPO_ROOT" show "$head_sha:scripts/dashboard"
       else
         cat "$SCRIPT_DIR/dashboard"
       fi; } | sed -e "s|^REPO_ROOT_DEFAULT=.*|REPO_ROOT_DEFAULT=\"$REPO_ROOT\"|" \
       | _mc_write "$MISSION_CONTROL_HOME/bin/dashboard" || install_failed=1
     if [ "$install_failed" = 0 ]; then
-      chmod +x "$MISSION_CONTROL_HOME/bin/dashboard"
-      echo "installed runtime -> $MISSION_CONTROL_HOME/bin/dashboard (REPO_ROOT=$REPO_ROOT, $provenance $head_sha)"
+      if chmod 700 "$MISSION_CONTROL_HOME/bin/dashboard"; then
+        echo "installed runtime -> $MISSION_CONTROL_HOME/bin/dashboard (REPO_ROOT=$REPO_ROOT, $provenance $head_sha)"
+      else
+        echo "install: could not set executable mode: $MISSION_CONTROL_HOME/bin/dashboard" >&2
+        install_failed=1
+      fi
     fi
   fi
   local runtime dest
   for runtime in morning-brief morning-brief-deadman decision-alert mission_control_common.py; do
     dest="$MISSION_CONTROL_HOME/bin/$runtime"
     if [ "$provenance" = "head" ]; then
-      if git -C "$REPO_ROOT" cat-file -e "HEAD:scripts/$runtime" 2>/dev/null; then
-        git -C "$REPO_ROOT" show "HEAD:scripts/$runtime" | _mc_write "$dest" || { install_failed=1; continue; }
+      if git -C "$REPO_ROOT" cat-file -e "$head_sha:scripts/$runtime" 2>/dev/null; then
+        git -C "$REPO_ROOT" show "$head_sha:scripts/$runtime" | _mc_write "$dest" || { install_failed=1; continue; }
       else
         echo "install: required runtime missing at HEAD: scripts/$runtime" >&2
         install_failed=1; continue
@@ -626,24 +701,30 @@ do_install() {
       echo "install: required runtime missing from worktree: scripts/$runtime" >&2
       install_failed=1; continue
     fi
-    case "$runtime" in *.py) chmod 600 "$dest" ;; *) chmod +x "$dest" ;; esac
+    case "$runtime" in
+      *.py) chmod 600 "$dest" || { echo "install: could not secure runtime: $dest" >&2; install_failed=1; continue; } ;;
+      *) chmod 700 "$dest" || { echo "install: could not set executable mode: $dest" >&2; install_failed=1; continue; } ;;
+    esac
     echo "installed runtime -> $dest"
   done
   # Deployment assets (index.html render shell + vendored graph engine) install
   # from the SAME committed HEAD as the runtimes when provenance=head, so the
-  # stamped head_sha is truthful for the whole shipped surface — never a dirty
+  # stamped head_sha is truthful for the exact code/render surface — never a dirty
   # working tree stamped "head". Worktree fallback mirrors the runtime path.
   if [ "$provenance" = "head" ]; then
-    if git -C "$REPO_ROOT" cat-file -e "HEAD:dashboard/index.html" 2>/dev/null; then
-      git -C "$REPO_ROOT" show "HEAD:dashboard/index.html" | _mc_write "$MISSION_CONTROL_HOME/index.html" || install_failed=1
+    if git -C "$REPO_ROOT" cat-file -e "$head_sha:dashboard/index.html" 2>/dev/null; then
+      git -C "$REPO_ROOT" show "$head_sha:dashboard/index.html" | _mc_write "$MISSION_CONTROL_HOME/index.html" || install_failed=1
+      chmod 600 "$MISSION_CONTROL_HOME/index.html" || install_failed=1
       # Rebuild vendor from HEAD only: rm -rf drops any asset deleted upstream so a
       # stale vendor/index file can't linger and get stamped under the new HEAD.
-      rm -rf "$MISSION_CONTROL_HOME/vendor"
-      mkdir -p "$MISSION_CONTROL_HOME/vendor"
+      rm -rf "$MISSION_CONTROL_HOME/vendor" || install_failed=1
+      mkdir -p "$MISSION_CONTROL_HOME/vendor" || install_failed=1
+      chmod 700 "$MISSION_CONTROL_HOME/vendor" || install_failed=1
       for asset in $required_assets; do
         [ "$asset" = "index.html" ] && continue
-        if git -C "$REPO_ROOT" cat-file -e "HEAD:dashboard/$asset" 2>/dev/null; then
-          git -C "$REPO_ROOT" show "HEAD:dashboard/$asset" | _mc_write "$MISSION_CONTROL_HOME/$asset" || install_failed=1
+        if git -C "$REPO_ROOT" cat-file -e "$head_sha:dashboard/$asset" 2>/dev/null; then
+          git -C "$REPO_ROOT" show "$head_sha:dashboard/$asset" | _mc_write "$MISSION_CONTROL_HOME/$asset" || install_failed=1
+          chmod 600 "$MISSION_CONTROL_HOME/$asset" || install_failed=1
         else
           echo "install: required asset missing at HEAD: dashboard/$asset" >&2
           install_failed=1
@@ -661,12 +742,15 @@ do_install() {
     fi
   elif [ -f "$REPO_ROOT/dashboard/index.html" ]; then
     _mc_write "$MISSION_CONTROL_HOME/index.html" < "$REPO_ROOT/dashboard/index.html" || install_failed=1
-    rm -rf "$MISSION_CONTROL_HOME/vendor"
-    mkdir -p "$MISSION_CONTROL_HOME/vendor"
+    chmod 600 "$MISSION_CONTROL_HOME/index.html" || install_failed=1
+    rm -rf "$MISSION_CONTROL_HOME/vendor" || install_failed=1
+    mkdir -p "$MISSION_CONTROL_HOME/vendor" || install_failed=1
+    chmod 700 "$MISSION_CONTROL_HOME/vendor" || install_failed=1
     for asset in $required_assets; do
       [ "$asset" = "index.html" ] && continue
       if [ -f "$REPO_ROOT/dashboard/$asset" ]; then
         _mc_write "$MISSION_CONTROL_HOME/$asset" < "$REPO_ROOT/dashboard/$asset" || install_failed=1
+        chmod 600 "$MISSION_CONTROL_HOME/$asset" || install_failed=1
       else
         echo "install: required asset missing from worktree: dashboard/$asset" >&2
         install_failed=1
@@ -684,12 +768,12 @@ do_install() {
     echo "install: one or more files could not be installed safely — refusing to stamp (rc=1)" >&2
     return 1
   fi
-  # Stamp the install: HEAD SHA + sha256 of each installed runtime AND deployment
-  # asset (index.html, vendor/*), so status and the deadman verify the WHOLE
-  # shipped surface matches a committed SHA without needing git.
-  MC_BIN="$MISSION_CONTROL_HOME/bin" MC_HOME="$MISSION_CONTROL_HOME" \
-  MC_HEAD_SHA="$head_sha" MC_PROVENANCE="$provenance" \
-    python3 - "$SCRIPT_DIR" <<'PYEOF'
+  _write_install_stamp() {
+    # The stamp attests exactly the five installed runtimes and two render
+    # assets. LaunchAgents have a separate checked deployment/reload gate below.
+    MC_BIN="$MISSION_CONTROL_HOME/bin" MC_HOME="$MISSION_CONTROL_HOME" \
+    MC_HEAD_SHA="$head_sha" MC_PROVENANCE="$provenance" \
+      python3 - "$MISSION_CONTROL_HOME/bin" <<'PYEOF'
 import os, sys, time
 sys.path.insert(0, sys.argv[1])
 from mission_control_common import write_install_stamp
@@ -706,45 +790,111 @@ write_install_stamp(os.environ["MC_BIN"], os.environ.get("MC_HEAD_SHA") or None,
 print("stamped install -> %s/install-stamp.json (%s, %d assets)" % (
     os.environ["MC_BIN"], os.environ.get("MC_PROVENANCE"), len(assets)))
 PYEOF
-  if [ "$?" != 0 ]; then
-    echo "install: stamp write failed — refusing success (rc=1)" >&2
-    return 1
-  fi
+  }
   if [ "${DASHBOARD_INSTALL_NO_LAUNCHD:-0}" = "1" ]; then
+    if ! _write_install_stamp; then
+      echo "install: stamp write failed — refusing success (rc=1)" >&2
+      return 1
+    fi
     echo "skip: launchd installation disabled by DASHBOARD_INSTALL_NO_LAUNCHD"
     return 0
   fi
-  local tmpl dest label
-  for tmpl in "$REPO_ROOT"/launchd/*.plist.template; do
-    [ -f "$tmpl" ] || continue
-    dest="$HOME/Library/LaunchAgents/$(basename "${tmpl%.template}")"
-    label="$(basename "${tmpl%.plist.template}")"
-    case "$label" in
-      com.gillettes.outcome-extractor|com.gillettes.morning-brief|com.gillettes.morning-brief-deadman)
-        if [ "${DASHBOARD_INSTALL_ACTIVATE_GATED:-0}" != "1" ]; then
-          echo "skip: activation-gated job requires DASHBOARD_INSTALL_ACTIVATE_GATED=1: $label"
-          continue
-        fi
-        ;;
-    esac
-    mkdir -p "$HOME/Library/LaunchAgents"
-    # __MCHOME__ = the COMPLETE mission-control home (already includes .mission-control);
-    # the template must not re-append it (the double-prefix bug the fresh-eyes audit
-    # caught: ~/.mission-control/.mission-control/bin/dashboard). __HOME__/__REPO__ kept
-    # for any real-home / repo references.
-    sed -e "s|__MCHOME__|$MISSION_CONTROL_HOME|g" -e "s|__HOME__|$HOME|g" -e "s|__REPO__|$REPO_ROOT|g" \
-      "$tmpl" > "$dest"
-    echo "installed plist -> $dest"
-    if command -v launchctl >/dev/null 2>&1; then
-      if launchctl print "gui/$(id -u)/$label" >/dev/null 2>&1; then
-        echo "already bootstrapped: $label"
-      elif launchctl bootstrap "gui/$(id -u)" "$dest" 2>/dev/null; then
-        echo "bootstrapped $label"
-      else
-        echo "bootstrap skipped/failed (non-fatal)"
-      fi
+  command -v launchctl >/dev/null 2>&1 || {
+    echo "install: launchctl is required unless DASHBOARD_INSTALL_NO_LAUNCHD=1" >&2
+    return 1
+  }
+  command -v plutil >/dev/null 2>&1 || {
+    echo "install: plutil is required for LaunchAgent validation" >&2
+    return 1
+  }
+  mkdir -p "$HOME/Library/LaunchAgents" || return 1
+  local selected_plists="com.gillettes.mission-control.plist"
+  if [ "${DASHBOARD_INSTALL_ACTIVATE_GATED:-0}" = "1" ]; then
+    selected_plists="$selected_plists com.gillettes.outcome-extractor.plist com.gillettes.morning-brief.plist com.gillettes.morning-brief-deadman.plist"
+  else
+    echo "skip: activation-gated job requires DASHBOARD_INSTALL_ACTIVATE_GATED=1: com.gillettes.outcome-extractor"
+    echo "skip: activation-gated job requires DASHBOARD_INSTALL_ACTIVATE_GATED=1: com.gillettes.morning-brief"
+    echo "skip: activation-gated job requires DASHBOARD_INSTALL_ACTIVATE_GATED=1: com.gillettes.morning-brief-deadman"
+  fi
+  local plist dest label source_tmp rendered changed loaded was_loaded domain
+  domain="gui/$(id -u)"
+  for plist in $selected_plists; do
+    label="${plist%.plist}"
+    dest="$HOME/Library/LaunchAgents/$plist"
+    if [ -L "$dest" ] || { [ -e "$dest" ] && [ ! -f "$dest" ]; }; then
+      echo "install: refusing unsafe LaunchAgent destination: $dest" >&2
+      return 1
     fi
+    source_tmp="$(mktemp "${TMPDIR:-/tmp}/mc-plist-source.XXXXXX")" || return 1
+    rendered="$(mktemp "${TMPDIR:-/tmp}/mc-plist-rendered.XXXXXX")" || {
+      rm -f "$source_tmp"; return 1;
+    }
+    if [ "$provenance" = "head" ]; then
+      if ! git -C "$REPO_ROOT" show "$head_sha:launchd/$plist.template" > "$source_tmp"; then
+        echo "install: required plist missing at HEAD: launchd/$plist.template" >&2
+        rm -f "$source_tmp" "$rendered"; return 1
+      fi
+    elif [ -f "$REPO_ROOT/launchd/$plist.template" ]; then
+      cp "$REPO_ROOT/launchd/$plist.template" "$source_tmp" || {
+        rm -f "$source_tmp" "$rendered"; return 1;
+      }
+    else
+      echo "install: required plist missing from worktree: launchd/$plist.template" >&2
+      rm -f "$source_tmp" "$rendered"; return 1
+    fi
+    if ! python3 - "$source_tmp" "$rendered" "$MISSION_CONTROL_HOME" "$HOME" "$REPO_ROOT" <<'PYEOF'
+import sys
+source, dest, mc_home, home, repo = sys.argv[1:]
+text = open(source).read()
+text = text.replace("__MCHOME__", mc_home).replace("__HOME__", home).replace("__REPO__", repo)
+with open(dest, "w") as handle:
+    handle.write(text)
+PYEOF
+    then
+      echo "install: plist render failed: $plist" >&2
+      rm -f "$source_tmp" "$rendered"; return 1
+    fi
+    if ! plutil -lint "$rendered" >/dev/null 2>&1; then
+      echo "install: rendered plist failed validation: $plist" >&2
+      rm -f "$source_tmp" "$rendered"; return 1
+    fi
+    changed=1
+    [ -f "$dest" ] && cmp -s "$rendered" "$dest" && changed=0
+    loaded=0
+    was_loaded=0
+    if launchctl print "$domain/$label" >/dev/null 2>&1; then
+      loaded=1; was_loaded=1
+    fi
+    if [ "$changed" = 1 ] && [ "$loaded" = 1 ]; then
+      if ! launchctl bootout "$domain/$label" >/dev/null 2>&1; then
+        echo "install: could not unload changed LaunchAgent: $label" >&2
+        rm -f "$source_tmp" "$rendered"; return 1
+      fi
+      loaded=0
+    fi
+    if [ "$changed" = 1 ]; then
+      if ! _mc_write "$dest" < "$rendered"; then
+        [ "$was_loaded" = 1 ] && launchctl bootstrap "$domain" "$dest" >/dev/null 2>&1 || true
+        rm -f "$source_tmp" "$rendered"; return 1
+      fi
+      chmod 600 "$dest" || { rm -f "$source_tmp" "$rendered"; return 1; }
+      echo "installed plist -> $dest"
+    fi
+    if [ "$loaded" = 0 ]; then
+      if ! launchctl bootstrap "$domain" "$dest" >/dev/null 2>&1; then
+        echo "install: bootstrap failed: $label" >&2
+        rm -f "$source_tmp" "$rendered"; return 1
+      fi
+      echo "bootstrapped $label"
+    else
+      echo "already current and bootstrapped: $label"
+    fi
+    rm -f "$source_tmp" "$rendered"
   done
+  if ! _write_install_stamp; then
+    echo "install: stamp write failed — refusing success (rc=1)" >&2
+    return 1
+  fi
 }
 
 do_demo() {
@@ -762,7 +912,7 @@ case "$cmd" in
   collect)  engine collect "$@" ;;
   refresh)  engine collect --force "$@" ;;
   status)   engine status "$@"; exit $? ;;
-  brief)    exec "$REPO_ROOT/scripts/morning-brief" "$@" ;;
+  brief)    exec "$SCRIPT_DIR/morning-brief" "$@" ;;
   extract-outcomes) exec "$REPO_ROOT/scripts/chat-graph" extract-outcomes "$@" ;;
   decide)
     [ "${1:-}" = "dismiss" ] && [ $# -eq 2 ] || { usage; exit 2; }

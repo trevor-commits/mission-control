@@ -16,6 +16,7 @@ import json
 import math
 import os
 import re
+import stat
 import time
 from collections import Counter
 from dataclasses import dataclass
@@ -293,19 +294,36 @@ def sanitize_chunks(chunks, counters=None):
 
 
 # --- freshness + product validity -------------------------------------------
-# ONE source of truth for feed freshness across the dashboard status command,
-# the index.html per-feed guard, and the morning brief's input-health check.
-# The envelope compose timestamp alone misses two real staleness classes; both
-# are folded in here so a caller cannot forget one (the class of bug that let a
-# brief claim its chats input fresh while the full transcript ingest was ~a day
-# behind).
+# Shared Python source of truth for feed freshness. The browser independently
+# verifies the advertised raw evidence against the same wire contract so a
+# malformed or contradictory producer envelope cannot render green.
+
+def _wire_number(value):
+    """Return a finite JSON number without bool/string coercion."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    if isinstance(value, float) and not math.isfinite(value):
+        return None
+    return value
+
+
+def _wire_epoch(value):
+    """Return strict integer epoch seconds, or None for malformed wire data."""
+    value = _wire_number(value)
+    if value is None or (isinstance(value, float) and not value.is_integer()):
+        return None
+    return int(value)
 
 def same_local_day(epoch, now):
     """True when epoch and now fall on the same local calendar day."""
+    epoch = _wire_epoch(epoch)
+    now = _wire_epoch(now)
+    if epoch is None or now is None:
+        return False
     try:
-        return time.strftime("%Y-%m-%d", time.localtime(int(epoch))) == time.strftime(
-            "%Y-%m-%d", time.localtime(int(now)))
-    except (TypeError, ValueError):
+        return time.strftime("%Y-%m-%d", time.localtime(epoch)) == time.strftime(
+            "%Y-%m-%d", time.localtime(now))
+    except (TypeError, ValueError, OverflowError, OSError):
         return False
 
 
@@ -317,7 +335,9 @@ def next_local_midnight(epoch):
     it. mktime normalizes the mday+1 rollover and picks the right DST offset.
     """
     try:
-        raw = int(epoch)
+        raw = _wire_epoch(epoch)
+        if raw is None:
+            return None
         if raw <= 0:
             return None
         lt = time.localtime(raw)
@@ -355,29 +375,34 @@ def nested_ingest_state(env):
     envelope cadence, while its last complete transcript pass runs nightly; the
     nightly SLA (not the envelope cadence) decides whether that pass is stale.
     """
-    if not env or not isinstance(env.get("data"), dict):
-        return "fresh"
+    is_chats = isinstance(env, dict) and env.get("feed") == "chats"
+    if not isinstance(env, dict) or not isinstance(env.get("data"), dict):
+        return "unknown" if is_chats else "fresh"
     counts = env["data"].get("counts")
     if not isinstance(counts, dict):
-        return "fresh"
+        return "unknown" if is_chats else "fresh"
     full_ingest_keys = ("full_ingest_state", "full_ingest_stale",
                         "last_full_ingest_age_s", "last_full_ingest_epoch",
                         "full_ingest_sla_s")
-    if (env.get("feed") != "chats" and not counts.get("ingest_skipped") and
-            not any(k in counts for k in full_ingest_keys)):
+    has_full_ingest = any(k in counts for k in full_ingest_keys)
+    if not is_chats and not has_full_ingest:
         return "fresh"
-    if counts.get("ingest_skipped"):
-        return "stale"
+    if "ingest_skipped" in counts:
+        skipped = counts.get("ingest_skipped")
+        if not isinstance(skipped, bool):
+            return "unknown"
+        if skipped:
+            return "stale"
     if "last_full_ingest_age_s" not in counts:
         return "unknown"
     age = counts.get("last_full_ingest_age_s")
-    if (isinstance(age, bool) or not isinstance(age, (int, float)) or
-            not math.isfinite(age) or age < 0):
+    age = _wire_number(age)
+    if age is None or age < 0:
         return "unknown"
     if "full_ingest_sla_s" in counts:
         sla = counts.get("full_ingest_sla_s")
-        if (isinstance(sla, bool) or not isinstance(sla, (int, float)) or
-                not math.isfinite(sla) or sla <= 0):
+        sla = _wire_number(sla)
+        if sla is None or sla <= 0:
             return "unknown"
     else:
         sla = full_ingest_sla_s()
@@ -386,20 +411,21 @@ def nested_ingest_state(env):
     # Derived producer flags are useful to non-Python consumers, but they cannot
     # override malformed raw evidence. A contradictory envelope is unknown,
     # never green: this catches partial writes and rolling-version mismatches.
+    has_declared = "full_ingest_state" in counts
+    has_legacy = "full_ingest_stale" in counts
+    if not has_declared and not has_legacy:
+        return computed
+    if has_declared != has_legacy:
+        return "unknown"
     declared = counts.get("full_ingest_state")
     legacy = counts.get("full_ingest_stale")
-    if declared in ("fresh", "stale", "unknown"):
-        if declared == "unknown":
-            return "unknown"
-        if declared != computed:
-            return "unknown"
-        if isinstance(legacy, bool) and legacy != (declared == "stale"):
-            return "unknown"
-        return declared
-    if isinstance(legacy, bool):
-        legacy_state = "stale" if legacy else "fresh"
-        return legacy_state if legacy_state == computed else "unknown"
-    return computed
+    if declared not in ("fresh", "stale", "unknown") or not isinstance(legacy, bool):
+        return "unknown"
+    if declared == "unknown":
+        return "unknown"
+    if declared != computed or legacy != (declared == "stale"):
+        return "unknown"
+    return declared
 
 
 def nested_ingest_stale(env):
@@ -424,25 +450,45 @@ def feed_health(env, cadence, now, stale_multiple=6, aging=True):
             "valid_until": None}
     if env is None:
         return base
-    ok = bool(env.get("ok", True))
-    try:
-        epoch = int(env.get("generated_epoch"))
-    except (TypeError, ValueError):
-        epoch = None
-    age = None if epoch is None else now - epoch
-    try:
-        valid_until = int(env["valid_until"]) if env.get("valid_until") is not None else None
-    except (TypeError, ValueError):
-        valid_until = None
+    if not isinstance(env, dict):
+        return base
+    wire_cadence = _wire_epoch(env.get("cadence_s"))
+    expected_cadence = _wire_epoch(cadence)
+    wire_now = _wire_epoch(now)
+    schema = env.get("schema")
+    ok_value = env.get("ok")
+    data = env.get("data")
+    envelope_valid = (
+        type(schema) is int and schema == 1 and
+        isinstance(ok_value, bool) and
+        wire_cadence is not None and wire_cadence > 0 and
+        expected_cadence is not None and expected_cadence > 0 and
+        wire_cadence == expected_cadence and
+        wire_now is not None and
+        (ok_value is False or isinstance(data, dict))
+    )
+    if not envelope_valid:
+        malformed = dict(base)
+        malformed["state"] = "error"
+        malformed["nested_state"] = "unknown" if env.get("feed") == "chats" else "fresh"
+        malformed["nested_stale"] = malformed["nested_state"] != "fresh"
+        return malformed
+    ok = ok_value
+    epoch = _wire_epoch(env.get("generated_epoch"))
+    age = None if epoch is None else wire_now - epoch
+    has_valid_until = "valid_until" in env and env.get("valid_until") is not None
+    valid_until = _wire_epoch(env.get("valid_until")) if has_valid_until else None
+    valid_until_invalid = has_valid_until and valid_until is None
     nested_state = nested_ingest_state(env)
     counts = env.get("data", {}).get("counts") if isinstance(env.get("data"), dict) else None
     # A chats consumer must see the producer's derived state. Raw age alone is
     # insufficient during a rolling upgrade; consumers also verify the derived
     # state against the advertised/default nightly SLA before trusting green.
-    if (env.get("feed") == "chats" and isinstance(counts, dict) and
-            "full_ingest_state" not in counts and
-            "full_ingest_stale" not in counts):
-        nested_state = "unknown"
+    if env.get("feed") == "chats":
+        if (not isinstance(counts, dict) or
+                "full_ingest_state" not in counts or
+                "full_ingest_stale" not in counts):
+            nested_state = "unknown"
     out = {"age_s": (max(0, age) if age is not None else None),
            "nested_stale": nested_state != "fresh", "nested_state": nested_state,
            "ok": ok,
@@ -461,11 +507,13 @@ def feed_health(env, cadence, now, stale_multiple=6, aging=True):
         out["state"], out["red"] = "stale", True
     elif age < 0:
         out["state"], out["red"], out["age_s"] = "skew", False, age
-    elif valid_until is not None and now >= valid_until:
+    elif valid_until_invalid:
+        out["state"], out["red"] = "stale", True
+    elif valid_until is not None and wire_now >= valid_until:
         # A present valid_until is a HARD expiry: once now reaches it, an expired
         # daily brief reads stale immediately, regardless of the poll cadence age.
         out["state"], out["red"] = "stale", True
-    elif valid_ok and now < valid_until:
+    elif valid_ok and wire_now < valid_until:
         out["state"], out["red"] = "fresh", False
     elif age > stale_multiple * cadence:
         out["state"], out["red"] = "stale", True
@@ -498,7 +546,7 @@ def write_install_stamp(bin_dir, head_sha, provenance, names, now, assets=None):
     `names` are runtimes under bin_dir (stored bare in "files"). `assets` is an
     optional {home_relative_path: absolute_path} map for the non-bin deployment
     set (index.html, vendor/*), stored under "assets" so status + the deadman
-    detect drift in the whole shipped surface, not just the five bin files.
+    detect drift in the exact code/render surface, not just the five bin files.
     """
     expected_files = set(REQUIRED_INSTALL_RUNTIMES)
     expected_assets = set(REQUIRED_INSTALL_ASSETS)
@@ -525,41 +573,93 @@ def write_install_stamp(bin_dir, head_sha, provenance, names, now, assets=None):
              "files": files, "assets": asset_hashes}
     path = os.path.join(bin_dir, INSTALL_STAMP_NAME)
     tmp = "%s.tmp.%d" % (path, os.getpid())
-    with open(tmp, "w") as handle:
-        json.dump(stamp, handle, ensure_ascii=True, sort_keys=True)
-        handle.write("\n")
-        handle.flush()
-        os.fsync(handle.fileno())
-    os.rename(tmp, path)
+    try:
+        with open(tmp, "w") as handle:
+            json.dump(stamp, handle, ensure_ascii=True, sort_keys=True)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp, path)
+    finally:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
     return stamp
 
 
 def verify_install_stamp(bin_dir):
     """Re-hash installed runtimes against the stamp. Content-free verdict."""
+    def verdict(present, reason, head_sha=None, provenance=None,
+                mismatches=None, missing=None, unexpected=None):
+        mismatches = sorted(mismatches or [])
+        missing = sorted(missing or [])
+        unexpected = sorted(unexpected or [])
+        return {"present": bool(present), "ok": reason == "verified",
+                "reason": reason, "head_sha": head_sha,
+                "provenance": provenance, "mismatches": mismatches,
+                "missing": missing, "unexpected": unexpected}
+
     path = os.path.join(bin_dir, INSTALL_STAMP_NAME)
+    if not os.path.lexists(path):
+        return verdict(False, "missing")
+    if os.path.islink(path) or not os.path.isfile(path):
+        return verdict(True, "malformed")
     try:
         with open(path) as handle:
             stamp = json.load(handle)
-    except (OSError, ValueError):
-        return {"present": False, "ok": False, "head_sha": None,
-                "provenance": None, "mismatches": [], "missing": []}
-    mismatches, missing, unexpected = [], [], []
-    files = stamp.get("files") or {}
-    assets = stamp.get("assets") or {}
-    for name in sorted(set(files) - set(REQUIRED_INSTALL_RUNTIMES)):
-        unexpected.append(name)
-    for rel in sorted(set(assets) - set(REQUIRED_INSTALL_ASSETS)):
-        unexpected.append(rel)
+    except OSError:
+        return verdict(True, "unreadable")
+    except ValueError:
+        return verdict(True, "malformed")
+    if not isinstance(stamp, dict):
+        return verdict(True, "malformed")
+    files = stamp.get("files")
+    assets = stamp.get("assets")
+    head_sha = stamp.get("head_sha")
+    provenance = stamp.get("provenance")
+    installed_at = stamp.get("installed_at")
+    schema = stamp.get("schema")
+    head_valid = (
+        provenance == "head" and isinstance(head_sha, str) and
+        re.fullmatch(r"(?:[0-9a-f]{40}|[0-9a-f]{64})", head_sha) is not None
+    ) or (provenance == "worktree" and head_sha == "worktree")
+    if (type(schema) is not int or schema != 1 or
+            type(installed_at) is not int or installed_at <= 0 or
+            not isinstance(files, dict) or
+            not isinstance(assets, dict) or not isinstance(head_sha, str) or
+            not head_sha or provenance not in ("head", "worktree") or
+            not head_valid or any(not isinstance(k, str)
+                                  for k in list(files) + list(assets))):
+        safe_provenance = provenance if provenance in ("head", "worktree") else None
+        return verdict(True, "malformed",
+                       head_sha if head_valid else None, safe_provenance)
+    mismatches, missing, unexpected, invalid_hashes = [], [], [], []
+    if set(files) - set(REQUIRED_INSTALL_RUNTIMES):
+        unexpected.append("unexpected-runtime")
+    if set(assets) - set(REQUIRED_INSTALL_ASSETS):
+        unexpected.append("unexpected-asset")
     for name in REQUIRED_INSTALL_RUNTIMES:
         expected = files.get(name)
         if expected is None:
             missing.append(name)
             continue
+        if not isinstance(expected, str) or len(expected) != 64:
+            invalid_hashes.append(name)
+            continue
         candidate = os.path.join(bin_dir, name)
-        if not os.path.isfile(candidate):
+        if os.path.islink(candidate) or not os.path.isfile(candidate):
             missing.append(name)
-        elif _sha256_file(candidate) != expected:
-            mismatches.append(name)
+        else:
+            try:
+                mode = os.stat(candidate).st_mode
+                if (name != "mission_control_common.py" and
+                        not (mode & stat.S_IXUSR)):
+                    mismatches.append(name)
+                elif _sha256_file(candidate) != expected:
+                    mismatches.append(name)
+            except OSError:
+                missing.append(name)
     # Assets live under the mission-control home (parent of bin_dir), keyed by a
     # home-relative path (e.g. index.html, vendor/foo.js).
     home = os.path.dirname(bin_dir)
@@ -568,13 +668,26 @@ def verify_install_stamp(bin_dir):
         if expected is None:
             missing.append(rel)
             continue
+        if not isinstance(expected, str) or len(expected) != 64:
+            invalid_hashes.append(rel)
+            continue
         candidate = os.path.join(home, rel)
-        if not os.path.isfile(candidate):
+        if os.path.islink(candidate) or not os.path.isfile(candidate):
             missing.append(rel)
-        elif _sha256_file(candidate) != expected:
-            mismatches.append(rel)
-    return {"present": True, "ok": not mismatches and not missing and not unexpected,
-            "head_sha": stamp.get("head_sha"),
-            "provenance": stamp.get("provenance"),
-            "mismatches": sorted(mismatches), "missing": sorted(missing),
-            "unexpected": sorted(unexpected)}
+        else:
+            try:
+                if _sha256_file(candidate) != expected:
+                    mismatches.append(rel)
+            except OSError:
+                missing.append(rel)
+    if missing or unexpected:
+        return verdict(True, "drift", head_sha, provenance,
+                       mismatches, missing, unexpected)
+    if invalid_hashes:
+        return verdict(True, "malformed", head_sha, provenance)
+    if mismatches:
+        return verdict(True, "drift", head_sha, provenance,
+                       mismatches, missing, unexpected)
+    if provenance != "head":
+        return verdict(True, "uncommitted", head_sha, provenance)
+    return verdict(True, "verified", head_sha, provenance)

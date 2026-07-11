@@ -25,7 +25,8 @@ INPUTS = {
     "git": {"cadence_s": 900, "required": True},
     "chats": {"cadence_s": 1800, "required": True},
     "decisions": {"cadence_s": 300, "required": False},
-    "usage": {"cadence_s": 1800, "required": False},
+    "usage": {"cadence_s": 1800, "allowed_cadences_s": (1800, 604800),
+              "required": False},
 }
 SECTION_ORDER = (
     "NEEDS YOU", "What happened", "Possible follow-ups — Inferred", "Open work changes",
@@ -81,12 +82,18 @@ def _snapshot_inputs():
 def _input_health(name, feed, now):
     declared = INPUTS[name]
     cadence = declared["cadence_s"]
-    if feed and isinstance(feed.get("cadence_s"), (int, float)) and feed["cadence_s"] > 0:
-        cadence = int(feed["cadence_s"])
+    wire_cadence = feed.get("cadence_s") if isinstance(feed, dict) else None
+    if (type(wire_cadence) is int or
+            (type(wire_cadence) is float and wire_cadence.is_integer())):
+        wire_cadence = int(wire_cadence)
+        if wire_cadence in declared.get("allowed_cadences_s", (cadence,)):
+            cadence = wire_cadence
     # A brief is delivered as fact, so its inputs must be current at 1x cadence
     # with no lenient aging tier — and a feed that is envelope-fresh but whose
     # full transcript ingest is stale (nested_stale) is not trustworthy either.
     h = feed_health(feed, cadence, now, stale_multiple=1, aging=False)
+    data = feed.get("data") if isinstance(feed, dict) else None
+    empty = not isinstance(data, dict) or not data
     if h["state"] == "missing":
         state = "missing"
     elif h["state"] == "error":
@@ -95,8 +102,10 @@ def _input_health(name, feed, now):
         # A future generated_epoch is a clock-skew / invalid envelope, never a
         # trustworthy "fresh" input — surface it as its own visible warning.
         state = "skew"
-    elif h["state"] == "fresh" and not h["nested_stale"]:
+    elif h["state"] == "fresh" and not h["nested_stale"] and not empty:
         state = "fresh"
+    elif empty:
+        state = "empty"
     else:
         state = "stale"
     return {
@@ -104,8 +113,8 @@ def _input_health(name, feed, now):
         "required": bool(declared["required"]),
         "cadence_s": cadence,
         "age_s": h["age_s"],
-        "generated_epoch": feed.get("generated_epoch") if feed else None,
-        "ok": bool(feed and feed.get("ok", True)),
+        "generated_epoch": h["generated_epoch"],
+        "ok": bool(isinstance(feed, dict) and feed.get("ok") is True),
     }
 
 

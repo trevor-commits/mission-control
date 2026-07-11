@@ -10,6 +10,7 @@ import hashlib
 import http.client
 import ipaddress
 import json
+import math
 import os
 import re
 import signal
@@ -388,11 +389,20 @@ def _send(category):
 _same_local_day = same_local_day
 
 
-def _as_int(value, default=None):
-    try:
-        return int(value)
-    except (TypeError, ValueError):
+def _as_int(value, default=None, allow_text=False):
+    """Parse persisted integers without bool/string/non-finite coercion."""
+    if isinstance(value, bool):
         return default
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value) if math.isfinite(value) and value.is_integer() else default
+    if allow_text and isinstance(value, str):
+        try:
+            return int(value)
+        except (TypeError, ValueError, OverflowError):
+            return default
+    return default
 
 
 def _problem(now):
@@ -401,7 +411,8 @@ def _problem(now):
     if not latest:
         return "missing", "none"
     brief_id = str(latest.get("brief_id") or "unknown")
-    max_age = _as_int(os.environ.get("MORNING_BRIEF_MAX_AGE_S", "93600"), 93600)
+    max_age = _as_int(os.environ.get("MORNING_BRIEF_MAX_AGE_S", "93600"),
+                      93600, allow_text=True)
     generated = _as_int(latest.get("generated_epoch"))
     age = now - generated if generated is not None else 10**12
     if age < 0 or age > max_age or not _same_local_day(generated, now):
@@ -412,7 +423,9 @@ def _problem(now):
             return "empty", brief_id
     except OSError:
         return "empty", brief_id
-    delivery = latest.get("delivery") or {}
+    delivery = latest.get("delivery")
+    if not isinstance(delivery, dict):
+        delivery = {}
     state = delivery.get("state")
     confirmed = _as_int(delivery.get("confirmed_chunks"), 0)
     total = _as_int(delivery.get("total_chunks"), 0)
@@ -422,9 +435,12 @@ def _problem(now):
         state = receipt.get("state", state)
         confirmed = _as_int(receipt.get("confirmed_chunks"), confirmed)
         total = _as_int(receipt.get("total_chunks"), total)
+    delivered_at = _as_int(receipt.get("delivered_at")) if receipt else None
     if (receipt and receipt.get("brief_id") == brief_id and state == "delivered" and
             total > 0 and confirmed == total and
-            _same_local_day(receipt.get("delivered_at"), now)):
+            generated is not None and delivered_at is not None and
+            generated <= delivered_at <= now and
+            _same_local_day(delivered_at, now)):
         return None, brief_id
     if confirmed > 0 and (total == 0 or confirmed < total):
         return "partial", brief_id
@@ -469,6 +485,11 @@ def main():
 def _main_locked():
     now = _now(); home = _home()
     category, brief_id = _problem(now)
+    # Install integrity is a separate local health gate. It never becomes a
+    # Telegram alert category; dashboard/automation health surfaces the nonzero
+    # result while delivery alerts remain category-only.
+    bin_dir = os.path.join(os.path.dirname(home), "bin")
+    stamp = verify_install_stamp(bin_dir)
     fingerprint = hashlib.sha256(("%s:%s" % (category or "healthy", brief_id)).encode(
         "utf-8")).hexdigest()
     alert_state_path = os.path.join(home, "deadman-alert-state.json")
@@ -476,32 +497,34 @@ def _main_locked():
     alerted = False
     throttled = False
     if category:
-        try:
-            throttle = int(os.environ.get("MORNING_BRIEF_DEADMAN_THROTTLE_S", "21600"))
-        except ValueError:
-            throttle = 21600
-        last = int(previous.get("alerted_at") or 0)
-        throttled = previous.get("fingerprint") == fingerprint and now - last < throttle
+        throttle = _as_int(os.environ.get("MORNING_BRIEF_DEADMAN_THROTTLE_S", "21600"),
+                           21600, allow_text=True)
+        last = _as_int(previous.get("alerted_at"), 0)
+        elapsed = now - last
+        throttled = (previous.get("fingerprint") == fingerprint and throttle > 0 and
+                     0 <= elapsed < throttle)
         if not throttled and _send(category):
             alerted = True
             _atomic_json(alert_state_path, {
                 "schema": 1, "fingerprint": fingerprint, "alerted_at": now,
                 "category": category,
             })
-    # Independent provenance read: verify the installed runtime matches its stamp
-    # (a committed SHA). Recorded only — never blocks or drives the delivery alert.
-    bin_dir = os.path.join(os.path.dirname(home), "bin")
-    stamp = verify_install_stamp(bin_dir)
+    result = category or ("healthy" if stamp["ok"] else "install-unverified")
     _atomic_json(os.path.join(home, "deadman-last-check.json"), {
         "schema": 1, "checked_at": now, "brief_id": brief_id,
-        "result": category or "healthy", "alerted": alerted,
+        "result": result, "alerted": alerted,
         "throttled": throttled,
         "install_stamp": {"present": stamp["present"], "ok": stamp["ok"],
                           "head_sha": stamp["head_sha"],
-                          "provenance": stamp["provenance"]},
+                          "provenance": stamp["provenance"],
+                          "reason": stamp.get("reason", "unknown")},
     })
     if category:
         sys.stderr.write("morning-brief-deadman: %s\n" % category)
+        return 1
+    if not stamp["ok"]:
+        sys.stderr.write("morning-brief-deadman: install-unverified (%s)\n" %
+                         stamp.get("reason", "unknown"))
         return 1
     print("morning-brief-deadman: healthy")
     return 0

@@ -207,6 +207,26 @@ else pass "event arriving after snapshot is deferred"; fi
 if grep -q "Arrived during compose" "$MARKDOWN"; then pass "next compose includes deferred event"
 else fail "next compose includes deferred event"; fi
 
+# A fresh envelope with an empty required payload is incomplete even though its
+# timestamp is current. OpenSpec requires recency AND non-emptiness.
+cp "$MISSION_CONTROL_HOME/data/automation.json" "$TMP/automation.json.saved"
+python3 - "$MISSION_CONTROL_HOME/data/automation.json" <<'PY'
+import json, sys
+p=sys.argv[1]; d=json.load(open(p)); d["data"]={}; json.dump(d, open(p,"w"))
+PY
+"$BRIEF" >/dev/null 2>&1
+if python3 - "$LATEST" <<'PY'
+import json, sys
+d=json.load(open(sys.argv[1]))
+assert d["inputs"]["automation"]["state"] == "empty", d["inputs"]["automation"]
+assert "automation" in d["stale_required_inputs"], d["stale_required_inputs"]
+needs=next(s for s in d["sections"] if s["title"]=="NEEDS YOU")
+assert any("automation" in row["text"] for row in needs["lines"]), needs
+PY
+then pass "fresh empty required input warns and marks the brief incomplete"
+else fail "fresh empty required input warns and marks the brief incomplete"; fi
+mv "$TMP/automation.json.saved" "$MISSION_CONTROL_HOME/data/automation.json"
+
 # A missing required feed creates a top-level warning; volume remains bounded.
 rm -f "$MISSION_CONTROL_HOME/data/git.json"
 MORNING_BRIEF_TOP_N=1 MORNING_BRIEF_NEEDS_YOU_MAX=1 "$BRIEF" >/dev/null 2>&1
@@ -234,7 +254,10 @@ def write(name, data, cadence):
 secret_line="Pick the deploy window " + ("x"*120) + " sk-livesecrettoken1234567890abcdef"
 write("automation", {"jobs": [], "counts": {"red":0,"green":1}}, 300)
 write("git", {"repos": []}, 900)
-write("chats", {"nodes":[],"edges":[],"loose_ends":[],"loose_end_changes":[]}, 1800)
+write("chats", {"nodes":[],"edges":[],"loose_ends":[],"loose_end_changes":[],
+                "counts":{"last_full_ingest_age_s":0,
+                          "full_ingest_state":"fresh",
+                          "full_ingest_stale":False}}, 1800)
 write("decisions", {"pinned":[
   {"id":"decision:"+"9"*24,"text":secret_line,"trust":"structured",
    "provenance":"chat-graph tier1"}], "inferred":[]}, 300)
@@ -281,7 +304,10 @@ def write(name, data, cadence):
                "ok":True,"error":None,"data":data}, open(os.path.join(root,name+".json"),"w"))
 write("automation", {"jobs": [], "counts": {"red":0,"green":1}}, 300)
 write("git", {"repos": []}, 900)
-write("chats", {"nodes":[],"edges":[],"loose_ends":[],"loose_end_changes":[]}, 1800)
+write("chats", {"nodes":[],"edges":[],"loose_ends":[],"loose_end_changes":[],
+                "counts":{"last_full_ingest_age_s":0,
+                          "full_ingest_state":"fresh",
+                          "full_ingest_stale":False}}, 1800)
 write("decisions", {"pinned":[
   {"id":"decision:"+str(i)*24,"text":"Decision %d needs review"%i,
    "trust":"structured","provenance":"chat-graph tier1"} for i in range(1,5)],
@@ -390,6 +416,26 @@ assert "chats" in d["stale_required_inputs"], d["stale_required_inputs"]
 PY
 then pass "future generated_epoch renders as visible skew warning, never fresh"
 else fail "future generated_epoch renders as visible skew warning, never fresh"; fi
+
+# A malformed wire epoch is classified red and sanitized to JSON null in the
+# brief's own input metadata; Python's non-RFC Infinity token must never leak
+# from an upstream file into latest.json.
+if PYTHONPATH="$ROOT/scripts" python3 - "$BRIEF" <<'PY'
+import importlib.machinery, json, sys
+m=importlib.machinery.SourceFileLoader("mb_epoch", sys.argv[1]).load_module()
+feed={"schema":1,"feed":"automation","ok":True,"generated_epoch":float("inf"),
+      "cadence_s":300,"data":{"jobs":[]}}
+h=m._input_health("automation",feed,1783674000)
+assert h["state"] == "stale" and h["generated_epoch"] is None, h
+json.dumps(h, allow_nan=False)
+# A well-typed but forged cadence cannot weaken the configured 300-second SLA.
+feed={"schema":1,"feed":"automation","ok":True,"generated_epoch":1783587600,
+      "cadence_s":1000000000,"data":{"jobs":[]}}
+h=m._input_health("automation",feed,1783674000)
+assert h["state"] == "error" and h["cadence_s"] == 300, h
+PY
+then pass "malformed epoch is null and forged cadence cannot weaken the declared SLA"
+else fail "malformed epoch/cadence escaped the brief freshness boundary"; fi
 
 # Defect (c) regression: resolution wording is evidence-honest. Plain "Resolved"
 # is reserved for evidence-backed resolutions; a fork dedup reads "Duplicate

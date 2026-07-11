@@ -2170,8 +2170,9 @@ def _build_export(con, ingest_skipped=False):
     # The producer stamps the effective nightly SLA plus its derived state. Each
     # consumer can therefore verify that the raw age and derived flags agree
     # without guessing an environment-specific threshold.
-    counts["full_ingest_state"] = nested_ingest_state({"data": {"counts": counts}})
-    counts["full_ingest_stale"] = nested_ingest_stale({"data": {"counts": counts}})
+    ingest_state = nested_ingest_state({"data": {"counts": counts}})
+    counts["full_ingest_state"] = ingest_state
+    counts["full_ingest_stale"] = ingest_state != "fresh"
     return {
         "schema": 1, "feed": "chats",
         "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now)),
