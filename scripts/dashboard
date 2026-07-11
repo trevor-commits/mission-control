@@ -82,7 +82,13 @@ FEED_CADENCE = dict((n, c) for n, c, _, _, _ in FEEDS)
 
 
 def _now():
-    return int(time.time())
+    # Test seam only (mirrors morning-brief's MORNING_BRIEF_NOW_EPOCH): freshness
+    # is clock-critical, so a deterministic suite pins now. Never set in prod.
+    raw = os.environ.get("MISSION_CONTROL_NOW_EPOCH")
+    try:
+        return int(raw) if raw else int(time.time())
+    except ValueError:
+        return int(time.time())
 
 
 def _iso(epoch):

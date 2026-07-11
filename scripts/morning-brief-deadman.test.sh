@@ -125,6 +125,18 @@ MODE="$(stat -f '%Lp' "$MARKER" 2>/dev/null || stat -c '%a' "$MARKER" 2>/dev/nul
 if [ -s "$MARKER" ] && [ "$MODE" = 600 ]; then pass "deadman writes atomic mode-600 check marker"
 else fail "deadman check marker missing or wrong mode"; fi
 
+# The marker carries an independent install-provenance read every run so a drifted
+# runtime is observable from the deadman record, not only the dashboard.
+if python3 - "$MARKER" <<'PY'
+import json,sys
+m=json.load(open(sys.argv[1]))
+s=m["install_stamp"]
+assert set(s)=={"present","ok","head_sha","provenance"}, s
+assert isinstance(s["present"],bool) and isinstance(s["ok"],bool)
+PY
+then pass "deadman marker records install_stamp provenance fields"
+else fail "deadman marker missing install_stamp provenance fields"; fi
+
 # Concurrent checks serialize; only the first alert crosses the external boundary.
 STATE_C="$T/concurrent-state"; CAP_C="$T/concurrent-send.json"; mkdir -p "$STATE_C/morning-brief"
 env -i HOME="$HOME_T" PATH="/usr/bin:/bin" MISSION_CONTROL_HOME="$STATE_C" \

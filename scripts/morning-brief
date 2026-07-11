@@ -826,6 +826,26 @@ def _deliver_locked():
     return 1
 
 
+def _migrate_valid_until(existing):
+    """Backfill valid_until on a same-day delivered brief composed before the
+    field existed, so the dashboard's next collect stops aging out today's brief
+    on the 5-minute poll cadence. The horizon is next local midnight from the
+    brief's own generated_epoch (same-local-day semantics) — no re-send, delivery
+    idempotency untouched. Idempotent: a stamped sidecar is left as-is.
+    """
+    gen = existing.get("generated_epoch")
+    if type(gen) is not int or gen <= 0:
+        return False
+    vu = existing.get("valid_until")
+    if isinstance(vu, int) and vu > 0:
+        return False
+    existing["valid_until"] = next_local_midnight(gen)
+    _atomic_write(os.path.join(_brief_home(), "latest.json"),
+                  json.dumps(existing, ensure_ascii=True, indent=2,
+                             sort_keys=True) + "\n")
+    return True
+
+
 def _compose_locked(preview=False):
     _reset_egress_counters()
     now = _now()
@@ -837,6 +857,8 @@ def _compose_locked(preview=False):
                           (existing or {}).get("delivery", {}).get("state"))
         if (existing and _same_local_day(existing.get("generated_epoch"), now) and
                 delivery_state in ("pending", "partial", "failed", "delivered")):
+            if delivery_state == "delivered" and _migrate_valid_until(existing):
+                print("migrated valid_until on %s" % existing_id)
             print("compose deferred while delivery state is %s: %s" %
                   (delivery_state, existing_id))
             return 0

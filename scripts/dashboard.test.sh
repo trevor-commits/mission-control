@@ -697,7 +697,61 @@ PY
   else no "collect dropped the brief valid_until on the way through _wrap"; fi
 }
 
-c1; c2; c3; c4; c5; c6; c7; c8; c8a; c8b; c9; c10; c11; c12; c13; c14; c14a; c15; c16; c17; c18; c19; c20; c21; c22
+c23() { # a same-day delivered brief composed before valid_until existed is
+  # migrated on the next compose, and the dashboard then reports it fresh (rc=0)
+  # instead of stale — regression for the "brief stale all day" trust defect.
+  local H rc BRIEF NOW GEN RAWCHATS
+  H="$(newhome)"; BRIEF="$REPO/scripts/morning-brief"
+  # Anchor to local noon today so same-local-day + valid_until are TZ/date-proof.
+  NOW="$(python3 -c 'import time;lt=time.localtime();print(int(time.mktime((lt.tm_year,lt.tm_mon,lt.tm_mday,12,0,0,0,0,-1))))')"
+  GEN=$((NOW - 7200))   # 10:00 local: same day, but > 6x brief cadence (1800s) old
+  RAWCHATS="$H/chats_raw.json"
+  printf '{"nodes":[],"edges":[],"topics":[],"counts":{}}\n' > "$RAWCHATS"
+  mkdir -p "$H/morning-brief/delivery"
+  python3 /dev/stdin "$H/morning-brief" "$GEN" <<'PYEOF'
+import json, os, sys
+home, gen = sys.argv[1], int(sys.argv[2])
+bid = "legacy-brief"
+# Legacy sidecar: delivered, same local day, NO valid_until (pre-field brief).
+json.dump({"schema": 1, "brief_id": bid, "generated_epoch": gen,
+           "generated_at": "2026-01-01T00:00:00Z", "sections": [], "inputs": {},
+           "stale_required_inputs": [],
+           "selection_high_water": {"loose_end_changes": [0, ""]},
+           "delivery": {"state": "delivered", "confirmed_chunks": 1, "total_chunks": 1}},
+          open(os.path.join(home, "latest.json"), "w"), indent=2, sort_keys=True)
+open(os.path.join(home, "latest.md"), "w").write("# Legacy brief\n")
+json.dump({"schema": 1, "brief_id": bid, "state": "delivered",
+           "confirmed_chunks": 1, "total_chunks": 1, "delivered_at": gen},
+          open(os.path.join(home, "delivery", bid + ".json"), "w"))
+PYEOF
+  # PRE: builtin reads the legacy sidecar (no valid_until) -> brief stale -> rc!=0.
+  env -u DASHBOARD_CMD_BRIEF MISSION_CONTROL_HOME="$H" MISSION_CONTROL_NOW_EPOCH="$NOW" \
+    DASHBOARD_CMD_CHATS="cat '$RAWCHATS'" bash "$DASH" collect --force >/dev/null 2>&1
+  env -u DASHBOARD_CMD_BRIEF MISSION_CONTROL_HOME="$H" MISSION_CONTROL_NOW_EPOCH="$NOW" \
+    bash "$DASH" status >/dev/null 2>&1; rc=$?
+  if [ "$rc" -eq 0 ]; then no "brief-migrate setup: legacy brief was not stale pre-migration"; return; fi
+  # A no-arg compose defers (no re-send) and migrates valid_until in place.
+  MISSION_CONTROL_HOME="$H" MORNING_BRIEF_NOW_EPOCH="$NOW" "$BRIEF" >/dev/null 2>&1
+  # POST: collect re-derives brief.json from the migrated sidecar; status reads fresh.
+  env -u DASHBOARD_CMD_BRIEF MISSION_CONTROL_HOME="$H" MISSION_CONTROL_NOW_EPOCH="$NOW" \
+    DASHBOARD_CMD_CHATS="cat '$RAWCHATS'" bash "$DASH" collect --force >/dev/null 2>&1
+  env -u DASHBOARD_CMD_BRIEF MISSION_CONTROL_HOME="$H" MISSION_CONTROL_NOW_EPOCH="$NOW" \
+    bash "$DASH" status >/dev/null 2>&1; rc=$?
+  if ! python3 /dev/stdin "$H" <<'PYEOF'
+import json, os, sys
+home = sys.argv[1]
+latest = json.load(open(os.path.join(home, "morning-brief", "latest.json")))
+brief = json.load(open(os.path.join(home, "data", "brief.json")))
+assert isinstance(latest.get("valid_until"), int) and latest["valid_until"] > 0, "latest.json not migrated"
+assert isinstance(brief.get("valid_until"), int) and brief["valid_until"] > 0, "brief.json missing valid_until"
+assert latest["delivery"]["state"] == "delivered", "delivery must be untouched"
+PYEOF
+  then no "brief-migrate: both sidecars not stamped with valid_until (or delivery mutated)"; return; fi
+  if [ "$rc" -eq 0 ]; then ok "same-day delivered brief migrated -> dashboard status rc=0 (was stale)"
+  else no "brief-migrate: status still nonzero after migration (rc=$rc)"; fi
+}
+
+c1; c2; c3; c4; c5; c6; c7; c8; c8a; c8b; c9; c10; c11; c12; c13; c14; c14a; c15; c16; c17; c18; c19; c20; c21; c22; c23
 shell_contract
 echo "----"
 echo "PASS=$PASS FAIL=$FAIL"
