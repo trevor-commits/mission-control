@@ -9,9 +9,10 @@ python3 stdlib only. All state + source roots honor env overrides so the tool
 runs write-sandboxed and its tests use mktemp dirs. See docs/MISSION_CONTROL_PLAN.md
 §"Part A" + §"Hardening addenda" for the authoritative design.
 """
-import glob, hashlib, json, os, re, shutil, sqlite3, subprocess, sys, time
+import glob, hashlib, json, os, re, shutil, signal, sqlite3, subprocess, sys, time
 from collections import deque
 
+sys.dont_write_bytecode = True
 from mission_control_common import (ACTION, NARRATIVE, EgressCounters,
                                     full_ingest_sla_s, nested_ingest_stale,
                                     nested_ingest_state, safe_text,
@@ -21,6 +22,7 @@ SCHEMA_VERSION = 7
 STALE_INGEST_S = 30 * 60  # show/doctor staleness threshold
 LOCK_STALE_S = 30 * 60      # ingest.lock older than this is treated as crashed
 _INGEST_SKIPPED = False     # set when export's catch-up ingest could not acquire lock
+_INGEST_LOCK_OWNER = None
 CHAT_PROVIDERS = frozenset(("claude", "codex", "cursor", "hermes", "copilot"))
 
 # ---- env resolution -------------------------------------------------------
@@ -34,11 +36,27 @@ CHAT_SOURCE   = lambda: _env("CHAT_GRAPH_CHAT_SOURCE", "~/.codex/scripts/chat-so
 CODING_ROOT   = lambda: _env("CHAT_GRAPH_CODING_ROOT", "/Users/gillettes/Coding Projects")
 NIGHTLY_GLOB  = lambda: _env("CHAT_GRAPH_NIGHTLY_REPORT_GLOB", "~/.claude/nightly-review/reports/*.md")
 HERMES_STATE_DB = lambda: _env("CHAT_GRAPH_HERMES_STATE_DB", "~/.hermes/state.db")
+def _git_feed_path():
+    explicit = os.environ.get("CHAT_GRAPH_GIT_FEED")
+    if explicit:
+        return os.path.expanduser(explicit)
+    mission_home = os.environ.get("MISSION_CONTROL_HOME")
+    if mission_home:
+        return os.path.join(os.path.expanduser(mission_home), "data", "git.json")
+    return os.path.expanduser("~/.mission-control/data/git.json")
+GIT_FEED      = _git_feed_path
 TIER1_PARSER_VERSION = 5
+
+# Dashboard timeouts send SIGTERM to the whole feeder process group. Raising
+# SystemExit lets cmd_ingest's finally block release ingest.lock before exit.
+def _graceful_term(signum, frame):
+    raise SystemExit(128 + signum)
+signal.signal(signal.SIGTERM, _graceful_term)
 
 def db_path():      return os.path.join(HOME_DIR(), "graph.db")
 def journal_path(): return os.path.join(HOME_DIR(), "journal", "manual.jsonl")
 def lock_path():    return os.path.join(HOME_DIR(), "ingest.lock")
+def lock_owner_path(): return os.path.join(lock_path(), "owner.json")
 def marker_path():  return os.path.join(HOME_DIR(), "last-ingest")
 def scanlog_path(): return os.path.join(HOME_DIR(), "logs", "scan-errors.log")
 
@@ -1695,11 +1713,71 @@ def _resume_cmd(provider, sid):
     return "chat-source full %s" % sid
 
 _REPO_ANNOTATIONS_CACHE = None
+def _valid_git_feed_repo(row):
+    if not isinstance(row, dict):
+        return False
+    repo = row.get("repo")
+    if not isinstance(repo, str) or not repo.strip():
+        return False
+    for key in ("dirty_files", "ahead"):
+        value = row.get(key)
+        if type(value) is not int or value < 0:
+            return False
+    for key in ("dirty", "detached"):
+        if type(row.get(key)) is not bool:
+            return False
+    branches = row.get("branches")
+    if not isinstance(branches, list):
+        return False
+    for branch in branches:
+        if not isinstance(branch, dict):
+            return False
+        name, age = branch.get("name"), branch.get("age_days")
+        if not isinstance(name, str) or not name.strip() or type(age) is not int or age < 0:
+            return False
+    return True
+
+def _valid_git_feed_repos(repos):
+    if not isinstance(repos, list) or not all(_valid_git_feed_repo(row) for row in repos):
+        return False
+    names = [row["repo"] for row in repos]
+    return len(names) == len(set(names))
+
+def _fresh_git_feed_repos():
+    """Reuse the dashboard's just-collected Git facts before rescanning the portfolio."""
+    try:
+        with open(GIT_FEED()) as f:
+            envelope = json.load(f)
+        if not isinstance(envelope, dict):
+            return None
+        generated = envelope.get("generated_epoch")
+        cadence = envelope.get("cadence_s")
+        now = int(time.time())
+        if (type(envelope.get("schema")) is not int or envelope.get("schema") != 1 or
+                envelope.get("feed") != "git" or envelope.get("ok") is not True or
+                type(generated) is not int or generated > now or now - generated > 900 or
+                type(cadence) is not int or cadence != 900):
+            return None
+        data = envelope.get("data")
+        repos = data.get("repos") if isinstance(data, dict) else None
+        return repos if _valid_git_feed_repos(repos) else None
+    except (OSError, UnicodeError, ValueError, TypeError):
+        return None
+
 def _repo_annotations():
     """From `scan-unfinished-work --json` (env CHAT_GRAPH_SCAN_CMD override).
     Returns (annotations_list, notes_list)."""
     global _REPO_ANNOTATIONS_CACHE
+    skip_reason = os.environ.get("CHAT_GRAPH_SKIP_REPO_SCAN")
+    if skip_reason:
+        return None, ["repo annotations unavailable: %s" % safe_text(skip_reason, NARRATIVE)]
     if _REPO_ANNOTATIONS_CACHE is not None:
+        return _REPO_ANNOTATIONS_CACHE
+    explicit_cache = bool(os.environ.get("CHAT_GRAPH_GIT_FEED"))
+    explicit_scan = bool(os.environ.get("CHAT_GRAPH_SCAN_CMD"))
+    cached = None if explicit_scan and not explicit_cache else _fresh_git_feed_repos()
+    if cached is not None:
+        _REPO_ANNOTATIONS_CACHE = (cached, [])
         return _REPO_ANNOTATIONS_CACHE
     cmd = os.environ.get("CHAT_GRAPH_SCAN_CMD")
     exe = cmd.split() if cmd else None
@@ -1708,19 +1786,25 @@ def _repo_annotations():
         if os.path.exists(default):
             exe = [default, "--json"]
     if not exe:
-        return [], ["scan-unfinished-work absent"]
+        return None, ["repo annotations unavailable: scan-unfinished-work absent"]
     try:
         out = subprocess.run(exe, capture_output=True, text=True, timeout=120)
         if out.returncode not in (0, 1):
-            _REPO_ANNOTATIONS_CACHE = ([], ["scan-unfinished-work exit %d" % out.returncode])
+            _REPO_ANNOTATIONS_CACHE = (None, [
+                "repo annotations unavailable: scan-unfinished-work exit %d" % out.returncode])
             return _REPO_ANNOTATIONS_CACHE
         data = json.loads(out.stdout)
         if isinstance(data, dict):
-            data = data.get("repos") or data.get("data") or []
-        _REPO_ANNOTATIONS_CACHE = (data if isinstance(data, list) else [], [])
+            data = data["repos"] if "repos" in data else data.get("data")
+        if not _valid_git_feed_repos(data):
+            _REPO_ANNOTATIONS_CACHE = (None, [
+                "repo annotations unavailable: scanner output invalid"])
+            return _REPO_ANNOTATIONS_CACHE
+        _REPO_ANNOTATIONS_CACHE = (data, [])
         return _REPO_ANNOTATIONS_CACHE
     except Exception as e:
-        _REPO_ANNOTATIONS_CACHE = ([], ["scan-unfinished-work failed: %s" % e])
+        _REPO_ANNOTATIONS_CACHE = (None, [
+            "repo annotations unavailable: scan-unfinished-work failed: %s" % e])
         return _REPO_ANNOTATIONS_CACHE
 
 def _repo_node(con, repo):
@@ -1745,7 +1829,7 @@ def _tracked_repo_paths():
         if os.path.isdir(p):
             paths.add(p)
     repos, _ = _repo_annotations()
-    for r in repos:
+    for r in repos or []:
         name = r.get("repo") if isinstance(r, dict) else None
         if name:
             p = os.path.join(CODING_ROOT(), name)
@@ -1816,6 +1900,8 @@ def collect_nightly_findings(con):
 
 def collect_repo_dirty(con):
     repos, _ = _repo_annotations()
+    if repos is None:
+        return 0  # unavailable evidence is never proof that open work resolved
     active = {}
     for r in repos:
         if not isinstance(r, dict):
@@ -2182,7 +2268,7 @@ def _build_export(con, ingest_skipped=False):
                  "outcome_egress_counters": outcome_egress,
                  "outcome_extraction_health": outcome_health,
                  "loose_ends": loose_ends, "loose_end_changes": loose_end_changes,
-                 "repo_annotations": repo_annotations,
+                 "repo_annotations": repo_annotations or [],
                  "stale_providers": sorted(_STALE_PROVIDERS), "notes": notes, "counts": counts},
     }
 
@@ -2294,21 +2380,100 @@ def cmd_validate_export(args):
     return 0
 
 # ---- ingest (mkdir-locked) ------------------------------------------------
+def _process_start(pid):
+    """Return (probe_ok, start_identity); None identity means the PID is absent."""
+    try:
+        p = subprocess.run(["/bin/ps", "-o", "lstart=", "-p", str(pid)],
+                           capture_output=True, text=True, timeout=2)
+    except (OSError, subprocess.TimeoutExpired):
+        return False, None
+    start = p.stdout.strip()
+    if p.returncode == 0 and start:
+        return True, start
+    if p.returncode in (0, 1) and not start:
+        return True, None
+    return False, None
+
+def _read_lock_owner():
+    try:
+        with open(lock_owner_path()) as f:
+            owner = json.load(f)
+        if (not isinstance(owner, dict) or type(owner.get("pid")) is not int or
+                owner["pid"] <= 0 or not isinstance(owner.get("token"), str) or
+                not owner["token"] or not isinstance(owner.get("start"), str) or
+                not owner["start"]):
+            return None
+        return owner
+    except (OSError, ValueError, TypeError):
+        return None
+
+def _lock_owner():
+    pid = os.getpid()
+    probed, start = _process_start(pid)
+    if not probed or not start:
+        raise RuntimeError("cannot establish ingest lock process identity")
+    return {"pid": pid,
+            "token": os.environ.get("CHAT_GRAPH_LOCK_TOKEN") or os.urandom(16).hex(),
+            "start": start}
+
+def _remove_ingest_lock(owner=None):
+    """Remove only this owner's lock; owner=None is reserved for stale recovery."""
+    lp, op = lock_path(), lock_owner_path()
+    if owner is not None:
+        try:
+            with open(op) as f:
+                if json.load(f) != owner:
+                    return False
+        except (OSError, ValueError, TypeError):
+            return False
+    try:
+        entries = os.listdir(lp)
+        if any(name != "owner.json" for name in entries):
+            return False
+        if "owner.json" in entries:
+            os.unlink(op)
+        os.rmdir(lp)
+        return True
+    except OSError:
+        return False
+
+def _claim_ingest_lock():
+    global _INGEST_LOCK_OWNER
+    os.mkdir(lock_path())
+    try:
+        owner = _lock_owner()
+        with open(lock_owner_path(), "x") as f:
+            json.dump(owner, f, sort_keys=True)
+            f.flush()
+            os.fsync(f.fileno())
+    except BaseException:
+        _remove_ingest_lock()
+        raise
+    _INGEST_LOCK_OWNER = owner
+
 def _acquire_ingest_lock():
     """mkdir lock; stale locks (>LOCK_STALE_S) from a crashed ingest are removed."""
+    global _INGEST_LOCK_OWNER
+    _INGEST_LOCK_OWNER = None
     lp = lock_path()
     try:
-        os.mkdir(lp)
+        _claim_ingest_lock()
         return True
     except FileExistsError:
         try:
             age = time.time() - os.path.getmtime(lp)
             if age > LOCK_STALE_S:
-                os.rmdir(lp)
-                os.mkdir(lp)
-                sys.stderr.write("chat-graph: removed stale ingest lock (%.0f min old)\n"
-                                 % (age / 60))
-                return True
+                owner = _read_lock_owner()
+                if owner is None:
+                    reclaimable = True  # legacy/partial crashed lock
+                else:
+                    probed, start = _process_start(owner["pid"])
+                    reclaimable = probed and start != owner["start"]
+                if reclaimable and _remove_ingest_lock():
+                    _claim_ingest_lock()
+                    sys.stderr.write("chat-graph: removed stale ingest lock (%.0f min old)\n"
+                                     % (age / 60))
+                    return True
         except OSError:
             pass
         print("chat-graph: ingest lock held — another ingest is running, skipping")
@@ -2360,10 +2525,7 @@ def cmd_ingest(args):
             print("chat-graph: ingest complete")
         return 0
     finally:
-        try:
-            os.rmdir(lock_path())
-        except OSError:
-            pass
+        _remove_ingest_lock(_INGEST_LOCK_OWNER)
 
 # ---- id resolution --------------------------------------------------------
 def known_ids(con):

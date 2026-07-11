@@ -3,6 +3,7 @@
 # Never touches real $HOME. One PASS:/FAIL: line per case; exit 0 iff all pass.
 # Optional flag: --require-shell makes the shell-contract checks mandatory.
 set -uo pipefail
+export PYTHONDONTWRITEBYTECODE=1
 
 # Every nested dashboard invocation must use the same interpreter as this test
 # process.  Calling bare `bash` otherwise follows PATH and silently switches a
@@ -1284,7 +1285,317 @@ EOF
   fi
 }
 
-c1; c2; c3; c4; c5; c6; c7; c8; c8a; c8b; c9; c10; c11; c12; c13; c14; c14a; c15; c16; c17; c18; c19; c20; c21; c22; c23; c24; c25; c26; c27; c28; c29; c30; c31; c32; c33
+c34() { # forced timeout kills a non-cooperative group and its owned lock
+  local gr mch cgh child rc alive=0 start end bounded
+  gr="$(mktemp -d)/repo"; mch="$(mktemp -d)"; cgh="$(mktemp -d)"
+  mkdir -p "$gr/scripts"
+  cp "$REPO/scripts/dashboard" "$REPO/scripts/mission_control_common.py" "$gr/scripts/"
+  # Keep the production code path but shrink only this fixture's chats timeout.
+  sed -i.bak 's/("chats",      1800, "", "DASHBOARD_CMD_CHATS", 150)/("chats",      1800, "", "DASHBOARD_CMD_CHATS", 1)/' \
+    "$gr/scripts/dashboard"
+  rm -f "$gr/scripts/dashboard.bak"
+  cat > "$gr/scripts/chat-graph" <<'EOF'
+#!/bin/sh
+mkdir -p "$CHAT_GRAPH_HOME/export" "$CHAT_GRAPH_HOME/ingest.lock"
+printf '{"pid":%s,"token":"%s"}\n' "$$" "$CHAT_GRAPH_LOCK_TOKEN" \
+  > "$CHAT_GRAPH_HOME/ingest.lock/owner.json"
+trap 'exit 143' TERM INT
+(
+  exec >/dev/null 2>&1
+  trap '' TERM INT
+  while :; do sleep 1; done
+) &
+echo $! > "$CHAT_GRAPH_HOME/child.pid"
+wait
+EOF
+  chmod +x "$gr/scripts/chat-graph"
+  start="$(python3 -c 'import time; print(time.monotonic())')"
+  env -u DASHBOARD_CMD_CHATS REPO_ROOT="$gr" MISSION_CONTROL_HOME="$mch" \
+    CHAT_GRAPH_HOME="$cgh" bash "$gr/scripts/dashboard" collect --force chats \
+    >/dev/null 2>&1; rc=$?
+  end="$(python3 -c 'import time; print(time.monotonic())')"
+  bounded="$(python3 - "$start" "$end" <<'PY'
+import sys
+print(1 if float(sys.argv[2]) - float(sys.argv[1]) < 8 else 0)
+PY
+)"
+  child="$(cat "$cgh/child.pid" 2>/dev/null || true)"
+  for _ in $(seq 1 100); do
+    [ -z "$child" ] || ! kill -0 "$child" 2>/dev/null && break
+    sleep 0.02
+  done
+  if [ -n "$child" ] && kill -0 "$child" 2>/dev/null; then alive=1; kill -KILL "$child" 2>/dev/null || true; fi
+  if [ "$rc" -eq 0 ] && [ "$bounded" = 1 ] && [ "$alive" -eq 0 ] && \
+     [ ! -d "$cgh/ingest.lock" ] && \
+     grep -q 'timed out' "$mch/data/chats.error.json" 2>/dev/null; then
+    ok "timeout: SIGKILL reaps a non-cooperative group and removes its owned lock"
+  else
+    rm -f "$cgh/ingest.lock/owner.json" 2>/dev/null || true
+    rmdir "$cgh/ingest.lock" 2>/dev/null || true
+    no "timeout: forced cleanup was unbounded or left residue (rc=$rc child_alive=$alive)"
+  fi
+}
+
+c35() { # dashboard Git->Chats pipeline scans once and preserves failed-cycle uncertainty
+  local stub count gr mch cgh roots rc success_count failure_count success_snapshot
+  stub="$(mktemp -d)/scan"; count="$(mktemp -d)/count"; : > "$count"
+  cat > "$stub" <<'EOF'
+#!/bin/sh
+printf 'x\n' >> "$SCAN_COUNT_FILE"
+if [ "$SCAN_MODE" = fail ]; then
+  echo 'forced Git failure' >&2
+  exit 2
+fi
+printf '%s\n' '{"generated":"now","stale_days":21,"findings_total":1,"repos":[{"repo":"cached","dirty":true,"dirty_files":1,"ahead":0,"detached":false,"branches":[]}]}'
+exit 1
+EOF
+  chmod +x "$stub"
+  gr="$(mktemp -d)/repo"; mkdir -p "$gr/scripts"
+  cp "$REPO/scripts/dashboard" "$REPO/scripts/chat-graph" \
+     "$REPO/scripts/mission_control_common.py" "$gr/scripts/"
+  cp "$stub" "$gr/scripts/scan-unfinished-work"
+  chmod +x "$gr/scripts/dashboard" "$gr/scripts/chat-graph" \
+    "$gr/scripts/scan-unfinished-work"
+
+  run_pipeline_case() {
+    mch="${2:-$(mktemp -d)}"; cgh="${3:-$(mktemp -d)}"; roots="${4:-$(mktemp -d)}"
+    mkdir -p "$cgh"; date +%s > "$cgh/last-ingest"
+    : > "$roots/register.md"
+    env -u DASHBOARD_CMD_CHATS \
+      SCAN_MODE="$1" SCAN_COUNT_FILE="$count" DASHBOARD_CMD_GIT="$stub" \
+      CHAT_GRAPH_HOME="$cgh" \
+      CHAT_GRAPH_CLAUDE_ROOT="$roots/claude" CHAT_GRAPH_CODEX_ROOT="$roots/codex" \
+      CHAT_GRAPH_CURSOR_ROOT="$roots/cursor" CHAT_GRAPH_HERMES_ROOT="$roots/hermes" \
+      CHAT_GRAPH_COPILOT_ROOT="$roots/copilot" CHAT_GRAPH_SESSION_INDEX="$roots/index.jsonl" \
+      CHAT_GRAPH_CHAT_SOURCE=/usr/bin/false CHAT_GRAPH_CODING_ROOT="$roots" \
+      CHAT_GRAPH_REPO_ROOTS="$roots" CHAT_GRAPH_REGISTER="$roots/register.md" \
+      CHAT_GRAPH_NIGHTLY_REPORT_GLOB="$roots/reports/*.md" \
+      CHAT_GRAPH_HERMES_STATE_DB="$roots/hermes.db" \
+      REPO_ROOT="$gr" MISSION_CONTROL_HOME="$mch" \
+      bash "$DASH" collect --force git chats >/dev/null 2>&1
+    PIPELINE_MCH="$mch"
+    PIPELINE_CGH="$cgh"
+    PIPELINE_ROOTS="$roots"
+  }
+
+  run_pipeline_case ok; rc=$?; success_count="$(wc -l < "$count" | tr -d ' ')"
+  local success_home="$PIPELINE_MCH"
+  local success_cgh="$PIPELINE_CGH"
+  local success_roots="$PIPELINE_ROOTS"
+  success_snapshot="$(mktemp)"
+  cp "$success_home/data/chats.json" "$success_snapshot"
+  : > "$count"
+  # Reuse the successful cycle's home so git.json is a fresh last-good cache.
+  run_pipeline_case fail "$success_home" "$success_cgh" "$success_roots"; rc=$?
+  failure_count="$(wc -l < "$count" | tr -d ' ')"
+  local failure_home="$PIPELINE_MCH"
+  if [ "$success_count" = 1 ] && [ "$failure_count" = 1 ] && \
+     python3 - "$success_snapshot" "$failure_home/data/chats.json" <<'PY'
+import json,sys
+good=json.load(open(sys.argv[1]))["data"]
+bad=json.load(open(sys.argv[2]))["data"]
+assert good["repo_annotations"][0]["repo"] == "cached", good
+assert bad["repo_annotations"] == [], bad
+assert any("repo annotations unavailable" in n for n in bad["notes"]), bad["notes"]
+PY
+  then
+    ok "pipeline: Git success/failure each invokes scanner once with explicit uncertainty"
+  else
+    no "pipeline: duplicate scanner call remained (success=$success_count failure=$failure_count)"
+  fi
+}
+
+c36() { # timeout cleanup must not remove a lock with a different nonce
+  local gr mch cgh rc
+  gr="$(mktemp -d)/repo"; mch="$(mktemp -d)"; cgh="$(mktemp -d)"
+  mkdir -p "$gr/scripts"
+  cp "$REPO/scripts/dashboard" "$REPO/scripts/mission_control_common.py" "$gr/scripts/"
+  sed -i.bak 's/("chats",      1800, "", "DASHBOARD_CMD_CHATS", 150)/("chats",      1800, "", "DASHBOARD_CMD_CHATS", 1)/' \
+    "$gr/scripts/dashboard"; rm -f "$gr/scripts/dashboard.bak"
+  cat > "$gr/scripts/chat-graph" <<'EOF'
+#!/bin/sh
+mkdir -p "$CHAT_GRAPH_HOME/ingest.lock"
+printf '{"pid":%s,"token":"wrong-%s"}\n' "$$" "$CHAT_GRAPH_LOCK_TOKEN" \
+  > "$CHAT_GRAPH_HOME/ingest.lock/owner.json"
+trap '' TERM INT
+while :; do sleep 1; done
+EOF
+  chmod +x "$gr/scripts/chat-graph"
+  env -u DASHBOARD_CMD_CHATS REPO_ROOT="$gr" MISSION_CONTROL_HOME="$mch" \
+    CHAT_GRAPH_HOME="$cgh" bash "$gr/scripts/dashboard" collect --force chats \
+    >/dev/null 2>&1; rc=$?
+  if [ "$rc" -eq 0 ] && [ -f "$cgh/ingest.lock/owner.json" ]; then
+    ok "timeout: owner nonce mismatch leaves another lock untouched"
+  else
+    no "timeout: cleanup removed an unproven lock"
+  fi
+  rm -f "$cgh/ingest.lock/owner.json" 2>/dev/null || true
+  rmdir "$cgh/ingest.lock" 2>/dev/null || true
+}
+
+c37() { # an escaped descendant holding pipes cannot wedge communicate forever
+  local gr mch cgh runner child completed=0 rc=0
+  gr="$(mktemp -d)/repo"; mch="$(mktemp -d)"; cgh="$(mktemp -d)"
+  mkdir -p "$gr/scripts"
+  cp "$REPO/scripts/dashboard" "$REPO/scripts/mission_control_common.py" "$gr/scripts/"
+  sed -i.bak 's/("chats",      1800, "", "DASHBOARD_CMD_CHATS", 150)/("chats",      1800, "", "DASHBOARD_CMD_CHATS", 1)/' \
+    "$gr/scripts/dashboard"; rm -f "$gr/scripts/dashboard.bak"
+  cat > "$gr/scripts/chat-graph" <<'PY'
+#!/usr/bin/env python3
+import json, os, signal, time
+home = os.environ["CHAT_GRAPH_HOME"]
+lock = os.path.join(home, "ingest.lock")
+os.makedirs(lock, exist_ok=True)
+with open(os.path.join(lock, "owner.json"), "w") as f:
+    json.dump({"pid": os.getpid(), "token": os.environ["CHAT_GRAPH_LOCK_TOKEN"]}, f)
+child = os.fork()
+if child == 0:
+    os.setsid()
+    signal.signal(signal.SIGTERM, signal.SIG_IGN)
+    with open(os.path.join(home, "escaped.pid"), "w") as f:
+        f.write(str(os.getpid()))
+    while True: time.sleep(1)
+os._exit(0)
+PY
+  chmod +x "$gr/scripts/chat-graph"
+  env -u DASHBOARD_CMD_CHATS REPO_ROOT="$gr" MISSION_CONTROL_HOME="$mch" \
+    CHAT_GRAPH_HOME="$cgh" bash "$gr/scripts/dashboard" collect --force chats \
+    >/dev/null 2>&1 &
+  runner=$!
+  for _ in $(seq 1 160); do
+    if ! kill -0 "$runner" 2>/dev/null; then completed=1; break; fi
+    sleep 0.05
+  done
+  child="$(cat "$cgh/escaped.pid" 2>/dev/null || true)"
+  [ -z "$child" ] || kill -KILL "$child" 2>/dev/null || true
+  if [ "$completed" = 0 ]; then kill -TERM "$runner" 2>/dev/null || true; fi
+  wait "$runner" 2>/dev/null; rc=$?
+  if [ "$completed" = 1 ] && [ "$rc" -eq 0 ] && \
+     [ -f "$cgh/ingest.lock/owner.json" ] && \
+     grep -q 'timed out' "$mch/data/chats.error.json" 2>/dev/null; then
+    ok "timeout: escaped pipe holder is bounded and its lock remains fail-closed"
+  else
+    no "timeout: escaped descriptor caused an unbounded or dirty return"
+  fi
+  rm -f "$cgh/ingest.lock/owner.json" 2>/dev/null || true
+  rmdir "$cgh/ingest.lock" 2>/dev/null || true
+}
+
+c38() { # runtime imports must not litter the source directory with bytecode
+  local gr mch cgh
+  gr="$(mktemp -d)/repo"; mch="$(mktemp -d)"; cgh="$(mktemp -d)"
+  mkdir -p "$gr/scripts"
+  cp "$REPO/scripts/dashboard" "$REPO/scripts/chat-graph" \
+     "$REPO/scripts/mission_control_common.py" "$gr/scripts/"
+  env -u PYTHONDONTWRITEBYTECODE MISSION_CONTROL_HOME="$mch" \
+    bash "$gr/scripts/dashboard" status >/dev/null 2>&1 || true
+  env -u PYTHONDONTWRITEBYTECODE CHAT_GRAPH_HOME="$cgh" CHAT_GRAPH_SCAN_CMD='/bin/echo []' \
+    CHAT_GRAPH_REPO_ROOTS="$(mktemp -d)" "$gr/scripts/chat-graph" stats >/dev/null 2>&1 || true
+  if ! find "$gr/scripts" \( -type d -name __pycache__ -o -type f -name '*.pyc' \) | grep -q .; then
+    ok "runtime: source tree remains free of Python bytecode"
+  else
+    no "runtime: source imports wrote __pycache__ or .pyc files"
+  fi
+}
+
+c39() { # an interrupted engine cleans the feeder and only its proven lock
+  local gr mch cgh runner engine feeder completed=0 rc=0 alive=0
+  gr="$(mktemp -d)/repo"; mch="$(mktemp -d)"; cgh="$(mktemp -d)"
+  mkdir -p "$gr/scripts"
+  cp "$REPO/scripts/dashboard" "$REPO/scripts/mission_control_common.py" "$gr/scripts/"
+  cat > "$gr/scripts/chat-graph" <<'EOF'
+#!/bin/sh
+mkdir -p "$CHAT_GRAPH_HOME/ingest.lock"
+printf '{"pid":%s,"token":"%s"}\n' "$$" "$CHAT_GRAPH_LOCK_TOKEN" \
+  > "$CHAT_GRAPH_HOME/ingest.lock/owner.json"
+printf '%s\n' "$PPID" > "$CHAT_GRAPH_HOME/engine.pid"
+printf '%s\n' "$$" > "$CHAT_GRAPH_HOME/feeder.pid"
+trap '' TERM INT
+while :; do sleep 1; done
+EOF
+  chmod +x "$gr/scripts/chat-graph"
+  env -u DASHBOARD_CMD_CHATS REPO_ROOT="$gr" MISSION_CONTROL_HOME="$mch" \
+    CHAT_GRAPH_HOME="$cgh" python3 - "$gr/scripts/dashboard" <<'PY' >/dev/null 2>&1 &
+import os, signal, sys
+signal.signal(signal.SIGINT, signal.SIG_DFL)
+os.execv("/bin/bash", ["/bin/bash", sys.argv[1], "collect", "--force", "chats"])
+PY
+  runner=$!
+  for _ in $(seq 1 100); do [ -f "$cgh/engine.pid" ] && break; sleep 0.05; done
+  engine="$(cat "$cgh/engine.pid" 2>/dev/null || true)"
+  feeder="$(cat "$cgh/feeder.pid" 2>/dev/null || true)"
+  [ -z "$engine" ] || kill -INT "$engine" 2>/dev/null || true
+  for _ in $(seq 1 160); do
+    if ! kill -0 "$runner" 2>/dev/null; then completed=1; break; fi
+    sleep 0.05
+  done
+  if [ "$completed" = 0 ]; then kill -TERM "$runner" 2>/dev/null || true; fi
+  wait "$runner" 2>/dev/null; rc=$?
+  if [ -n "$feeder" ] && kill -0 "$feeder" 2>/dev/null; then
+    alive=1; kill -KILL "$feeder" 2>/dev/null || true
+  fi
+  if [ "$completed" = 1 ] && [ "$rc" -ne 0 ] && [ "$alive" = 0 ] && \
+     [ ! -d "$cgh/ingest.lock" ]; then
+    ok "interrupt: BaseException path reaps feeder and removes its proven lock"
+  else
+    rm -f "$cgh/ingest.lock/owner.json" 2>/dev/null || true
+    rmdir "$cgh/ingest.lock" 2>/dev/null || true
+    no "interrupt: engine interruption left residue (done=$completed rc=$rc feeder_alive=$alive lock=$([ -d "$cgh/ingest.lock" ] && echo yes || echo no))"
+  fi
+}
+
+c40() { # post-reap invalid bytes cannot authorize false group cleanup
+  local gr mch cgh child rc alive=0 start end bounded
+  gr="$(mktemp -d)/repo"; mch="$(mktemp -d)"; cgh="$(mktemp -d)"
+  mkdir -p "$gr/scripts"
+  cp "$REPO/scripts/dashboard" "$REPO/scripts/mission_control_common.py" "$gr/scripts/"
+  cat > "$gr/scripts/chat-graph" <<'PY'
+#!/usr/bin/env python3
+import json, os, signal, time
+home = os.environ["CHAT_GRAPH_HOME"]
+lock = os.path.join(home, "ingest.lock")
+os.makedirs(lock, exist_ok=True)
+with open(os.path.join(lock, "owner.json"), "w") as f:
+    json.dump({"pid": os.getpid(), "token": os.environ["CHAT_GRAPH_LOCK_TOKEN"]}, f)
+child = os.fork()
+if child == 0:
+    devnull = os.open(os.devnull, os.O_WRONLY)
+    os.dup2(devnull, 1); os.dup2(devnull, 2); os.close(devnull)
+    signal.signal(signal.SIGTERM, signal.SIG_IGN)
+    with open(os.path.join(home, "same-group.pid"), "w") as f:
+        f.write(str(os.getpid()))
+    while True: time.sleep(1)
+for _ in range(100):
+    if os.path.exists(os.path.join(home, "same-group.pid")): break
+    time.sleep(0.01)
+os.write(1, b"\xff")
+os._exit(0)
+PY
+  chmod +x "$gr/scripts/chat-graph"
+  start="$(python3 -c 'import time; print(time.monotonic())')"
+  env -u DASHBOARD_CMD_CHATS REPO_ROOT="$gr" MISSION_CONTROL_HOME="$mch" \
+    CHAT_GRAPH_HOME="$cgh" bash "$gr/scripts/dashboard" collect --force chats \
+    >/dev/null 2>&1; rc=$?
+  end="$(python3 -c 'import time; print(time.monotonic())')"
+  bounded="$(python3 - "$start" "$end" <<'PY'
+import sys
+print(1 if float(sys.argv[2]) - float(sys.argv[1]) < 8 else 0)
+PY
+)"
+  child="$(cat "$cgh/same-group.pid" 2>/dev/null || true)"
+  if [ -n "$child" ] && kill -0 "$child" 2>/dev/null; then alive=1; fi
+  if [ "$rc" -eq 0 ] && [ "$bounded" = 1 ] && [ "$alive" = 1 ] && \
+     [ -f "$cgh/ingest.lock/owner.json" ] && [ -f "$mch/data/chats.error.json" ]; then
+    ok "decode: post-reap invalid bytes leave the owner lock fail-closed"
+  else
+    no "decode: post-reap exception falsely cleaned group/lock (rc=$rc alive=$alive)"
+  fi
+  [ -z "$child" ] || kill -KILL "$child" 2>/dev/null || true
+  rm -f "$cgh/ingest.lock/owner.json" 2>/dev/null || true
+  rmdir "$cgh/ingest.lock" 2>/dev/null || true
+}
+
+c1; c2; c3; c4; c5; c6; c7; c8; c8a; c8b; c9; c10; c11; c12; c13; c14; c14a; c15; c16; c17; c18; c19; c20; c21; c22; c23; c24; c25; c26; c27; c28; c29; c30; c31; c32; c33; c34; c35; c36; c37; c38; c39; c40
 shell_contract
 echo "----"
 echo "PASS=$PASS FAIL=$FAIL"

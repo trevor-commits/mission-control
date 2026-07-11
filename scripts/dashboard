@@ -32,12 +32,13 @@ export MISSION_CONTROL_HOME REPO_ROOT MISSION_CONTROL_RUNTIME_DIR
 # subcommand + args arrive as argv.
 engine() {
   python3 - "$@" <<'PYEOF'
-import json, math, os, re, shlex, shutil, subprocess, sys, time
+import json, math, os, re, shlex, shutil, signal, subprocess, sys, time
 
 HOME = os.environ["MISSION_CONTROL_HOME"]
 REPO = os.environ.get("REPO_ROOT", ".")
 RUNTIME_DIR = os.environ.get("MISSION_CONTROL_RUNTIME_DIR",
                              os.path.join(REPO, "scripts"))
+sys.dont_write_bytecode = True
 DATA = os.path.join(HOME, "data")
 sys.path.insert(0, RUNTIME_DIR)
 try:
@@ -201,13 +202,116 @@ def _write_error(name, cadence, msg):
     _atomic_write(os.path.join(DATA, name + ".error.js"), js)
 
 
+def _signal_owned_group(proc, signum):
+    """Signal only the unreaped session leader created by this Popen."""
+    if proc.returncode is not None:
+        return False
+    try:
+        # start_new_session made pid the group id. We deliberately do not poll
+        # or wait before the final group signal, so the pid cannot be reused.
+        os.killpg(proc.pid, signum)
+        return True
+    except ProcessLookupError:
+        return True  # the unreaped leader proves this group id was not reused
+    except OSError:
+        return False
+
+
+def _close_feeder_pipes(proc):
+    for pipe in (proc.stdout, proc.stderr):
+        if pipe is not None:
+            try:
+                pipe.close()
+            except OSError:
+                pass
+
+
+def _terminate_feeder(proc):
+    """Bound lifecycle cleanup; return True only when group cleanup is proven."""
+    owned_unreaped = proc.returncode is None
+    _signal_owned_group(proc, signal.SIGTERM)
+    try:
+        # Keep the session leader unreaped during the grace period. Its PID and
+        # process-group identity therefore cannot be reused before SIGKILL.
+        time.sleep(2)
+    except BaseException:
+        pass
+    group_stopped = _signal_owned_group(proc, signal.SIGKILL)
+    _close_feeder_pipes(proc)
+    try:
+        proc.wait(timeout=1)
+    except subprocess.TimeoutExpired:
+        try:
+            proc.kill()
+        except OSError:
+            pass
+        try:
+            proc.wait(timeout=1)
+        except (subprocess.TimeoutExpired, OSError):
+            pass
+    except OSError:
+        pass
+    return owned_unreaped and group_stopped and proc.returncode is not None
+
+
+def _chat_graph_timeout_cleanup(graph_home, token):
+    def cleanup(proc):
+        lock = os.path.join(graph_home, "ingest.lock")
+        owner_path = os.path.join(lock, "owner.json")
+        expected = {"pid": proc.pid, "token": token}
+        try:
+            with open(owner_path) as f:
+                owner = json.load(f)
+                if (not isinstance(owner, dict) or owner.get("pid") != expected["pid"] or
+                        owner.get("token") != expected["token"] or
+                        any(key not in ("pid", "token", "start") for key in owner)):
+                    return
+            if any(name != "owner.json" for name in os.listdir(lock)):
+                return
+            os.unlink(owner_path)
+            os.rmdir(lock)
+        except (OSError, ValueError, TypeError):
+            pass
+    return cleanup
+
+
+def _run_argv(argv, timeout_s, env=None, timeout_cleanup=None):
+    """Run one feeder in a private session with bounded lifecycle cleanup."""
+    try:
+        proc = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                text=True, encoding="utf-8", errors="replace",
+                                env=env, start_new_session=True)
+    except OSError:
+        return None, "cannot start feeder"
+    try:
+        stdout, stderr = proc.communicate(timeout=timeout_s)
+        return subprocess.CompletedProcess(argv, proc.returncode, stdout, stderr), None
+    except subprocess.TimeoutExpired:
+        cleanup_proven = _terminate_feeder(proc)
+        if cleanup_proven and timeout_cleanup is not None:
+            timeout_cleanup(proc)
+        return None, "feeder timed out after %ds" % timeout_s
+    except BaseException:
+        cleanup_proven = _terminate_feeder(proc)
+        if cleanup_proven and timeout_cleanup is not None:
+            timeout_cleanup(proc)
+        raise
+
+
 def _run_builtin_chats(timeout_s):
     cg = os.path.join(REPO, "scripts", "chat-graph")
-    try:
-        p = subprocess.run([cg, "export", "--json", "--catchup-limit", "1500"],
-                           capture_output=True, text=True, timeout=timeout_s)
-    except subprocess.TimeoutExpired:
-        return None, "feeder timed out after %ds" % timeout_s
+    child_env = dict(os.environ)
+    token = os.urandom(16).hex()
+    child_env["CHAT_GRAPH_LOCK_TOKEN"] = token
+    if "CHAT_GRAPH_GIT_FEED" not in child_env and "CHAT_GRAPH_SCAN_CMD" not in child_env:
+        child_env["CHAT_GRAPH_GIT_FEED"] = os.path.join(DATA, "git.json")
+    graph_home = os.path.expanduser(child_env.get(
+        "CHAT_GRAPH_HOME", os.path.join(child_env.get("HOME", ""), ".chat-graph")))
+    p, run_error = _run_argv(
+        [cg, "export", "--json", "--catchup-limit", "1500"], timeout_s,
+        env=child_env, timeout_cleanup=_chat_graph_timeout_cleanup(graph_home, token))
+    if run_error:
+        return None, run_error
     if p.returncode != 0:
         return None, "chat-graph export exit %d: %s" % (p.returncode, (p.stderr or "").strip()[:200])
     graph_home = os.environ.get("CHAT_GRAPH_HOME",
@@ -229,12 +333,10 @@ def _run_builtin_brief(timeout_s):
     # 5-minute dashboard poll would overwrite a delivered sidecar with not_sent
     # before the 7:20 deadman checks it.
     if not os.path.isfile(path):
-        try:
-            p = subprocess.run([composer], capture_output=True, text=True, timeout=timeout_s)
-        except subprocess.TimeoutExpired:
-            return None, "morning-brief timed out after %ds" % timeout_s
-        except OSError as e:
-            return None, "cannot start morning-brief: %s" % e
+        p, run_error = _run_argv([composer], timeout_s)
+        if run_error:
+            return None, ("morning-brief timed out after %ds" % timeout_s
+                          if "timed out" in run_error else "cannot start morning-brief")
         if p.returncode != 0:
             return None, "morning-brief exit %d: %s" % (p.returncode, (p.stderr or "").strip()[:200])
     try:
@@ -248,13 +350,10 @@ def _run_builtin_decisions(timeout_s):
     installed = os.path.join(HOME, "bin", "decision-alert")
     tool = installed if os.path.isfile(installed) and os.access(installed, os.X_OK) \
         else os.path.join(REPO, "scripts", "decision-alert")
-    try:
-        p = subprocess.run([tool, "sync-snapshot", "--json"],
-                           capture_output=True, text=True, timeout=timeout_s)
-    except subprocess.TimeoutExpired:
-        return None, "decision queue timed out after %ds" % timeout_s
-    except OSError:
-        return None, "cannot start decision queue"
+    p, run_error = _run_argv([tool, "sync-snapshot", "--json"], timeout_s)
+    if run_error:
+        return None, ("decision queue timed out after %ds" % timeout_s
+                      if "timed out" in run_error else "cannot start decision queue")
     if p.returncode != 0:
         return None, "decision queue exit %d" % p.returncode
     try:
@@ -269,10 +368,9 @@ def _run_feeder(name, defcmd, envvar, timeout_s):
         if _SHELL_FORBIDDEN.search(override):
             return None, "feeder override contains forbidden shell characters"
         argv = shlex.split(override)
-        try:
-            p = subprocess.run(argv, capture_output=True, text=True, timeout=timeout_s)
-        except subprocess.TimeoutExpired:
-            return None, "feeder timed out after %ds" % timeout_s
+        p, run_error = _run_argv(argv, timeout_s)
+        if run_error:
+            return None, run_error
         if p.returncode not in OK_EXITS.get(name, (0,)):
             return None, "feeder exit %d: %s" % (p.returncode, (p.stderr or "").strip()[:200])
         try:
@@ -286,10 +384,9 @@ def _run_feeder(name, defcmd, envvar, timeout_s):
     if name == "brief":
         return _run_builtin_brief(timeout_s)
     argv = shlex.split(defcmd)
-    try:
-        p = subprocess.run(argv, capture_output=True, text=True, timeout=timeout_s)
-    except subprocess.TimeoutExpired:
-        return None, "feeder timed out after %ds" % timeout_s
+    p, run_error = _run_argv(argv, timeout_s)
+    if run_error:
+        return None, run_error
     if p.returncode not in OK_EXITS.get(name, (0,)):
         return None, "feeder exit %d: %s" % (p.returncode, (p.stderr or "").strip()[:200])
     try:
@@ -342,12 +439,26 @@ def cmd_collect(argv):
     strict = "--strict" in argv
     only = [a for a in argv if not a.startswith("--")]
     failed = False
+    git_attempt_status = None
     for name, cadence, defcmd, envvar, tmo in FEEDS:
         if only and name not in only:
             continue
         if due and not force and not _is_due(name, cadence):
             continue
-        status = _collect_one(name, cadence, defcmd, envvar, tmo)
+        prior_skip = os.environ.get("CHAT_GRAPH_SKIP_REPO_SCAN")
+        if name == "chats" and git_attempt_status in ("error", "locked"):
+            os.environ["CHAT_GRAPH_SKIP_REPO_SCAN"] = \
+                "dashboard Git feed %s in this collection cycle" % git_attempt_status
+        try:
+            status = _collect_one(name, cadence, defcmd, envvar, tmo)
+        finally:
+            if name == "chats":
+                if prior_skip is None:
+                    os.environ.pop("CHAT_GRAPH_SKIP_REPO_SCAN", None)
+                else:
+                    os.environ["CHAT_GRAPH_SKIP_REPO_SCAN"] = prior_skip
+        if name == "git":
+            git_attempt_status = status
         failed = failed or status != "ok"
     # Normal collection preserves feed independence. Explicit operator
     # round-trips can request strict status so a lock/error is never reported

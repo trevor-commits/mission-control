@@ -3,6 +3,7 @@
 # bash-3.2 compatible; python3 stdlib only; mktemp fixtures only; no network; no real $HOME.
 # One PASS:/FAIL: line per case; exit 0 only when all pass.
 set -u
+export PYTHONDONTWRITEBYTECODE=1
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 CG="$HERE/chat-graph"
@@ -36,6 +37,7 @@ new_env() {
   export CHAT_GRAPH_REPO_ROOTS="$(mktemp -d)"
   export CHAT_GRAPH_NIGHTLY_REPORT_GLOB="$(mktemp -d)/*.md"
   export CHAT_GRAPH_SCAN_CMD="/bin/echo []"
+  export CHAT_GRAPH_GIT_FEED="$(mktemp -d)/git.json"
   export CHAT_GRAPH_REGISTER="$(mktemp -d)/register.md"; : > "$CHAT_GRAPH_REGISTER"
   # stub chat-source: 'present' checks pass; describe returns provider only (no
   # title) so untitled-fallback cases survive enrichment; list writes a marker so
@@ -186,6 +188,46 @@ if [ "$RC" -eq 0 ] && echo "$OUT" | grep -qi "removed stale ingest lock" \
    && [ ! -d "$CHAT_GRAPH_HOME/ingest.lock" ]; then
   pass "stale ingest lock is cleared and ingest continues"
 else fail "stale ingest lock recovery failed (rc=$RC out=$OUT)"; fi
+
+# --- 9c. an old lock whose exact process identity is live is never stolen ---
+new_env
+mkdir -p "$CHAT_GRAPH_HOME/ingest.lock"
+python3 - "$CHAT_GRAPH_HOME/ingest.lock" "$$" <<'PY'
+import json, os, subprocess, sys, time
+lock, pid = sys.argv[1], int(sys.argv[2])
+p = subprocess.run(["/bin/ps", "-o", "lstart=", "-p", str(pid)],
+                   capture_output=True, text=True, timeout=2)
+start = p.stdout.strip()
+assert p.returncode == 0 and start
+json.dump({"pid": pid, "token": "live-old-test", "start": start},
+          open(os.path.join(lock, "owner.json"), "w"))
+old = time.time() - 31 * 60
+os.utime(lock, (old, old))
+PY
+OUT="$("$CG" ingest 2>&1)"; RC=$?
+if [ "$RC" -eq 0 ] && echo "$OUT" | grep -qi "lock held" && \
+   [ -f "$CHAT_GRAPH_HOME/ingest.lock/owner.json" ]; then
+  pass "old ingest lock with exact live process start is not stolen"
+else fail "old live ingest lock was stolen (rc=$RC out=$OUT)"; fi
+rm -f "$CHAT_GRAPH_HOME/ingest.lock/owner.json" 2>/dev/null || true
+rmdir "$CHAT_GRAPH_HOME/ingest.lock" 2>/dev/null || true
+
+# --- 9d. a reused live PID with the wrong process start is stale ------------
+new_env
+mkdir -p "$CHAT_GRAPH_HOME/ingest.lock"
+python3 - "$CHAT_GRAPH_HOME/ingest.lock" "$$" <<'PY'
+import json, os, sys, time
+lock, pid = sys.argv[1], int(sys.argv[2])
+json.dump({"pid": pid, "token": "reused-pid-test", "start": "not-this-process"},
+          open(os.path.join(lock, "owner.json"), "w"))
+old = time.time() - 31 * 60
+os.utime(lock, (old, old))
+PY
+OUT="$("$CG" ingest 2>&1)"; RC=$?
+if [ "$RC" -eq 0 ] && echo "$OUT" | grep -qi "removed stale ingest lock" && \
+   [ ! -d "$CHAT_GRAPH_HOME/ingest.lock" ]; then
+  pass "stale lock with reused PID and mismatched start is reclaimed"
+else fail "PID-reuse fencing failed (rc=$RC out=$OUT)"; fi
 
 # --- 10. migration guard: schema_version=99 -> plain abort, nonzero exit ----
 new_env
@@ -679,7 +721,7 @@ cat > "$SCAN30" <<'SH'
 cat <<'JSON'
 [
   {"repo":"repo-beta","dirty":true,"dirty_files":2,"ahead":1,
-   "branches":[{"name":"old-work","age_days":12}]}
+   "detached":false,"branches":[{"name":"old-work","age_days":12}]}
 ]
 JSON
 exit 1
@@ -697,6 +739,232 @@ SH
 "$CG" ingest --collector repo_dirty >/dev/null
 ok 0 "$(q "SELECT COUNT(*) FROM open_ends WHERE kind='repo_dirty' AND resolved_at IS NULL")" \
    "repo_dirty auto-resolves when scanner returns clean"
+
+# --- 30a. fresh dashboard Git feed replaces the duplicate portfolio scan ---
+new_env
+SCAN30A="$(mktemp -d)/scan"
+SCAN30A_MARKER="$CHAT_GRAPH_HOME/scanner-called"
+export SCAN30A_MARKER
+cat > "$SCAN30A" <<'SH'
+#!/usr/bin/env bash
+: > "$SCAN30A_MARKER"
+echo '[]'
+SH
+chmod +x "$SCAN30A"
+export CHAT_GRAPH_SCAN_CMD="$SCAN30A"
+python3 - "$CHAT_GRAPH_GIT_FEED" <<'PYEOF'
+import json, sys, time
+now = int(time.time())
+json.dump({
+    "schema": 1, "feed": "git", "generated_epoch": now,
+    "cadence_s": 900, "ok": True, "error": None,
+    "data": {"repos": [{"repo": "cached-repo", "dirty": True,
+                           "dirty_files": 2, "ahead": 0, "detached": False,
+                           "branches": []}]},
+}, open(sys.argv[1], "w"))
+PYEOF
+"$CG" ingest --collector repo_dirty >/dev/null
+if [ ! -e "$SCAN30A_MARKER" ] && \
+   [ "$(q "SELECT COUNT(*) FROM open_ends WHERE kind='repo_dirty' AND resolved_at IS NULL")" = 1 ]; then
+  pass "fresh dashboard Git feed avoids a duplicate portfolio scan"
+else
+  fail "fresh dashboard Git feed was ignored or repo annotations were missing"
+fi
+
+# --- 30b. malformed cached envelope falls back to the canonical scanner -----
+new_env
+SCAN30B="$(mktemp -d)/scan"
+cat > "$SCAN30B" <<'SH'
+#!/usr/bin/env bash
+echo '[{"repo":"fallback-repo","dirty":true,"dirty_files":1,"ahead":0,"detached":false,"branches":[]}]'
+exit 1
+SH
+chmod +x "$SCAN30B"
+export CHAT_GRAPH_SCAN_CMD="$SCAN30B"
+printf '[]\n' > "$CHAT_GRAPH_GIT_FEED"
+"$CG" ingest --collector repo_dirty >/dev/null 2>&1
+if [ "$?" = 0 ] && \
+   [ "$(q "SELECT COUNT(*) FROM open_ends WHERE kind='repo_dirty' AND resolved_at IS NULL")" = 1 ]; then
+  pass "malformed dashboard Git envelope falls back to the scanner"
+else
+  fail "malformed dashboard Git envelope blocked the scanner fallback"
+fi
+
+# --- 30c. cached Git envelope is strict and honors state/override routing ----
+new_env
+MCH30C="$(mktemp -d)"
+if MISSION_CONTROL_HOME="$MCH30C" python3 - "$CG" "$CHAT_GRAPH_GIT_FEED" <<'PYEOF'
+import copy, importlib.machinery, importlib.util, json, os, sys, time
+tool, explicit_feed = sys.argv[1:]
+sys.path.insert(0, os.path.dirname(tool))
+loader = importlib.machinery.SourceFileLoader("chat_graph_cache_contract", tool)
+spec = importlib.util.spec_from_loader(loader.name, loader)
+cg = importlib.util.module_from_spec(spec); loader.exec_module(cg)
+now = int(time.time())
+row = {"repo": "cached", "dirty": True, "dirty_files": 1, "ahead": 0,
+       "detached": False, "branches": []}
+base = {"schema": 1, "feed": "git", "generated_epoch": now,
+        "cadence_s": 900, "ok": True, "error": None,
+        "data": {"repos": [row]}}
+def write(path, value):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w") as f: json.dump(value, f)
+def load(value):
+    write(explicit_feed, value); cg._REPO_ANNOTATIONS_CACHE = None
+    return cg._fresh_git_feed_repos()
+assert load(base) == [row]
+bad = []
+for key, value in (("schema", True), ("cadence_s", 10**9),
+                   ("generated_epoch", now + 1)):
+    item = copy.deepcopy(base); item[key] = value; bad.append(item)
+for mutation in (
+    lambda r: 42,
+    lambda r: dict(r, ahead="abc"),
+    lambda r: dict(r, dirty="false"),
+    lambda r: dict(r, dirty_files=True),
+    lambda r: dict(r, branches=[{"name": "old", "age_days": "7"}]),
+):
+    item = copy.deepcopy(base); item["data"]["repos"] = [mutation(row)]; bad.append(item)
+for item in bad:
+    assert load(item) is None, item
+
+# No explicit feed path: canonical Mission Control home wins over process HOME.
+os.environ.pop("CHAT_GRAPH_GIT_FEED", None)
+expected = os.path.join(os.environ["MISSION_CONTROL_HOME"], "data", "git.json")
+assert cg.GIT_FEED() == expected, (cg.GIT_FEED(), expected)
+write(expected, base)
+
+# An explicit scanner with only an implicit cache keeps scanner precedence.
+os.environ["CHAT_GRAPH_SCAN_CMD"] = "/bin/echo []"
+cg._REPO_ANNOTATIONS_CACHE = None
+repos, notes = cg._repo_annotations()
+assert repos == [] and notes == [], (repos, notes)
+
+# Supplying both paths explicitly makes cache-first an intentional override.
+os.environ["CHAT_GRAPH_GIT_FEED"] = expected
+cg._REPO_ANNOTATIONS_CACHE = None
+repos, notes = cg._repo_annotations()
+assert repos == [row] and notes == [], (repos, notes)
+PYEOF
+then pass "Git cache rejects malformed rows and honors state/override precedence"
+else fail "Git cache trust or routing contract"; fi
+
+# --- 30d. same-cycle Git failure preserves unresolved repo truth ------------
+new_env
+DIRTY30D="$(mktemp -d)/scan"
+cat > "$DIRTY30D" <<'SH'
+#!/usr/bin/env bash
+echo '[{"repo":"preserve-me","dirty":true,"dirty_files":1,"ahead":0,"detached":false,"branches":[]}]'
+exit 1
+SH
+chmod +x "$DIRTY30D"
+export CHAT_GRAPH_SCAN_CMD="$DIRTY30D"
+"$CG" ingest --collector repo_dirty >/dev/null 2>&1
+CLEAN30D="$(mktemp -d)/scan"
+printf '#!/usr/bin/env bash\necho "[]"\n' > "$CLEAN30D"
+chmod +x "$CLEAN30D"
+export CHAT_GRAPH_SCAN_CMD="$CLEAN30D"
+# A prior successful Git cycle can leave a still-fresh last-good cache. The
+# explicit same-cycle failure signal must win over that cache.
+python3 - "$CHAT_GRAPH_GIT_FEED" <<'PYEOF'
+import json, sys, time
+json.dump({"schema": 1, "feed": "git", "generated_epoch": int(time.time()),
+           "cadence_s": 900, "ok": True, "error": None,
+           "data": {"repos": []}}, open(sys.argv[1], "w"))
+PYEOF
+CHAT_GRAPH_SKIP_REPO_SCAN=dashboard-git-error \
+  "$CG" ingest --collector repo_dirty >/dev/null 2>&1
+EXP30D="$CHAT_GRAPH_HOME/export/graph.json"
+CHAT_GRAPH_SKIP_REPO_SCAN=dashboard-git-error "$CG" export --json >/dev/null 2>&1
+if [ "$(q "SELECT COUNT(*) FROM open_ends WHERE kind='repo_dirty' AND resolved_at IS NULL")" = 1 ] && \
+   python3 - "$EXP30D" <<'PYEOF'
+import json,sys
+d=json.load(open(sys.argv[1]))["data"]
+assert d["repo_annotations"] == []
+assert any("repo annotations unavailable" in n for n in d["notes"]), d["notes"]
+PYEOF
+then pass "same-cycle Git failure preserves dirty truth and exports uncertainty"
+else fail "same-cycle Git failure falsely reconciled repo truth"; fi
+
+# --- 30e. SIGTERM unwinds the real ingest lock ------------------------------
+new_env
+SLOW30E="$(mktemp -d)/scan"
+CHILD30E="$CHAT_GRAPH_HOME/slow-child.pid"
+export CHILD30E
+cat > "$SLOW30E" <<'SH'
+#!/usr/bin/env bash
+echo $$ > "$CHILD30E"
+trap 'exit 0' TERM INT
+while :; do sleep 1; done
+SH
+chmod +x "$SLOW30E"
+export CHAT_GRAPH_SCAN_CMD="$SLOW30E"
+"$CG" ingest --collector repo_dirty >/dev/null 2>&1 &
+PARENT30E=$!
+for _ in $(seq 1 100); do
+  [ -d "$CHAT_GRAPH_HOME/ingest.lock" ] && [ -f "$CHILD30E" ] && break
+  sleep 0.05
+done
+OWNER30E="$(python3 - "$CHAT_GRAPH_HOME/ingest.lock/owner.json" <<'PYEOF' 2>/dev/null
+import json, sys
+try: print(json.load(open(sys.argv[1])).get("pid", ""))
+except Exception: print("")
+PYEOF
+)"
+kill -TERM "$PARENT30E" 2>/dev/null || true
+wait "$PARENT30E" 2>/dev/null || true
+CPID30E="$(cat "$CHILD30E" 2>/dev/null || true)"
+[ -z "$CPID30E" ] || kill -TERM "$CPID30E" 2>/dev/null || true
+if [ "$OWNER30E" = "$PARENT30E" ] && [ ! -d "$CHAT_GRAPH_HOME/ingest.lock" ]; then
+  pass "SIGTERM unwinds its owner-identified chat-graph ingest lock"
+else
+  rm -f "$CHAT_GRAPH_HOME/ingest.lock/owner.json" 2>/dev/null || true
+  rmdir "$CHAT_GRAPH_HOME/ingest.lock" 2>/dev/null || true
+  fail "SIGTERM lock owner/cleanup contract (owner=$OWNER30E parent=$PARENT30E)"
+fi
+
+# --- 30f. malformed/duplicate scanner rows preserve prior repo truth --------
+new_env
+SCAN30F="$(mktemp -d)/scan"
+cat > "$SCAN30F" <<'SH'
+#!/usr/bin/env bash
+echo '[{"repo":"keep-open","dirty":true,"dirty_files":1,"ahead":0,"detached":false,"branches":[]}]'
+SH
+chmod +x "$SCAN30F"
+export CHAT_GRAPH_SCAN_CMD="$SCAN30F"
+"$CG" ingest --collector repo_dirty >/dev/null 2>&1
+cat > "$SCAN30F" <<'SH'
+#!/usr/bin/env bash
+echo '[{"repo":"bad-row","dirty":false,"dirty_files":"one","ahead":0,"detached":false,"branches":[]}]'
+SH
+MALFORMED30F="$CHAT_GRAPH_HOME/export/malformed.json"
+"$CG" ingest --collector repo_dirty >/dev/null 2>&1; RC30F=$?
+"$CG" export --json >/dev/null 2>&1; EX30F=$?
+cp "$CHAT_GRAPH_HOME/export/graph.json" "$MALFORMED30F" 2>/dev/null || true
+if [ "$RC30F" = 0 ] && [ "$EX30F" = 0 ] && \
+   [ "$(q "SELECT COUNT(*) FROM open_ends WHERE kind='repo_dirty' AND resolved_at IS NULL AND session_id='repo:keep-open'")" = 1 ] && \
+   python3 - "$MALFORMED30F" <<'PYEOF'
+import json, sys
+d = json.load(open(sys.argv[1]))["data"]
+assert d["repo_annotations"] == []
+assert any("scanner output invalid" in n for n in d["notes"]), d["notes"]
+PYEOF
+then pass "malformed fallback rows are unavailable and preserve repo truth"
+else fail "malformed fallback rows crashed or reconciled repo truth"; fi
+
+cat > "$SCAN30F" <<'SH'
+#!/usr/bin/env bash
+echo '[{"repo":"dup","dirty":true,"dirty_files":1,"ahead":0,"detached":false,"branches":[]},{"repo":"dup","dirty":true,"dirty_files":1,"ahead":0,"detached":false,"branches":[]}]'
+SH
+"$CG" export --json >/dev/null 2>&1; DUPRC30F=$?
+if [ "$DUPRC30F" = 0 ] && python3 - "$CHAT_GRAPH_HOME/export/graph.json" <<'PYEOF'
+import json, sys
+d = json.load(open(sys.argv[1]))["data"]
+assert d["repo_annotations"] == []
+assert any("scanner output invalid" in n for n in d["notes"]), d["notes"]
+PYEOF
+then pass "duplicate fallback repo names are unavailable, not reconciled"
+else fail "duplicate fallback repo names were trusted"; fi
 
 # --- 31. loose-ends: register rows insert and resolve after verification ----
 new_env
