@@ -75,6 +75,13 @@ for (const name of ['usage', 'git', 'chats', 'automation', 'decisions', 'brief']
 if (feeds.chats && feeds.chats.data && feeds.chats.data.counts) {
   feeds.chats.data.counts.ingest_skipped = true;
 }
+// Defect (b) JS-guard coverage: a daily brief composed long ago (age >> 2x
+// cadence) but still inside its valid_until window must NOT show the stale
+// banner — the guard honors product validity over the poll cadence.
+if (feeds.brief) {
+  feeds.brief.generated_epoch = 1000000000;      // year 2001, far past any cadence
+  feeds.brief.valid_until = 4102444800;          // year 2100, still "valid"
+}
 if (feeds.automation && feeds.automation.data && Array.isArray(feeds.automation.data.jobs)) {
   feeds.automation.data.jobs.forEach(j => {
     if (j.label === 'Usage Snapshot') j.state = 'yellow';
@@ -248,6 +255,12 @@ for (const tab of TABS) {
       (txt.indexOf('NEEDS YOU') === -1 || txt.indexOf('What happened') === -1 ||
        txt.indexOf('Open work changes') === -1 || txt.indexOf('Confirmed') === -1)) {
     console.error('FAIL: #brief is missing ordered sections or visible trust labels');
+    fails++; continue;
+  }
+  // Defect (b): a within-validity brief must not be flagged stale despite a very
+  // old compose epoch (the guard honors valid_until, not the poll cadence).
+  if (tab === 'brief' && txt.indexOf('Data is older than expected') !== -1) {
+    console.error('FAIL: #brief flagged stale while inside its valid_until window');
     fails++; continue;
   }
   console.log('PASS: #' + tab + ' renders (' + txt.length + ' chars' + (marker ? ', contains "' + marker.slice(0, 30) + '"' : '') + ')');

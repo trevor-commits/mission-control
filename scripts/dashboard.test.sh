@@ -677,7 +677,27 @@ PY
   else no "install-stamp: provenance or drift verification failed"; fi
 }
 
-c1; c2; c3; c4; c5; c6; c7; c8; c8a; c8b; c9; c10; c11; c12; c13; c14; c14a; c15; c16; c17; c18; c19; c20; c21
+c22() { # _wrap copies the brief sidecar's valid_until into the collected envelope
+  local mch; mch="$(mktemp -d)"; mkdir -p "$mch/morning-brief"
+  python3 - "$mch/morning-brief/latest.json" <<'PY'
+import json, sys, time
+now = int(time.time())
+json.dump({"brief_id": "valid-fixture", "generated_epoch": now,
+           "generated_at": "2026-07-10T09:00:00Z", "valid_until": now + 50000,
+           "sections": {}}, open(sys.argv[1], "w"))
+PY
+  env -u DASHBOARD_CMD_BRIEF MISSION_CONTROL_HOME="$mch" \
+    bash "$DASH" collect --force brief >/dev/null 2>&1
+  if python3 - "$mch/data/brief.json" <<'PY'
+import json, sys
+e = json.load(open(sys.argv[1]))
+assert e.get("valid_until") and int(e["valid_until"]) > int(e["generated_epoch"]), e
+PY
+  then ok "collect copies the brief sidecar valid_until into the envelope (_wrap)"
+  else no "collect dropped the brief valid_until on the way through _wrap"; fi
+}
+
+c1; c2; c3; c4; c5; c6; c7; c8; c8a; c8b; c9; c10; c11; c12; c13; c14; c14a; c15; c16; c17; c18; c19; c20; c21; c22
 shell_contract
 echo "----"
 echo "PASS=$PASS FAIL=$FAIL"
