@@ -101,9 +101,10 @@ RC=$?
 if [ "$RC" -eq 0 ]; then pass "field-aware privacy matrix"; else fail "field-aware privacy matrix"; fi
 
 PYTHONPATH="$ROOT/scripts" python3 - <<'PY'
-import os, tempfile
+import os, tempfile, time
 from mission_control_common import (
     feed_health, nested_ingest_stale, write_install_stamp, verify_install_stamp,
+    next_local_midnight,
 )
 
 NOW = 1783674000
@@ -114,6 +115,11 @@ def env(**kw):
     base.update(kw)
     return base
 
+def local_noon(epoch):  # 12:00 local on epoch's day — a TZ-robust anchor for
+    lt = time.localtime(int(epoch))  # horizon tests (next_local_midnight is ~12h out)
+    return int(time.mktime((lt.tm_year, lt.tm_mon, lt.tm_mday, 12, 0, 0, 0, 0, -1)))
+NOON = local_noon(NOW)
+
 # --- skew: a FUTURE generated_epoch must never read fresh -------------------
 h = feed_health(env(generated_epoch=NOW + 600), CAD, NOW)
 assert h["state"] == "skew" and h["red"] is False and h["age_s"] == -600, h
@@ -122,11 +128,24 @@ assert h["state"] == "skew" and h["red"] is False and h["age_s"] == -600, h
 # staleness. Old epoch (year 2001) + far-future valid_until (year 2100) -> stale.
 h = feed_health(env(generated_epoch=1000000000, valid_until=4102444800), CAD, NOW)
 assert h["state"] == "stale" and h["red"] is True, h
-# a legit within-horizon valid_until (next-midnight scale) IS still honored even
-# though age > cadence: composed 1h ago, valid 3h out.
-h = feed_health(env(generated_epoch=NOW - 3600, valid_until=NOW + 3 * 3600), CAD, NOW)
+# a legit within-horizon valid_until IS honored even though age > cadence: composed
+# at local noon, valid to tonight's local midnight, read 4h later. Noon-anchored so
+# the next-local-midnight horizon is a stable ~12h out regardless of run time/TZ.
+h = feed_health(env(generated_epoch=NOON, valid_until=next_local_midnight(NOON)),
+                CAD, NOON + 4 * 3600)
 assert h["state"] == "fresh" and h["red"] is False, h
-# a valid_until just past the 2-day horizon is rejected -> falls to age ladder.
+# ER-109 round 6: the validity horizon is next local midnight (<=~24-25h), NOT a flat
+# 2-day slab. A ~47h-span valid_until on an OLD brief must be REJECTED (was accepted
+# as fresh under the old 48h bound) -> falls to the age ladder -> stale.
+h = feed_health(env(generated_epoch=NOON - 40 * 3600, valid_until=NOON + 7 * 3600),
+                CAD, NOON)
+assert h["state"] == "stale" and h["red"] is True, h
+# a 30h-old brief cannot read fresh off a too-long valid_until (17h in the future,
+# i.e. epoch+47h). Old 48h bound honored it; next-midnight horizon rejects it.
+h = feed_health(env(generated_epoch=NOON - 30 * 3600, valid_until=NOON + 17 * 3600),
+                CAD, NOON)
+assert h["state"] == "stale" and h["red"] is True, h
+# a valid_until several days past the horizon is rejected -> falls to age ladder.
 h = feed_health(env(generated_epoch=NOW - 10 * 86400,
                     valid_until=NOW + 3 * 86400), CAD, NOW)
 assert h["state"] == "stale", h

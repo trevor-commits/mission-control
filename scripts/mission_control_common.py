@@ -302,12 +302,6 @@ def same_local_day(epoch, now):
         return False
 
 
-# A daily product stays valid at most until the next local midnight (<=~24h past
-# its compose epoch). Two days gives DST/late-compose slack while rejecting the
-# malformed far-future valid_until class that would otherwise suppress staleness.
-_MAX_VALID_HORIZON_S = 2 * 86400
-
-
 def next_local_midnight(epoch):
     """Epoch of 00:00 local on the day AFTER epoch's local day.
 
@@ -390,12 +384,13 @@ def feed_health(env, cadence, now, stale_multiple=6, aging=True):
     out = {"age_s": (max(0, age) if age is not None else None),
            "nested_stale": nested_ingest_stale(env), "ok": ok,
            "generated_epoch": epoch, "valid_until": valid_until}
-    # A daily product's validity is a bounded horizon (next local midnight, <=~24h
-    # past its compose epoch). A valid_until absurdly far in the future is malformed
-    # and must NOT suppress staleness forever, so it is only honored within
-    # _MAX_VALID_HORIZON_S of the feed's own generated_epoch.
+    # A daily product's validity horizon is exactly the next local midnight after
+    # its compose epoch (<=~24h, ~25h across a fall-back DST day). A valid_until
+    # beyond that is malformed (a 47h value, or a 30h-old brief still claiming
+    # validity) and must NOT suppress staleness, so it is honored only up to that
+    # per-day boundary — not a flat multi-day slab.
     valid_ok = (valid_until is not None and epoch is not None and
-                valid_until - epoch <= _MAX_VALID_HORIZON_S)
+                valid_until <= next_local_midnight(epoch))
     if not ok:
         out["state"], out["red"] = "error", True
     elif age is None:

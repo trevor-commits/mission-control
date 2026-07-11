@@ -77,15 +77,25 @@ if (feeds.chats && feeds.chats.data && feeds.chats.data.counts) {
 }
 // Defect (b) JS-guard coverage: a daily brief older than 2x its cadence but still
 // inside a LEGIT (within-horizon) valid_until window must NOT show the stale
-// banner — the guard honors product validity over the poll cadence. Composed 1h
-// ago with a small cadence so age(3600) > 2*cadence(600), valid 3h out (well
-// within the 2-day horizon). The absurd far-future case is exercised separately
-// as a negative render after the main loop.
+// banner — the guard honors product validity over the poll cadence. Composed at
+// local midnight today (a real, up-to-24h-old compose epoch), valid until next
+// local midnight (the true daily horizon). Anchoring both to local midnight keeps
+// the compose epoch <= now and the horizon in the future for ANY time of day/TZ/DST,
+// so the round-6 next-local-midnight cap doesn't make this fixture midnight-flaky.
 const NOW_S = Math.floor(Date.now() / 1000);
+function localMidnightOf(sec) { // 00:00 local on sec's day (DST-correct)
+  const d = new Date(sec * 1000);
+  return Math.floor(new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0, 0).getTime() / 1000);
+}
+function nextLocalMidnightJS(sec) { // mirrors the page's nextLocalMidnight
+  const d = new Date(sec * 1000);
+  return Math.floor(new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1, 0, 0, 0, 0).getTime() / 1000);
+}
 if (feeds.brief) {
-  feeds.brief.generated_epoch = NOW_S - 3600;
+  const composedAt = localMidnightOf(NOW_S);
+  feeds.brief.generated_epoch = composedAt;
   feeds.brief.cadence_s = 300;
-  feeds.brief.valid_until = NOW_S + 3 * 3600;
+  feeds.brief.valid_until = nextLocalMidnightJS(composedAt);
 }
 if (feeds.automation && feeds.automation.data && Array.isArray(feeds.automation.data.jobs)) {
   feeds.automation.data.jobs.forEach(j => {
@@ -304,6 +314,97 @@ for (const tab of TABS) {
     fails++; return;
   }
   console.log('PASS: absurd far-future valid_until is rejected — brief shows stale banner');
+})();
+
+// ER-109 round 6: the validity horizon is next local midnight, NOT a flat 2-day slab.
+// A 40h-old brief carrying a valid_until 7h in the future (a ~47h span) was ACCEPTED
+// as fresh under the old 48h bound; it must now be REJECTED and show the stale banner.
+// valid_until is always > now and always >> nextLocalMidnight(a 40h-old epoch), so the
+// verdict is stale for any time of day/TZ.
+(function negativeFortySevenHourValidity() {
+  const negFeeds = JSON.parse(JSON.stringify(feeds));
+  negFeeds.brief.generated_epoch = NOW_S - 40 * 3600;   // 40h old
+  negFeeds.brief.valid_until = NOW_S + 7 * 3600;         // 7h out -> 47h span (<=48h)
+  negFeeds.brief.cadence_s = 3600;                        // 2x cadence = 2h << 40h age
+  resetDom();
+  locationShim.hash = '#brief';
+  const sandbox = {
+    window: { MC: { feeds: negFeeds }, addEventListener() {}, removeEventListener() {} },
+    document: documentShim, location: locationShim,
+    setInterval() { return 0; }, clearInterval() {}, setTimeout(fn) { if (typeof fn === 'function') fn(); return 0; }, clearTimeout() {},
+    Math: Math, Date: Date, JSON: JSON, console: { log() {}, warn() {}, error() {} },
+    Array: Array, Object: Object, String: String, Number: Number, isFinite: isFinite, parseInt: parseInt, parseFloat: parseFloat,
+    cytoscape() { return { on() {}, destroy() {}, $() { return { select() { return this; } }; } }; },
+  };
+  sandbox.window.window = sandbox.window;
+  sandbox.globalThis = sandbox;
+  try {
+    vm.runInNewContext(scriptBody, sandbox, { timeout: 5000 });
+  } catch (e) {
+    console.error('FAIL: negative 47h-validity brief render THREW: ' + (e && e.message));
+    fails++; return;
+  }
+  const txt = (byId['mc-main'] && byId['mc-main'].textContent) || '';
+  if (txt.indexOf('Data is older than expected') === -1) {
+    console.error('FAIL: a 47h-span valid_until on a 40h-old brief suppressed the stale banner (horizon too loose)');
+    fails++; return;
+  }
+  console.log('PASS: ~47h valid_until on a 40h-old brief is rejected — brief shows stale banner');
+})();
+
+// ER-109 round 6: clock skew (a FUTURE chats generated_epoch) must render the SAME
+// untrustworthy state on the Home Chats card AND the "Open work" strip segment as it
+// already does on the banner and the strip dot — not stay green. guard()'s g.flag is
+// the single source; all consumers read it. Assert via the state CSS class (color is
+// the whole point), walking the rendered node tree the DOM shim records on className.
+(function negativeSkewHomeConsistency() {
+  function collectClass(el, pred, out) {
+    if (!el || typeof el !== 'object') return out;
+    if (typeof el.className === 'string' && pred(el)) out.push(el);
+    (el.children || []).forEach(c => collectClass(c, pred, out));
+    return out;
+  }
+  const has = s => el => el.className.indexOf(s) !== -1;
+  const skewFeeds = JSON.parse(JSON.stringify(feeds));
+  // ensure chats renders a real card/segment, then push its timestamp into the future
+  skewFeeds.chats.ok = true;
+  skewFeeds.chats.generated_epoch = NOW_S + 3600;
+  if (!skewFeeds.chats.data) skewFeeds.chats.data = {};
+  if (!Array.isArray(skewFeeds.chats.data.nodes)) skewFeeds.chats.data.nodes = [{ id: 'a' }];
+  resetDom();
+  locationShim.hash = '#home';
+  const sandbox = {
+    window: { MC: { feeds: skewFeeds }, addEventListener() {}, removeEventListener() {} },
+    document: documentShim, location: locationShim,
+    setInterval() { return 0; }, clearInterval() {}, setTimeout(fn) { if (typeof fn === 'function') fn(); return 0; }, clearTimeout() {},
+    Math: Math, Date: Date, JSON: JSON, console: { log() {}, warn() {}, error() {} },
+    Array: Array, Object: Object, String: String, Number: Number, isFinite: isFinite, parseInt: parseInt, parseFloat: parseFloat,
+    cytoscape() { return { on() {}, destroy() {}, $() { return { select() { return this; } }; } }; },
+  };
+  sandbox.window.window = sandbox.window;
+  sandbox.globalThis = sandbox;
+  try {
+    vm.runInNewContext(scriptBody, sandbox, { timeout: 5000 });
+  } catch (e) {
+    console.error('FAIL: skew Home render THREW: ' + (e && e.message));
+    fails++; return;
+  }
+  // "Open work" is the first strip segment; its state color lives on the inner glyph,
+  // so gather the class names of the whole segment subtree.
+  const seg = collectClass(byId['mc-strip'], has('mc-strip-seg '), [])[0]
+           || collectClass(byId['mc-strip'], has('mc-strip-seg'), [])[0];
+  const headline = collectClass(byId['mc-main'], has('mc-card-headline'), [])[0];
+  const segCls = seg ? collectClass(seg, () => true, []).map(e => e.className).join(' ') : '';
+  const cardCls = headline ? headline.className : '';
+  if (segCls.indexOf('mc-state-amber') === -1) {
+    console.error('FAIL: skewed chats feed left the "Open work" strip segment green (got: ' + (segCls || '(none)') + ')');
+    fails++; return;
+  }
+  if (cardCls.indexOf('mc-state-amber') === -1) {
+    console.error('FAIL: skewed chats feed left the Home Chats card green (got: ' + (cardCls || '(none)') + ')');
+    fails++; return;
+  }
+  console.log('PASS: clock skew turns the Open work segment AND the Chats card amber (banner/dot/card/segment agree)');
 })();
 
 // ER-109 round 5: full-ingest freshness must come from the feed's computed

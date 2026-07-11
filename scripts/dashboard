@@ -547,6 +547,31 @@ do_open() {
 do_install() {
   mkdir -p "$MISSION_CONTROL_HOME/data" "$MISSION_CONTROL_HOME/bin" "$MISSION_CONTROL_HOME/logs"
   chmod 700 "$MISSION_CONTROL_HOME"
+  local install_failed=0
+  # Safe file install: refuse a symlink or non-regular-file destination (never
+  # write THROUGH a link, which would escape the target dir), write via a temp
+  # in the same dir then atomic mv (so a blocked/failed write cannot leave a
+  # half-file or silently no-op), and return nonzero on any failure so the caller
+  # can fail the whole install loudly instead of stamping a copy that never landed.
+  _mc_write() { # $1=dest ; new content on stdin
+    local d="$1" tmp
+    if [ -L "$d" ]; then
+      echo "install: refusing to write through symlink destination: $d" >&2
+      cat >/dev/null; return 1
+    fi
+    if [ -e "$d" ] && [ ! -f "$d" ]; then
+      echo "install: destination is not a regular file (dir/special): $d" >&2
+      cat >/dev/null; return 1
+    fi
+    tmp="$(dirname "$d")/.mcw.$$.$(basename "$d")"
+    if ! cat > "$tmp" 2>/dev/null; then
+      echo "install: write failed (unwritable destination): $d" >&2; rm -f "$tmp"; return 1
+    fi
+    if ! mv -f "$tmp" "$d" 2>/dev/null; then
+      echo "install: could not place file at destination: $d" >&2; rm -f "$tmp"; return 1
+    fi
+    return 0
+  }
   # Provenance: install runtimes from the committed HEAD SHA, never an uncommitted
   # working tree, so what runs always matches a pushed commit. A non-git tree
   # (e.g. a test fixture) falls back to the working copy, stamped as "worktree".
@@ -559,25 +584,35 @@ do_install() {
   # Copy the dashboard to a STABLE runtime path the plist execs, baking the
   # resolved REPO_ROOT into the copy so `collect --due` finds repo-sibling feeders
   # even though the copy's own SCRIPT_DIR is ~/.mission-control/bin (not the repo).
-  if [ "$provenance" = "head" ] && git -C "$REPO_ROOT" cat-file -e "HEAD:scripts/dashboard" 2>/dev/null; then
-    git -C "$REPO_ROOT" show "HEAD:scripts/dashboard"
+  if [ "$provenance" = "head" ] && ! git -C "$REPO_ROOT" cat-file -e "HEAD:scripts/dashboard" 2>/dev/null; then
+    # provenance=head promises every shipped file comes from the committed SHA;
+    # a missing source must fail loud, never silently fall back to the worktree
+    # and then get stamped "head" (that would be a provenance lie).
+    echo "install: scripts/dashboard not committed at HEAD (provenance=head) — refusing worktree fallback" >&2
+    install_failed=1
   else
-    cat "$SCRIPT_DIR/dashboard"
-  fi | sed -e "s|^REPO_ROOT_DEFAULT=.*|REPO_ROOT_DEFAULT=\"$REPO_ROOT\"|" \
-    > "$MISSION_CONTROL_HOME/bin/dashboard"
-  chmod +x "$MISSION_CONTROL_HOME/bin/dashboard"
-  echo "installed runtime -> $MISSION_CONTROL_HOME/bin/dashboard (REPO_ROOT=$REPO_ROOT, $provenance $head_sha)"
+    { if [ "$provenance" = "head" ]; then
+        git -C "$REPO_ROOT" show "HEAD:scripts/dashboard"
+      else
+        cat "$SCRIPT_DIR/dashboard"
+      fi; } | sed -e "s|^REPO_ROOT_DEFAULT=.*|REPO_ROOT_DEFAULT=\"$REPO_ROOT\"|" \
+      | _mc_write "$MISSION_CONTROL_HOME/bin/dashboard" || install_failed=1
+    if [ "$install_failed" = 0 ]; then
+      chmod +x "$MISSION_CONTROL_HOME/bin/dashboard"
+      echo "installed runtime -> $MISSION_CONTROL_HOME/bin/dashboard (REPO_ROOT=$REPO_ROOT, $provenance $head_sha)"
+    fi
+  fi
   local runtime dest
   for runtime in morning-brief morning-brief-deadman decision-alert mission_control_common.py; do
     dest="$MISSION_CONTROL_HOME/bin/$runtime"
     if [ "$provenance" = "head" ]; then
       if git -C "$REPO_ROOT" cat-file -e "HEAD:scripts/$runtime" 2>/dev/null; then
-        git -C "$REPO_ROOT" show "HEAD:scripts/$runtime" > "$dest"
+        git -C "$REPO_ROOT" show "HEAD:scripts/$runtime" | _mc_write "$dest" || { install_failed=1; continue; }
       else
         echo "skip: $runtime not committed at HEAD (provenance requires a committed source)"; continue
       fi
     elif [ -f "$REPO_ROOT/scripts/$runtime" ]; then
-      cp "$REPO_ROOT/scripts/$runtime" "$dest"
+      _mc_write "$dest" < "$REPO_ROOT/scripts/$runtime" || { install_failed=1; continue; }
     else
       continue
     fi
@@ -588,25 +623,49 @@ do_install() {
   # from the SAME committed HEAD as the runtimes when provenance=head, so the
   # stamped head_sha is truthful for the whole shipped surface — never a dirty
   # working tree stamped "head". Worktree fallback mirrors the runtime path.
-  if [ "$provenance" = "head" ] && git -C "$REPO_ROOT" cat-file -e "HEAD:dashboard/index.html" 2>/dev/null; then
-    git -C "$REPO_ROOT" show "HEAD:dashboard/index.html" > "$MISSION_CONTROL_HOME/index.html"
-    rm -rf "$MISSION_CONTROL_HOME/vendor"
-    mkdir -p "$MISSION_CONTROL_HOME/vendor"
-    git -C "$REPO_ROOT" ls-tree --name-only "HEAD:dashboard/vendor" 2>/dev/null | while IFS= read -r vf; do
-      [ -n "$vf" ] || continue
-      git -C "$REPO_ROOT" show "HEAD:dashboard/vendor/$vf" > "$MISSION_CONTROL_HOME/vendor/$vf"
-    done
-    echo "installed shell -> $MISSION_CONTROL_HOME/index.html (head $head_sha)"
+  if [ "$provenance" = "head" ]; then
+    if git -C "$REPO_ROOT" cat-file -e "HEAD:dashboard/index.html" 2>/dev/null; then
+      git -C "$REPO_ROOT" show "HEAD:dashboard/index.html" | _mc_write "$MISSION_CONTROL_HOME/index.html" || install_failed=1
+      # Rebuild vendor from HEAD only: rm -rf drops any asset deleted upstream so a
+      # stale vendor/index file can't linger and get stamped under the new HEAD.
+      rm -rf "$MISSION_CONTROL_HOME/vendor"
+      mkdir -p "$MISSION_CONTROL_HOME/vendor"
+      git -C "$REPO_ROOT" ls-tree --name-only "HEAD:dashboard/vendor" 2>/dev/null | while IFS= read -r vf; do
+        [ -n "$vf" ] || continue
+        git -C "$REPO_ROOT" show "HEAD:dashboard/vendor/$vf" | _mc_write "$MISSION_CONTROL_HOME/vendor/$vf" \
+          || echo "install: vendor asset write failed: $vf" >&2
+      done
+      echo "installed shell -> $MISSION_CONTROL_HOME/index.html (head $head_sha)"
+    else
+      # index.html is a shipped asset; missing at HEAD under provenance=head is a
+      # broken install. Fail loud and DROP the stale installed shell + vendor so a
+      # deleted-upstream asset can't remain installed and get stamped as "head".
+      echo "install: dashboard/index.html not committed at HEAD (provenance=head) — refusing worktree fallback" >&2
+      rm -f "$MISSION_CONTROL_HOME/index.html"
+      rm -rf "$MISSION_CONTROL_HOME/vendor"
+      install_failed=1
+    fi
   elif [ -f "$REPO_ROOT/dashboard/index.html" ]; then
-    cp "$REPO_ROOT/dashboard/index.html" "$MISSION_CONTROL_HOME/index.html"
+    _mc_write "$MISSION_CONTROL_HOME/index.html" < "$REPO_ROOT/dashboard/index.html" || install_failed=1
     if [ -d "$REPO_ROOT/dashboard/vendor" ]; then
       rm -rf "$MISSION_CONTROL_HOME/vendor"
       mkdir -p "$MISSION_CONTROL_HOME/vendor"
-      cp "$REPO_ROOT/dashboard/vendor/"* "$MISSION_CONTROL_HOME/vendor/" 2>/dev/null || true
+      for vf in "$REPO_ROOT/dashboard/vendor/"*; do
+        [ -f "$vf" ] || continue
+        _mc_write "$MISSION_CONTROL_HOME/vendor/$(basename "$vf")" < "$vf" \
+          || echo "install: vendor asset write failed: $(basename "$vf")" >&2
+      done
     fi
     echo "installed shell -> $MISSION_CONTROL_HOME/index.html (worktree)"
   else
     echo "skip: dashboard/index.html not present yet"
+  fi
+  # A file that could not be installed safely must NOT be papered over by a stamp
+  # that claims a clean committed surface. Fail loud with a nonzero rc and no new
+  # stamp, so status/deadman keep flagging the surface as unverified.
+  if [ "$install_failed" != 0 ]; then
+    echo "install: one or more files could not be installed safely — refusing to stamp (rc=1)" >&2
+    return 1
   fi
   # Stamp the install: HEAD SHA + sha256 of each installed runtime AND deployment
   # asset (index.html, vendor/*), so status and the deadman verify the WHOLE

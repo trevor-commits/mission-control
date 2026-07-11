@@ -455,6 +455,13 @@ body {
 
   var LOAD_EPOCH = Math.floor(Date.now() / 1000);
   function nowS() { return Math.floor(Date.now() / 1000); }
+  // Epoch of 00:00 local on the day AFTER `sec`'s local day — a daily product's
+  // validity horizon. new Date(y, mon, day+1) normalizes the rollover and picks
+  // the right local/DST offset, mirroring Python next_local_midnight (mktime).
+  function nextLocalMidnight(sec) {
+    var d = new Date(sec * 1000);
+    return Math.floor(new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1, 0, 0, 0, 0).getTime() / 1000);
+  }
 
   // --- display-time redaction (mirrors scripts/search-transcripts _SECRET_RE) -
   // transcript-derived text (titles, open-end text, err-log tails) is untrusted;
@@ -552,12 +559,12 @@ body {
     var cadence = +env.cadence_s || 0;
     var validUntil = +env.valid_until || 0;
     var age = nowS() - epoch;
-    // A daily product's validity is a bounded horizon (next local midnight,
-    // <=~24h past its compose epoch). A valid_until absurdly far in the future is
-    // malformed and must NOT suppress staleness forever, so it is only honored
-    // within 2 days of the feed's own generated_epoch (matches feed_health).
-    var MAX_VALID_HORIZON_S = 2 * 86400;
-    var validOk = validUntil && epoch && (validUntil - epoch) <= MAX_VALID_HORIZON_S;
+    // A daily product's validity horizon is exactly the next local midnight after
+    // its compose epoch (<=~24h, ~25h across fall-back DST). A valid_until beyond
+    // that is malformed (a 47h value, or a 30h-old brief still claiming validity)
+    // and must NOT suppress staleness, so it is honored only up to that per-day
+    // boundary — not a flat 2-day slab. Mirrors feed_health / next_local_midnight.
+    var validOk = validUntil && epoch && validUntil <= nextLocalMidnight(epoch);
     var flag = null;
     if (age < 0) flag = "skew";
     // A daily product (valid_until set) stays fresh for its whole valid day
@@ -1061,7 +1068,8 @@ body {
       var cnt = gc.data.counts || {};
       var staleIngest = cnt.full_ingest_stale === true;
       var ingestSkipped = cnt.ingest_skipped === true;
-      s.chats = { state: (owe || staleIngest || ingestSkipped) ? "amber" : "green", count: owe };
+      // Match the banner/dot/card: a skewed (future) feed timestamp is not green.
+      s.chats = { state: (owe || staleIngest || ingestSkipped || gc.flag === "skew") ? "amber" : "green", count: owe };
     } else s.chats = { state: "grey", count: 0 };
 
     var gg = guard("git");
@@ -1291,11 +1299,17 @@ body {
     var scanErr = +cnt.scan_errors_24h || 0;
     var staleIngest = cnt.full_ingest_stale === true;
     var ingestSkipped = cnt.ingest_skipped === true;
+    // Clock skew (feed timestamp in the future) is the same untrustworthy state the
+    // banner and the strip dot already flag; the card/summary must agree, not stay
+    // green. guard()'s g.flag is the single source (round-5 exported full_ingest_stale
+    // the same way; skew is inherently render-time so it lives on the guard, not the feed).
+    var skew = g.flag === "skew";
     var lines = [owe + " open work item" + (owe === 1 ? "" : "s")];
     if (scanErr > 0) lines.push(scanErr + " chat" + (scanErr > 1 ? "s" : "") + " couldn't be read today");
     if (staleIngest) lines.push("full chat scan is stale");
     if (ingestSkipped) lines.push("chat refresh skipped — another scan is running");
-    return summaryCard("Chats", (owe || scanErr || staleIngest || ingestSkipped) ? "amber" : "green", nodes.length,
+    if (skew) lines.push("clock skew: this feed's timestamp is in the future");
+    return summaryCard("Chats", (owe || scanErr || staleIngest || ingestSkipped || skew) ? "amber" : "green", nodes.length,
       lines, g.epoch, pulse);
   }
   function cardGit() {

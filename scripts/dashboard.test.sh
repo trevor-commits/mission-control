@@ -806,7 +806,74 @@ PY
   fi
 }
 
-c1; c2; c3; c4; c5; c6; c7; c8; c8a; c8b; c9; c10; c11; c12; c13; c14; c14a; c15; c16; c17; c18; c19; c20; c21; c22; c23
+c24() { # ER-109 round 6: installer honesty + safety. Each pathological input must
+  # FAIL LOUD (nonzero rc + no false "head" stamp), never silently succeed.
+  command -v git >/dev/null 2>&1 || { ok "install-safety: git absent — skipped"; return; }
+  _mkrepo() { # -> committed repo path with all runtimes + index.html + vendor at HEAD
+    local gr; gr="$(mktemp -d)/repo"; mkdir -p "$gr/scripts" "$gr/dashboard/vendor"; local n
+    for n in dashboard mission_control_common.py morning-brief morning-brief-deadman decision-alert; do
+      cp "$REPO/scripts/$n" "$gr/scripts/$n"
+    done
+    printf '<html>shell HEAD</html>\n' > "$gr/dashboard/index.html"
+    printf '// vendor HEAD\n' > "$gr/dashboard/vendor/cytoscape.min.js"
+    ( cd "$gr" && git init -q && git add -A && \
+      git -c user.email=t@t -c user.name=t commit -qm init ) >/dev/null 2>&1
+    echo "$gr"
+  }
+  local gr mch rc prov fails=0
+
+  # (a) asset missing at HEAD but present in the worktree must NOT be installed and
+  # stamped "head" — that fallback is a provenance lie. Expect: rc!=0, no stamp.
+  gr="$(_mkrepo)"; mch="$(mktemp -d)"
+  ( cd "$gr" && git rm -q --cached dashboard/index.html && \
+    git -c user.email=t@t -c user.name=t commit -qm drop-index-from-head ) >/dev/null 2>&1
+  DASHBOARD_INSTALL_NO_LAUNCHD=1 REPO_ROOT="$gr" MISSION_CONTROL_HOME="$mch" \
+    bash "$gr/scripts/dashboard" install >/dev/null 2>&1; rc=$?
+  [ "$rc" -ne 0 ] || { no "install-safety(a): worktree-fallback of a not-at-HEAD asset returned rc=0"; fails=1; }
+  [ ! -f "$mch/bin/install-stamp.json" ] || { no "install-safety(a): stamped a head install despite a worktree fallback"; fails=1; }
+
+  # (b) an asset deleted from the repo (absent at HEAD AND worktree) must not remain
+  # installed and get stamped under the new HEAD. Expect: rc!=0, stale shell removed.
+  gr="$(_mkrepo)"; mch="$(mktemp -d)"; mkdir -p "$mch/vendor"
+  printf 'OLD-INDEX\n' > "$mch/index.html"; printf 'OLD\n' > "$mch/vendor/removed.js"
+  ( cd "$gr" && git rm -q dashboard/index.html && \
+    git -c user.email=t@t -c user.name=t commit -qm drop-index-everywhere ) >/dev/null 2>&1
+  rm -f "$gr/dashboard/index.html"
+  DASHBOARD_INSTALL_NO_LAUNCHD=1 REPO_ROOT="$gr" MISSION_CONTROL_HOME="$mch" \
+    bash "$gr/scripts/dashboard" install >/dev/null 2>&1; rc=$?
+  [ "$rc" -ne 0 ] || { no "install-safety(b): a deleted-upstream asset install returned rc=0"; fails=1; }
+  [ ! -f "$mch/bin/install-stamp.json" ] || { no "install-safety(b): stamped a deleted-asset install as valid"; fails=1; }
+  [ "$(cat "$mch/index.html" 2>/dev/null)" != "OLD-INDEX" ] || { no "install-safety(b): stale shell lingered"; fails=1; }
+
+  # (c) a blocked/unwritable destination must not return rc=0 while silently omitting
+  # the file. A directory at the dest path makes the write fail. Expect: rc!=0.
+  gr="$(_mkrepo)"; mch="$(mktemp -d)"; mkdir -p "$mch/bin/decision-alert"
+  DASHBOARD_INSTALL_NO_LAUNCHD=1 REPO_ROOT="$gr" MISSION_CONTROL_HOME="$mch" \
+    bash "$gr/scripts/dashboard" install >/dev/null 2>&1; rc=$?
+  [ "$rc" -ne 0 ] || { no "install-safety(c): unwritable destination returned rc=0"; fails=1; }
+  [ ! -f "$mch/bin/install-stamp.json" ] || { no "install-safety(c): stamped despite a failed write"; fails=1; }
+
+  # (d) a symlinked destination must NOT be followed (writing OUTSIDE the target dir).
+  # Expect: the outside file is untouched and rc!=0.
+  gr="$(_mkrepo)"; mch="$(mktemp -d)"; local outside; outside="$(mktemp -d)/secret"
+  printf 'DO-NOT-TOUCH\n' > "$outside"; mkdir -p "$mch/bin"; ln -s "$outside" "$mch/bin/morning-brief"
+  DASHBOARD_INSTALL_NO_LAUNCHD=1 REPO_ROOT="$gr" MISSION_CONTROL_HOME="$mch" \
+    bash "$gr/scripts/dashboard" install >/dev/null 2>&1; rc=$?
+  [ "$(cat "$outside" 2>/dev/null)" = "DO-NOT-TOUCH" ] || { no "install-safety(d): install wrote THROUGH a symlink, escaping the target dir"; fails=1; }
+  [ "$rc" -ne 0 ] || { no "install-safety(d): symlinked destination returned rc=0"; fails=1; }
+
+  # sanity: a clean committed repo still installs green (fail-loud only fires on the
+  # pathological inputs above, never on a normal reinstall).
+  gr="$(_mkrepo)"; mch="$(mktemp -d)"
+  DASHBOARD_INSTALL_NO_LAUNCHD=1 REPO_ROOT="$gr" MISSION_CONTROL_HOME="$mch" \
+    bash "$gr/scripts/dashboard" install >/dev/null 2>&1; rc=$?
+  prov="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["provenance"])' "$mch/bin/install-stamp.json" 2>/dev/null)"
+  { [ "$rc" -eq 0 ] && [ "$prov" = head ]; } || { no "install-safety: a clean committed install regressed (rc=$rc prov=$prov)"; fails=1; }
+
+  [ "$fails" = 0 ] && ok "install-safety: missing-at-HEAD, deleted-asset, unwritable, and symlink dests all fail loud; clean install still green"
+}
+
+c1; c2; c3; c4; c5; c6; c7; c8; c8a; c8b; c9; c10; c11; c12; c13; c14; c14a; c15; c16; c17; c18; c19; c20; c21; c22; c23; c24
 shell_contract
 echo "----"
 echo "PASS=$PASS FAIL=$FAIL"
