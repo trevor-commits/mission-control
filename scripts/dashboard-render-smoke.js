@@ -510,6 +510,20 @@ function renderHomeWithChatsCounts(overrides) {
   }
   console.log('PASS: genuinely missed nightly full ingest (age ~31h) renders stale');
 })();
+(function fullIngestFreshnessUnknown() {
+  let txt;
+  try {
+    txt = renderHomeWithChatsCounts({ last_full_ingest_age_s: -60, full_ingest_stale: undefined, full_ingest_state: 'unknown' });
+  } catch (e) {
+    console.error('FAIL: unknown full-ingest home render THREW: ' + (e && e.message));
+    fails++; return;
+  }
+  if (txt.indexOf('full chat scan freshness unknown') === -1) {
+    console.error('FAIL: unknown full-ingest state did not render an honest unknown warning');
+    fails++; return;
+  }
+  console.log('PASS: unknown full-ingest freshness renders an honest warning');
+})();
 
 if (fails) { console.error('render-smoke: ' + fails + ' tab(s) FAILED'); process.exit(1); }
 console.log('render-smoke: all ' + TABS.length + ' tabs render over fixtures');

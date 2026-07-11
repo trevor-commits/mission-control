@@ -74,7 +74,8 @@ write("chats", {"nodes": [
      "edges": [
        {"src":"claude:chat-audit","dst":"codex:chat-outcome","type":"audits",
         "source":"titles","confidence":0.7}],
-     "topics": [], "counts": {},
+     "topics": [], "counts": {"full_ingest_state": "fresh",
+       "full_ingest_stale": False},
      "outcome_extraction_health": {"day":"2026-07-09","successes":2,
        "cache_hits":3,"deferred":1,"failures":0,"budget_skips":1,
        "uncalibrated_skips":1,"disabled_skips":6,"provider_skips":2,"privacy_skips":3,

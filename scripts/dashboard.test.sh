@@ -37,7 +37,9 @@ w("chats.json", {"schema": 1, "feed": "chats",
                  "cadence_s": 1800, "ok": True, "error": None,
                  "data": {"nodes": [{"id": "x:1",
                           "title": "Tre'vor \U0001F600 </script> chat"}],
-                          "edges": [], "topics": [], "counts": {}}})
+                          "edges": [], "topics": [],
+                          "counts": {"full_ingest_state": "fresh",
+                                     "full_ingest_stale": False}}})
 # automation envelopes; counts carries a "red" COUNT key on purpose (false-match trap)
 def auto(jobs, red):
     return {"schema": 1, "feed": "automation", "generated_at": now_iso,
@@ -246,6 +248,12 @@ c7() { # defaults must resolve repo-sibling feeders WITHOUT env overrides (live 
     printf '#!/bin/sh\necho "{\\"stub\\": \\"%s\\"}"\n' "$n" > "$fr/scripts/$n"
     chmod +x "$fr/scripts/$n"
   done
+  for n in dashboard mission_control_common.py morning-brief morning-brief-deadman; do
+    cp "$REPO/scripts/$n" "$fr/scripts/$n"
+  done
+  mkdir -p "$fr/dashboard/vendor"
+  cp "$REPO/dashboard/index.html" "$fr/dashboard/index.html"
+  cp "$REPO/dashboard/vendor/cytoscape.min.js" "$fr/dashboard/vendor/cytoscape.min.js"
   # chat-graph stub: honors the run-then-cat compound default
   cgh="$(mktemp -d)"
   printf '#!/bin/sh\nmkdir -p "${CHAT_GRAPH_HOME}/export"\necho "{\\"stub\\": \\"chats\\"}" > "${CHAT_GRAPH_HOME}/export/graph.json"\n' > "$fr/scripts/chat-graph"
@@ -323,10 +331,10 @@ env = {"schema": 1, "feed": "chats", "generated_at": "now", "generated_epoch": n
 json.dump(env, open(sys.argv[1], "w"))
 PYEOF
   local out; out="$(MISSION_CONTROL_HOME="$mch" bash "$DASH" status 2>/dev/null || true)"
-  if printf '%s\n' "$out" | grep -q "stale full ingest"; then
-    ok "status: fresh chats feed still surfaces stale full graph ingest"
+  if printf '%s\n' "$out" | grep -q "unknown full ingest"; then
+    ok "status: fresh chats feed still surfaces unknown full graph ingest"
   else
-    no "status: stale full graph ingest hidden behind fresh chats feed"
+    no "status: unknown full graph ingest hidden behind fresh chats feed"
   fi
 }
 
@@ -726,7 +734,7 @@ c23() { # a same-day delivered brief composed before valid_until existed is
   NOW="$(python3 -c 'import time;lt=time.localtime();print(int(time.mktime((lt.tm_year,lt.tm_mon,lt.tm_mday,12,0,0,0,0,-1))))')"
   GEN=$((NOW - 7200))   # 10:00 local: same day, but > 6x brief cadence (1800s) old
   RAWCHATS="$H/chats_raw.json"
-  printf '{"nodes":[],"edges":[],"topics":[],"counts":{}}\n' > "$RAWCHATS"
+  printf '{"nodes":[],"edges":[],"topics":[],"counts":{"full_ingest_state":"fresh","full_ingest_stale":false}}\n' > "$RAWCHATS"
   mkdir -p "$H/morning-brief/delivery"
   python3 /dev/stdin "$H/morning-brief" "$GEN" <<'PYEOF'
 import json, os, sys
@@ -853,6 +861,32 @@ c24() { # ER-109 round 6: installer honesty + safety. Each pathological input mu
   [ "$rc" -ne 0 ] || { no "install-safety(c): unwritable destination returned rc=0"; fails=1; }
   [ ! -f "$mch/bin/install-stamp.json" ] || { no "install-safety(c): stamped despite a failed write"; fails=1; }
 
+  # (e) a required runtime source missing at HEAD must be a hard failure, not a
+  # silent skip that stamps only the remaining runtimes.
+  gr="$(_mkrepo)"; mch="$(mktemp -d)"
+  ( cd "$gr" && git rm -q scripts/decision-alert && \
+    git -c user.email=t@t -c user.name=t commit -qm drop-required-runtime ) >/dev/null 2>&1
+  DASHBOARD_INSTALL_NO_LAUNCHD=1 REPO_ROOT="$gr" MISSION_CONTROL_HOME="$mch" \
+    bash "$gr/scripts/dashboard" install >/dev/null 2>&1; rc=$?
+  [ "$rc" -ne 0 ] || { no "install-safety(e): missing required runtime at HEAD returned rc=0"; fails=1; }
+  [ ! -f "$mch/bin/install-stamp.json" ] || { no "install-safety(e): stamped despite missing required runtime"; fails=1; }
+
+  # (f) a required vendor asset missing at HEAD must be a hard failure. The old
+  # vendor loop swallowed the failed copy and stamped only index.html.
+  gr="$(_mkrepo)"; mch="$(mktemp -d)"
+  ( cd "$gr" && git rm -q dashboard/vendor/cytoscape.min.js && \
+    git -c user.email=t@t -c user.name=t commit -qm drop-required-vendor ) >/dev/null 2>&1
+  DASHBOARD_INSTALL_NO_LAUNCHD=1 REPO_ROOT="$gr" MISSION_CONTROL_HOME="$mch" \
+    bash "$gr/scripts/dashboard" install >/dev/null 2>&1; rc=$?
+  [ "$rc" -ne 0 ] || { no "install-safety(f): missing required vendor asset at HEAD returned rc=0"; fails=1; }
+  [ ! -f "$mch/bin/install-stamp.json" ] || { no "install-safety(f): stamped despite missing required vendor asset"; fails=1; }
+
+  # (g) a stamp destination that cannot be replaced must fail the whole install.
+  gr="$(_mkrepo)"; mch="$(mktemp -d)"; mkdir -p "$mch/bin/install-stamp.json"
+  DASHBOARD_INSTALL_NO_LAUNCHD=1 REPO_ROOT="$gr" MISSION_CONTROL_HOME="$mch" \
+    bash "$gr/scripts/dashboard" install >/dev/null 2>&1; rc=$?
+  [ "$rc" -ne 0 ] || { no "install-safety(g): unwritable install-stamp destination returned rc=0"; fails=1; }
+
   # (d) a symlinked destination must NOT be followed (writing OUTSIDE the target dir).
   # Expect: the outside file is untouched and rc!=0.
   gr="$(_mkrepo)"; mch="$(mktemp -d)"; local outside; outside="$(mktemp -d)/secret"
@@ -870,7 +904,7 @@ c24() { # ER-109 round 6: installer honesty + safety. Each pathological input mu
   prov="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["provenance"])' "$mch/bin/install-stamp.json" 2>/dev/null)"
   { [ "$rc" -eq 0 ] && [ "$prov" = head ]; } || { no "install-safety: a clean committed install regressed (rc=$rc prov=$prov)"; fails=1; }
 
-  [ "$fails" = 0 ] && ok "install-safety: missing-at-HEAD, deleted-asset, unwritable, and symlink dests all fail loud; clean install still green"
+  [ "$fails" = 0 ] && ok "install-safety: missing required runtime/asset, deleted asset, unwritable file/stamp, and symlink dests all fail loud; clean install still green"
 }
 
 c1; c2; c3; c4; c5; c6; c7; c8; c8a; c8b; c9; c10; c11; c12; c13; c14; c14a; c15; c16; c17; c18; c19; c20; c21; c22; c23; c24

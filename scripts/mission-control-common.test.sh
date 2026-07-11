@@ -101,7 +101,7 @@ RC=$?
 if [ "$RC" -eq 0 ]; then pass "field-aware privacy matrix"; else fail "field-aware privacy matrix"; fi
 
 PYTHONPATH="$ROOT/scripts" python3 - <<'PY'
-import os, tempfile, time
+import json, os, tempfile, time
 from mission_control_common import (
     feed_health, nested_ingest_stale, write_install_stamp, verify_install_stamp,
     next_local_midnight,
@@ -123,6 +123,11 @@ NOON = local_noon(NOW)
 # --- skew: a FUTURE generated_epoch must never read fresh -------------------
 h = feed_health(env(generated_epoch=NOW + 600), CAD, NOW)
 assert h["state"] == "skew" and h["red"] is False and h["age_s"] == -600, h
+assert next_local_midnight(10 ** 100) is None
+h = feed_health(env(generated_epoch=10 ** 100, valid_until=10 ** 100), CAD, NOW)
+assert h["state"] == "skew" and h["red"] is False, h
+h = feed_health(env(generated_epoch=-(10 ** 100), valid_until=NOW + 3600), CAD, NOW)
+assert h["state"] == "stale" and h["red"] is True, h
 
 # --- bounded validity: an absurd far-future valid_until must NOT suppress
 # staleness. Old epoch (year 2001) + far-future valid_until (year 2100) -> stale.
@@ -171,6 +176,9 @@ assert nested_ingest_stale(chats(7 * 3600)) is False        # healthy last-night
 assert nested_ingest_stale(chats(26 * 3600)) is False       # within nightly band
 assert nested_ingest_stale(chats(50 * 3600)) is True        # missed nightly
 assert nested_ingest_stale(chats(None)) is True             # unknown -> stale
+assert nested_ingest_stale(env(feed="chats", generated_epoch=NOW, data={"counts": {}})) is True
+assert nested_ingest_stale(chats("not-an-int")) is True
+assert nested_ingest_stale(chats(-60)) is True
 assert nested_ingest_stale(chats(9999, ingest_skipped=True)) is True
 # envelope may override with its own completion SLA
 assert nested_ingest_stale(chats(2 * 3600, full_ingest_sla_s=3600)) is True
@@ -182,15 +190,32 @@ del os.environ["MISSION_CONTROL_FULL_INGEST_SLA_S"]
 # --- install stamp covers deployment assets (index.html, vendor/*) -----------
 home = tempfile.mkdtemp()
 bin_dir = os.path.join(home, "bin"); os.makedirs(bin_dir)
-open(os.path.join(bin_dir, "dashboard"), "w").write("runtime\n")
+for runtime in ["dashboard", "morning-brief", "morning-brief-deadman",
+                "decision-alert", "mission_control_common.py"]:
+    open(os.path.join(bin_dir, runtime), "w").write("runtime %s\n" % runtime)
 open(os.path.join(home, "index.html"), "w").write("<html>shell</html>\n")
 os.makedirs(os.path.join(home, "vendor"))
 open(os.path.join(home, "vendor", "cytoscape.min.js"), "w").write("//vendor\n")
 assets = {"index.html": os.path.join(home, "index.html"),
           "vendor/cytoscape.min.js": os.path.join(home, "vendor", "cytoscape.min.js")}
-write_install_stamp(bin_dir, "abc123", "head", ["dashboard"], NOW, assets=assets)
+write_install_stamp(bin_dir, "abc123", "head",
+                    ["dashboard", "morning-brief", "morning-brief-deadman",
+                     "decision-alert", "mission_control_common.py"],
+                    NOW, assets=assets)
 v = verify_install_stamp(bin_dir)
 assert v["present"] and v["ok"], v
+# omitted required keys must fail verification; an underspecified stamp is not proof.
+stamp_path = os.path.join(bin_dir, "install-stamp.json")
+with open(stamp_path, "w") as handle:
+    json.dump({"schema": 1, "installed_at": NOW, "head_sha": "abc123",
+               "provenance": "head", "files": {"dashboard": "x"},
+               "assets": {"index.html": "x"}}, handle)
+v = verify_install_stamp(bin_dir)
+assert not v["ok"] and "decision-alert" in v["missing"] and "vendor/cytoscape.min.js" in v["missing"], v
+write_install_stamp(bin_dir, "abc123", "head",
+                    ["dashboard", "morning-brief", "morning-brief-deadman",
+                     "decision-alert", "mission_control_common.py"],
+                    NOW, assets=assets)
 # drift in the render shell must be caught (it carries the render JS)
 open(os.path.join(home, "index.html"), "a").write("<!-- drift -->\n")
 v = verify_install_stamp(bin_dir)

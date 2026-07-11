@@ -401,10 +401,10 @@ def _automation_red(env):
     return any(isinstance(j, dict) and j.get("state") == "red" for j in jobs)
 
 
-def _chats_stale_ingest(env, cadence):
+def _chats_nested_ingest_state(env, cadence):
     # The feed can be freshly generated from a bounded catch-up while the last
     # completed transcript scan is stale. Shared detector, surfaced separately.
-    return feed_health(env, cadence, _now())["nested_stale"]
+    return feed_health(env, cadence, _now()).get("nested_state", "fresh")
 
 
 def cmd_status(argv):
@@ -418,9 +418,14 @@ def cmd_status(argv):
         if name == "automation" and _automation_red(env):
             is_red = True
             verdict += " (red job)"
-        if name == "chats" and _chats_stale_ingest(env, cadence):
-            is_red = True
-            verdict += " (stale full ingest)"
+        if name == "chats":
+            nested = _chats_nested_ingest_state(env, cadence)
+            if nested == "stale":
+                is_red = True
+                verdict += " (stale full ingest)"
+            elif nested == "unknown":
+                is_red = True
+                verdict += " (unknown full ingest)"
         if env is None:
             age, oks = "-", "-"
         else:
@@ -438,7 +443,8 @@ def cmd_status(argv):
                       "verified (%s)" % prov))
             else:
                 red = True
-                drift = ",".join(stamp["mismatches"] + stamp["missing"]) or "?"
+                drift = ",".join(stamp["mismatches"] + stamp["missing"] +
+                                 stamp.get("unexpected", [])) or "?"
                 print("%-12s %-9s %-6s %s" % ("install", sha, "error",
                       "DRIFT: %s (%s)" % (drift, prov)))
     return 1 if red else 0
@@ -548,6 +554,8 @@ do_install() {
   mkdir -p "$MISSION_CONTROL_HOME/data" "$MISSION_CONTROL_HOME/bin" "$MISSION_CONTROL_HOME/logs"
   chmod 700 "$MISSION_CONTROL_HOME"
   local install_failed=0
+  local required_runtimes="dashboard morning-brief morning-brief-deadman decision-alert mission_control_common.py"
+  local required_assets="index.html vendor/cytoscape.min.js"
   # Safe file install: refuse a symlink or non-regular-file destination (never
   # write THROUGH a link, which would escape the target dir), write via a temp
   # in the same dir then atomic mv (so a blocked/failed write cannot leave a
@@ -609,12 +617,14 @@ do_install() {
       if git -C "$REPO_ROOT" cat-file -e "HEAD:scripts/$runtime" 2>/dev/null; then
         git -C "$REPO_ROOT" show "HEAD:scripts/$runtime" | _mc_write "$dest" || { install_failed=1; continue; }
       else
-        echo "skip: $runtime not committed at HEAD (provenance requires a committed source)"; continue
+        echo "install: required runtime missing at HEAD: scripts/$runtime" >&2
+        install_failed=1; continue
       fi
     elif [ -f "$REPO_ROOT/scripts/$runtime" ]; then
       _mc_write "$dest" < "$REPO_ROOT/scripts/$runtime" || { install_failed=1; continue; }
     else
-      continue
+      echo "install: required runtime missing from worktree: scripts/$runtime" >&2
+      install_failed=1; continue
     fi
     case "$runtime" in *.py) chmod 600 "$dest" ;; *) chmod +x "$dest" ;; esac
     echo "installed runtime -> $dest"
@@ -630,10 +640,14 @@ do_install() {
       # stale vendor/index file can't linger and get stamped under the new HEAD.
       rm -rf "$MISSION_CONTROL_HOME/vendor"
       mkdir -p "$MISSION_CONTROL_HOME/vendor"
-      git -C "$REPO_ROOT" ls-tree --name-only "HEAD:dashboard/vendor" 2>/dev/null | while IFS= read -r vf; do
-        [ -n "$vf" ] || continue
-        git -C "$REPO_ROOT" show "HEAD:dashboard/vendor/$vf" | _mc_write "$MISSION_CONTROL_HOME/vendor/$vf" \
-          || echo "install: vendor asset write failed: $vf" >&2
+      for asset in $required_assets; do
+        [ "$asset" = "index.html" ] && continue
+        if git -C "$REPO_ROOT" cat-file -e "HEAD:dashboard/$asset" 2>/dev/null; then
+          git -C "$REPO_ROOT" show "HEAD:dashboard/$asset" | _mc_write "$MISSION_CONTROL_HOME/$asset" || install_failed=1
+        else
+          echo "install: required asset missing at HEAD: dashboard/$asset" >&2
+          install_failed=1
+        fi
       done
       echo "installed shell -> $MISSION_CONTROL_HOME/index.html (head $head_sha)"
     else
@@ -647,18 +661,21 @@ do_install() {
     fi
   elif [ -f "$REPO_ROOT/dashboard/index.html" ]; then
     _mc_write "$MISSION_CONTROL_HOME/index.html" < "$REPO_ROOT/dashboard/index.html" || install_failed=1
-    if [ -d "$REPO_ROOT/dashboard/vendor" ]; then
-      rm -rf "$MISSION_CONTROL_HOME/vendor"
-      mkdir -p "$MISSION_CONTROL_HOME/vendor"
-      for vf in "$REPO_ROOT/dashboard/vendor/"*; do
-        [ -f "$vf" ] || continue
-        _mc_write "$MISSION_CONTROL_HOME/vendor/$(basename "$vf")" < "$vf" \
-          || echo "install: vendor asset write failed: $(basename "$vf")" >&2
-      done
-    fi
+    rm -rf "$MISSION_CONTROL_HOME/vendor"
+    mkdir -p "$MISSION_CONTROL_HOME/vendor"
+    for asset in $required_assets; do
+      [ "$asset" = "index.html" ] && continue
+      if [ -f "$REPO_ROOT/dashboard/$asset" ]; then
+        _mc_write "$MISSION_CONTROL_HOME/$asset" < "$REPO_ROOT/dashboard/$asset" || install_failed=1
+      else
+        echo "install: required asset missing from worktree: dashboard/$asset" >&2
+        install_failed=1
+      fi
+    done
     echo "installed shell -> $MISSION_CONTROL_HOME/index.html (worktree)"
   else
-    echo "skip: dashboard/index.html not present yet"
+    echo "install: required asset missing from worktree: dashboard/index.html" >&2
+    install_failed=1
   fi
   # A file that could not be installed safely must NOT be papered over by a stamp
   # that claims a clean committed surface. Fail loud with a nonzero rc and no new
@@ -672,29 +689,27 @@ do_install() {
   # shipped surface matches a committed SHA without needing git.
   MC_BIN="$MISSION_CONTROL_HOME/bin" MC_HOME="$MISSION_CONTROL_HOME" \
   MC_HEAD_SHA="$head_sha" MC_PROVENANCE="$provenance" \
-    python3 - "$SCRIPT_DIR" <<'PYEOF' || echo "stamp skipped (mission_control_common unavailable)"
+    python3 - "$SCRIPT_DIR" <<'PYEOF'
 import os, sys, time
 sys.path.insert(0, sys.argv[1])
 from mission_control_common import write_install_stamp
 names = ["dashboard", "morning-brief", "morning-brief-deadman", "decision-alert",
          "mission_control_common.py"]
 home = os.environ["MC_HOME"]
-assets = {}
-index_html = os.path.join(home, "index.html")
-if os.path.isfile(index_html):
-    assets["index.html"] = index_html
-vendor = os.path.join(home, "vendor")
-if os.path.isdir(vendor):
-    for fn in sorted(os.listdir(vendor)):
-        p = os.path.join(vendor, fn)
-        if os.path.isfile(p):
-            assets["vendor/" + fn] = p
+assets = {
+    "index.html": os.path.join(home, "index.html"),
+    "vendor/cytoscape.min.js": os.path.join(home, "vendor", "cytoscape.min.js"),
+}
 write_install_stamp(os.environ["MC_BIN"], os.environ.get("MC_HEAD_SHA") or None,
                     os.environ.get("MC_PROVENANCE") or "unknown", names,
                     int(time.time()), assets=assets)
 print("stamped install -> %s/install-stamp.json (%s, %d assets)" % (
     os.environ["MC_BIN"], os.environ.get("MC_PROVENANCE"), len(assets)))
 PYEOF
+  if [ "$?" != 0 ]; then
+    echo "install: stamp write failed — refusing success (rc=1)" >&2
+    return 1
+  fi
   if [ "${DASHBOARD_INSTALL_NO_LAUNCHD:-0}" = "1" ]; then
     echo "skip: launchd installation disabled by DASHBOARD_INSTALL_NO_LAUNCHD"
     return 0

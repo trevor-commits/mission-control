@@ -13,7 +13,8 @@ import glob, hashlib, json, os, re, shutil, sqlite3, subprocess, sys, time
 from collections import deque
 
 from mission_control_common import (ACTION, NARRATIVE, EgressCounters,
-                                    nested_ingest_stale, safe_text, sanitize_text)
+                                    nested_ingest_stale, nested_ingest_state,
+                                    safe_text, sanitize_text)
 
 SCHEMA_VERSION = 7
 STALE_INGEST_S = 30 * 60  # show/doctor staleness threshold
@@ -2168,6 +2169,7 @@ def _build_export(con, ingest_skipped=False):
     # the nightly SLA (not the 1800s envelope cadence). Stamped here at generation
     # time so consumers (dashboard JS, status, brief) read one computed flag instead
     # of each re-implementing the threshold.
+    counts["full_ingest_state"] = nested_ingest_state({"data": {"counts": counts}})
     counts["full_ingest_stale"] = nested_ingest_stale({"data": {"counts": counts}})
     return {
         "schema": 1, "feed": "chats",

@@ -30,6 +30,12 @@ FIELD_CLASSES = frozenset((
     NARRATIVE, ACTION, IDENTIFIER, ERROR, MODEL_INPUT, NOTIFICATION,
 ))
 
+REQUIRED_INSTALL_RUNTIMES = (
+    "dashboard", "morning-brief", "morning-brief-deadman",
+    "decision-alert", "mission_control_common.py",
+)
+REQUIRED_INSTALL_ASSETS = ("index.html", "vendor/cytoscape.min.js")
+
 SECRET_PLACEHOLDER = "«REDACTED-SECRET»"
 PII_PLACEHOLDER = "«REDACTED-PII»"
 SENSITIVE_PLACEHOLDER = "«REDACTED-SENSITIVE-FIELD»"
@@ -309,19 +315,28 @@ def next_local_midnight(epoch):
     stays valid until the next local midnight, when a fresh compose supersedes
     it. mktime normalizes the mday+1 rollover and picks the right DST offset.
     """
-    lt = time.localtime(int(epoch))
+    try:
+        raw = int(epoch)
+        if raw <= 0:
+            return None
+        lt = time.localtime(raw)
+    except (TypeError, ValueError, OverflowError, OSError):
+        return None
     start_next = (lt.tm_year, lt.tm_mon, lt.tm_mday + 1, 0, 0, 0, 0, 0, -1)
-    return int(time.mktime(start_next))
+    try:
+        return int(time.mktime(start_next))
+    except (OverflowError, OSError):
+        return None
 
 
 # The full transcript ingest runs NIGHTLY (com.gillettes.nightly-review,
 # StartCalendarInterval 23:30 daily -> nightly-review.sh runs `chat-graph ingest`,
-# which writes ~/.chat-graph/last-ingest; live marker mtime 2026-07-10 23:31:21
-# confirms the 23:30 schedule). Its staleness horizon is therefore a nightly one,
-# NOT the 1800s envelope cadence the chats FEED is regenerated on. Band: a healthy
-# last-night ingest tops out near the 24h cycle (marker stamped at completion, no
-# meaningful export lag), while a genuinely missed nightly is >=~31.5h at the 07:00
-# brief (~48h general). 30h separates the two; an envelope may override with its own
+# which writes ~/.chat-graph/last-ingest; round-4 proof observed the marker at
+# 2026-07-10 23:31:21). Its staleness horizon is therefore a nightly one, NOT the
+# 1800s envelope cadence the chats FEED is regenerated on. Band: a healthy last-night
+# ingest tops out near the 24h cycle (marker stamped at completion, no meaningful
+# export lag), while a genuinely missed nightly is >=~31.5h at the 07:00 brief
+# (~48h general). 30h separates the two; an envelope may override with its own
 # completion SLA via counts.full_ingest_sla_s.
 def _full_ingest_sla_s():
     try:
@@ -330,28 +345,53 @@ def _full_ingest_sla_s():
         return 30 * 3600
 
 
-def nested_ingest_stale(env):
-    """True when a feed is envelope-fresh but its last FULL ingest is stale.
+def nested_ingest_state(env):
+    """Freshness state for a feed's nested full transcript ingest.
 
     The chats feed is regenerated from a bounded catch-up scan on the 1800s
     envelope cadence, while its last complete transcript pass runs nightly; the
     nightly SLA (not the envelope cadence) decides whether that pass is stale.
     """
     if not env or not isinstance(env.get("data"), dict):
-        return False
-    counts = env["data"].get("counts") or {}
+        return "fresh"
+    counts = env["data"].get("counts")
+    if not isinstance(counts, dict):
+        return "fresh"
+    full_ingest_keys = ("full_ingest_state", "full_ingest_stale",
+                        "last_full_ingest_age_s", "last_full_ingest_epoch",
+                        "full_ingest_sla_s")
+    if (env.get("feed") != "chats" and not counts.get("ingest_skipped") and
+            not any(k in counts for k in full_ingest_keys)):
+        return "fresh"
     if counts.get("ingest_skipped"):
-        return True
+        return "stale"
+    if counts.get("full_ingest_state") in ("fresh", "stale", "unknown"):
+        return counts["full_ingest_state"]
+    if counts.get("full_ingest_stale") is True:
+        return "stale"
+    if counts.get("full_ingest_stale") is False:
+        return "fresh"
     if "last_full_ingest_age_s" not in counts:
-        return False
+        return "unknown"
     age = counts.get("last_full_ingest_age_s")
     if age is None:
-        return True
+        return "unknown"
+    try:
+        age = int(age)
+    except (TypeError, ValueError):
+        return "unknown"
+    if age < 0:
+        return "unknown"
     try:
         sla = int(counts["full_ingest_sla_s"])
     except (KeyError, TypeError, ValueError):
         sla = _full_ingest_sla_s()
-    return int(age) > sla
+    return "stale" if age > sla else "fresh"
+
+
+def nested_ingest_stale(env):
+    """True when a feed is envelope-fresh but its full ingest is not trusted."""
+    return nested_ingest_state(env) != "fresh"
 
 
 def feed_health(env, cadence, now, stale_multiple=6, aging=True):
@@ -367,7 +407,7 @@ def feed_health(env, cadence, now, stale_multiple=6, aging=True):
     valid_until stays fresh for its whole valid window regardless of cadence.
     """
     base = {"state": "missing", "red": True, "age_s": None,
-            "nested_stale": False, "ok": False, "generated_epoch": None,
+            "nested_stale": False, "nested_state": "fresh", "ok": False, "generated_epoch": None,
             "valid_until": None}
     if env is None:
         return base
@@ -381,16 +421,19 @@ def feed_health(env, cadence, now, stale_multiple=6, aging=True):
         valid_until = int(env["valid_until"]) if env.get("valid_until") is not None else None
     except (TypeError, ValueError):
         valid_until = None
+    nested_state = nested_ingest_state(env)
     out = {"age_s": (max(0, age) if age is not None else None),
-           "nested_stale": nested_ingest_stale(env), "ok": ok,
+           "nested_stale": nested_state != "fresh", "nested_state": nested_state,
+           "ok": ok,
            "generated_epoch": epoch, "valid_until": valid_until}
     # A daily product's validity horizon is exactly the next local midnight after
     # its compose epoch (<=~24h, ~25h across a fall-back DST day). A valid_until
     # beyond that is malformed (a 47h value, or a 30h-old brief still claiming
     # validity) and must NOT suppress staleness, so it is honored only up to that
     # per-day boundary — not a flat multi-day slab.
-    valid_ok = (valid_until is not None and epoch is not None and
-                valid_until <= next_local_midnight(epoch))
+    midnight = next_local_midnight(epoch) if epoch is not None else None
+    valid_ok = (valid_until is not None and midnight is not None and
+                valid_until <= midnight)
     if not ok:
         out["state"], out["red"] = "error", True
     elif age is None:
@@ -436,15 +479,26 @@ def write_install_stamp(bin_dir, head_sha, provenance, names, now, assets=None):
     set (index.html, vendor/*), stored under "assets" so status + the deadman
     detect drift in the whole shipped surface, not just the five bin files.
     """
+    expected_files = set(REQUIRED_INSTALL_RUNTIMES)
+    expected_assets = set(REQUIRED_INSTALL_ASSETS)
+    if set(names or ()) != expected_files:
+        raise ValueError("install stamp runtime set must be exactly %s" %
+                         sorted(expected_files))
+    if set((assets or {}).keys()) != expected_assets:
+        raise ValueError("install stamp asset set must be exactly %s" %
+                         sorted(expected_assets))
     files = {}
-    for name in names:
+    for name in REQUIRED_INSTALL_RUNTIMES:
         path = os.path.join(bin_dir, name)
-        if os.path.isfile(path):
-            files[name] = _sha256_file(path)
+        if not os.path.isfile(path):
+            raise OSError("required installed runtime missing: %s" % name)
+        files[name] = _sha256_file(path)
     asset_hashes = {}
-    for rel, path in (assets or {}).items():
-        if os.path.isfile(path):
-            asset_hashes[rel] = _sha256_file(path)
+    for rel in REQUIRED_INSTALL_ASSETS:
+        path = assets[rel]
+        if not os.path.isfile(path):
+            raise OSError("required installed asset missing: %s" % rel)
+        asset_hashes[rel] = _sha256_file(path)
     stamp = {"schema": 1, "installed_at": int(now),
              "head_sha": head_sha or None, "provenance": provenance,
              "files": files, "assets": asset_hashes}
@@ -468,8 +522,18 @@ def verify_install_stamp(bin_dir):
     except (OSError, ValueError):
         return {"present": False, "ok": False, "head_sha": None,
                 "provenance": None, "mismatches": [], "missing": []}
-    mismatches, missing = [], []
-    for name, expected in (stamp.get("files") or {}).items():
+    mismatches, missing, unexpected = [], [], []
+    files = stamp.get("files") or {}
+    assets = stamp.get("assets") or {}
+    for name in sorted(set(files) - set(REQUIRED_INSTALL_RUNTIMES)):
+        unexpected.append(name)
+    for rel in sorted(set(assets) - set(REQUIRED_INSTALL_ASSETS)):
+        unexpected.append(rel)
+    for name in REQUIRED_INSTALL_RUNTIMES:
+        expected = files.get(name)
+        if expected is None:
+            missing.append(name)
+            continue
         candidate = os.path.join(bin_dir, name)
         if not os.path.isfile(candidate):
             missing.append(name)
@@ -478,13 +542,18 @@ def verify_install_stamp(bin_dir):
     # Assets live under the mission-control home (parent of bin_dir), keyed by a
     # home-relative path (e.g. index.html, vendor/foo.js).
     home = os.path.dirname(bin_dir)
-    for rel, expected in (stamp.get("assets") or {}).items():
+    for rel in REQUIRED_INSTALL_ASSETS:
+        expected = assets.get(rel)
+        if expected is None:
+            missing.append(rel)
+            continue
         candidate = os.path.join(home, rel)
         if not os.path.isfile(candidate):
             missing.append(rel)
         elif _sha256_file(candidate) != expected:
             mismatches.append(rel)
-    return {"present": True, "ok": not mismatches and not missing,
+    return {"present": True, "ok": not mismatches and not missing and not unexpected,
             "head_sha": stamp.get("head_sha"),
             "provenance": stamp.get("provenance"),
-            "mismatches": sorted(mismatches), "missing": sorted(missing)}
+            "mismatches": sorted(mismatches), "missing": sorted(missing),
+            "unexpected": sorted(unexpected)}
