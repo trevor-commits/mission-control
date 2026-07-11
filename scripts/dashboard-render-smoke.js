@@ -529,6 +529,10 @@ function renderHomeWithChatsCounts(overrides) {
     { last_full_ingest_age_s: -60, full_ingest_state: 'fresh', full_ingest_stale: false },
     { last_full_ingest_age_s: 'bad', full_ingest_state: 'fresh', full_ingest_stale: false },
     { last_full_ingest_age_s: null, full_ingest_state: 'fresh', full_ingest_stale: false },
+    { last_full_ingest_age_s: 50 * 3600, full_ingest_state: 'fresh', full_ingest_stale: false },
+    { last_full_ingest_age_s: 7 * 3600, full_ingest_state: 'stale', full_ingest_stale: true },
+    { last_full_ingest_age_s: 2 * 3600, full_ingest_sla_s: 3600,
+      full_ingest_state: 'fresh', full_ingest_stale: false },
   ];
   for (const counts of cases) {
     let txt;
@@ -543,7 +547,7 @@ function renderHomeWithChatsCounts(overrides) {
       fails++; return;
     }
   }
-  console.log('PASS: malformed full-ingest age overrides contradictory green flags');
+  console.log('PASS: malformed or contradictory full-ingest evidence cannot render green');
 })();
 
 if (fails) { console.error('render-smoke: ' + fails + ' tab(s) FAILED'); process.exit(1); }

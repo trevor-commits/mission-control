@@ -438,8 +438,8 @@ def feed_health(env, cadence, now, stale_multiple=6, aging=True):
     nested_state = nested_ingest_state(env)
     counts = env.get("data", {}).get("counts") if isinstance(env.get("data"), dict) else None
     # A chats consumer must see the producer's derived state. Raw age alone is
-    # insufficient during a rolling upgrade because JS intentionally does not
-    # duplicate the 30-hour policy threshold.
+    # insufficient during a rolling upgrade; consumers also verify the derived
+    # state against the advertised/default nightly SLA before trusting green.
     if (env.get("feed") == "chats" and isinstance(counts, dict) and
             "full_ingest_state" not in counts and
             "full_ingest_stale" not in counts):
