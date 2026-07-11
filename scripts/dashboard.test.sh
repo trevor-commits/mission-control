@@ -663,6 +663,7 @@ c21() { # install stamps provenance from committed HEAD; verify detects runtime 
   ( cd "$gr" && git init -q && git add -A && \
     git -c user.email=t@t -c user.name=t commit -qm init ) >/dev/null 2>&1
   head="$(git -C "$gr" rev-parse HEAD)"; mch="$(mktemp -d)"
+  mkdir -p "$mch/vendor"; printf 'stale\n' > "$mch/vendor/removed-upstream.js"
   DASHBOARD_INSTALL_NO_LAUNCHD=1 REPO_ROOT="$gr" MISSION_CONTROL_HOME="$mch" \
     bash "$gr/scripts/dashboard" install >/dev/null 2>&1
   if [ ! -f "$mch/bin/install-stamp.json" ]; then no "install-stamp: no stamp written"; return; fi
@@ -677,6 +678,8 @@ assert stamp["head_sha"] == head, stamp
 # assets stamped from HEAD alongside the bin runtimes
 assert "index.html" in (stamp.get("assets") or {}), stamp
 assert "vendor/cytoscape.min.js" in (stamp.get("assets") or {}), stamp
+assert not os.path.exists(os.path.join(os.path.dirname(bindir), "vendor", "removed-upstream.js")), \
+       "install must remove stale vendor assets not present in HEAD"
 assert verify_install_stamp(bindir)["ok"], "clean install must verify"
 # drift: mutate an installed runtime — verify must catch it
 with open(os.path.join(bindir, "morning-brief"), "a") as fh:
@@ -717,7 +720,7 @@ PY
 c23() { # a same-day delivered brief composed before valid_until existed is
   # migrated on the next compose, and the dashboard then reports it fresh (rc=0)
   # instead of stale — regression for the "brief stale all day" trust defect.
-  local H rc BRIEF NOW GEN RAWCHATS
+  local H rc BRIEF NOW GEN RAWCHATS EXPECTED AFTER out send_out
   H="$(newhome)"; BRIEF="$REPO/scripts/morning-brief"
   # Anchor to local noon today so same-local-day + valid_until are TZ/date-proof.
   NOW="$(python3 -c 'import time;lt=time.localtime();print(int(time.mktime((lt.tm_year,lt.tm_mon,lt.tm_mday,12,0,0,0,0,-1))))')"
@@ -749,23 +752,58 @@ PYEOF
   if [ "$rc" -eq 0 ]; then no "brief-migrate setup: legacy brief was not stale pre-migration"; return; fi
   # A no-arg compose defers (no re-send) and migrates valid_until in place.
   MISSION_CONTROL_HOME="$H" MORNING_BRIEF_NOW_EPOCH="$NOW" "$BRIEF" >/dev/null 2>&1
+  cp "$H/morning-brief/latest.json" "$H/latest.after-first.json"
+  cp "$H/morning-brief/latest.md" "$H/latest.after-first.md"
+  cp "$H/morning-brief/delivery/legacy-brief.json" "$H/receipt.after-first.json"
+  # A second compose must be byte-idempotent: no sidecar, Markdown, or receipt rewrite.
+  MISSION_CONTROL_HOME="$H" MORNING_BRIEF_NOW_EPOCH="$NOW" "$BRIEF" >/dev/null 2>&1
+  if ! cmp -s "$H/latest.after-first.json" "$H/morning-brief/latest.json" ||
+     ! cmp -s "$H/latest.after-first.md" "$H/morning-brief/latest.md" ||
+     ! cmp -s "$H/receipt.after-first.json" "$H/morning-brief/delivery/legacy-brief.json"; then
+    no "brief-migrate: second compose was not byte-idempotent"; return
+  fi
   # POST: collect re-derives brief.json from the migrated sidecar; status reads fresh.
   env -u DASHBOARD_CMD_BRIEF MISSION_CONTROL_HOME="$H" MISSION_CONTROL_NOW_EPOCH="$NOW" \
     DASHBOARD_CMD_CHATS="cat '$RAWCHATS'" bash "$DASH" collect --force >/dev/null 2>&1
   env -u DASHBOARD_CMD_BRIEF MISSION_CONTROL_HOME="$H" MISSION_CONTROL_NOW_EPOCH="$NOW" \
     bash "$DASH" status >/dev/null 2>&1; rc=$?
-  if ! python3 /dev/stdin "$H" <<'PYEOF'
-import json, os, sys
-home = sys.argv[1]
+  if ! python3 /dev/stdin "$H" "$GEN" <<'PYEOF'
+import json, os, sys, time
+home, gen = sys.argv[1], int(sys.argv[2])
 latest = json.load(open(os.path.join(home, "morning-brief", "latest.json")))
 brief = json.load(open(os.path.join(home, "data", "brief.json")))
-assert isinstance(latest.get("valid_until"), int) and latest["valid_until"] > 0, "latest.json not migrated"
-assert isinstance(brief.get("valid_until"), int) and brief["valid_until"] > 0, "brief.json missing valid_until"
+local = time.localtime(gen)
+expected = int(time.mktime((local.tm_year, local.tm_mon, local.tm_mday + 1,
+                            0, 0, 0, 0, 0, -1)))
+assert latest.get("valid_until") == expected, (latest.get("valid_until"), expected)
+assert brief.get("valid_until") == expected, (brief.get("valid_until"), expected)
 assert latest["delivery"]["state"] == "delivered", "delivery must be untouched"
 PYEOF
   then no "brief-migrate: both sidecars not stamped with valid_until (or delivery mutated)"; return; fi
   if [ "$rc" -eq 0 ]; then ok "same-day delivered brief migrated -> dashboard status rc=0 (was stale)"
   else no "brief-migrate: status still nonzero after migration (rc=$rc)"; fi
+  EXPECTED="$(python3 - "$GEN" <<'PY'
+import sys, time
+local = time.localtime(int(sys.argv[1]))
+print(int(time.mktime((local.tm_year, local.tm_mon, local.tm_mday + 1,
+                       0, 0, 0, 0, 0, -1))))
+PY
+)"
+  AFTER=$((EXPECTED + 1))
+  out="$(MISSION_CONTROL_HOME="$H" MISSION_CONTROL_NOW_EPOCH="$AFTER" bash "$DASH" status 2>/dev/null || true)"
+  if printf '%s\n' "$out" | grep -E '^brief' | grep -qi 'stale'; then
+    ok "brief-migrate validity expires exactly after next local midnight"
+  else
+    no "brief-migrate: exact validity horizon did not become stale"
+  fi
+  send_out="$(MISSION_CONTROL_HOME="$H" MORNING_BRIEF_NOW_EPOCH="$NOW" \
+    MORNING_BRIEF_CHAT_ID=1 MORNING_BRIEF_SEND_BIN=/usr/bin/false \
+    "$BRIEF" --send 2>&1)" || { no "brief-migrate: delivered no-resend check failed"; return; }
+  if printf '%s\n' "$send_out" | grep -q 'delivery already complete'; then
+    ok "brief-migrate delivered receipt prevents re-send"
+  else
+    no "brief-migrate: delivered brief did not take no-resend path"
+  fi
 }
 
 c1; c2; c3; c4; c5; c6; c7; c8; c8a; c8b; c9; c10; c11; c12; c13; c14; c14a; c15; c16; c17; c18; c19; c20; c21; c22; c23
