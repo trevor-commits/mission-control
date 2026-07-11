@@ -26,6 +26,8 @@ The implementation therefore shipped a deterministic, zero-call spine first. Tha
 - Git facts needed to fail closed on empty, malformed, and wrong-path worktree output, and human output needed the same privacy discipline as JSON logs.
 - An uninstalled scheduled job is not a failed job; the dashboard now distinguishes awaiting activation from runtime failure.
 - Prefix-only credential documentation still carries sensitive identity. The final UI review caught both partial token redaction and a stale next-run precedence bug; adversarial render fixtures now retain the dangerous suffix/timestamp so regressions cannot normalize the cases away.
+- The first immutable final-gate audit found that independently reasonable freshness checks had drifted at ordinary age boundaries, unchanged plist bytes concealed mode drift, and nested tests silently switched from macOS Bash 3.2 to Homebrew Bash. A cross-runtime boundary table, same-interpreter test harness, isolated-HOME fixtures, and unchanged/retry permission regressions now make those guarantees structural.
+- An ad hoc launchd counterexample reached real launchctl when its intended stub was absent, temporarily disrupting the live collector registration before immediate repair. Future state-moving counterexamples must prove the stub exists and fail closed before any real launchctl command is reachable; a temporary HOME alone is not isolation from a per-user launchd domain.
 
 ## Durable lessons
 
