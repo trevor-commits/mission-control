@@ -2638,6 +2638,8 @@ def cmd_show(args):
     age = _ingest_age()
     if age is None:
         print("warning: no completed full ingest — run 'chat-graph ingest' to initialize")
+    elif age < 0:
+        print("warning: full-ingest marker is future-dated — check clock/state before trusting it")
     elif age > full_ingest_sla_s():
         print("warning: last ingest %d min ago — run 'chat-graph ingest' to refresh" % int(age // 60))
     return 0
@@ -2694,7 +2696,7 @@ def cmd_doctor(args):
         check(False, "db open: %s" % e)
     age = _ingest_age()
     full_sla = full_ingest_sla_s()
-    check(age is not None and age <= full_sla,
+    check(age is not None and 0 <= age <= full_sla,
           "last-full-ingest age: %s (SLA %dm)" %
           ("never" if age is None else "%dm" % int(age // 60), int(full_sla // 60)))
     try:

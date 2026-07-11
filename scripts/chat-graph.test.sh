@@ -307,6 +307,16 @@ ok 1 "$RC" "doctor rejects a 31h-old full ingest outside the 30h nightly SLA"
 "$CG" show DA 2>&1 | grep -q "warning: last ingest" \
   && pass "show warns for a genuinely stale 31h-old full ingest" \
   || fail "show omits warning for a stale 31h-old full ingest"
+python3 - "$CHAT_GRAPH_HOME/last-ingest" <<'PYEOF'
+import os, sys, time
+stamp = time.time() + 3600
+os.utime(sys.argv[1], (stamp, stamp))
+PYEOF
+"$CG" doctor >/dev/null; RC=$?
+ok 1 "$RC" "doctor rejects a future-dated full-ingest marker"
+"$CG" show DA 2>&1 | grep -q "warning: full-ingest marker is future-dated" \
+  && pass "show warns for a future-dated full-ingest marker" \
+  || fail "show omits warning for a future-dated full-ingest marker"
 rm -f "$CHAT_GRAPH_HOME/last-ingest"
 "$CG" doctor >/dev/null; RC=$?
 ok 1 "$RC" "doctor rejects a missing full-ingest marker"
