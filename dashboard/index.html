@@ -567,6 +567,9 @@ body {
     var validOk = validUntil && epoch && validUntil <= nextLocalMidnight(epoch);
     var flag = null;
     if (age < 0) flag = "skew";
+    // A present valid_until is a HARD expiry: once now reaches it, an expired
+    // daily brief reads stale immediately, regardless of the poll cadence.
+    else if (validUntil && nowS() >= validUntil) flag = "stale";
     // A daily product (valid_until set) stays fresh for its whole valid day
     // instead of aging out on the poll cadence.
     else if (validOk && nowS() < validUntil) flag = null;

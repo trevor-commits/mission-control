@@ -149,6 +149,18 @@ assert h["state"] == "stale" and h["red"] is True, h
 h = feed_health(env(generated_epoch=NOW - 10 * 86400,
                     valid_until=NOW + 3 * 86400), CAD, NOW)
 assert h["state"] == "stale", h
+# ER-109 round 7: valid_until is a HARD expiry at exact-midnight rollover. A brief
+# composed 23:59 local, valid to the next local midnight, must read fresh 30s before
+# midnight, then stale AT midnight (now == valid_until) and 5 min after -- an expired
+# daily brief cannot linger fresh on the poll cadence.
+MID = next_local_midnight(NOON)          # a real local midnight
+BR = MID - 60                            # composed 23:59 local, valid to MID
+h = feed_health(env(generated_epoch=BR, valid_until=MID), CAD, MID - 30)
+assert h["state"] == "fresh" and h["red"] is False, h
+h = feed_health(env(generated_epoch=BR, valid_until=MID), CAD, MID)
+assert h["state"] == "stale" and h["red"] is True, h
+h = feed_health(env(generated_epoch=BR, valid_until=MID), CAD, MID + 300)
+assert h["state"] == "stale" and h["red"] is True, h
 
 # --- nightly full-ingest SLA (30h default), NOT the 1800s envelope cadence ---
 def chats(age_s, **counts):

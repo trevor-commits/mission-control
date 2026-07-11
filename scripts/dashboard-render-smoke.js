@@ -352,6 +352,56 @@ for (const tab of TABS) {
   console.log('PASS: ~47h valid_until on a 40h-old brief is rejected — brief shows stale banner');
 })();
 
+// ER-109 round 7: valid_until is a HARD expiry across the exact-midnight rollover.
+// A brief composed 23:59 local, valid to the next local midnight, must render fresh
+// 30s before midnight, then show the stale banner AT midnight (now == valid_until)
+// and 5 min after. Pin Date.now() (the page reads nowS() = Date.now()/1000) via a
+// proxy so the three boundary clocks are exact regardless of real wall-clock/TZ.
+(function hardExpiryAtMidnight() {
+  const MID = nextLocalMidnightJS(NOW_S);   // a real local midnight
+  const BRIEF_EPOCH = MID - 60;             // composed 23:59 local, valid to MID
+  const cases = [
+    { offset: -30, expectStale: false, label: '23:59:30 (fresh)' },
+    { offset: 0,   expectStale: true,  label: '00:00:00 exactly (stale)' },
+    { offset: 300, expectStale: true,  label: '00:05:00 (stale)' },
+  ];
+  for (const c of cases) {
+    const negFeeds = JSON.parse(JSON.stringify(feeds));
+    negFeeds.brief.generated_epoch = BRIEF_EPOCH;
+    negFeeds.brief.valid_until = MID;
+    negFeeds.brief.cadence_s = 300;
+    const FixedDate = new Proxy(Date, {
+      get(t, p) { return p === 'now' ? () => (MID + c.offset) * 1000 : t[p]; },
+      construct(t, a) { return a.length ? new t(...a) : new t((MID + c.offset) * 1000); },
+    });
+    resetDom();
+    locationShim.hash = '#brief';
+    const sandbox = {
+      window: { MC: { feeds: negFeeds }, addEventListener() {}, removeEventListener() {} },
+      document: documentShim, location: locationShim,
+      setInterval() { return 0; }, clearInterval() {}, setTimeout(fn) { if (typeof fn === 'function') fn(); return 0; }, clearTimeout() {},
+      Math: Math, Date: FixedDate, JSON: JSON, console: { log() {}, warn() {}, error() {} },
+      Array: Array, Object: Object, String: String, Number: Number, isFinite: isFinite, parseInt: parseInt, parseFloat: parseFloat,
+      cytoscape() { return { on() {}, destroy() {}, $() { return { select() { return this; } }; } }; },
+    };
+    sandbox.window.window = sandbox.window;
+    sandbox.globalThis = sandbox;
+    try {
+      vm.runInNewContext(scriptBody, sandbox, { timeout: 5000 });
+    } catch (e) {
+      console.error('FAIL: hard-expiry ' + c.label + ' render THREW: ' + (e && e.message));
+      fails++; continue;
+    }
+    const txt = (byId['mc-main'] && byId['mc-main'].textContent) || '';
+    const isStale = txt.indexOf('Data is older than expected') !== -1;
+    if (isStale !== c.expectStale) {
+      console.error('FAIL: hard-expiry ' + c.label + ' -> stale banner ' + (isStale ? 'shown' : 'absent') + ', expected ' + (c.expectStale ? 'shown' : 'absent'));
+      fails++; continue;
+    }
+    console.log('PASS: hard-expiry ' + c.label + ' -> stale banner ' + (isStale ? 'shown' : 'absent'));
+  }
+})();
+
 // ER-109 round 6: clock skew (a FUTURE chats generated_epoch) must render the SAME
 // untrustworthy state on the Home Chats card AND the "Open work" strip segment as it
 // already does on the banner and the strip dot — not stay green. guard()'s g.flag is

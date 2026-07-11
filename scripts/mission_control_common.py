@@ -397,6 +397,10 @@ def feed_health(env, cadence, now, stale_multiple=6, aging=True):
         out["state"], out["red"] = "stale", True
     elif age < 0:
         out["state"], out["red"], out["age_s"] = "skew", False, age
+    elif valid_until is not None and now >= valid_until:
+        # A present valid_until is a HARD expiry: once now reaches it, an expired
+        # daily brief reads stale immediately, regardless of the poll cadence age.
+        out["state"], out["red"] = "stale", True
     elif valid_ok and now < valid_until:
         out["state"], out["red"] = "fresh", False
     elif age > stale_multiple * cadence:
