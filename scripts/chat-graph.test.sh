@@ -39,6 +39,7 @@ new_env() {
   export CHAT_GRAPH_SCAN_CMD="/bin/echo []"
   export CHAT_GRAPH_GIT_FEED="$(mktemp -d)/git.json"
   export CHAT_GRAPH_REGISTER="$(mktemp -d)/register.md"; : > "$CHAT_GRAPH_REGISTER"
+  unset MISSION_CONTROL_FULL_INGEST_SLA_S
   # stub chat-source: 'present' checks pass; describe returns provider only (no
   # title) so untitled-fallback cases survive enrichment; list writes a marker so
   # the carry-over test can prove it is NEVER invoked.
@@ -297,6 +298,10 @@ if "$CG" show DA 2>&1 | grep -q "warning: last ingest"; then
 else
   pass "show accepts a 3h-old full ingest inside the 30h nightly SLA"
 fi
+MISSION_CONTROL_FULL_INGEST_SLA_S=3600 "$CG" doctor >/dev/null; RC=$?
+ok 1 "$RC" "doctor honors a stricter 1h full-ingest SLA override"
+MISSION_CONTROL_FULL_INGEST_SLA_S=172800 "$CG" doctor >/dev/null; RC=$?
+ok 0 "$RC" "doctor honors a wider 48h full-ingest SLA override"
 python3 - "$CHAT_GRAPH_HOME/last-ingest" <<'PYEOF'
 import os, sys, time
 stamp = time.time() - 31 * 3600
