@@ -91,7 +91,11 @@ def _input_health(name, feed, now):
         state = "missing"
     elif h["state"] == "error":
         state = "error"
-    elif h["state"] in ("fresh", "skew") and not h["nested_stale"]:
+    elif h["state"] == "skew":
+        # A future generated_epoch is a clock-skew / invalid envelope, never a
+        # trustworthy "fresh" input — surface it as its own visible warning.
+        state = "skew"
+    elif h["state"] == "fresh" and not h["nested_stale"]:
         state = "fresh"
     else:
         state = "stale"

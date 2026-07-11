@@ -584,31 +584,56 @@ do_install() {
     case "$runtime" in *.py) chmod 600 "$dest" ;; *) chmod +x "$dest" ;; esac
     echo "installed runtime -> $dest"
   done
-  # Stamp the install: HEAD SHA + sha256 of each installed runtime, so status and
-  # the deadman can verify the runtime matches a committed SHA without needing git.
-  MC_BIN="$MISSION_CONTROL_HOME/bin" MC_HEAD_SHA="$head_sha" MC_PROVENANCE="$provenance" \
+  # Deployment assets (index.html render shell + vendored graph engine) install
+  # from the SAME committed HEAD as the runtimes when provenance=head, so the
+  # stamped head_sha is truthful for the whole shipped surface — never a dirty
+  # working tree stamped "head". Worktree fallback mirrors the runtime path.
+  if [ "$provenance" = "head" ] && git -C "$REPO_ROOT" cat-file -e "HEAD:dashboard/index.html" 2>/dev/null; then
+    git -C "$REPO_ROOT" show "HEAD:dashboard/index.html" > "$MISSION_CONTROL_HOME/index.html"
+    mkdir -p "$MISSION_CONTROL_HOME/vendor"
+    git -C "$REPO_ROOT" ls-tree --name-only "HEAD:dashboard/vendor" 2>/dev/null | while IFS= read -r vf; do
+      [ -n "$vf" ] || continue
+      git -C "$REPO_ROOT" show "HEAD:dashboard/vendor/$vf" > "$MISSION_CONTROL_HOME/vendor/$vf"
+    done
+    echo "installed shell -> $MISSION_CONTROL_HOME/index.html (head $head_sha)"
+  elif [ -f "$REPO_ROOT/dashboard/index.html" ]; then
+    cp "$REPO_ROOT/dashboard/index.html" "$MISSION_CONTROL_HOME/index.html"
+    if [ -d "$REPO_ROOT/dashboard/vendor" ]; then
+      mkdir -p "$MISSION_CONTROL_HOME/vendor"
+      cp "$REPO_ROOT/dashboard/vendor/"* "$MISSION_CONTROL_HOME/vendor/" 2>/dev/null || true
+    fi
+    echo "installed shell -> $MISSION_CONTROL_HOME/index.html (worktree)"
+  else
+    echo "skip: dashboard/index.html not present yet"
+  fi
+  # Stamp the install: HEAD SHA + sha256 of each installed runtime AND deployment
+  # asset (index.html, vendor/*), so status and the deadman verify the WHOLE
+  # shipped surface matches a committed SHA without needing git.
+  MC_BIN="$MISSION_CONTROL_HOME/bin" MC_HOME="$MISSION_CONTROL_HOME" \
+  MC_HEAD_SHA="$head_sha" MC_PROVENANCE="$provenance" \
     python3 - "$SCRIPT_DIR" <<'PYEOF' || echo "stamp skipped (mission_control_common unavailable)"
 import os, sys, time
 sys.path.insert(0, sys.argv[1])
 from mission_control_common import write_install_stamp
 names = ["dashboard", "morning-brief", "morning-brief-deadman", "decision-alert",
          "mission_control_common.py"]
+home = os.environ["MC_HOME"]
+assets = {}
+index_html = os.path.join(home, "index.html")
+if os.path.isfile(index_html):
+    assets["index.html"] = index_html
+vendor = os.path.join(home, "vendor")
+if os.path.isdir(vendor):
+    for fn in sorted(os.listdir(vendor)):
+        p = os.path.join(vendor, fn)
+        if os.path.isfile(p):
+            assets["vendor/" + fn] = p
 write_install_stamp(os.environ["MC_BIN"], os.environ.get("MC_HEAD_SHA") or None,
-                    os.environ.get("MC_PROVENANCE") or "unknown", names, int(time.time()))
-print("stamped install -> %s/install-stamp.json (%s)" % (
-    os.environ["MC_BIN"], os.environ.get("MC_PROVENANCE")))
+                    os.environ.get("MC_PROVENANCE") or "unknown", names,
+                    int(time.time()), assets=assets)
+print("stamped install -> %s/install-stamp.json (%s, %d assets)" % (
+    os.environ["MC_BIN"], os.environ.get("MC_PROVENANCE"), len(assets)))
 PYEOF
-  if [ -f "$REPO_ROOT/dashboard/index.html" ]; then
-    cp "$REPO_ROOT/dashboard/index.html" "$MISSION_CONTROL_HOME/index.html"
-    # vendored graph engine for the connection Map (local, offline; loaded via relative src)
-    if [ -d "$REPO_ROOT/dashboard/vendor" ]; then
-      mkdir -p "$MISSION_CONTROL_HOME/vendor"
-      cp "$REPO_ROOT/dashboard/vendor/"* "$MISSION_CONTROL_HOME/vendor/" 2>/dev/null || true
-    fi
-    echo "installed shell -> $MISSION_CONTROL_HOME/index.html"
-  else
-    echo "skip: dashboard/index.html not present yet"
-  fi
   if [ "${DASHBOARD_INSTALL_NO_LAUNCHD:-0}" = "1" ]; then
     echo "skip: launchd installation disabled by DASHBOARD_INSTALL_NO_LAUNCHD"
     return 0

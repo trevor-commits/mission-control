@@ -100,6 +100,79 @@ RC=$?
 
 if [ "$RC" -eq 0 ]; then pass "field-aware privacy matrix"; else fail "field-aware privacy matrix"; fi
 
+PYTHONPATH="$ROOT/scripts" python3 - <<'PY'
+import os, tempfile
+from mission_control_common import (
+    feed_health, nested_ingest_stale, write_install_stamp, verify_install_stamp,
+)
+
+NOW = 1783674000
+CAD = 300
+
+def env(**kw):
+    base = {"schema": 1, "ok": True, "generated_epoch": NOW}
+    base.update(kw)
+    return base
+
+# --- skew: a FUTURE generated_epoch must never read fresh -------------------
+h = feed_health(env(generated_epoch=NOW + 600), CAD, NOW)
+assert h["state"] == "skew" and h["red"] is False and h["age_s"] == -600, h
+
+# --- bounded validity: an absurd far-future valid_until must NOT suppress
+# staleness. Old epoch (year 2001) + far-future valid_until (year 2100) -> stale.
+h = feed_health(env(generated_epoch=1000000000, valid_until=4102444800), CAD, NOW)
+assert h["state"] == "stale" and h["red"] is True, h
+# a legit within-horizon valid_until (next-midnight scale) IS still honored even
+# though age > cadence: composed 1h ago, valid 3h out.
+h = feed_health(env(generated_epoch=NOW - 3600, valid_until=NOW + 3 * 3600), CAD, NOW)
+assert h["state"] == "fresh" and h["red"] is False, h
+# a valid_until just past the 2-day horizon is rejected -> falls to age ladder.
+h = feed_health(env(generated_epoch=NOW - 10 * 86400,
+                    valid_until=NOW + 3 * 86400), CAD, NOW)
+assert h["state"] == "stale", h
+
+# --- nightly full-ingest SLA (30h default), NOT the 1800s envelope cadence ---
+def chats(age_s, **counts):
+    c = {"last_full_ingest_age_s": age_s}
+    c.update(counts)
+    return env(generated_epoch=NOW, data={"counts": c})
+assert nested_ingest_stale(chats(7 * 3600)) is False        # healthy last-night
+assert nested_ingest_stale(chats(26 * 3600)) is False       # within nightly band
+assert nested_ingest_stale(chats(50 * 3600)) is True        # missed nightly
+assert nested_ingest_stale(chats(None)) is True             # unknown -> stale
+assert nested_ingest_stale(chats(9999, ingest_skipped=True)) is True
+# envelope may override with its own completion SLA
+assert nested_ingest_stale(chats(2 * 3600, full_ingest_sla_s=3600)) is True
+# env override tightens the default
+os.environ["MISSION_CONTROL_FULL_INGEST_SLA_S"] = "3600"
+assert nested_ingest_stale(chats(2 * 3600)) is True
+del os.environ["MISSION_CONTROL_FULL_INGEST_SLA_S"]
+
+# --- install stamp covers deployment assets (index.html, vendor/*) -----------
+home = tempfile.mkdtemp()
+bin_dir = os.path.join(home, "bin"); os.makedirs(bin_dir)
+open(os.path.join(bin_dir, "dashboard"), "w").write("runtime\n")
+open(os.path.join(home, "index.html"), "w").write("<html>shell</html>\n")
+os.makedirs(os.path.join(home, "vendor"))
+open(os.path.join(home, "vendor", "cytoscape.min.js"), "w").write("//vendor\n")
+assets = {"index.html": os.path.join(home, "index.html"),
+          "vendor/cytoscape.min.js": os.path.join(home, "vendor", "cytoscape.min.js")}
+write_install_stamp(bin_dir, "abc123", "head", ["dashboard"], NOW, assets=assets)
+v = verify_install_stamp(bin_dir)
+assert v["present"] and v["ok"], v
+# drift in the render shell must be caught (it carries the render JS)
+open(os.path.join(home, "index.html"), "a").write("<!-- drift -->\n")
+v = verify_install_stamp(bin_dir)
+assert not v["ok"] and "index.html" in v["mismatches"], v
+# a missing vendored asset is caught too
+os.remove(os.path.join(home, "vendor", "cytoscape.min.js"))
+v = verify_install_stamp(bin_dir)
+assert "vendor/cytoscape.min.js" in v["missing"], v
+print("PYTHON PASS")
+PY
+RC=$?
+if [ "$RC" -eq 0 ]; then pass "freshness/skew/validity + nightly ingest SLA + install-asset stamp"; else fail "freshness/skew/validity + nightly ingest SLA + install-asset stamp"; fi
+
 printf '%s\n' "----"
 if [ "$FAIL" -eq 0 ]; then
   printf 'PASS=%s FAIL=0\n' "$PASS"

@@ -75,12 +75,17 @@ for (const name of ['usage', 'git', 'chats', 'automation', 'decisions', 'brief']
 if (feeds.chats && feeds.chats.data && feeds.chats.data.counts) {
   feeds.chats.data.counts.ingest_skipped = true;
 }
-// Defect (b) JS-guard coverage: a daily brief composed long ago (age >> 2x
-// cadence) but still inside its valid_until window must NOT show the stale
-// banner — the guard honors product validity over the poll cadence.
+// Defect (b) JS-guard coverage: a daily brief older than 2x its cadence but still
+// inside a LEGIT (within-horizon) valid_until window must NOT show the stale
+// banner — the guard honors product validity over the poll cadence. Composed 1h
+// ago with a small cadence so age(3600) > 2*cadence(600), valid 3h out (well
+// within the 2-day horizon). The absurd far-future case is exercised separately
+// as a negative render after the main loop.
+const NOW_S = Math.floor(Date.now() / 1000);
 if (feeds.brief) {
-  feeds.brief.generated_epoch = 1000000000;      // year 2001, far past any cadence
-  feeds.brief.valid_until = 4102444800;          // year 2100, still "valid"
+  feeds.brief.generated_epoch = NOW_S - 3600;
+  feeds.brief.cadence_s = 300;
+  feeds.brief.valid_until = NOW_S + 3 * 3600;
 }
 if (feeds.automation && feeds.automation.data && Array.isArray(feeds.automation.data.jobs)) {
   feeds.automation.data.jobs.forEach(j => {
@@ -265,6 +270,42 @@ for (const tab of TABS) {
   }
   console.log('PASS: #' + tab + ' renders (' + txt.length + ' chars' + (marker ? ', contains "' + marker.slice(0, 30) + '"' : '') + ')');
 }
+// Defect (b) NEGATIVE case: an absurd far-future valid_until (year 2001 compose +
+// year 2100 validity) is malformed and must NOT suppress staleness — the guard
+// only honors validity within 2 days of the compose epoch, so this brief MUST
+// show the stale banner. (Round-2 locked the OPPOSITE assertion; that encoded the
+// defect this round fixes.)
+(function negativeFarFutureValidity() {
+  const negFeeds = JSON.parse(JSON.stringify(feeds));
+  negFeeds.brief.generated_epoch = 1000000000;   // year 2001, age >> 2x cadence
+  negFeeds.brief.valid_until = 4102444800;        // year 2100, absurdly far future
+  negFeeds.brief.cadence_s = 86400;               // nonzero so the stale branch can fire
+  resetDom();
+  locationShim.hash = '#brief';
+  const sandbox = {
+    window: { MC: { feeds: negFeeds }, addEventListener() {}, removeEventListener() {} },
+    document: documentShim, location: locationShim,
+    setInterval() { return 0; }, clearInterval() {}, setTimeout(fn) { if (typeof fn === 'function') fn(); return 0; }, clearTimeout() {},
+    Math: Math, Date: Date, JSON: JSON, console: { log() {}, warn() {}, error() {} },
+    Array: Array, Object: Object, String: String, Number: Number, isFinite: isFinite, parseInt: parseInt, parseFloat: parseFloat,
+    cytoscape() { return { on() {}, destroy() {}, $() { return { select() { return this; } }; } }; },
+  };
+  sandbox.window.window = sandbox.window;
+  sandbox.globalThis = sandbox;
+  try {
+    vm.runInNewContext(scriptBody, sandbox, { timeout: 5000 });
+  } catch (e) {
+    console.error('FAIL: negative far-future brief render THREW: ' + (e && e.message));
+    fails++; return;
+  }
+  const txt = (byId['mc-main'] && byId['mc-main'].textContent) || '';
+  if (txt.indexOf('Data is older than expected') === -1) {
+    console.error('FAIL: absurd far-future valid_until suppressed the stale banner (staleness not restored)');
+    fails++; return;
+  }
+  console.log('PASS: absurd far-future valid_until is rejected — brief shows stale banner');
+})();
+
 if (fails) { console.error('render-smoke: ' + fails + ' tab(s) FAILED'); process.exit(1); }
 console.log('render-smoke: all ' + TABS.length + ' tabs render over fixtures');
 process.exit(0);

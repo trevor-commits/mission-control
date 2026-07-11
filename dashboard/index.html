@@ -552,11 +552,17 @@ body {
     var cadence = +env.cadence_s || 0;
     var validUntil = +env.valid_until || 0;
     var age = nowS() - epoch;
+    // A daily product's validity is a bounded horizon (next local midnight,
+    // <=~24h past its compose epoch). A valid_until absurdly far in the future is
+    // malformed and must NOT suppress staleness forever, so it is only honored
+    // within 2 days of the feed's own generated_epoch (matches feed_health).
+    var MAX_VALID_HORIZON_S = 2 * 86400;
+    var validOk = validUntil && epoch && (validUntil - epoch) <= MAX_VALID_HORIZON_S;
     var flag = null;
     if (age < 0) flag = "skew";
     // A daily product (valid_until set) stays fresh for its whole valid day
     // instead of aging out on the poll cadence.
-    else if (validUntil && nowS() < validUntil) flag = null;
+    else if (validOk && nowS() < validUntil) flag = null;
     else if (cadence && age > 2 * cadence) flag = "stale";
     var feedError = env.ok === false ? (env.error || "feeder error") : null;
     if (currentError && currentError.ok === false &&

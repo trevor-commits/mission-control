@@ -313,33 +313,78 @@ PY
 then pass "section dedup keeps different-provenance rows and drops exact duplicates"
 else fail "section dedup keeps different-provenance rows and drops exact duplicates"; fi
 
-# Defect (a) regression: a chats input that is envelope-fresh but whose last
-# FULL transcript ingest is stale must be marked stale — the brief must not claim
-# fresh chats while ingest is ~a day behind. (Was: _input_health read only the
-# envelope generated_epoch, so nested full-ingest lag was invisible.)
+# Defect (a) regression: nested full-ingest freshness uses the NIGHTLY SLA, not
+# the 1800s envelope cadence. The full transcript pass runs nightly (23:30
+# com.gillettes.nightly-review -> chat-graph ingest), so a healthy last-night
+# ingest (~26h band) must NOT flag, while a genuinely MISSED nightly (>30h SLA)
+# MUST flag. (Round-3 encoded the defect: 26h treated as stale under the 1800s
+# cadence, so a healthy nightly ingest read as stale every morning.)
 NEST="$TMP/nested"; mkdir -p "$NEST/state/data"
-python3 - "$NEST/state/data" <<'PY'
+mk_nest() { # $1=state dir  $2=last_full_ingest_age_s
+  mkdir -p "$1/data"
+  python3 - "$1/data" "$2" <<'PY'
 import json, os, sys
-root=sys.argv[1]; now=1783674000
+root=sys.argv[1]; age=int(sys.argv[2]); now=1783674000
 def write(name, data, cadence):
     json.dump({"schema":1,"feed":name,"generated_epoch":now,"cadence_s":cadence,
                "ok":True,"error":None,"data":data}, open(os.path.join(root,name+".json"),"w"))
 write("automation", {"jobs": [], "counts": {"red":0,"green":1}}, 300)
 write("git", {"repos": []}, 900)
-# envelope fresh (generated_epoch == now) but last full ingest 26h stale (> 1800s).
+# envelope fresh (generated_epoch == now); nested full-ingest age varies.
 write("chats", {"nodes":[],"edges":[],"loose_ends":[],"loose_end_changes":[],
-                "counts":{"last_full_ingest_age_s": 26*3600}}, 1800)
+                "counts":{"last_full_ingest_age_s": age}}, 1800)
 write("decisions", {"pinned":[],"inferred":[]}, 300)
 PY
-if MISSION_CONTROL_HOME="$NEST/state" MORNING_BRIEF_NOW_EPOCH=1783674000 "$BRIEF" >/dev/null 2>&1 && \
-   python3 - "$NEST/state/morning-brief/latest.json" <<'PY'
+}
+# Healthy last-night ingest (26h, within the nightly band) must read fresh.
+mk_nest "$NEST/healthy/state" $((26*3600))
+if MISSION_CONTROL_HOME="$NEST/healthy/state" MORNING_BRIEF_NOW_EPOCH=1783674000 "$BRIEF" >/dev/null 2>&1 && \
+   python3 - "$NEST/healthy/state/morning-brief/latest.json" <<'PY'
+import json, sys
+d=json.load(open(sys.argv[1]))
+assert d["inputs"]["chats"]["state"] == "fresh", d["inputs"]["chats"]
+assert "chats" not in d["stale_required_inputs"], d["stale_required_inputs"]
+PY
+then pass "healthy last-night full ingest (26h) is NOT flagged stale by the morning brief"
+else fail "healthy last-night full ingest (26h) is NOT flagged stale by the morning brief"; fi
+# Genuinely missed nightly (50h) must be reported stale.
+mk_nest "$NEST/missed/state" $((50*3600))
+if MISSION_CONTROL_HOME="$NEST/missed/state" MORNING_BRIEF_NOW_EPOCH=1783674000 "$BRIEF" >/dev/null 2>&1 && \
+   python3 - "$NEST/missed/state/morning-brief/latest.json" <<'PY'
 import json, sys
 d=json.load(open(sys.argv[1]))
 assert d["inputs"]["chats"]["state"] == "stale", d["inputs"]["chats"]
 assert "chats" in d["stale_required_inputs"], d["stale_required_inputs"]
 PY
-then pass "chats input envelope-fresh but full ingest stale is reported stale (nested freshness)"
-else fail "chats input envelope-fresh but full ingest stale is reported stale (nested freshness)"; fi
+then pass "genuinely missed nightly full ingest (50h) is reported stale (nested freshness)"
+else fail "genuinely missed nightly full ingest (50h) is reported stale (nested freshness)"; fi
+
+# Skew regression: a chats input whose generated_epoch is in the FUTURE (clock
+# skew / invalid envelope) must render as its own visible "skew" warning, never
+# fresh, and count as a not-current required input. (Was: _input_health folded
+# skew into "fresh", so a future timestamp read as trustworthy.)
+SKEW="$TMP/skew"; mkdir -p "$SKEW/state/data"
+python3 - "$SKEW/state/data" <<'PY'
+import json, os, sys
+root=sys.argv[1]; now=1783674000
+def write(name, data, cadence, epoch):
+    json.dump({"schema":1,"feed":name,"generated_epoch":epoch,"cadence_s":cadence,
+               "ok":True,"error":None,"data":data}, open(os.path.join(root,name+".json"),"w"))
+write("automation", {"jobs": [], "counts": {"red":0,"green":1}}, 300, now)
+write("git", {"repos": []}, 900, now)
+# 10 minutes into the FUTURE relative to compose now.
+write("chats", {"nodes":[],"edges":[],"loose_ends":[],"loose_end_changes":[]}, 1800, now+600)
+write("decisions", {"pinned":[],"inferred":[]}, 300, now)
+PY
+if MISSION_CONTROL_HOME="$SKEW/state" MORNING_BRIEF_NOW_EPOCH=1783674000 "$BRIEF" >/dev/null 2>&1 && \
+   python3 - "$SKEW/state/morning-brief/latest.json" <<'PY'
+import json, sys
+d=json.load(open(sys.argv[1]))
+assert d["inputs"]["chats"]["state"] == "skew", d["inputs"]["chats"]
+assert "chats" in d["stale_required_inputs"], d["stale_required_inputs"]
+PY
+then pass "future generated_epoch renders as visible skew warning, never fresh"
+else fail "future generated_epoch renders as visible skew warning, never fresh"; fi
 
 # Defect (c) regression: resolution wording is evidence-honest. Plain "Resolved"
 # is reserved for evidence-backed resolutions; a fork dedup reads "Duplicate

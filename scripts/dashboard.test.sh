@@ -625,19 +625,23 @@ c19() { # code-only install cannot write or bootstrap launchd jobs
 }
 
 c20() { # daily brief validity: a same-day brief past 6x cadence is NOT stale in status
-  local mch out; mch="$(mktemp -d)"; mkdir -p "$mch/data"
-  python3 - "$mch/data/brief.json" "$REPO/scripts" <<'PY'
+  local mch out NOW
+  # Anchor to local noon today (like c23) so same-local-day + valid_until are
+  # TZ/date-proof — a naive `now-7200` flakes stale in the ~2h after local midnight.
+  NOW="$(python3 -c 'import time;lt=time.localtime();print(int(time.mktime((lt.tm_year,lt.tm_mon,lt.tm_mday,12,0,0,0,0,-1))))')"
+  mch="$(mktemp -d)"; mkdir -p "$mch/data"
+  python3 - "$mch/data/brief.json" "$REPO/scripts" "$NOW" <<'PY'
 import json, sys, time
 sys.path.insert(0, sys.argv[2])
 from mission_control_common import next_local_midnight
-now = int(time.time()); gen = now - 7200      # composed ~2h ago, still today
+now = int(sys.argv[3]); gen = now - 7200      # 10:00 local: same day, > 6x cadence old
 env = {"schema": 1, "feed": "brief", "generated_at": "t", "generated_epoch": gen,
        "cadence_s": 300, "ok": True, "error": None,
        "valid_until": next_local_midnight(gen),
        "data": {"brief_id": "today", "generated_epoch": gen}}
 json.dump(env, open(sys.argv[1], "w"))
 PY
-  out="$(MISSION_CONTROL_HOME="$mch" bash "$DASH" status 2>/dev/null || true)"
+  out="$(MISSION_CONTROL_HOME="$mch" MISSION_CONTROL_NOW_EPOCH="$NOW" bash "$DASH" status 2>/dev/null || true)"
   if printf '%s\n' "$out" | grep -E '^brief' | grep -Eqi 'stale|aging'; then
     no "status flags a same-day brief stale on poll cadence (validity ignored)"
   else
@@ -647,11 +651,15 @@ PY
 
 c21() { # install stamps provenance from committed HEAD; verify detects runtime drift
   command -v git >/dev/null 2>&1 || { ok "install-stamp: git absent — provenance test skipped"; return; }
-  local gr mch head; gr="$(mktemp -d)/repo"; mkdir -p "$gr/scripts" "$gr/dashboard"
+  local gr mch head; gr="$(mktemp -d)/repo"; mkdir -p "$gr/scripts" "$gr/dashboard/vendor"
   local n
   for n in dashboard mission_control_common.py morning-brief morning-brief-deadman decision-alert; do
     cp "$REPO/scripts/$n" "$gr/scripts/$n"
   done
+  # Deployment assets are part of the shipped surface: install must stamp them from
+  # the SAME committed HEAD as the runtimes, and verify must catch their drift.
+  printf '<html>shell %s</html>\n' "render-js" > "$gr/dashboard/index.html"
+  printf '// vendored graph engine\n' > "$gr/dashboard/vendor/cytoscape.min.js"
   ( cd "$gr" && git init -q && git add -A && \
     git -c user.email=t@t -c user.name=t commit -qm init ) >/dev/null 2>&1
   head="$(git -C "$gr" rev-parse HEAD)"; mch="$(mktemp -d)"
@@ -666,14 +674,23 @@ bindir, head = sys.argv[1], sys.argv[2]
 stamp = json.load(open(os.path.join(bindir, "install-stamp.json")))
 assert stamp["provenance"] == "head", stamp
 assert stamp["head_sha"] == head, stamp
+# assets stamped from HEAD alongside the bin runtimes
+assert "index.html" in (stamp.get("assets") or {}), stamp
+assert "vendor/cytoscape.min.js" in (stamp.get("assets") or {}), stamp
 assert verify_install_stamp(bindir)["ok"], "clean install must verify"
 # drift: mutate an installed runtime — verify must catch it
 with open(os.path.join(bindir, "morning-brief"), "a") as fh:
     fh.write("\n# drift\n")
 v = verify_install_stamp(bindir)
 assert not v["ok"] and "morning-brief" in v["mismatches"], v
+# drift: mutate the render shell (an asset) — verify must catch it too
+home = os.path.dirname(bindir)
+with open(os.path.join(home, "index.html"), "a") as fh:
+    fh.write("<!-- drift -->\n")
+v = verify_install_stamp(bindir)
+assert "index.html" in v["mismatches"], v
 PY
-  then ok "install-stamp: committed HEAD provenance recorded and runtime drift is detected"
+  then ok "install-stamp: committed HEAD provenance + runtime AND asset drift are detected"
   else no "install-stamp: provenance or drift verification failed"; fi
 }
 
