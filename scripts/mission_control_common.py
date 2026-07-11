@@ -11,8 +11,11 @@ Python standard library only.
 
 from __future__ import print_function
 
+import hashlib
+import json
 import os
 import re
+import time
 from collections import Counter
 from dataclasses import dataclass
 
@@ -280,3 +283,155 @@ def sanitize_chunks(chunks, counters=None):
         if not result.dropped and result.value:
             out.append(result.value)
     return out
+
+
+# --- freshness + product validity -------------------------------------------
+# ONE source of truth for feed freshness across the dashboard status command,
+# the index.html per-feed guard, and the morning brief's input-health check.
+# The envelope compose timestamp alone misses two real staleness classes; both
+# are folded in here so a caller cannot forget one (the class of bug that let a
+# brief claim its chats input fresh while the full transcript ingest was ~a day
+# behind).
+
+def same_local_day(epoch, now):
+    """True when epoch and now fall on the same local calendar day."""
+    try:
+        return time.strftime("%Y-%m-%d", time.localtime(int(epoch))) == time.strftime(
+            "%Y-%m-%d", time.localtime(int(now)))
+    except (TypeError, ValueError):
+        return False
+
+
+def next_local_midnight(epoch):
+    """Epoch of 00:00 local on the day AFTER epoch's local day.
+
+    This is a daily product's validity horizon: a brief composed any time today
+    stays valid until the next local midnight, when a fresh compose supersedes
+    it. mktime normalizes the mday+1 rollover and picks the right DST offset.
+    """
+    lt = time.localtime(int(epoch))
+    start_next = (lt.tm_year, lt.tm_mon, lt.tm_mday + 1, 0, 0, 0, 0, 0, -1)
+    return int(time.mktime(start_next))
+
+
+def nested_ingest_stale(env, cadence):
+    """True when a feed is envelope-fresh but its last FULL ingest is stale.
+
+    The chats feed can be regenerated from a bounded catch-up scan while its
+    last complete transcript pass is a day behind; data.counts surfaces that.
+    """
+    if not env or not isinstance(env.get("data"), dict):
+        return False
+    counts = env["data"].get("counts") or {}
+    if counts.get("ingest_skipped"):
+        return True
+    if "last_full_ingest_age_s" not in counts:
+        return False
+    age = counts.get("last_full_ingest_age_s")
+    return age is None or int(age) > cadence
+
+
+def feed_health(env, cadence, now, stale_multiple=6, aging=True):
+    """Freshness verdict for one feed envelope.
+
+    Returns a dict: state in {missing, error, skew, stale, aging, fresh};
+    red (bool) True when the feed must alarm on age alone; nested_stale (bool)
+    the separate full-ingest signal callers surface however they like; plus
+    age_s, ok, generated_epoch, valid_until.
+
+    stale_multiple/aging tune the age ladder for each caller (dashboard: 6x with
+    an aging tier; brief inputs: 1x, no aging). A daily product that stamps
+    valid_until stays fresh for its whole valid window regardless of cadence.
+    """
+    base = {"state": "missing", "red": True, "age_s": None,
+            "nested_stale": False, "ok": False, "generated_epoch": None,
+            "valid_until": None}
+    if env is None:
+        return base
+    ok = bool(env.get("ok", True))
+    try:
+        epoch = int(env.get("generated_epoch"))
+    except (TypeError, ValueError):
+        epoch = None
+    age = None if epoch is None else now - epoch
+    try:
+        valid_until = int(env["valid_until"]) if env.get("valid_until") is not None else None
+    except (TypeError, ValueError):
+        valid_until = None
+    out = {"age_s": (max(0, age) if age is not None else None),
+           "nested_stale": nested_ingest_stale(env, cadence), "ok": ok,
+           "generated_epoch": epoch, "valid_until": valid_until}
+    if not ok:
+        out["state"], out["red"] = "error", True
+    elif age is None:
+        out["state"], out["red"] = "stale", True
+    elif age < 0:
+        out["state"], out["red"], out["age_s"] = "skew", False, age
+    elif valid_until is not None and now < valid_until:
+        out["state"], out["red"] = "fresh", False
+    elif age > stale_multiple * cadence:
+        out["state"], out["red"] = "stale", True
+    elif age > cadence:
+        out["state"], out["red"] = ("aging", False) if aging else ("stale", True)
+    else:
+        out["state"], out["red"] = "fresh", False
+    return out
+
+
+# --- install provenance stamp -----------------------------------------------
+# The install step copies runtimes from the committed HEAD SHA and records this
+# stamp; status + deadman re-hash the installed files against it so an install
+# that drifted from any committed SHA (or from a mutated bin/) is visible.
+
+INSTALL_STAMP_NAME = "install-stamp.json"
+
+
+def _sha256_file(path):
+    digest = hashlib.sha256()
+    with open(path, "rb") as handle:
+        for chunk in iter(lambda: handle.read(65536), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def write_install_stamp(bin_dir, head_sha, provenance, names, now):
+    """Record sha256 of each installed runtime + the HEAD SHA it came from."""
+    files = {}
+    for name in names:
+        path = os.path.join(bin_dir, name)
+        if os.path.isfile(path):
+            files[name] = _sha256_file(path)
+    stamp = {"schema": 1, "installed_at": int(now),
+             "head_sha": head_sha or None, "provenance": provenance,
+             "files": files}
+    path = os.path.join(bin_dir, INSTALL_STAMP_NAME)
+    tmp = "%s.tmp.%d" % (path, os.getpid())
+    with open(tmp, "w") as handle:
+        json.dump(stamp, handle, ensure_ascii=True, sort_keys=True)
+        handle.write("\n")
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.rename(tmp, path)
+    return stamp
+
+
+def verify_install_stamp(bin_dir):
+    """Re-hash installed runtimes against the stamp. Content-free verdict."""
+    path = os.path.join(bin_dir, INSTALL_STAMP_NAME)
+    try:
+        with open(path) as handle:
+            stamp = json.load(handle)
+    except (OSError, ValueError):
+        return {"present": False, "ok": False, "head_sha": None,
+                "provenance": None, "mismatches": [], "missing": []}
+    mismatches, missing = [], []
+    for name, expected in (stamp.get("files") or {}).items():
+        candidate = os.path.join(bin_dir, name)
+        if not os.path.isfile(candidate):
+            missing.append(name)
+        elif _sha256_file(candidate) != expected:
+            mismatches.append(name)
+    return {"present": True, "ok": not mismatches and not missing,
+            "head_sha": stamp.get("head_sha"),
+            "provenance": stamp.get("provenance"),
+            "mismatches": sorted(mismatches), "missing": sorted(missing)}

@@ -15,8 +15,9 @@ import sys
 import time
 
 from mission_control_common import (ACTION, IDENTIFIER, NARRATIVE, NOTIFICATION,
-                                    EgressCounters, sanitize_chunks,
-                                    sanitize_text, safe_text)
+                                    EgressCounters, feed_health,
+                                    next_local_midnight, sanitize_chunks,
+                                    sanitize_text, safe_text, same_local_day)
 
 SCHEMA = 1
 INPUTS = {
@@ -82,22 +83,23 @@ def _input_health(name, feed, now):
     cadence = declared["cadence_s"]
     if feed and isinstance(feed.get("cadence_s"), (int, float)) and feed["cadence_s"] > 0:
         cadence = int(feed["cadence_s"])
-    if feed is None:
-        state, age = "missing", None
-    elif not feed.get("ok", True):
-        state, age = "error", max(0, now - int(feed.get("generated_epoch") or 0))
+    # A brief is delivered as fact, so its inputs must be current at 1x cadence
+    # with no lenient aging tier — and a feed that is envelope-fresh but whose
+    # full transcript ingest is stale (nested_stale) is not trustworthy either.
+    h = feed_health(feed, cadence, now, stale_multiple=1, aging=False)
+    if h["state"] == "missing":
+        state = "missing"
+    elif h["state"] == "error":
+        state = "error"
+    elif h["state"] in ("fresh", "skew") and not h["nested_stale"]:
+        state = "fresh"
     else:
-        generated = feed.get("generated_epoch")
-        try:
-            age = max(0, now - int(generated))
-        except (TypeError, ValueError):
-            age = None
-        state = "fresh" if age is not None and age <= cadence else "stale"
+        state = "stale"
     return {
         "state": state,
         "required": bool(declared["required"]),
         "cadence_s": cadence,
-        "age_s": age,
+        "age_s": h["age_s"],
         "generated_epoch": feed.get("generated_epoch") if feed else None,
         "ok": bool(feed and feed.get("ok", True)),
     }
@@ -411,6 +413,27 @@ def _what_happened(snapshot, top_n):
     return combined[:top_n], hidden
 
 
+# Resolution evidence types the chat-graph records that represent a genuine,
+# evidence-backed resolution (explicit human/downstream marker or migrated
+# resolved row). fork_dedup is a duplicate consolidation, not a resolution;
+# source_absent is inferred from the item no longer appearing — both must not
+# read as a plain "Resolved".
+_EVIDENCE_BACKED = frozenset((
+    "manual", "same_session_explicit", "downstream_explicit", "downstream", "legacy",
+))
+
+
+def _resolution_prefix(row):
+    etype = str(row.get("resolution_evidence_type") or "")
+    if etype in _EVIDENCE_BACKED:
+        return "Resolved"
+    if etype == "fork_dedup":
+        return "Duplicate consolidated"
+    if etype == "source_absent":
+        return "Cleared (source absent)"
+    return "Resolved (unverified)"
+
+
 def _open_changes(snapshot, top_n, cursor):
     chats = _payload(snapshot.get("chats"))
     candidates = []
@@ -432,13 +455,14 @@ def _open_changes(snapshot, top_n, cursor):
         candidates.append(row)
     candidates.sort(key=lambda row: row["_mark"])
     high_water = max([cursor] + [row["_mark"] for row in candidates])
-    labels = {"new": "New", "updated": "Updated", "resolved": "Resolved", "reopened": "Reopened"}
+    labels = {"new": "New", "updated": "Updated", "reopened": "Reopened"}
     lines = []
     seen = set()
     for row in candidates:
         stable = str(row.get("stable_id") or row.get("id") or "")
         seen.add(stable)
-        prefix = labels.get(row.get("change_type"), "Updated")
+        prefix = (_resolution_prefix(row) if row.get("change_type") == "resolved"
+                  else labels.get(row.get("change_type"), "Updated"))
         lines.append(_sanitize_line(
             "%s — %s" % (prefix, row.get("text") or row.get("kind") or "open work"),
             source=row.get("source_node") or "chat-graph"))
@@ -559,12 +583,9 @@ def _atomic_json(path, value):
                                    sort_keys=True) + "\n")
 
 
-def _same_local_day(epoch, now):
-    try:
-        return time.strftime("%Y-%m-%d", time.localtime(int(epoch))) == time.strftime(
-            "%Y-%m-%d", time.localtime(int(now)))
-    except (TypeError, ValueError):
-        return False
+# Same-local-day validity is shared with the deadman via the common module so a
+# brief cannot be "valid" to one and "stale" to the other.
+_same_local_day = same_local_day
 
 
 def _chat_id():
@@ -852,6 +873,10 @@ def _compose_locked(preview=False):
         "brief_id": brief_id,
         "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now)),
         "generated_epoch": now,
+        # A brief is a daily product: valid until the next local midnight, not
+        # aged out on the dashboard's 5-minute poll cadence. Dashboard status and
+        # index.html read this so a same-day brief is never flagged stale.
+        "valid_until": next_local_midnight(now),
         "inputs": health,
         "stale_required_inputs": sorted(stale),
         "selection_high_water": {"loose_end_changes": [high_water[0], high_water[1]]},

@@ -13,7 +13,8 @@ import subprocess
 import sys
 import time
 
-from mission_control_common import NOTIFICATION, sanitize_text
+from mission_control_common import (NOTIFICATION, sanitize_text, same_local_day,
+                                    verify_install_stamp)
 
 
 def _now():
@@ -94,12 +95,9 @@ def _send(category):
         return False
 
 
-def _same_local_day(epoch, now):
-    try:
-        return time.strftime("%Y-%m-%d", time.localtime(int(epoch))) == time.strftime(
-            "%Y-%m-%d", time.localtime(int(now)))
-    except (TypeError, ValueError):
-        return False
+# Shared with the composer via the common module so a brief cannot be "valid"
+# to the dashboard but "stale" to the deadman.
+_same_local_day = same_local_day
 
 
 def _as_int(value, default=None):
@@ -202,10 +200,17 @@ def _main_locked():
                 "schema": 1, "fingerprint": fingerprint, "alerted_at": now,
                 "category": category,
             })
+    # Independent provenance read: verify the installed runtime matches its stamp
+    # (a committed SHA). Recorded only — never blocks or drives the delivery alert.
+    bin_dir = os.path.join(os.path.dirname(home), "bin")
+    stamp = verify_install_stamp(bin_dir)
     _atomic_json(os.path.join(home, "deadman-last-check.json"), {
         "schema": 1, "checked_at": now, "brief_id": brief_id,
         "result": category or "healthy", "alerted": alerted,
         "throttled": throttled,
+        "install_stamp": {"present": stamp["present"], "ok": stamp["ok"],
+                          "head_sha": stamp["head_sha"],
+                          "provenance": stamp["provenance"]},
     })
     if category:
         sys.stderr.write("morning-brief-deadman: %s\n" % category)

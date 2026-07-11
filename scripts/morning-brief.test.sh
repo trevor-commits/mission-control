@@ -313,6 +313,66 @@ PY
 then pass "section dedup keeps different-provenance rows and drops exact duplicates"
 else fail "section dedup keeps different-provenance rows and drops exact duplicates"; fi
 
+# Defect (a) regression: a chats input that is envelope-fresh but whose last
+# FULL transcript ingest is stale must be marked stale — the brief must not claim
+# fresh chats while ingest is ~a day behind. (Was: _input_health read only the
+# envelope generated_epoch, so nested full-ingest lag was invisible.)
+NEST="$TMP/nested"; mkdir -p "$NEST/state/data"
+python3 - "$NEST/state/data" <<'PY'
+import json, os, sys
+root=sys.argv[1]; now=1783674000
+def write(name, data, cadence):
+    json.dump({"schema":1,"feed":name,"generated_epoch":now,"cadence_s":cadence,
+               "ok":True,"error":None,"data":data}, open(os.path.join(root,name+".json"),"w"))
+write("automation", {"jobs": [], "counts": {"red":0,"green":1}}, 300)
+write("git", {"repos": []}, 900)
+# envelope fresh (generated_epoch == now) but last full ingest 26h stale (> 1800s).
+write("chats", {"nodes":[],"edges":[],"loose_ends":[],"loose_end_changes":[],
+                "counts":{"last_full_ingest_age_s": 26*3600}}, 1800)
+write("decisions", {"pinned":[],"inferred":[]}, 300)
+PY
+if MISSION_CONTROL_HOME="$NEST/state" MORNING_BRIEF_NOW_EPOCH=1783674000 "$BRIEF" >/dev/null 2>&1 && \
+   python3 - "$NEST/state/morning-brief/latest.json" <<'PY'
+import json, sys
+d=json.load(open(sys.argv[1]))
+assert d["inputs"]["chats"]["state"] == "stale", d["inputs"]["chats"]
+assert "chats" in d["stale_required_inputs"], d["stale_required_inputs"]
+PY
+then pass "chats input envelope-fresh but full ingest stale is reported stale (nested freshness)"
+else fail "chats input envelope-fresh but full ingest stale is reported stale (nested freshness)"; fi
+
+# Defect (c) regression: resolution wording is evidence-honest. Plain "Resolved"
+# is reserved for evidence-backed resolutions; a fork dedup reads "Duplicate
+# consolidated"; a source-absent inference is marked, never a bare "Resolved".
+if PYTHONPATH="$ROOT/scripts" python3 - "$BRIEF" <<'PY'
+import importlib.machinery, sys
+m=importlib.machinery.SourceFileLoader("mb", sys.argv[1]).load_module()
+def snap(rows):
+    return {"chats": {"schema":1,"feed":"chats","ok":True,"generated_epoch":1783674000,
+                      "data": {"loose_end_changes": rows, "loose_ends": []}}}
+def one(evidence):
+    rows=[{"id":"x","stable_id":"x","source_node":"codex:x","kind":"chat_open_end",
+           "item_key":"x","text":"An item","change_type":"resolved","updated_at":1783673990,
+           "resolved_at":1783673990,"resolution_evidence_type":evidence,
+           "resolution_evidence_ref":"ref"}]
+    lines,_,_=m._open_changes(snap(rows), 8, (0,""))
+    return lines[0]["text"]
+assert one("manual").startswith("Resolved —"), one("manual")
+assert one("source_absent").startswith("Resolved") is False, one("source_absent")
+assert "source absent" in one("source_absent").lower(), one("source_absent")
+fd=one("fork_dedup")
+assert fd.startswith("Duplicate consolidated —"), fd
+# change_type resolved but no evidence type must NOT claim a bare "Resolved"
+assert one(None).startswith("Resolved —") is False, one(None)
+# non-resolution change types keep their plain labels
+rows=[{"id":"y","stable_id":"y","source_node":"codex:y","kind":"chat_open_end",
+       "item_key":"y","text":"New item","change_type":"new","updated_at":1783673990}]
+lines,_,_=m._open_changes(snap(rows), 8, (0,""))
+assert lines[0]["text"].startswith("New —"), lines[0]["text"]
+PY
+then pass "open-change resolution wording keys off evidence type (Resolved reserved for evidence-backed)"
+else fail "open-change resolution wording keys off evidence type (Resolved reserved for evidence-backed)"; fi
+
 printf '%s\n' "----"
 if [ "$FAIL" -eq 0 ]; then echo "ALL PASS"; exit 0; fi
 echo "$FAIL FAILED"; exit 1

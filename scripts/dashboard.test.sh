@@ -624,7 +624,60 @@ c19() { # code-only install cannot write or bootstrap launchd jobs
   fi
 }
 
-c1; c2; c3; c4; c5; c6; c7; c8; c8a; c8b; c9; c10; c11; c12; c13; c14; c14a; c15; c16; c17; c18; c19
+c20() { # daily brief validity: a same-day brief past 6x cadence is NOT stale in status
+  local mch out; mch="$(mktemp -d)"; mkdir -p "$mch/data"
+  python3 - "$mch/data/brief.json" "$REPO/scripts" <<'PY'
+import json, sys, time
+sys.path.insert(0, sys.argv[2])
+from mission_control_common import next_local_midnight
+now = int(time.time()); gen = now - 7200      # composed ~2h ago, still today
+env = {"schema": 1, "feed": "brief", "generated_at": "t", "generated_epoch": gen,
+       "cadence_s": 300, "ok": True, "error": None,
+       "valid_until": next_local_midnight(gen),
+       "data": {"brief_id": "today", "generated_epoch": gen}}
+json.dump(env, open(sys.argv[1], "w"))
+PY
+  out="$(MISSION_CONTROL_HOME="$mch" bash "$DASH" status 2>/dev/null || true)"
+  if printf '%s\n' "$out" | grep -E '^brief' | grep -Eqi 'stale|aging'; then
+    no "status flags a same-day brief stale on poll cadence (validity ignored)"
+  else
+    ok "status honors daily brief validity: same-day brief past 6x cadence not stale"
+  fi
+}
+
+c21() { # install stamps provenance from committed HEAD; verify detects runtime drift
+  command -v git >/dev/null 2>&1 || { ok "install-stamp: git absent — provenance test skipped"; return; }
+  local gr mch head; gr="$(mktemp -d)/repo"; mkdir -p "$gr/scripts" "$gr/dashboard"
+  local n
+  for n in dashboard mission_control_common.py morning-brief morning-brief-deadman decision-alert; do
+    cp "$REPO/scripts/$n" "$gr/scripts/$n"
+  done
+  ( cd "$gr" && git init -q && git add -A && \
+    git -c user.email=t@t -c user.name=t commit -qm init ) >/dev/null 2>&1
+  head="$(git -C "$gr" rev-parse HEAD)"; mch="$(mktemp -d)"
+  DASHBOARD_INSTALL_NO_LAUNCHD=1 REPO_ROOT="$gr" MISSION_CONTROL_HOME="$mch" \
+    bash "$gr/scripts/dashboard" install >/dev/null 2>&1
+  if [ ! -f "$mch/bin/install-stamp.json" ]; then no "install-stamp: no stamp written"; return; fi
+  if python3 - "$mch/bin" "$head" "$REPO/scripts" <<'PY'
+import json, os, sys
+sys.path.insert(0, sys.argv[3])
+from mission_control_common import verify_install_stamp
+bindir, head = sys.argv[1], sys.argv[2]
+stamp = json.load(open(os.path.join(bindir, "install-stamp.json")))
+assert stamp["provenance"] == "head", stamp
+assert stamp["head_sha"] == head, stamp
+assert verify_install_stamp(bindir)["ok"], "clean install must verify"
+# drift: mutate an installed runtime — verify must catch it
+with open(os.path.join(bindir, "morning-brief"), "a") as fh:
+    fh.write("\n# drift\n")
+v = verify_install_stamp(bindir)
+assert not v["ok"] and "morning-brief" in v["mismatches"], v
+PY
+  then ok "install-stamp: committed HEAD provenance recorded and runtime drift is detected"
+  else no "install-stamp: provenance or drift verification failed"; fi
+}
+
+c1; c2; c3; c4; c5; c6; c7; c8; c8a; c8b; c9; c10; c11; c12; c13; c14; c14a; c15; c16; c17; c18; c19; c20; c21
 shell_contract
 echo "----"
 echo "PASS=$PASS FAIL=$FAIL"

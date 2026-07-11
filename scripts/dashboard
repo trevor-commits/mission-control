@@ -37,11 +37,14 @@ REPO = os.environ.get("REPO_ROOT", ".")
 DATA = os.path.join(HOME, "data")
 sys.path.insert(0, os.path.join(REPO, "scripts"))
 try:
-    from mission_control_common import ERROR, EgressCounters, sanitize_text
+    from mission_control_common import (ERROR, EgressCounters, feed_health,
+                                        sanitize_text, verify_install_stamp)
 except ImportError:
     ERROR = "error"
     EgressCounters = None
     sanitize_text = None
+    feed_health = None
+    verify_install_stamp = None
 
 _SHELL_FORBIDDEN = re.compile(r'[;|&`$<>]')
 
@@ -133,6 +136,11 @@ def _wrap(name, cadence, obj):
             raise ValueError("brief generated_epoch must be a positive integer")
         env["generated_epoch"] = epoch
         env["generated_at"] = obj.get("generated_at") or _iso(epoch)
+        # A daily product carries its own validity horizon; status + index.html
+        # honor it so the brief is not aged out on the 5-minute poll cadence.
+        valid_until = obj.get("valid_until") if isinstance(obj, dict) else None
+        if isinstance(valid_until, int) and valid_until > 0:
+            env["valid_until"] = valid_until
     else:
         env["generated_at"] = _iso(now)
         env["generated_epoch"] = now
@@ -367,19 +375,13 @@ def _current_status_env(name):
 
 
 def _verdict(env, cadence):
-    """(text, is_red). red = errored feed or stale beyond 6x cadence."""
-    if env is None:
-        return "missing", True
-    if not env.get("ok", True):
-        return "error", True
-    age = _now() - int(env.get("generated_epoch", 0))
-    if age < 0:
-        return "skew", False
-    if age > 6 * cadence:
-        return "stale", True
-    if age > cadence:
-        return "aging", False
-    return "fresh", False
+    """(text, is_red). red = errored feed or stale beyond 6x cadence.
+
+    Thin adapter over the shared feed_health so status, index.html and the brief
+    agree on freshness (incl. a daily product's valid_until and nested ingest).
+    """
+    h = feed_health(env, cadence, _now())
+    return h["state"], h["red"]
 
 
 def _automation_red(env):
@@ -394,17 +396,9 @@ def _automation_red(env):
 
 
 def _chats_stale_ingest(env, cadence):
-    if not env or not isinstance(env.get("data"), dict):
-        return False
-    counts = env["data"].get("counts") or {}
-    if counts.get("ingest_skipped"):
-        return True
-    if "last_full_ingest_age_s" not in counts:
-        return False
-    age = counts.get("last_full_ingest_age_s")
     # The feed can be freshly generated from a bounded catch-up while the last
-    # completed transcript scan is stale. Surface that separately.
-    return age is None or int(age) > cadence
+    # completed transcript scan is stale. Shared detector, surfaced separately.
+    return feed_health(env, cadence, _now())["nested_stale"]
 
 
 def cmd_status(argv):
@@ -428,6 +422,19 @@ def cmd_status(argv):
             oks = "ok" if env.get("ok", True) else "error"
         red = red or is_red
         print("%-12s %-9s %-6s %s" % (name, age, oks, verdict))
+    if verify_install_stamp is not None:
+        stamp = verify_install_stamp(os.path.join(HOME, "bin"))
+        if stamp["present"]:
+            sha = (stamp["head_sha"] or "unknown")[:12]
+            prov = stamp["provenance"] or "unknown"
+            if stamp["ok"]:
+                print("%-12s %-9s %-6s %s" % ("install", sha, "ok",
+                      "verified (%s)" % prov))
+            else:
+                red = True
+                drift = ",".join(stamp["mismatches"] + stamp["missing"]) or "?"
+                print("%-12s %-9s %-6s %s" % ("install", sha, "error",
+                      "DRIFT: %s (%s)" % (drift, prov)))
     return 1 if red else 0
 
 
@@ -534,21 +541,57 @@ do_open() {
 do_install() {
   mkdir -p "$MISSION_CONTROL_HOME/data" "$MISSION_CONTROL_HOME/bin" "$MISSION_CONTROL_HOME/logs"
   chmod 700 "$MISSION_CONTROL_HOME"
-  # Copy the running dashboard to a STABLE runtime path the plist execs, baking the
+  # Provenance: install runtimes from the committed HEAD SHA, never an uncommitted
+  # working tree, so what runs always matches a pushed commit. A non-git tree
+  # (e.g. a test fixture) falls back to the working copy, stamped as "worktree".
+  local head_sha="" provenance="worktree"
+  if head_sha="$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null)"; then
+    provenance="head"
+  else
+    head_sha=""
+  fi
+  # Copy the dashboard to a STABLE runtime path the plist execs, baking the
   # resolved REPO_ROOT into the copy so `collect --due` finds repo-sibling feeders
   # even though the copy's own SCRIPT_DIR is ~/.mission-control/bin (not the repo).
-  sed -e "s|^REPO_ROOT_DEFAULT=.*|REPO_ROOT_DEFAULT=\"$REPO_ROOT\"|" \
-    "$SCRIPT_DIR/dashboard" > "$MISSION_CONTROL_HOME/bin/dashboard"
+  if [ "$provenance" = "head" ] && git -C "$REPO_ROOT" cat-file -e "HEAD:scripts/dashboard" 2>/dev/null; then
+    git -C "$REPO_ROOT" show "HEAD:scripts/dashboard"
+  else
+    cat "$SCRIPT_DIR/dashboard"
+  fi | sed -e "s|^REPO_ROOT_DEFAULT=.*|REPO_ROOT_DEFAULT=\"$REPO_ROOT\"|" \
+    > "$MISSION_CONTROL_HOME/bin/dashboard"
   chmod +x "$MISSION_CONTROL_HOME/bin/dashboard"
-  echo "installed runtime -> $MISSION_CONTROL_HOME/bin/dashboard (REPO_ROOT=$REPO_ROOT)"
-  local runtime
+  echo "installed runtime -> $MISSION_CONTROL_HOME/bin/dashboard (REPO_ROOT=$REPO_ROOT, $provenance $head_sha)"
+  local runtime dest
   for runtime in morning-brief morning-brief-deadman decision-alert mission_control_common.py; do
-    if [ -f "$REPO_ROOT/scripts/$runtime" ]; then
-      cp "$REPO_ROOT/scripts/$runtime" "$MISSION_CONTROL_HOME/bin/$runtime"
-      case "$runtime" in *.py) chmod 600 "$MISSION_CONTROL_HOME/bin/$runtime" ;; *) chmod +x "$MISSION_CONTROL_HOME/bin/$runtime" ;; esac
-      echo "installed runtime -> $MISSION_CONTROL_HOME/bin/$runtime"
+    dest="$MISSION_CONTROL_HOME/bin/$runtime"
+    if [ "$provenance" = "head" ]; then
+      if git -C "$REPO_ROOT" cat-file -e "HEAD:scripts/$runtime" 2>/dev/null; then
+        git -C "$REPO_ROOT" show "HEAD:scripts/$runtime" > "$dest"
+      else
+        echo "skip: $runtime not committed at HEAD (provenance requires a committed source)"; continue
+      fi
+    elif [ -f "$REPO_ROOT/scripts/$runtime" ]; then
+      cp "$REPO_ROOT/scripts/$runtime" "$dest"
+    else
+      continue
     fi
+    case "$runtime" in *.py) chmod 600 "$dest" ;; *) chmod +x "$dest" ;; esac
+    echo "installed runtime -> $dest"
   done
+  # Stamp the install: HEAD SHA + sha256 of each installed runtime, so status and
+  # the deadman can verify the runtime matches a committed SHA without needing git.
+  MC_BIN="$MISSION_CONTROL_HOME/bin" MC_HEAD_SHA="$head_sha" MC_PROVENANCE="$provenance" \
+    python3 - "$SCRIPT_DIR" <<'PYEOF' || echo "stamp skipped (mission_control_common unavailable)"
+import os, sys, time
+sys.path.insert(0, sys.argv[1])
+from mission_control_common import write_install_stamp
+names = ["dashboard", "morning-brief", "morning-brief-deadman", "decision-alert",
+         "mission_control_common.py"]
+write_install_stamp(os.environ["MC_BIN"], os.environ.get("MC_HEAD_SHA") or None,
+                    os.environ.get("MC_PROVENANCE") or "unknown", names, int(time.time()))
+print("stamped install -> %s/install-stamp.json (%s)" % (
+    os.environ["MC_BIN"], os.environ.get("MC_PROVENANCE")))
+PYEOF
   if [ -f "$REPO_ROOT/dashboard/index.html" ]; then
     cp "$REPO_ROOT/dashboard/index.html" "$MISSION_CONTROL_HOME/index.html"
     # vendored graph engine for the connection Map (local, offline; loaded via relative src)

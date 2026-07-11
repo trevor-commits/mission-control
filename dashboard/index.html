@@ -550,9 +550,13 @@ body {
     if (env.schema !== 1) return { ok: false, reason: "unsupported schema " + env.schema + " — keeping last good", env: env, hard: true };
     var epoch = +env.generated_epoch || 0;
     var cadence = +env.cadence_s || 0;
+    var validUntil = +env.valid_until || 0;
     var age = nowS() - epoch;
     var flag = null;
     if (age < 0) flag = "skew";
+    // A daily product (valid_until set) stays fresh for its whole valid day
+    // instead of aging out on the poll cadence.
+    else if (validUntil && nowS() < validUntil) flag = null;
     else if (cadence && age > 2 * cadence) flag = "stale";
     var feedError = env.ok === false ? (env.error || "feeder error") : null;
     if (currentError && currentError.ok === false &&
