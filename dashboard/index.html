@@ -1059,7 +1059,7 @@ body {
     if (gc.ok && gc.data && Array.isArray(gc.data.nodes)) {
       var owe = looseEnds(gc.data).length;
       var cnt = gc.data.counts || {};
-      var staleIngest = "last_full_ingest_age_s" in cnt && (cnt.last_full_ingest_age_s == null || +cnt.last_full_ingest_age_s > 1800);
+      var staleIngest = cnt.full_ingest_stale === true;
       var ingestSkipped = cnt.ingest_skipped === true;
       s.chats = { state: (owe || staleIngest || ingestSkipped) ? "amber" : "green", count: owe };
     } else s.chats = { state: "grey", count: 0 };
@@ -1111,8 +1111,7 @@ body {
       var st = !g.ok ? "grey" : (g.feedError || g.flag === "stale" ? "red" : (g.flag === "skew" ? "amber" : "green"));
       if (n === "chats" && g.ok && g.data && g.data.counts &&
           (g.data.counts.ingest_skipped === true ||
-           ("last_full_ingest_age_s" in g.data.counts &&
-            (g.data.counts.last_full_ingest_age_s == null || +g.data.counts.last_full_ingest_age_s > 1800)))) st = "red";
+           g.data.counts.full_ingest_stale === true)) st = "red";
       dots.appendChild(h("span", { title: n + (g.ok ? " · " + fmtAge(g.epoch) : " · " + g.reason) }, dot(st)));
     });
     meta.appendChild(dots);
@@ -1290,7 +1289,7 @@ body {
     // sweep FIX 5: scan_errors_24h was computed in the feed but never surfaced. Show it
     // (amber card + a line) so a silently-degrading transcript scan is visible.
     var scanErr = +cnt.scan_errors_24h || 0;
-    var staleIngest = "last_full_ingest_age_s" in cnt && (cnt.last_full_ingest_age_s == null || +cnt.last_full_ingest_age_s > 1800);
+    var staleIngest = cnt.full_ingest_stale === true;
     var ingestSkipped = cnt.ingest_skipped === true;
     var lines = [owe + " open work item" + (owe === 1 ? "" : "s")];
     if (scanErr > 0) lines.push(scanErr + " chat" + (scanErr > 1 ? "s" : "") + " couldn't be read today");

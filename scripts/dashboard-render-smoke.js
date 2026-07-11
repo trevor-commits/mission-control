@@ -306,6 +306,60 @@ for (const tab of TABS) {
   console.log('PASS: absurd far-future valid_until is rejected — brief shows stale banner');
 })();
 
+// ER-109 round 5: full-ingest freshness must come from the feed's computed
+// full_ingest_stale flag (nightly SLA via mission_control_common.nested_ingest_stale),
+// not a re-implemented 1800s threshold. A healthy nightly ingest ~3286s old (past the
+// old buggy 30-minute threshold, well inside the 30h SLA) must render NOT-stale; a
+// genuinely missed nightly (>30h) must render stale. Both fixtures carry the raw age
+// AND the flag a real chat-graph export would stamp for that age, so a renderer that
+// regresses to reading last_full_ingest_age_s directly fails the healthy case.
+function renderHomeWithChatsCounts(overrides) {
+  const f = JSON.parse(JSON.stringify(feeds));
+  Object.assign(f.chats.data.counts, { ingest_skipped: false }, overrides);
+  resetDom();
+  locationShim.hash = '#home';
+  const sandbox = {
+    window: { MC: { feeds: f }, addEventListener() {}, removeEventListener() {} },
+    document: documentShim, location: locationShim,
+    setInterval() { return 0; }, clearInterval() {}, setTimeout(fn) { if (typeof fn === 'function') fn(); return 0; }, clearTimeout() {},
+    Math: Math, Date: Date, JSON: JSON, console: { log() {}, warn() {}, error() {} },
+    Array: Array, Object: Object, String: String, Number: Number, isFinite: isFinite, parseInt: parseInt, parseFloat: parseFloat,
+    cytoscape() { return { on() {}, destroy() {}, $() { return { select() { return this; } }; } }; },
+  };
+  sandbox.window.window = sandbox.window;
+  sandbox.globalThis = sandbox;
+  vm.runInNewContext(scriptBody, sandbox, { timeout: 5000 });
+  return (byId['mc-main'] && byId['mc-main'].textContent) || '';
+}
+(function fullIngestFreshnessHealthy() {
+  let txt;
+  try {
+    txt = renderHomeWithChatsCounts({ last_full_ingest_age_s: 3286, full_ingest_stale: false });
+  } catch (e) {
+    console.error('FAIL: healthy full-ingest home render THREW: ' + (e && e.message));
+    fails++; return;
+  }
+  if (txt.indexOf('full chat scan is stale') !== -1) {
+    console.error('FAIL: healthy nightly ingest (age 3286s, full_ingest_stale=false) rendered stale');
+    fails++; return;
+  }
+  console.log('PASS: healthy nightly full ingest (age 3286s) renders NOT-stale');
+})();
+(function fullIngestFreshnessMissed() {
+  let txt;
+  try {
+    txt = renderHomeWithChatsCounts({ last_full_ingest_age_s: 111600, full_ingest_stale: true }); // ~31h
+  } catch (e) {
+    console.error('FAIL: missed full-ingest home render THREW: ' + (e && e.message));
+    fails++; return;
+  }
+  if (txt.indexOf('full chat scan is stale') === -1) {
+    console.error('FAIL: genuinely missed nightly ingest (age 111600s, full_ingest_stale=true) did not render stale');
+    fails++; return;
+  }
+  console.log('PASS: genuinely missed nightly full ingest (age ~31h) renders stale');
+})();
+
 if (fails) { console.error('render-smoke: ' + fails + ' tab(s) FAILED'); process.exit(1); }
 console.log('render-smoke: all ' + TABS.length + ' tabs render over fixtures');
 process.exit(0);
