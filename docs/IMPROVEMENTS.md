@@ -126,7 +126,7 @@ packet done unless its verify commands pass on the real machine.
 **Verify:** suites + screenshot of #git.
 **Recommended model:** Codex gpt-5.5 high.
 
-## P9 — Automation tab: re-run + streaks + next run
+## P9 — Automation tab: re-run + streaks + next run — implemented by Morning Brief lane
 
 **Why:** Copilot's list (rightly): status, last run, next run, failure streak, re-run button.
 

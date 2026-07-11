@@ -34,6 +34,7 @@ Preserve a durable completion trail for verified work instead of deleting it fro
 - 2026-07-09 | ER-107 bounded Tier 2 outcome enrichment — closed-taxonomy extraction, deterministic session/repo/audit lineage, inferred-only follow-ups, strict kill/config/cache boundaries, and inactive schedule template landed as `df991b4`; independent iterative audit review-clean; full record below.
 - 2026-07-09 | ER-107 deterministic/Tier 1 Morning Brief — merged and installed through `2432d6e`; independent review-clean, with Telegram/Tier 2/activation/five-morning proof still open; full record below.
 - 2026-07-09 | ER-107 Phase 0 reliability repairs — T7 LaunchAgents moved to a stable internal runtime, Morning Health bounded and registered, and improvement-loop wrapper noise removed; owning-repo commits `bbed5e3`, `bd7226e`, `1326217`, and `5f01334`; full record below.
+- 2026-07-11 | ER-109 Morning Brief P9 job history slice — verified the existing P9 automation-status/history/renderer implementation, repaired a date-sensitive dashboard status test, and marked the P9 roadmap row implemented by the Morning Brief lane; full record below.
 - 2026-07-08 | Audit-loop severity rules — implemented computed red/amber/grey severity for the Open work ledger; full record below.
 - 2026-07-08 | Audit-loop wording polish — clarified the Open work hide action and proved source-backed items reappear on refresh; landed in the audit-loop follow-up commit; full record below.
 - 2026-07-08 | Map journal action polish — aligned Home/Map/Chats action labels and made Map journal rows open the matching connection web; full record below.
@@ -45,6 +46,21 @@ Preserve a durable completion trail for verified work instead of deleting it fro
 - 2026-07-04 | ER-087 follow-up audit gaps — governance scaffold, product intent, tab wording, stale-ingest honesty, and Map smoke coverage landed in this change; full record below.
 
 ## Work Record Log
+### 2026-07-11 — Morning Brief P9 job history slice
+- Problem: ER-109 slice 2 needed the P9 automation tab job-history/streaks/next-run behavior proven and recorded before the next Morning Brief slice.
+- Reasoning: The P9 implementation was already present on `main` in `scripts/automation-status`, `dashboard/index.html`, and the automation fixture/smoke coverage, so the smallest correct slice was to verify the existing behavior, fix the test drift that blocked the required suite, and record the result instead of duplicating product code.
+- Diagnosis inputs: Fable Morning Brief plan Phase 1, ER-109 implementation packet addendum, `docs/IMPROVEMENTS.md` P9, current `scripts/automation-status`, `scripts/automation-status.test.sh`, `dashboard/index.html`, `dashboard/fixtures/automation.json`, and `scripts/dashboard-render-smoke.js`.
+- Implementation inputs: branch `feature/morning-brief-p9-job-history`; fixed `scripts/dashboard.test.sh` status stubs so full-envelope feeds use current test timestamps instead of aging into false stale failures; marked `docs/IMPROVEMENTS.md` P9 as implemented by the Morning Brief lane.
+- Fix: preserved the existing P9 product implementation and repaired the required dashboard shell suite's date-sensitive all-green status case.
+- Self-audit:
+  - method: reran the required P9 slice verification commands after the test repair and checked the P9 source paths against the requested spec.
+  - outcome: `bash scripts/automation-status.test.sh`, `REPO_ROOT=$PWD bash scripts/dashboard.test.sh --require-shell`, and `node scripts/dashboard-render-smoke.js .` passed; automation history persistence, next-run schedule math, failure streaks, renderer mini-strip, and `Run now` copy are covered.
+  - did not verify: live launchd kickstart execution or a natural future automation run because this slice is code/test proof only.
+- by: Codex thread `019f4f3d-3034-7283-b63c-e4e8890b51f1`.
+- triggered by: ER-109 benefit pilot slice 2 worker request.
+- led to: slice 3 should be U1 thin walking-skeleton brief; repo remains implemented-pending-proof for elapsed/live Morning Brief gates.
+- linear: repo-only; no Mission Control Linear team is configured.
+
 ### 2026-07-09 — Morning Brief bounded Tier 2 outcome enrichment
 - Problem: Fable correctly made model-assisted outcome plainness part of Morning Brief, but a literal free-form rewrite could invent commands, identifiers, repositories, or authoritative claims; the first closed-taxonomy implementation then became too generic to explain which session or audit did what.
 - Reasoning: Use the model only where it adds value—as a bounded classifier—while deterministic graph/session facts carry identity, repo, audit/spawn/continuation relationships, commits, actions, and confirmed decisions. Keep all live transcript egress and scheduling behind explicit authorization.
@@ -306,7 +322,30 @@ Each active branch entry should include:
 - `cleanup command`
 - `linked PR/audit/completion record`
 
-- None. ER-107 remains active as an OpenSpec verification program on `main`, not as an unmerged branch.
+### `feature/morning-brief-p9-job-history`
+- status: active; verification green; ready for governor review/merge
+- created: 2026-07-11
+- base: `main` at `420a629`
+- worktree: `/Users/gillettes/Coding Projects/mission-control`
+- source chat: 2026-07-11 Codex thread `019f4f3d-3034-7283-b63c-e4e8890b51f1`
+- last refreshed by chat: 2026-07-11 Codex thread `019f4f3d-3034-7283-b63c-e4e8890b51f1`
+- purpose: Execute ER-109 Morning Brief slice 2 by proving P9 job history/streaks/next-run behavior and repairing the required dashboard status test drift.
+- linked issue: repo-only; no Mission Control Linear team is configured.
+- plugin mirror: none; repo-only mode.
+- merge expectation: merge to `main` after governor review.
+- merge target: `main`
+- review surface: branch diff plus required suite output in Test Evidence Log.
+- exit checklist:
+  - [x] Implementation/docs complete
+  - [x] Required verification complete
+  - [x] `todo.md` updated
+  - [ ] Commit pushed
+  - [ ] Merge or explicit no-merge closeout decided
+  - [ ] Local/remote branch cleanup complete
+- delete when: after merge/closeout and branch cleanup completes.
+- retain reason: n/a
+- cleanup command: `git branch -d feature/morning-brief-p9-job-history && git push origin --delete feature/morning-brief-p9-job-history`
+- linked PR/audit/completion record: Work Record `2026-07-11 — Morning Brief P9 job history slice`.
 
 ## Branch History
 - 2026-07-09 | `codex/morning-brief` | base `ebfbd50` | merged by fast-forward to `main`; implementation and closeout landed through `cf6b536`, pushed, independently review-clean, then local/remote branch and `/Users/gillettes/Coding Projects/mission-control-worktrees/morning-brief` removed | source: Codex `019f4963-1e75-7600-8a17-1e6f6f8e8ca6` | record: `records/2026-07-09-morning-brief-orchestration-convergence.md`.
@@ -363,6 +402,7 @@ If it's not here, it isn't remembered.
 
 ## Test Evidence Log
 If it's not here, it isn't remembered.
+- 2026-07-11 | commands: `bash scripts/automation-status.test.sh`; `REPO_ROOT=$PWD bash scripts/dashboard.test.sh --require-shell`; `node scripts/dashboard-render-smoke.js .` | result: pass; automation ALL PASS, dashboard suite PASS=30 FAIL=0, and render smoke all 7 tabs | log/PR reference: Work Record `2026-07-11 — Morning Brief P9 job history slice` | by: Codex thread `019f4f3d-3034-7283-b63c-e4e8890b51f1` | linear: repo-only; no Mission Control Linear team is configured.
 - 2026-07-09 | commands: final bounded Tier 2 cold matrix — graph, automation, dashboard shell/render, shared privacy, brief/delivery/deadman, coverage/extractor, decisions, runner, usage, scanner self-test, Python/shell/JSON/plist checks, strict OpenSpec, HOTL lint, `git diff --check`, and iterative independent counterexample replay | result: PASS; implementation `df991b4` pushed; dashboard `PASS=30 FAIL=0`, runner `PASS=32 FAIL=0`, all seven tabs render, and independent current-tree verdict `review-clean` with no P0–P3 findings | log/PR reference: `records/morning-brief-tier2-codex-audit.md`; `openspec/changes/morning-brief/verify.md`; commit `df991b4` | by: Codex thread `019f4963` with `/root/outcome_audit` and challenger | linear: repo-only.
 - 2026-07-09 | commands: full Morning Brief cold matrix (`chat-graph`, `automation-status`, dashboard shell/render, usage, scanner self-test, shared egress, brief/delivery/deadman, coverage, decisions, runner), Python/shell/JSON/static checks, strict OpenSpec, HOTL lint, `git diff --check`, live parser-v5 migration, real rollback/canonical reinstall, LaunchAgent hash comparison, installed browser capture, and independent per-record/holistic/scoped re-audits | result: PASS for deterministic/Tier 1 implementation; dashboard `PASS=29 FAIL=0`, runner `PASS=32 FAIL=0`, all seven tabs rendered, prefix-only/full-token and contradictory-schedule negative controls passed, 23/23 real candidates correctly refused, normalized action-relevant Git facts unchanged, and no LaunchAgent installed | log/PR reference: `openspec/changes/morning-brief/verify.md`; `records/2026-07-09-morning-brief-orchestration-convergence.md`; `records/morning-brief-independent-codex-audit.md`; `/tmp/morning-brief-runner-live-dry-run.jsonl`; `tmp/playwright/morning-brief-final-*.png` | by: Codex thread `019f4963` and independent reviewers | linear: repo-only.
 - 2026-07-09 | commands: Morning Brief delivery/privacy convergence — repeated `bash scripts/morning-brief.test.sh`; `bash scripts/morning-brief-delivery.test.sh`; `bash scripts/morning-brief-deadman.test.sh`; `bash scripts/mission-control-common.test.sh`; `REPO_ROOT="$PWD" bash scripts/dashboard.test.sh --require-shell`; `bash scripts/automation-status.test.sh`; `node scripts/dashboard-render-smoke.js .`; Python/Bash syntax; strict OpenSpec; HOTL document lint; `git diff --check`; independent adversarial replay after each fix | result: PASS; exact-once concurrent delivery, compose/send coherence, same-day deadman, malformed timestamp matrix, stale/error overlay honesty, whole-message secret screening, cursor fail-close, content-free counters, and sensitive stderr rejection all pass; dashboard `PASS=26 FAIL=0`; independent final verdict review-clean | log/PR reference: `records/2026-07-09-morning-brief-delivery-privacy-audit.md`; Work Record `2026-07-09 — Morning Brief resumable delivery and privacy convergence` | by: Codex thread `019f4963` plus reviewer `/root/mission_mapping` | linear: repo-only.

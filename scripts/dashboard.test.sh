@@ -21,30 +21,41 @@ mkdir -p "$STUB/bin"
 
 # --- stub feeder payloads, written via python so unicode/hostile text is safe -
 python3 /dev/stdin "$STUB" <<'PYEOF'
-import json, os, sys
+import json, os, sys, time
 d = sys.argv[1]
 def w(name, obj):
     json.dump(obj, open(os.path.join(d, name), "w"))
+now = int(time.time())
+now_iso = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now))
 # raw payloads -> dashboard wraps them
 w("usage.json", {"providers": [{"name": "claude", "pct": 62}]})
 w("git.json", {"repos": [{"name": "gi", "dirty": True}]})
 w("git2.json", {"repos": [{"marker": "NEW"}]})
 # chats: already a full envelope (passthrough) + hostile title
 w("chats.json", {"schema": 1, "feed": "chats",
-                 "generated_at": "2026-07-02T12:00:00Z", "generated_epoch": 1751467200,
+                 "generated_at": now_iso, "generated_epoch": now,
                  "cadence_s": 1800, "ok": True, "error": None,
                  "data": {"nodes": [{"id": "x:1",
                           "title": "Tre'vor \U0001F600 </script> chat"}],
                           "edges": [], "topics": [], "counts": {}}})
 # automation envelopes; counts carries a "red" COUNT key on purpose (false-match trap)
 def auto(jobs, red):
-    return {"schema": 1, "feed": "automation", "generated_at": "2026-07-02T12:00:00Z",
-            "generated_epoch": 1751467200, "cadence_s": 300, "ok": True, "error": None,
+    return {"schema": 1, "feed": "automation", "generated_at": now_iso,
+            "generated_epoch": now, "cadence_s": 300, "ok": True, "error": None,
             "data": {"jobs": jobs, "counts": {"green": len(jobs) - red, "red": red}}}
 w("auto_green.json", auto([{"label": "A", "state": "green"},
                            {"label": "B", "state": "green"}], 0))
 w("auto_red.json", auto([{"label": "A", "state": "green"},
                          {"label": "B", "state": "red"}], 1))
+w("decisions.json", {"schema": 1, "feed": "decisions", "generated_at": now_iso,
+                     "generated_epoch": now, "cadence_s": 300, "ok": True,
+                     "error": None, "data": {"items": []}})
+w("brief.json", {"schema": 1, "feed": "brief", "generated_at": now_iso,
+                 "generated_epoch": now, "cadence_s": 3600, "ok": True,
+                 "error": None, "data": {"brief_id": "test-brief",
+                 "generated_epoch": now, "delivery": {"state": "not_sent"},
+                 "sections": [], "inputs": {}, "stale_required_inputs": [],
+                 "selection_high_water": {"loose_end_changes": [0, ""]}}})
 PYEOF
 
 # stub `open` on PATH: touches a sentinel if ever invoked
@@ -55,8 +66,8 @@ export DASHBOARD_CMD_USAGE="cat '$STUB/usage.json'"
 export DASHBOARD_CMD_GIT="cat '$STUB/git.json'"
 export DASHBOARD_CMD_CHATS="cat '$STUB/chats.json'"
 export DASHBOARD_CMD_AUTOMATION="cat '$STUB/auto_green.json'"
-export DASHBOARD_CMD_DECISIONS="cat '$REPO/dashboard/fixtures/decisions.json'"
-export DASHBOARD_CMD_BRIEF="cat '$REPO/dashboard/fixtures/brief.json'"
+export DASHBOARD_CMD_DECISIONS="cat '$STUB/decisions.json'"
+export DASHBOARD_CMD_BRIEF="cat '$STUB/brief.json'"
 
 newhome() { mktemp -d "$ROOT/home.XXXXXX"; }
 
