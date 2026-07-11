@@ -169,6 +169,12 @@ PY
 then pass "outcome extractor has bounded pre-brief retry slots"
 else fail "outcome extractor retry schedule"; fi
 
+if PYTHONPATH="$ROOT/scripts" python3 "$ROOT/scripts/morning-brief-deadman-sender.test.py"; then
+  pass "direct deadman sender security and transport suite"
+else
+  fail "direct deadman sender security and transport suite"
+fi
+
 printf '%s\n' "----"
 if [ "$FAIL" -eq 0 ]; then echo "ALL PASS"; exit 0; fi
 echo "$FAIL FAILED"; exit 1
