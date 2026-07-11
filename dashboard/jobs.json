@@ -36,6 +36,22 @@
     {
       "evidence": [
         {
+          "path": "/Users/gillettes/.local/state/repo-nightly-bundle/last-status.json",
+          "role": "run",
+          "run_key": true,
+          "semantic_status": true
+        }
+      ],
+      "err_log": "/Users/gillettes/.local/state/repo-nightly-bundle/launchd.err.log",
+      "expected_freshness_s": 93600,
+      "kind": "calendar",
+      "label": "Nightly Repository Bundles",
+      "name": "com.gillettes.repo-nightly-bundle",
+      "schedule": "02:30 daily"
+    },
+    {
+      "evidence": [
+        {
           "path": "/Users/gillettes/.codex/automation-state/morning-health-brief/last-run",
           "role": "run",
           "run_key": true

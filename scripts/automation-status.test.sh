@@ -282,6 +282,24 @@ PY
 then pass "semantic completed marker permits green and resets history"
 else fail "semantic completed marker classification"; fi
 
+# The production registry must consume the fail-closed repository-bundle
+# receipt semantically. A fresh file or exit-zero launchd row alone must never
+# turn a partial backup into a green automation card.
+if python3 - "$HERE/../dashboard/jobs.json" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1]))
+j = next(x for x in d["jobs"] if x["name"] == "com.gillettes.repo-nightly-bundle")
+assert j["kind"] == "calendar" and j["schedule"] == "02:30 daily", j
+assert j["expected_freshness_s"] == 93600, j
+assert j["err_log"].endswith("repo-nightly-bundle/launchd.err.log"), j
+assert j["evidence"] == [{
+    "path": "/Users/gillettes/.local/state/repo-nightly-bundle/last-status.json",
+    "role": "run", "run_key": True, "semantic_status": True,
+}], j
+PY
+then pass "registry: nightly bundles use the semantic fail-closed receipt"
+else fail "registry: nightly bundle health contract is missing or diluted"; fi
+
 # --- distinct-run history, schedule math, globs, and atomic persistence ----
 RUNS="$WORK/distinct-runs"; mkdir -p "$RUNS"
 RUN_MARKER="$RUNS/run-marker.json"
