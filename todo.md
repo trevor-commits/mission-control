@@ -63,7 +63,7 @@ Preserve a durable completion trail for verified work instead of deleting it fro
 - Fix: installed-surface verification is now exact for five runtime files (`dashboard`, `morning-brief`, `morning-brief-deadman`, `decision-alert`, `mission_control_common.py`) and two assets (`index.html`, `vendor/cytoscape.min.js`); missing or unwritable required members produce install `rc=1` and no false clean stamp. Full-ingest unknowns now surface as unknown in producer, CLI, and Home renderer instead of disappearing or being mislabeled as stale.
 - Test Evidence / Self-audit:
   - method: cleared `scripts/__pycache__`, reran the full cold chain, plus syntax and whitespace checks.
-  - outcome: `chat-graph.test.sh` ALL PASS; `mission-control-common.test.sh` PASS=2 FAIL=0; `morning-brief.test.sh` ALL PASS; `morning-brief-delivery.test.sh` ALL PASS; `morning-brief-deadman.test.sh` ALL PASS; `dashboard.test.sh --require-shell` PASS=37 FAIL=0; `dashboard-render-smoke.js` all 7 tabs and all freshness/unknown regressions PASS; `git diff --check` clean; `bash -n` clean.
+  - outcome: `chat-graph.test.sh` ALL PASS; `mission-control-common.test.sh` PASS=2 FAIL=0; `morning-brief.test.sh` ALL PASS; `morning-brief-delivery.test.sh` ALL PASS; `morning-brief-deadman.test.sh` ALL PASS; `dashboard.test.sh --require-shell` PASS=37 FAIL=0; `dashboard-render-smoke.js` all 7 tabs and all freshness/unknown regressions PASS; `git diff --check` clean; `bash -n` clean; code-only reinstall wrote a full required-set stamp and `verify_install_stamp` returned ok.
   - did not verify: live natural 7:00/7:20 AM runs, five-morning comprehension proof, provider calibration, or merge to `main`; no Telegram send was performed.
 - Ripple Check: touched runtime/stamp/freshness contracts, producer/export counts, Home renderer, design wording, and branch ledger. `PROJECT_INTENT.md`, `AGENTS.project.md`, `CONTINUITY.md`, `COHERENCE.md`, and `LINEAR.md` still agree: this remains local/offline Mission Control, repo-only Linear mode, and implemented-pending-proof until elapsed live gates finish.
 - by: Codex thread `019f4d75-69e9-7211-9e76-2942acb0d0e8`.
@@ -497,7 +497,7 @@ Each active branch entry should include:
 - `linked PR/audit/completion record`
 
 ### `feature/morning-brief-activation`
-- status: active; round-8 hardening implemented and locally verified; pending push, reinstall proof, and independent re-audit before merge.
+- status: active; round-8 hardening implemented, pushed, and code-only reinstalled; pending independent re-audit before merge.
 - created: 2026-07-10
 - base: `main` at `420a629`
 - worktree: `/Users/gillettes/Coding Projects/mission-control`
@@ -513,8 +513,8 @@ Each active branch entry should include:
   - [x] Round-8 implementation/docs complete
   - [x] Required local verification complete
   - [x] `todo.md` updated
-  - [ ] Commit pushed
-  - [ ] Reinstall from committed SHA and stamp verified
+  - [x] Commit pushed
+  - [x] Reinstall from committed SHA and stamp verified
   - [ ] Independent re-audit complete
   - [ ] Merge or explicit no-merge closeout decided
   - [ ] Local/remote branch cleanup complete
