@@ -590,6 +590,7 @@ do_install() {
   # working tree stamped "head". Worktree fallback mirrors the runtime path.
   if [ "$provenance" = "head" ] && git -C "$REPO_ROOT" cat-file -e "HEAD:dashboard/index.html" 2>/dev/null; then
     git -C "$REPO_ROOT" show "HEAD:dashboard/index.html" > "$MISSION_CONTROL_HOME/index.html"
+    rm -rf "$MISSION_CONTROL_HOME/vendor"
     mkdir -p "$MISSION_CONTROL_HOME/vendor"
     git -C "$REPO_ROOT" ls-tree --name-only "HEAD:dashboard/vendor" 2>/dev/null | while IFS= read -r vf; do
       [ -n "$vf" ] || continue
@@ -599,6 +600,7 @@ do_install() {
   elif [ -f "$REPO_ROOT/dashboard/index.html" ]; then
     cp "$REPO_ROOT/dashboard/index.html" "$MISSION_CONTROL_HOME/index.html"
     if [ -d "$REPO_ROOT/dashboard/vendor" ]; then
+      rm -rf "$MISSION_CONTROL_HOME/vendor"
       mkdir -p "$MISSION_CONTROL_HOME/vendor"
       cp "$REPO_ROOT/dashboard/vendor/"* "$MISSION_CONTROL_HOME/vendor/" 2>/dev/null || true
     fi
