@@ -1,6 +1,7 @@
 # TODO
 
 ## Active Next Steps
+- ER-134 desktop-first usability (2026-07-12): light Home ≤3 Needs-you, menu-bar panel, decide answer→Goal prompt. Suites: render-smoke OK; er134-usability 13/0; dashboard.test.sh PASS=55 FAIL=0.
 If it's not here, it isn't remembered.
 Capture the current goal plus the concrete dependency-ordered steps that are still open.
 - Keep this section short, current, and ordered by impact/dependency.
