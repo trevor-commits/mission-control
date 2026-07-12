@@ -971,11 +971,24 @@ body {
                      sourceName: "chat-graph export" });
       });
     }
-    // git: repos needing a push/commit or stale branches
+    // git: repos needing lifecycle decisions, push/commit, or stale branches
     var gg = guard("git");
     if (gg.ok && gg.data && Array.isArray(gg.data.repos)) {
+      var gitDecisionShown = 0;
+      gg.data.repos.forEach(function (r) {
+        repoDecisionRows(r).slice(0, 2).forEach(function (row) {
+          if (gitDecisionShown >= 2) return;
+          gitDecisionShown += 1;
+          out.push({ state: row.state || "amber", seen: gg.env.generated_at || "", tab: "git",
+                     problem: r.repo + " - " + (row.label || "Git decision"),
+                     impact: row.detail || "The repo state can block landing or trusting current work.",
+                     action: row.action || decisionRowAction(row),
+                     sourceAge: fmtAge(gg.epoch),
+                     sourceName: "scan-unfinished-work branch lifecycle" });
+        });
+      });
       gg.data.repos.map(function (r) { return { r: r, act: gitAction(r) }; })
-        .filter(function (x) { return x.act.state !== "green"; }).slice(0, 2).forEach(function (x) {
+        .filter(function (x) { return x.act.state !== "green" && !repoDecisionRows(x.r).length; }).slice(0, 2).forEach(function (x) {
           var r = x.r, act = x.act;
           out.push({ state: act.state, seen: gg.env.generated_at || "", tab: "git",
                      problem: r.repo + " — " + act.summary,
@@ -1031,6 +1044,11 @@ body {
   function gitAction(r) {
     // remote relationship: synced/ahead/behind/diverged/no-remote
     var rel = r.remote || (r.no_remote ? "no-remote" : (r.ahead > 0 && r.behind > 0 ? "diverged" : (r.ahead > 0 ? "ahead" : (r.behind > 0 ? "behind" : "synced"))));
+    var decisions = repoDecisionRows(r);
+    if (decisions.length) {
+      return { state: decisions.some(function (d) { return d.state === "red"; }) ? "red" : "amber",
+        verb: decisionRowAction(decisions[0]), summary: decisions[0].label || "branch lifecycle needs review", rel: rel };
+    }
     if (r.dirty) return { state: "amber", verb: "Save changes to Git", summary: (r.dirty_files || "?") + " files changed", rel: rel };
     if (rel === "diverged") return { state: "red", verb: "Reconcile with GitHub", summary: "local and GitHub both changed", rel: rel };
     if (rel === "ahead") return { state: "amber", verb: "Send branch to GitHub", summary: (r.ahead || "?") + " local commits not on GitHub", rel: rel };
@@ -1039,6 +1057,16 @@ body {
     if (r.detached) return { state: "amber", verb: "Check branch", summary: "not on a named branch", rel: rel };
     if (Array.isArray(r.branches) && r.branches.length) return { state: "amber", verb: "Review old branches", summary: r.branches.length + " old branches", rel: rel };
     return { state: "green", verb: "Nothing to do", summary: "clean", rel: rel };
+  }
+  function repoDecisionRows(r) { return Array.isArray(r && r.decision_rows) ? r.decision_rows : []; }
+  function decisionRowAction(row) { return (row && row.action) || "review branch lifecycle"; }
+  function metadataLabel(status) { return { explained: "Explained", partial: "Missing details", unexplained: "Needs purpose", "not-required": "Not required", unknown: "Unknown" }[status] || "Unknown"; }
+  function metadataTone(status) { return status === "explained" || status === "not-required" ? "green" : (status === "unknown" ? "red" : "amber"); }
+  function lifecycleRows(r) {
+    var rows = [];
+    (r.branch_facts || []).forEach(function (b) { if (!b || b.metadata_status === "not-required" || b.is_default) return; rows.push({ kind: "Branch", name: b.name || "?", status: b.metadata_status, purpose: b.purpose, owner: b.owner_chat, merge: b.merge_condition, close: b.safe_delete_condition, source: b.source, action: b.action }); });
+    (r.worktrees || []).forEach(function (w) { if (!w || w.metadata_status === "not-required") return; rows.push({ kind: w.detached ? "Detached worktree" : "Worktree", name: w.branch || w.path || "?", status: w.metadata_status, purpose: w.purpose, owner: w.owner_chat, merge: w.merge_condition, close: w.safe_delete_condition, source: w.source, action: w.action }); });
+    return rows;
   }
   var REL_CLASS = { synced: "mc-state-green", ahead: "mc-state-amber", behind: "mc-state-amber",
                     diverged: "mc-state-red", "no-remote": "mc-state-grey" };
@@ -2220,12 +2248,16 @@ body {
     var dirty = acts.filter(function (x) { return x.r.dirty; }).length;
     var unpushed = acts.filter(function (x) { return x.a.rel === "ahead"; }).length;
     var flags = (data.watcher_flags || []);
+    var decisionCount = repos.reduce(function (n, r) { return n + repoDecisionRows(r).length; }, 0);
+    var lifecycleCount = repos.reduce(function (n, r) { return n + lifecycleRows(r).length; }, 0);
 
     // summary strip
     p.body.appendChild(h("div", { class: "mc-filters" },
       h("span", { class: "mc-chip" }, (data.findings_total != null ? data.findings_total : "?") + " items found"),
       h("span", { class: "mc-chip" }, dirty + " with local changes"),
       h("span", { class: "mc-chip" }, unpushed + " not sent to GitHub"),
+      h("span", { class: "mc-chip" }, decisionCount + " lifecycle decisions"),
+      h("span", { class: "mc-chip" }, lifecycleCount + " branch/worktree records"),
       h("span", { class: "mc-chip" }, flags.length + " watcher notes")));
 
     // scan-unfinished-work table (unfinished repos only; clean collapse)
@@ -2245,6 +2277,26 @@ body {
         h("td", { class: "mc-action-verb" }, x.a.verb)));
     });
     p.body.appendChild(table);
+
+    var decisions = [];
+    repos.forEach(function (r) { repoDecisionRows(r).forEach(function (row) { decisions.push({ repo: r.repo, row: row }); }); });
+    if (decisions.length) {
+      p.body.appendChild(h("div", { class: "mc-section-head" }, h("h2", { text: "Branch decisions" })));
+      var dt = h("table", { class: "mc-table" });
+      dt.appendChild(h("tr", null, h("th", null, "Project"), h("th", null, "Decision"), h("th", null, "Detail"), h("th", null, "Next action")));
+      decisions.forEach(function (d) { var tone = d.row.state || "amber"; dt.appendChild(h("tr", null, h("td", { class: "mc-ellipsis", title: d.repo, style: "max-width:180px" }, d.repo), h("td", null, glyphSpan(tone), " ", d.row.label || "Git decision"), h("td", { class: "mc-ellipsis", title: d.row.detail || "", style: "max-width:320px" }, d.row.detail || ""), h("td", { class: "mc-action-verb" }, d.row.action || decisionRowAction(d.row)))); });
+      p.body.appendChild(dt);
+    }
+
+    var lifecycle = repos.map(function (r) { return { repo: r.repo, rows: lifecycleRows(r) }; }).filter(function (x) { return x.rows.length; });
+    if (lifecycle.length) {
+      p.body.appendChild(h("div", { class: "mc-section-head" }, h("h2", { text: "Branch lifecycle" })));
+      p.body.appendChild(h("div", { class: "mc-card-foot" }, "Purpose, source chat, merge condition, and delete/retain condition come only from repo todo.md ledger entries."));
+      var lt = h("table", { class: "mc-table" });
+      lt.appendChild(h("tr", null, h("th", null, "Project"), h("th", null, "Kind"), h("th", null, "Branch/worktree"), h("th", null, "Metadata"), h("th", null, "Purpose"), h("th", null, "Owner/source"), h("th", null, "Merge"), h("th", null, "Close condition")));
+      lifecycle.forEach(function (repoRows) { repoRows.rows.forEach(function (row) { var tone = metadataTone(row.status); lt.appendChild(h("tr", null, h("td", { class: "mc-ellipsis", title: repoRows.repo, style: "max-width:170px" }, repoRows.repo), h("td", null, row.kind), h("td", { class: "mc-ellipsis", title: row.name, style: "max-width:180px" }, row.name), h("td", { class: STATE_CLASS[tone] || "" }, glyphSpan(tone), " ", metadataLabel(row.status)), h("td", { class: "mc-ellipsis", title: row.purpose || "", style: "max-width:220px" }, row.purpose || "not recorded"), h("td", { class: "mc-ellipsis", title: row.owner || "", style: "max-width:180px" }, row.owner || "not recorded"), h("td", { class: "mc-ellipsis", title: row.merge || "", style: "max-width:180px" }, row.merge || "not recorded"), h("td", { class: "mc-ellipsis", title: row.close || "", style: "max-width:220px" }, row.close || row.action || "not recorded"))); }); });
+      p.body.appendChild(lt);
+    }
     if (clean.length) {
       var expanded = { on: false };
       var line = h("div", { class: "mc-collapse" }, glyphSpan("green"), " " + clean.length + " projects are clean (click to show)");

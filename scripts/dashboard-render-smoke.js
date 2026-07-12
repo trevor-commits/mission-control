@@ -297,6 +297,17 @@ for (const tab of TABS) {
     console.error('FAIL: #chats is missing the Open work list, temporary-hide action, or plain chat action labels');
     fails++; continue;
   }
+  if (tab === 'git' &&
+      (txt.indexOf('Branch lifecycle') === -1 ||
+       txt.indexOf('Branch needs purpose') === -1 ||
+       txt.indexOf('Branch metadata incomplete') === -1 ||
+       txt.indexOf('Worktree needs purpose') === -1 ||
+       txt.indexOf('Finish the Git lifecycle dashboard lane.') === -1 ||
+       txt.indexOf('2026-07-11 ER-103 implementation') === -1 ||
+       txt.indexOf('after merge to main and remote branch cleanup') === -1)) {
+    console.error('FAIL: #git is missing branch lifecycle labels, owner/source, purpose, or close conditions');
+    fails++; continue;
+  }
   if (tab === 'usage' && txt.indexOf('Decision cards') === -1) {
     console.error('FAIL: #usage is missing the decision-card section');
     fails++; continue;

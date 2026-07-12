@@ -9,98 +9,288 @@
   "data": {
     "generated": "2026-07-02T12:00:00Z",
     "stale_days": 30,
-    "findings_total": 6,
+    "findings_total": 4,
     "repos": [
       {
         "repo": "global-implementations",
+        "path": "/Users/trevor/Coding Projects/global-implementations",
         "branch": "main",
+        "default_branch": "main",
         "remote": "synced",
         "dirty": false,
         "dirty_files": 0,
         "ahead": 0,
         "behind": 0,
         "detached": false,
-        "branches": []
+        "branches": [
+          {
+            "name": "feature/example-explained",
+            "age_days": 8,
+            "merged_to_default": false,
+            "metadata_status": "explained",
+            "purpose": "Audit follow-up example",
+            "owner_chat": "Codex example",
+            "merge_condition": "tests pass and PR reviewed to main",
+            "safe_delete_condition": "after merge to main",
+            "source": "todo.md Active Branch Ledger",
+            "confidence": 1.0,
+            "action": "review-merge-readiness"
+          },
+          {
+            "name": "feature/example-unexplained",
+            "age_days": 12,
+            "merged_to_default": false,
+            "metadata_status": "unexplained",
+            "purpose": null,
+            "owner_chat": null,
+            "merge_condition": null,
+            "safe_delete_condition": null,
+            "source": null,
+            "confidence": 0.0,
+            "action": "add branch ledger entry"
+          }
+        ],
+        "worktrees": [],
+        "branch_facts": [
+          {
+            "name": "main",
+            "is_default": true,
+            "metadata_status": "not-required",
+            "ahead": 0,
+            "behind": 0,
+            "last_activity": {
+              "state": "recent"
+            }
+          }
+        ],
+        "decision_rows": [
+          {
+            "state": "amber",
+            "kind": "unexplained-branch",
+            "label": "Branch needs purpose",
+            "detail": "feature/example-unexplained has no lifecycle metadata",
+            "action": "add branch ledger entry"
+          }
+        ]
       },
       {
-        "repo": "O'Brien's estimator",
-        "branch": "feature/quote-engine",
-        "remote": "ahead",
-        "dirty": false,
-        "dirty_files": 0,
-        "ahead": 3,
-        "behind": 0,
-        "detached": false,
-        "branches": []
-      },
-      {
-        "repo": "bible-ai",
+        "repo": "branch-lifecycle-demo",
+        "path": "/Users/trevor/Coding Projects/branch-lifecycle-demo",
         "branch": "main",
-        "remote": "behind",
-        "dirty": false,
-        "dirty_files": 0,
-        "ahead": 0,
-        "behind": 2,
-        "detached": false,
-        "branches": []
-      },
-      {
-        "repo": "signal intake",
-        "branch": "wip/ingest",
-        "remote": "diverged",
-        "dirty": false,
-        "dirty_files": 0,
-        "ahead": 2,
-        "behind": 4,
-        "detached": false,
-        "branches": []
-      },
-      {
-        "repo": "scratch-repo 🚧",
-        "branch": "main",
-        "remote": "no-remote",
-        "no_remote": true,
-        "dirty": false,
-        "dirty_files": 0,
-        "ahead": 0,
-        "behind": 0,
-        "detached": false,
-        "branches": []
-      },
-      {
-        "repo": "hermes",
-        "branch": "fix/auth-token",
-        "remote": "synced",
-        "dirty": true,
-        "dirty_files": 7,
-        "ahead": 0,
-        "behind": 0,
-        "detached": false,
-        "branches": [ { "name": "old/experiment", "age_days": 44 } ]
-      },
-      {
-        "repo": "gillette-estimator",
-        "branch": "main",
+        "default_branch": "main",
         "remote": "synced",
         "dirty": false,
         "dirty_files": 0,
         "ahead": 0,
         "behind": 0,
         "detached": false,
-        "branches": []
+        "branches": [
+          {
+            "name": "feature/explained-proof",
+            "age_days": 8,
+            "merged_to_default": false,
+            "metadata_status": "explained",
+            "purpose": "Finish the Git lifecycle dashboard lane.",
+            "owner_chat": "2026-07-11 ER-103 implementation",
+            "merge_condition": "merge to main",
+            "safe_delete_condition": "after merge to main and remote branch cleanup",
+            "source": "todo.md Active Branch Ledger",
+            "confidence": 1,
+            "action": "none"
+          }
+        ],
+        "worktrees": [],
+        "branch_facts": [
+          {
+            "name": "main",
+            "is_default": true,
+            "metadata_status": "not-required",
+            "ahead": 0,
+            "behind": 0,
+            "last_activity": {
+              "state": "recent"
+            }
+          },
+          {
+            "name": "feature/explained-proof",
+            "is_default": false,
+            "age_days": 8,
+            "merged_to_default": false,
+            "metadata_status": "explained",
+            "purpose": "Finish the Git lifecycle dashboard lane.",
+            "owner_chat": "2026-07-11 ER-103 implementation",
+            "merge_condition": "merge to main",
+            "safe_delete_condition": "after merge to main and remote branch cleanup",
+            "source": "todo.md Active Branch Ledger",
+            "confidence": 1,
+            "action": "none",
+            "ahead": 0,
+            "behind": 0,
+            "last_activity": {
+              "state": "stale"
+            }
+          }
+        ],
+        "decision_rows": [
+          {
+            "state": "amber",
+            "kind": "stale-branch",
+            "label": "Ready to check merge",
+            "detail": "feature/explained-proof has not moved recently",
+            "action": "review merge readiness"
+          }
+        ]
+      },
+      {
+        "repo": "partial-branch-demo",
+        "path": "/Users/trevor/Coding Projects/partial-branch-demo",
+        "branch": "feature/partial-ledger",
+        "default_branch": "main",
+        "remote": "synced",
+        "dirty": false,
+        "dirty_files": 0,
+        "ahead": 0,
+        "behind": 0,
+        "detached": false,
+        "branches": [
+          {
+            "name": "feature/partial-ledger",
+            "age_days": 2,
+            "merged_to_default": false,
+            "metadata_status": "partial",
+            "purpose": "Backfill branch metadata.",
+            "owner_chat": "2026-07-11 ER-103 implementation",
+            "merge_condition": null,
+            "safe_delete_condition": null,
+            "source": "todo.md Active Branch Ledger",
+            "confidence": 1,
+            "action": "complete branch ledger metadata"
+          }
+        ],
+        "worktrees": [],
+        "branch_facts": [
+          {
+            "name": "feature/partial-ledger",
+            "is_default": false,
+            "age_days": 2,
+            "merged_to_default": false,
+            "metadata_status": "partial",
+            "purpose": "Backfill branch metadata.",
+            "owner_chat": "2026-07-11 ER-103 implementation",
+            "merge_condition": null,
+            "safe_delete_condition": null,
+            "source": "todo.md Active Branch Ledger",
+            "confidence": 1,
+            "action": "complete branch ledger metadata",
+            "ahead": 0,
+            "behind": 0,
+            "last_activity": {
+              "state": "recent"
+            }
+          }
+        ],
+        "decision_rows": [
+          {
+            "state": "amber",
+            "kind": "partial-branch-metadata",
+            "label": "Branch metadata incomplete",
+            "detail": "feature/partial-ledger is missing lifecycle fields",
+            "action": "complete branch ledger metadata"
+          }
+        ]
+      },
+      {
+        "repo": "worktree-demo",
+        "path": "/Users/trevor/Coding Projects/worktree-demo",
+        "branch": "main",
+        "default_branch": "main",
+        "remote": "synced",
+        "dirty": false,
+        "dirty_files": 0,
+        "ahead": 0,
+        "behind": 0,
+        "detached": false,
+        "branches": [],
+        "worktrees": [
+          {
+            "path": "/Users/trevor/Coding Projects/worktrees/unexplained",
+            "branch": "feature/no-ledger",
+            "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "dirty": false,
+            "detached": false,
+            "metadata_status": "unexplained",
+            "purpose": null,
+            "owner_chat": null,
+            "merge_condition": null,
+            "safe_delete_condition": null,
+            "source": null,
+            "confidence": 0,
+            "action": "add branch ledger entry"
+          }
+        ],
+        "branch_facts": [
+          {
+            "name": "main",
+            "is_default": true,
+            "metadata_status": "not-required",
+            "ahead": 0,
+            "behind": 0,
+            "last_activity": {
+              "state": "recent"
+            }
+          },
+          {
+            "name": "feature/no-ledger",
+            "is_default": false,
+            "age_days": 1,
+            "merged_to_default": false,
+            "metadata_status": "unexplained",
+            "purpose": null,
+            "owner_chat": null,
+            "merge_condition": null,
+            "safe_delete_condition": null,
+            "source": null,
+            "confidence": 0,
+            "action": "add branch ledger entry",
+            "ahead": 0,
+            "behind": 0,
+            "last_activity": {
+              "state": "recent"
+            }
+          }
+        ],
+        "decision_rows": [
+          {
+            "state": "amber",
+            "kind": "unexplained-worktree",
+            "label": "Worktree needs purpose",
+            "detail": "feature/no-ledger has no lifecycle metadata",
+            "action": "add branch ledger entry"
+          },
+          {
+            "state": "amber",
+            "kind": "unexplained-branch",
+            "label": "Branch needs purpose",
+            "detail": "feature/no-ledger has no lifecycle metadata",
+            "action": "add branch ledger entry"
+          }
+        ]
       }
     ],
     "watcher_flags": [
-      { "repo": "bible-ai", "state": "amber", "flag": "stale-worktree", "detail": "gi-worktrees/old-branch is 40d old and unmerged" },
-      { "repo": "hermes", "state": "red", "flag": "detached-worktree", "detail": "worktree points at a deleted branch" }
+      {
+        "repo": "worktree-demo",
+        "state": "amber",
+        "flag": "stale-worktree",
+        "detail": "worktrees/unexplained is waiting for a branch ledger entry"
+      }
     ],
     "groom": {
       "last_run": "2026-07-03 06:00 PT",
       "done": 4,
       "failed": 1,
       "decide": [
-        "gi-worktrees/er080-spike — unmerged, 12d old, your call to keep or drop",
-        "scratch-repo 🚧 — no remote configured, delete after review?"
+        "worktree-demo feature/no-ledger - add ledger metadata before cleanup"
       ]
     }
   }
