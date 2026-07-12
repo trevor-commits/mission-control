@@ -59,6 +59,31 @@ Preserve a durable completion trail for verified work instead of deleting it fro
 - 2026-07-04 | ER-087 follow-up audit gaps — governance scaffold, product intent, tab wording, stale-ingest honesty, and Map smoke coverage landed in this change; full record below.
 
 ## Work Record Log
+
+### 2026-07-11 — ER-103 git-state lane + Morning Brief proof harvest
+- Problem: Git feed lacked lifecycle metadata; five-morning proof had no durable harvest path.
+- Fix: branch-ledger parser + metadata_status/decision_rows in `scripts/scan-unfinished-work`; Git tab lifecycle columns; fixtures; `records/morning-brief-live-proof-log.md` + `scripts/harvest-morning-brief-proof`; collision analysis brief (no plist changes).
+- Test Evidence: `scan-unfinished-work --self-test` PASS; `dashboard-render-smoke` PASS; `dashboard.test.sh --require-shell` PASS=55 FAIL=0.
+- Did not verify: live dashboard install from this branch; Trevor comprehension check-ins; notification consolidation action.
+- by: Cursor ICU follow-through session
+- linear: repo-only
+
+### 2026-07-11 — ER-103 Git-state lane and Morning Brief proof logging
+- Problem: Mission Control had unfinished ER-103 Git-state lifecycle work and no five-morning Morning Brief proof log tying delivery receipts to comprehension evidence.
+- Reasoning: The dashboard needed explicit branch/worktree lifecycle metadata instead of inferred ownership, while the Morning Brief proof window needed durable rows that separate machine delivery proof from Trevor comprehension proof.
+- Diagnosis inputs: ER-103 implementation packet from `global-implementations`; live `~/.mission-control/morning-brief/delivery/*.json` receipts for 2026-07-10 and 2026-07-11; latest Morning Brief sidecar; existing scanner/dashboard fixture/render tests; Mission Control Continuity/Coherence/Linear docs.
+- Implementation inputs: `scripts/scan-unfinished-work`, `dashboard/index.html`, `dashboard/fixtures/git.json`, `scripts/dashboard-render-smoke.js`, `scripts/harvest-morning-brief-proof`, `records/morning-brief-live-proof-log.md`, and `docs/briefs/2026-07-11-morning-surface-collision.md`.
+- Fix: Added branch-ledger parsing and lifecycle `metadata_status`/`decision_rows` to the Git feed; rendered branch decisions and lifecycle details in Home/Git; added synthetic lifecycle fixture coverage; added idempotent Morning Brief proof harvesting and seeded delivered mornings; added an analysis-only morning surface collision brief.
+- Self-audit:
+  - method: Ran scanner self-test, dashboard shell suite, render smoke, fixture JSON validation, shell syntax checks, proof harvester self-test, harvester py_compile, and whitespace diff check; checked no plist/Telegram/Outcome Extractor/Screenpipe activation command was run during implementation.
+  - outcome: Verification matrix passed before install/commit; Morning Brief proof rows update idempotently by `brief_id`; dashboard smoke asserts lifecycle labels, owner/source, purpose, and close conditions render.
+  - did not verify: Future five-morning comprehension success because it requires Trevor to read/understand future briefs; no browser capture because the renderer smoke covers the changed static UI and no visual redesign was introduced; no separate independent follow-up audit because this Cursor subagent was instructed not to spawn additional subagents.
+  - Ripple Check: Checked `AGENTS.project.md`, `CONTINUITY.md`, `COHERENCE.md`, `LINEAR.md`, and touched only product docs/records/tests matching the packet; no companion principle docs required edits.
+- by: Cursor subagent
+- triggered by: Trevor Goal prompt to implement Mission Control unfinished work not needing decisions
+- led to: Active branch ledger entry `codex/er103-git-state-and-morning-proof`; Test Evidence Log `2026-07-11`; Audit Record Log `2026-07-11 | ER-103 and Morning Brief proof self-audit`.
+- linear: self-contained; repo-only mode per `LINEAR.md`, no live Mission Control Linear issue created.
+
 ### 2026-07-11 — Chat-graph full-ingest health truth repair
 - Problem: A fresh governor check reported `chat-graph doctor` failed because the full-ingest marker was 134 minutes old, even though full transcript ingestion is a nightly 23:30 job with the already-established 30-hour SLA and the graph database/feed were being refreshed incrementally. `show` repeated the same false warning after 30 minutes, while a completely missing marker incorrectly passed doctor.
 - Decision: Keep the 30-minute constant only for export's bounded incremental catch-up. `show` and `doctor` describe the completed full-ingest marker, so they must use the shared `full_ingest_sla_s()` policy already consumed by dashboard and brief health. Missing full-ingest evidence must fail closed.
@@ -536,6 +561,32 @@ Keep materially new suggestions here so they survive beyond the current chat.
 - 2026-07-05 | recommendation: do not adopt the GitHub Copilot enterprise-observability stack (OpenTelemetry Collector, Prometheus, Grafana, OpenObserve, Superset, Metabase, Airbyte, Meltano, dbt-core, Great Expectations, TensorZero, Helicone, OpenLIT, traceAI, TraceRoot, Pull Request Analytics Action); treat `records/2026-07-04-dashboard-coding-tracker-search-audit.md` as the real same-niche repo map; if a chart is ever justified, prefer vendorable zero-dependency `leeoniya/uPlot` over Chart.js/ECharts/CDN — but not for V1. | why: Copilot recommended from the repo description alone (it said so); every headline pick runs as a background service, framework, or separate warehouse and collides with the explicit non-goals of offline single-file, single-user, no-server. Full evaluation in Feedback Decision Log 2026-07-05. | by: Claude Code (Opus 4.8) session `a9724039-6595-4205-a25b-bf361020250a`. | linear: self-contained until Linear is configured.
 
 ## Active Branch Ledger
+### `codex/er103-git-state-and-morning-proof`
+- status: active
+- created: 2026-07-11
+- base: `main`
+- worktree: `/Users/gillettes/Coding Projects/mission-control`
+- source chat: 2026-07-11 Cursor subagent, Mission Control unfinished work implementation
+- last refreshed by chat: 2026-07-11 Cursor subagent, verification matrix green before commit
+- purpose: Implement ER-103 Git-state lifecycle metadata plus five-morning Morning Brief proof logging and morning-surface collision analysis.
+- linked issue: self-contained; Linear repo-only mode in `LINEAR.md`
+- plugin mirror: none; no live Mission Control Linear team/prefix verified
+- merge expectation: merge
+- merge target: `main`
+- review surface: commit on this branch plus dashboard/scanner/test diff
+- exit checklist:
+  - [x] Morning proof log and harvester added
+  - [x] Notification collision brief added without plist changes
+  - [x] Git lifecycle scanner/dashboard fixture/rendering implemented
+  - [x] Packet verification commands passed
+  - [ ] Commit pushed
+  - [ ] Merge or explicit no-merge closeout decided
+  - [ ] Local/remote branch cleanup complete
+- delete when: after merge to `main`, push verification, and branch cleanup
+- retain reason: n/a
+- cleanup command: `git branch -d codex/er103-git-state-and-morning-proof && git push origin --delete codex/er103-git-state-and-morning-proof`
+- linked PR/audit/completion record: Work Record Log `2026-07-11 — ER-103 Git-state lane and Morning Brief proof logging`
+
 Keep one entry per non-trivial active branch so any chat can see why it exists, which chat opened or resumed it, what work is active, what must happen before merge or closeout, and whether the branch should be deleted or intentionally retained.
 Legacy branches opened before this workflow may still need manual backfill; use `TODO: verify` instead of guessing until those entries are added.
 Each active branch entry should include:
@@ -622,6 +673,7 @@ If it's not here, it isn't remembered.
 - When a verification run closes or updates an audit finding, cross-reference the matching audit record entry and the chat or commit that performed the work.
 
 ## Test Evidence Log
+- 2026-07-11 | commands: `bash scripts/scan-unfinished-work --self-test`; `scripts/harvest-morning-brief-proof --self-test`; `python3 -m json.tool dashboard/fixtures/git.json`; `node --check scripts/dashboard-render-smoke.js && node scripts/dashboard-render-smoke.js .`; `REPO_ROOT="$PWD" bash scripts/dashboard.test.sh --require-shell`; `bash -n scripts/scan-unfinished-work && bash -n scripts/dashboard`; `python3 -m py_compile scripts/harvest-morning-brief-proof`; `git diff --check` | result: pass; scanner self-test proves explained/unexplained branch metadata, linked worktree metadata, and decision rows; proof harvester self-test proves idempotent update by `brief_id`; dashboard suite PASS=55 FAIL=0; render smoke all 7 tabs plus lifecycle label assertions passed; fixture JSON, syntax, py_compile, and whitespace checks passed | log/PR reference: Work Record Log `2026-07-11 — ER-103 Git-state lane and Morning Brief proof logging` | by: Cursor subagent | linear: self-contained until Linear is configured.
 - 2026-07-11 | commands: live `dashboard status` and `chat-graph doctor`; marker/database/feed and scheduler inspection; initial RED `bash scripts/chat-graph.test.sh`; GREEN compile/full graph/diff gates; immutable review of `245fb31`; +1-hour skew RED replay; final GREEN with ambient SLA unset plus explicit 1-hour/48-hour overrides; cold reviewer rerun at `9843607` under default and ambient SLA 3600; `mission-control-common.test.sh`; exact commit/push containment; `./scripts/dashboard install`; schema-1 stamp inspection; live doctor/Chats/status; Mission Control LaunchAgent kickstart | result: live diagnosis separated a healthy 134-minute-old nightly full-ingest marker from fresh incremental DB/feed activity; initial RED produced exactly three expected boundary failures; independent review found a future-marker false green and its regression produced exactly two failures, then found an ambient-override test-hermeticity gap; final verdict `REVIEW-CLEAN` with no P0-P3 findings; full graph suites `ALL PASS`, common `2/2`; exact head `5372dfa` installed and verified; live doctor green at 146m/1800m, all feeds fresh, scheduler runs 86→87 and exit 0; dashboard exit 1 is the unrelated Automation red job | log/PR reference: Work/Audit Records `2026-07-11 — Chat-graph full-ingest health truth repair`; commits `245fb31`, `dcf11c2`, `9843607`, `5372dfa`; diff SHA `aa79aa307241948ce3265f39c866685615242d13925e6c62a0e7e28e743b658f` | by: Codex `019f51c1-5817-7872-a6ce-8b65428277ed` + independent reviewer `/root/chat_source_hermes_review` | linear: repo-only.
 - 2026-07-11 | commands: pre-fix live status/process/feed/orphan-lock inspection; RED/GREEN cache, fallback, owner, process-group, interruption, live-old-lock, PID-reuse, and post-reap decode probes; `bash scripts/chat-graph.test.sh`; `REPO_ROOT="$PWD" bash scripts/dashboard.test.sh --require-shell`; `bash scripts/automation-status.test.sh`; static/residue checks; frozen independent re-review; push to `origin/main`; canonical install and stamp verification; strict live Automation+Git+Chats collection; LaunchAgent kickstart | result: graph `ALL PASS`, dashboard `PASS=55 FAIL=0`, Automation `ALL PASS`, review-clean; exact install `4de0aef`; fresh `ok:true` feeds with 58 Git rows = 58 chat annotations, backup green, no unregistered jobs, no process/lock residue, Mission Control runs 70→71 with exit 0 | log/PR reference: Work Records `2026-07-11 — Chat truth-layer timeout and cache trust repair` and `Nightly repository-bundle semantic health registration`; commits `e2f5d60`, `4de0aef` | by: Codex `019f51c1-5817-7872-a6ce-8b65428277ed` + independent reviewer `/root/external_orchestration_research` | linear: repo-only.
 If it's not here, it isn't remembered.
