@@ -1,0 +1,70 @@
+#!/usr/bin/env python3
+import argparse, datetime as dt, json, os, pathlib, re, sys, tempfile
+HEADERS=["Morning","Brief ID","Delivery proof","Latest brief metadata","Trevor read?","Trevor understood?","Trevor notes"]
+def local_iso(epoch):
+    return dt.datetime.fromtimestamp(epoch).astimezone().strftime("%Y-%m-%d %H:%M:%S %Z") if isinstance(epoch,int) and epoch>0 else ""
+def load_json(path):
+    try:
+        with open(path,encoding="utf-8") as f: return json.load(f)
+    except FileNotFoundError: return None
+def brief_day(brief_id, receipt):
+    m=re.match(r"^(\d{4})(\d{2})(\d{2})-", brief_id or "")
+    return "%s-%s-%s"%m.groups() if m else local_iso(receipt.get("delivered_at") or receipt.get("created_at"))[:10]
+def markdown_summary(path):
+    try: text=pathlib.Path(path).read_text(encoding="utf-8")
+    except FileNotFoundError: return ""
+    for line in text.splitlines():
+        if line.startswith("- **"): return line.strip("- ").strip()[:140]
+    return ""
+def row_from_receipt(receipt_path, home):
+    receipt=load_json(receipt_path)
+    if not isinstance(receipt,dict): raise ValueError("receipt is not a JSON object: %s"%receipt_path)
+    brief_id=receipt.get("brief_id") or pathlib.Path(receipt_path).stem
+    latest=load_json(os.path.join(home,"morning-brief","latest.json")) or {}
+    proof="%s; %s/%s chunks confirmed%s"%(receipt.get("state","unknown"),receipt.get("confirmed_chunks",0),receipt.get("total_chunks",0),(" at %s"%local_iso(receipt.get("delivered_at"))) if receipt.get("delivered_at") else "")
+    metadata="not latest retained sidecar"
+    if latest.get("brief_id")==brief_id:
+        metadata="latest.json match; generated %s; sections %s; markdown_sha256 %s"%(local_iso(latest.get("generated_epoch")),len(latest.get("sections") or []),latest.get("markdown_sha256","missing"))
+        first=markdown_summary(os.path.join(home,"morning-brief","latest.md"))
+        if first: metadata += "; first item: %s"%first
+    return [brief_day(brief_id,receipt),"`%s`"%brief_id,proof,metadata,"","",""]
+def parse_table(lines):
+    rows={}
+    for line in lines:
+        if not line.startswith("|"): continue
+        cells=[c.strip() for c in line.strip().strip("|").split("|")]
+        if len(cells)!=len(HEADERS) or cells==HEADERS or set(cells[0])<= {"-"}: continue
+        rows[cells[1].strip("`")]=cells
+    return rows
+def table_lines(rows):
+    out=["| "+" | ".join(HEADERS)+" |","| "+" | ".join(["---"]*len(HEADERS))+" |"]
+    for row in sorted(rows.values(), key=lambda r:(r[0],r[1])): out.append("| "+" | ".join(row)+" |")
+    return out
+def update_log(log_path,row):
+    path=pathlib.Path(log_path); existing=path.read_text(encoding="utf-8").splitlines() if path.exists() else []
+    marker="<!-- proof-table -->"; end="<!-- /proof-table -->"; rows=parse_table(existing); rows[row[1].strip("`")]=row
+    block=[marker]+table_lines(rows)+[end]
+    if marker in existing and end in existing:
+        lines=existing[:existing.index(marker)]+block+existing[existing.index(end)+1:]
+    else: lines=(existing+[""] if existing else [])+block
+    path.write_text("\n".join(lines).rstrip()+"\n",encoding="utf-8")
+def self_test():
+    with tempfile.TemporaryDirectory() as tmp:
+        home=os.path.join(tmp,"home"); delivery=os.path.join(home,"morning-brief","delivery"); os.makedirs(delivery)
+        rp=os.path.join(delivery,"20260711-test.json")
+        pathlib.Path(rp).write_text(json.dumps({"brief_id":"20260711-test","state":"delivered","confirmed_chunks":2,"total_chunks":2,"delivered_at":1783778016}),encoding="utf-8")
+        pathlib.Path(os.path.join(home,"morning-brief","latest.json")).write_text(json.dumps({"brief_id":"20260711-test","generated_epoch":1783778016,"sections":[{}],"markdown_sha256":"abc"}),encoding="utf-8")
+        pathlib.Path(os.path.join(home,"morning-brief","latest.md")).write_text("# x\n- **Confirmed:** hello\n",encoding="utf-8")
+        log=os.path.join(tmp,"proof.md"); row=row_from_receipt(rp,home); update_log(log,row); update_log(log,row); text=pathlib.Path(log).read_text(encoding="utf-8")
+        assert text.count("20260711-test")==1 and "latest.json match" in text, text
+        print("SELF-TEST PASS")
+def main(argv):
+    ap=argparse.ArgumentParser(); ap.add_argument("--home",default=os.path.expanduser("~/.mission-control")); ap.add_argument("--log",default="records/morning-brief-live-proof-log.md"); ap.add_argument("--brief-id"); ap.add_argument("--self-test",action="store_true"); args=ap.parse_args(argv)
+    if args.self_test: self_test(); return 0
+    delivery=pathlib.Path(args.home)/"morning-brief"/"delivery"; receipts=sorted(delivery.glob("*.json"))
+    if args.brief_id: receipts=[p for p in receipts if p.stem==args.brief_id]
+    if not receipts: print("no delivery receipts found",file=sys.stderr); return 1
+    for receipt in receipts:
+        row=row_from_receipt(str(receipt),args.home); update_log(args.log,row); print("updated %s"%row[1])
+    return 0
+if __name__=="__main__": sys.exit(main(sys.argv[1:]))
