@@ -24,6 +24,7 @@ NOW_ISO=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 # its native macOS CLI. Keep scheduled collection reproducible and price lookup
 # offline; upgrade only as an explicit, verified repository change.
 CCUSAGE_PACKAGE="ccusage@20.0.17"
+SNAPSHOT_RC=0
 
 DO_HISTORY=0; DO_HTML=0; NO_CCUSAGE="${SKIP_CCUSAGE:-0}"
 for a in "$@"; do
@@ -61,28 +62,60 @@ codex_rows() {
     | xargs -0 stat -f '%m %N' 2>/dev/null | sort -rn | head -1 | cut -d' ' -f2-)
   if [ -z "$newest" ]; then
     emit "$(row codex 5h null null unknown unknown none 'no rollout files found')"
+    emit "$(row codex weekly null null unknown unknown none 'no rollout files found')"
     return
   fi
   mtime=$(stat -f %m "$newest" 2>/dev/null || echo 0)
   age_h=$(( (NOW_EPOCH - mtime) / 3600 ))
   line=$(tail -n 400 "$newest" | jq -c '.. | objects
-          | select(has("primary") and has("secondary"))
-          | select((.primary|type=="object") and (.primary|has("used_percent")))' 2>/dev/null | tail -1)
+          | select(has("primary") and has("secondary"))' \
+          2>/dev/null | tail -1)
   if [ -z "$line" ]; then
-    emit "$(row codex 5h null null unknown unknown "$newest" 'rollout has no rate_limits events')"
+    emit "$(row codex 5h null null unknown unknown "$newest" 'rollout has no valid rate_limits window')"
+    emit "$(row codex weekly null null unknown unknown "$newest" 'rollout has no valid rate_limits window')"
     return
   fi
-  local conf=live; [ "$age_h" -ge 6 ] && conf=stale
-  local pup pra sup sra plan
-  pup=$(printf '%s' "$line" | jq '.primary.used_percent // "null"')
-  pra=$(printf '%s' "$line" | jq '.primary.resets_at // "null"')
-  sup=$(printf '%s' "$line" | jq '.secondary.used_percent // "null"')
-  sra=$(printf '%s' "$line" | jq '.secondary.resets_at // "null"')
+  local base_conf=live; [ "$age_h" -ge 6 ] && base_conf=stale
+  local five weekly plan
+  # `primary` and `secondary` are transport slots, not stable window names.
+  # Map by the declared duration and treat duplicate/invalid rows as unknown.
+  five=$(printf '%s' "$line" | jq -c '
+    [.primary, .secondary]
+    | map(select(type=="object"
+        and .window_minutes==300
+        and (((.used_percent|type)=="number") or .used_percent==null)
+        and (((.resets_at|type)=="number") or .resets_at==null)))
+    | if length==1 then .[0] else null end')
+  weekly=$(printf '%s' "$line" | jq -c '
+    [.primary, .secondary]
+    | map(select(type=="object"
+        and .window_minutes==10080
+        and (((.used_percent|type)=="number") or .used_percent==null)
+        and (((.resets_at|type)=="number") or .resets_at==null)))
+    | if length==1 then .[0] else null end')
   plan=$(printf '%s' "$line" | jq -r '.plan_type // "?"')
-  # a reset that already passed means the number is from a closed window
-  [ "$pra" != "null" ] && [ "$pra" -le "$NOW_EPOCH" ] 2>/dev/null && conf=stale
-  emit "$(row codex 5h "$pup" "$pra" "$conf" ok rollout-rate_limits "plan=$plan; rollout age ${age_h}h; refresh: run any tiny codex exec")"
-  emit "$(row codex weekly "$sup" "$sra" "$conf" ok rollout-rate_limits "plan=$plan")"
+
+  local used reset conf
+  if [ "$five" = "null" ]; then
+    emit "$(row codex 5h null null unknown ok rollout-rate_limits "plan=$plan; current event omitted a valid 5h window")"
+  else
+    used=$(printf '%s' "$five" | jq -r 'if .used_percent==null then "null" else (.used_percent|tostring) end')
+    reset=$(printf '%s' "$five" | jq -r 'if .resets_at==null then "null" else (.resets_at|tostring) end')
+    conf="$base_conf"
+    # A reset that already passed means the number is from a closed window.
+    [ "$reset" != "null" ] && [ "$reset" -le "$NOW_EPOCH" ] 2>/dev/null && conf=stale
+    emit "$(row codex 5h "$used" "$reset" "$conf" ok rollout-rate_limits "plan=$plan; rollout age ${age_h}h; mapped by window_minutes=300; refresh: run any tiny codex exec")"
+  fi
+
+  if [ "$weekly" = "null" ]; then
+    emit "$(row codex weekly null null unknown ok rollout-rate_limits "plan=$plan; current event omitted a valid weekly window")"
+  else
+    used=$(printf '%s' "$weekly" | jq -r 'if .used_percent==null then "null" else (.used_percent|tostring) end')
+    reset=$(printf '%s' "$weekly" | jq -r 'if .resets_at==null then "null" else (.resets_at|tostring) end')
+    conf="$base_conf"
+    [ "$reset" != "null" ] && [ "$reset" -le "$NOW_EPOCH" ] 2>/dev/null && conf=stale
+    emit "$(row codex weekly "$used" "$reset" "$conf" ok rollout-rate_limits "plan=$plan; mapped by window_minutes=10080")"
+  fi
 }
 
 # ---------- claude: ccusage local-JSONL estimates (limits undisclosed → never a %) ----------
@@ -91,13 +124,22 @@ claude_rows() {
     emit "$(row claude session-5h null null unknown ok skipped 'ccusage skipped (--no-ccusage)')"
     return
   fi
-  local bj wj
-  if [ -n "${CCUSAGE_BLOCKS_JSON:-}" ]; then bj=$(cat "$CCUSAGE_BLOCKS_JSON" 2>/dev/null)
-  else bj=$(npx -y "$CCUSAGE_PACKAGE" blocks --json --active --offline 2>/dev/null); fi
-  if [ -n "${CCUSAGE_WEEKLY_JSON:-}" ]; then wj=$(cat "$CCUSAGE_WEEKLY_JSON" 2>/dev/null)
-  else wj=$(npx -y "$CCUSAGE_PACKAGE" weekly --json --offline 2>/dev/null); fi
+  local bj="" wj="" blocks_ok=1 weekly_ok=1
+  if [ -n "${CCUSAGE_BLOCKS_JSON:-}" ]; then
+    bj=$(cat "$CCUSAGE_BLOCKS_JSON" 2>/dev/null) || blocks_ok=0
+  else
+    bj=$(npx -y "$CCUSAGE_PACKAGE" blocks --json --active --offline 2>/dev/null) || blocks_ok=0
+  fi
+  if [ -n "${CCUSAGE_WEEKLY_JSON:-}" ]; then
+    wj=$(cat "$CCUSAGE_WEEKLY_JSON" 2>/dev/null) || weekly_ok=0
+  else
+    wj=$(npx -y "$CCUSAGE_PACKAGE" weekly --json --offline 2>/dev/null) || weekly_ok=0
+  fi
 
-  if printf '%s' "$bj" | jq -e '.blocks[0].isActive==true' >/dev/null 2>&1; then
+  if [ "$blocks_ok" -ne 1 ] || ! printf '%s' "$bj" | jq -e '.blocks | type=="array"' >/dev/null 2>&1; then
+    SNAPSHOT_RC=1
+    emit "$(row claude session-5h null null unknown down ccusage-blocks 'ccusage blocks failed or returned invalid JSON')"
+  elif printf '%s' "$bj" | jq -e '.blocks[0].isActive==true' >/dev/null 2>&1; then
     local tokens end_iso end_epoch burn cost models
     tokens=$(printf '%s' "$bj" | jq '.blocks[0].totalTokens')
     end_iso=$(printf '%s' "$bj" | jq -r '.blocks[0].endTime')
@@ -114,7 +156,10 @@ claude_rows() {
   else
     emit "$(row claude session-5h null null estimated ok ccusage-blocks 'no active block (idle)')"
   fi
-  if printf '%s' "$wj" | jq -e '.weekly | length > 0' >/dev/null 2>&1; then
+  if [ "$weekly_ok" -ne 1 ] || ! printf '%s' "$wj" | jq -e '.weekly | type=="array"' >/dev/null 2>&1; then
+    SNAPSHOT_RC=1
+    emit "$(row claude weekly null null unknown down ccusage-weekly 'ccusage weekly failed or returned invalid JSON')"
+  elif printf '%s' "$wj" | jq -e '.weekly | length > 0' >/dev/null 2>&1; then
     local wt wc
     wt=$(printf '%s' "$wj" | jq '.weekly[-1].totalTokens // (.weekly[-1] | (.inputTokens+.outputTokens+.cacheCreationTokens+.cacheReadTokens)) // 0')
     wc=$(printf '%s' "$wj" | jq '.weekly[-1].totalCost // 0 | floor' 2>/dev/null || echo 0)
@@ -165,6 +210,10 @@ cursor_row() {
 CREDITS_FILE="${USAGE_CREDITS_FILE:-$STATE_DIR/credits.json}"
 notify_credit_advice() {
   local advice="$1"
+  if [ -n "${USAGE_NOTIFY_BIN:-}" ]; then
+    "$USAGE_NOTIFY_BIN" notify --session usage-snapshot --name usage-snapshot --text "AI credits: $advice"
+    return $?
+  fi
   local -a notify_argv
   case "$USAGE_NOTIFY_CMD" in
     *";"*|*"|"*|*"&"*|*'`'*|*'$'*|*"<"*|*">"*)
@@ -205,7 +254,7 @@ credit_rows() {
     fi
     note="count=$cnt; expires ${exp:-unknown}${advice:+; $advice}"
     emit "$(row "$prov" "credit:$kind" null "$exp_epoch" manual held credits.json "$note")"
-    if [ -n "$advice" ] && [ -n "${USAGE_NOTIFY_CMD:-}" ]; then
+    if [ -n "$advice" ] && { [ -n "${USAGE_NOTIFY_BIN:-}" ] || [ -n "${USAGE_NOTIFY_CMD:-}" ]; }; then
       stamp="$STATE_DIR/.credit-alert-$(date +%Y%m%d)"
       # atomic claim (noclobber) so concurrent runs send at most one ping/day;
       # message passed as $1, never interpolated into the command string
@@ -272,3 +321,4 @@ if [ "$DO_HTML" = "1" ]; then
 fi
 
 printf '%s\n' "$SNAPSHOT"
+exit "$SNAPSHOT_RC"

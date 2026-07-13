@@ -286,7 +286,7 @@ This pass started from clean `main`/`origin/main` at `bcee9147b9bd45fa05e848d0ae
 
 **Composite Score:** 100/100
 
-**Trend:** First run — no trend data
+**Trend:** 96 → 100 (+4) after independent rejection and repair
 
 | Dimension | Score | Top Finding |
 |---|---:|---|
@@ -313,7 +313,9 @@ flowchart LR
   I --> H
 ```
 
-No current Critical, Warning, or Suggestion remains after repair.
+The initial candidate was 96/100, with three warnings and one suggestion. The
+100/100 row is the repaired current tree; it is not a retroactive claim that the
+rejected candidate was clean.
 
 ### Reproduced dependency-drift finding and repair
 
@@ -325,7 +327,23 @@ Source: *Software Engineering at Google* — Dependency Management and upgrade b
 
 Consequence: a registry release could change scheduled output, native code, or failure behavior without any Mission Control commit, invalidating reproducibility and bypassing repository review.
 
-Remedy: pinned `ccusage@20.0.17`, added `--offline` to both report commands, inspected the npm metadata and tarball integrity (`sha512-MJU4qDs6DOMdam0PXWWFgo0dw/kXAK05rX586DdxIARTzj/zJylWfVlIywgJwW094nNbqwJyGRZvzO2ZsczXDg==`), exercised the native macOS CLI, and added a fake-`npx` regression that proves both exact argv contracts and rejects `@latest`. Red evidence was `PASS=2 FAIL=1`; focused green evidence was `PASS=3 FAIL=0`.
+Remedy: pinned `ccusage@20.0.17`, added `--offline` to both report commands, inspected the npm metadata and tarball integrity (`sha512-MJU4qDs6DOMdam0PXWWFgo0dw/kXAK05rX586DdxIARTzj/zJylWfVlIywgJwW094nNbqwJyGRZvzO2ZsczXDg==`), exercised the native macOS CLI, and added a fake-`npx` regression that proves the exact argument count and each individual argument while rejecting `@latest`. Red evidence for the initial pin was `PASS=2 FAIL=1`; the expanded focused suite is `PASS=6 FAIL=0`.
+
+### Independent rejection and end-to-end repair
+
+Fresh reviewer `/root/worker_019f59f8_final_challenger` rejected immutable
+`105889e` rather than accepting its green suite:
+
+| Severity | Reproduced finding | Accepted repair |
+|---|---|---|
+| P1 | The loaded scheduled runtime and canonical global source still used `ccusage@latest`, so the Mission-only pin did not make the operational path reproducible. | Updated the canonical global collector and LaunchAgent template, retained the same pinned package in Mission Control, and made exact source/runtime hashes a landing gate. |
+| P1 | Mission Control's vendored collector treated `primary` as five-hour and `secondary` as weekly even though they are transport slots; reversed and omitted windows could be mislabeled. | Converged Mission and global parsers byte-for-byte, mapped only by `window_minutes` 300/10080, and added reversed-slot and omitted-window regressions. |
+| P2 | An `npx` exit 42 still returned snapshot exit 0 and emitted Claude rows as healthy/idle. | Propagated collector failure through a nonzero snapshot exit while preserving partial JSON/history, emitted `health=down`/`confidence=unknown`, and added a deterministic failure regression. |
+| P3 | The fake `npx` test flattened arguments through `$*`, so it did not prove argv boundaries. | Captured `argc` and every `arg=` independently and compared them to an exact fixture. |
+
+The repairs deliberately preserve `--no-ccusage` behavior for the dashboard,
+avoid provider egress, and retain the legacy notification test seam while the
+LaunchAgent uses one executable plus fixed arguments without a shell.
 
 ### Live operations and session reconciliation
 
@@ -339,9 +357,11 @@ Remedy: pinned `ccusage@20.0.17`, added `--offline` to both report commands, ins
 ### Verification and convergence
 
 - Pre-repair authoritative verifier on exact `bcee914`: `SUITES PASS=21 FAIL=0`; dashboard `67/0`, ER-134 `50/0`, browser `253`.
-- Post-repair focused usage suite: `PASS=3 FAIL=0`; shell syntax and `git diff --check`: PASS.
-- Post-repair authoritative verifier: `SUITES PASS=21 FAIL=0`; dashboard `67/0`, ER-134 `50/0`, usage `3/0`, browser `253`; full log `/tmp/mission-control-20260713-recurring-audit-verify.log`.
+- Initial pin-only focused usage suite: `PASS=3 FAIL=0`; the independent challenger then rejected the incomplete operational boundary above.
+- Final expanded focused usage suite: `PASS=6 FAIL=0`; global usage-routing suite: `38 pass, 0 fail`; Mission/global collector source comparison, shell syntax, plist validation, and `git diff --check`: PASS.
+- Post-convergence authoritative Mission verifier: `SUITES PASS=21 FAIL=0`; dashboard `67/0`, ER-134 `50/0`, usage `6/0`, browser `253`; full log `/tmp/mission-control-usage-convergence-verify.log`.
+- Post-convergence authoritative global verifier: PASS; full log `/tmp/global-usage-convergence-verify.log`.
 - Pinned/offline live-shape check: both real `blocks` and `weekly` JSON commands completed and exposed their expected top-level arrays without printing local usage data.
-- Final independent challenger verdict: pending against the immutable candidate commit; this record will be updated after the review loop converges.
+- Final independent challenger verdict: pending against immutable replacement commits and the installed-runtime proof; `105889e` is explicitly rejected and is not the final evidence commit.
 
 The repository goal remains active until the external/elapsed proof gates are either satisfied or explicitly dispositioned; a clean code audit does not manufacture those outcomes.
