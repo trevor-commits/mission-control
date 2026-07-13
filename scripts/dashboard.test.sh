@@ -1989,7 +1989,36 @@ PY
   fi
 }
 
-c1; c2; c3; c4; c5; c6; c7; c8; c8a; c8b; c9; c10; c11; c12; c13; c14; c14a; c15; c16; c17; c18; c19; c20; c21; c22; c23; c24; c25; c26; c27; c28; c29; c30; c31; c32; c33; c34; c35; c36; c37; c38; c39; c40; c41; c42; c42a; c43; c44; c45; c46; c47; c48; c49; c50
+c51() { # committed upstream specimens run through the real dashboard wrapper
+  local mch fixtures; mch="$(newhome)"; fixtures="$REPO/dashboard/fixtures/feeders"
+  if DASHBOARD_CMD_USAGE="cat '$fixtures/usage-snapshot.json'" \
+     DASHBOARD_CMD_GIT="cat '$fixtures/scan-unfinished-work.json'" \
+     MISSION_CONTROL_HOME="$mch" bash "$DASH" collect --force usage git >/dev/null 2>&1 \
+     && python3 - "$mch/data" "$fixtures" <<'PYEOF'
+import csv, json, os, sys
+data, fixtures = sys.argv[1:]
+usage = json.load(open(os.path.join(data, "usage.json")))
+git = json.load(open(os.path.join(data, "git.json")))
+assert usage["ok"] is True and usage["data"]["providers"][0]["name"] == "synthetic-provider"
+assert git["ok"] is True and git["data"]["repos"][0]["repo"] == "synthetic-repo"
+with open(os.path.join(fixtures, "last-scan.tsv"), newline="") as f:
+    rows = list(csv.DictReader(f, delimiter="\t"))
+assert len(rows) == 1
+assert set(rows[0]) == {"repo", "branch", "dirty_files", "ahead", "behind", "detached"}
+for name in ("delegation-state.json", "mailbox-msg.json", "scan-unfinished-work.json", "usage-snapshot.json"):
+    assert isinstance(json.load(open(os.path.join(fixtures, name))), dict), name
+for name in ("session-index.jsonl", "claude-line.jsonl", "codex-line.jsonl"):
+    lines = [json.loads(line) for line in open(os.path.join(fixtures, name)) if line.strip()]
+    assert lines, name
+PYEOF
+  then
+    ok "feeder specimens survive dashboard collectors and shape-contract validation"
+  else
+    no "committed feeder specimens drifted from dashboard collector contracts"
+  fi
+}
+
+c1; c2; c3; c4; c5; c6; c7; c8; c8a; c8b; c9; c10; c11; c12; c13; c14; c14a; c15; c16; c17; c18; c19; c20; c21; c22; c23; c24; c25; c26; c27; c28; c29; c30; c31; c32; c33; c34; c35; c36; c37; c38; c39; c40; c41; c42; c42a; c43; c44; c45; c46; c47; c48; c49; c50; c51
 shell_contract
 echo "----"
 echo "PASS=$PASS FAIL=$FAIL"

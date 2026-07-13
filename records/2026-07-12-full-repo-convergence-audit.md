@@ -159,3 +159,101 @@ These are not unimplemented repo defects and must not be papered over with synth
 
 by: Codex thread `019f59f8-bb9e-70c0-9497-a9686ea24154`, with independent architecture/security and UX/test challengers.
 linear: self-contained under the repo-only contract in `LINEAR.md`.
+
+---
+
+## 2026-07-13 fresh convergence re-audit
+
+This addendum re-proves the earlier closeout from current `origin/main`; it does
+not treat the prior green report as evidence for this run.
+
+### Fresh audit fingerprint and scope
+
+- Candidate/base: clean `main` at `a7e4edab8305d122c312cbeaac10c83f55adb7a7`, equal to `origin/main` after `git fetch --prune origin`.
+- Preserved concurrent checkout: `/Users/gillettes/Coding Projects/mission-control` on `codex/er103-git-state-and-morning-proof`, with its four pre-existing modified files untouched.
+- Runtime: Node `v26.3.1`, pnpm `10.22.0`, Python `3.14.6`; authoritative shell gates use macOS `/bin/bash`.
+- Inventory: 124 tracked files; local and remote topology again contained only `main` plus the intentionally preserved ER-103 branch.
+- Audit surfaces: implementation, runtime/install state, privacy/security boundaries, test authority, architecture, governance/ripple records, and provider-native Codex/Claude session feedback.
+
+### Architecture map and Brooks audit
+
+```mermaid
+flowchart LR
+  A["Provider and repo sources"] --> B["Feeder and collector scripts"]
+  B --> C["Shared privacy and health policy"]
+  C --> D["JSON and JavaScript feed envelopes"]
+  D --> E["Local dashboard and menu panel"]
+  B --> F["Chat graph SQLite"]
+  F --> D
+  B --> G["Decision SQLite"]
+  G --> D
+  B --> H["Morning Brief pipeline"]
+  H --> D
+  I["Launchd templates and installer"] --> B
+  J["Acceptance and browser suites"] --> B
+  J --> D
+  J --> I
+```
+
+The local/offline, feeder-to-envelope architecture remains the right shape for a
+single-operator product. It minimizes network and deployment surface, gives each
+source a bounded adapter, centralizes privacy/health decisions, and preserves
+separate state stores where transactional behavior differs. The team and software
+structure align: one operator-facing product with one integration boundary and
+small source-specific adapters. A service split or framework rewrite would add
+coordination cost without solving an observed defect.
+
+| Dimension | Result | Evidence |
+|---|---:|---|
+| Boundaries and cohesion | 20/20 | Collector, shared-policy, state, presentation, and install boundaries are explicit and independently tested. |
+| Correctness and testability | 25/25 | Hermetic source seams, negative controls, transaction races, browser execution, and full verifier all pass. |
+| Privacy and security | 20/20 | Field-aware egress, secret/PII regressions, fixed-argv transports, link refusal, pinned descriptors, and synthetic fixtures. |
+| Operability | 15/20 | Install stamp/panel/launchd proof is live; elapsed-morning and provider-authorization gates remain honestly open. |
+| Documentation and governance | 15/15 | Intent, OpenSpec, Continuity, Coherence, Linear-Core, todo, and the expanded audit/session record agree. |
+| **Architecture health** | **95/100** | The five withheld points are external/elapsed product proof, not a code or architecture defect; no critical architecture issue remains. |
+
+### Session-feedback reconciliation
+
+The audit started with `chat-source`, then used bounded provider-native store
+enumeration when an unbounded rich list stalled. Exact resolved IDs and transcript
+paths remain the source of truth; titles below are only navigation labels.
+
+| Session or group | Feedback/claim reconciled | Current disposition |
+|---|---|---|
+| Codex `019f2865-0cc2-7db1-82af-73646d440d6a` — original ER-087 independent reviewer; cwd `/Users/gillettes/Coding Projects/gi-worktrees/er087-mission-control`; transcript `/Users/gillettes/.codex/sessions/2026/07/03/rollout-2026-07-03T07-32-18-019f2865-0cc2-7db1-82af-73646d440d6a.jsonl` | Suppression source-key bypass, stable launchd copy, false-red pseudo job, future-schema guard, and the missing committed feeder-shape specimens. | First four were already implemented. The feeder-shape requirement was the one confirmed gap and is fixed by this addendum with real-collector regressions. |
+| Codex `019f2d4e`, `019f2dec` | Tabler/dashboard tracker pattern recommendations. | Implemented through the July 4 cards/tables/badges/search pass and its browser tests. |
+| Codex `019f2dd8` | cc-switch pattern: provider/config health. | Explicitly not adopted as a write-mode proxy/config layer; safe usage visibility remains tracked as ER-089 and requires truthful sources/auth. The old local source is no longer resolvable by `chat-source`, so no stronger provenance claim is made. |
+| Codex `019f2ddb`, `019f32ea` | Cursor defect audit; enterprise stack review. | Defects landed with regressions; enterprise replacement rejected and recorded as disproportionate for this local product. |
+| Codex `019f42ec`, `019f42f1`, `019f494c`, `019f495a` | Independent audit wording/severity plus Morning Brief plan privacy, concurrency, cursor, launchd, deadman, and Bash requirements. | Implemented and preserved by current tests; later exact candidates were review-clean. |
+| Codex `019f4f3d`, `019f4f5f`, `019f4fd4`, `019f5010`, `019f5056`, `019f5173` | Job history, renderer safety, same-day validity, full-ingest SLA, installer provenance, and live freshness findings. | Implemented with dedicated regressions; current full matrix covers every boundary. |
+| Codex `019f5447` | Remaining-work status and proof gates. | External gates remain active in `todo.md`; no repo defect was reclassified as complete. |
+| Claude reviewer/worker chain `287a0123`, `421dfd00`, `4f6e94ff`, `5c6e42c0`, `610b058d`, `a6a7c236`, `adc5fd6c`, `afd58877`, `dadd8ddc`, `dd5355ae`, `fca3480e`, plus worktree sessions `de18ae00`, `d28ca029` | Independent implementation, records, UI, install, and Morning Brief challenge passes. | Their material findings are represented in the original findings ledger and regression matrix; provider-native enumeration found no additional unimplemented request. Trivial probes were excluded from the material inventory. |
+
+### Newly reproduced finding and repair
+
+| Severity | Symptom | Source | Consequence | Remedy and proof |
+|---|---|---|---|---|
+| P2 | The locked plan promised durable feeder specimens, but `dashboard/fixtures/feeders/` did not exist and tests built all upstream shapes inline. | Original ER-087 reviewer `019f2865`; `docs/MISSION_CONTROL_PLAN.md` feeder-drift guard. | A coordinated upstream format drift could make inline mocks remain green while real collectors silently lose evidence. | Added privacy-safe synthetic specimens derived from observed shapes. `chat-graph.test.sh` runs delegation, mailbox, title, transcript, topic, and outcome collectors against them; `dashboard.test.sh` runs usage/Git wrapping and validates all stored shapes. Focused post-fix results: graph ALL PASS; dashboard `67/0`. |
+
+No other P0-P3 implementation defect was reproduced. ShellCheck reported no
+error-severity finding; lower-severity warnings are intentional test-shell idioms
+or pre-existing unused test locals and do not change runtime behavior.
+
+### Fresh verification and live-state truth
+
+- Pre-edit authoritative `/bin/bash scripts/verify.sh`: `SUITES PASS=21 FAIL=0`; dashboard `66/0`, ER-134 `50/0`, browser `253`.
+- Post-repair focused graph suite: ALL PASS, including the committed-specimen real-collector case.
+- Post-repair focused dashboard suite: `PASS=67 FAIL=0`.
+- Fixture parse, `git diff --check`, shell syntax, Python syntax, and ShellCheck error-severity: PASS.
+- Forced installed collection succeeded. Install verification returned exact head `a7e4eda`, `ok:true`, and no missing, mismatched, or unexpected member. The menu panel was running; the interval job had last exit `0`.
+- Overall live status remained honestly non-green because a separate global Automation job was red and the prior daily Brief was expired before the next 07:00 run. This is operational input truth, not a repo test failure.
+- Outcome Extractor remains unloaded at the explicit pending-calibration plist. No provider call, send, credential action, or fabricated morning was performed.
+
+### Honest residual gates
+
+The prior four residual gates are unchanged: five natural mornings with Trevor
+comprehension (only three receipts existed at the 02:00 audit), separately
+authorized provider calibration/activation, at-least-once provider ambiguity, and
+the separately scoped portfolio executor. These remain active work or external
+proof—not hidden audit failures and not permission requests for already-scoped
+repo work.

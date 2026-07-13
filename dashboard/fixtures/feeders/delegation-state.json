@@ -1,0 +1,11 @@
+{
+  "id": "synthetic-delegation",
+  "to": "codex",
+  "governor": {
+    "id": "11111111-1111-4111-8111-111111111111",
+    "provider": "claude"
+  },
+  "worker_child_id": "01900000-0000-7000-8000-000000000002",
+  "handshake": "synthetic-handshake",
+  "handshake_verified": "yes"
+}

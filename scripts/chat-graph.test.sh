@@ -1904,5 +1904,36 @@ PYEOF
 then pass "raw graph.db persistence sanitizes new and legacy sensitive fields"
 else fail "raw graph.db persistence retained sensitive transcript metadata"; fi
 
+# --- 49. committed feeder specimens exercise the real collectors -----------
+new_env
+FIXTURES="$HERE/../dashboard/fixtures/feeders"
+mkdir -p "$CHAT_GRAPH_CROSS_AGENT_ROOT/delegations/synthetic-delegation"
+mkdir -p "$CHAT_GRAPH_CROSS_AGENT_ROOT/mailbox/01900000-0000-7000-8000-000000000002/inbox"
+mkdir -p "$CHAT_GRAPH_CLAUDE_ROOT/synthetic" "$CHAT_GRAPH_CODEX_ROOT/2030/01/01"
+cp "$FIXTURES/delegation-state.json" \
+  "$CHAT_GRAPH_CROSS_AGENT_ROOT/delegations/synthetic-delegation/state.json"
+cp "$FIXTURES/mailbox-msg.json" \
+  "$CHAT_GRAPH_CROSS_AGENT_ROOT/mailbox/01900000-0000-7000-8000-000000000002/inbox/synthetic-message.json"
+cp "$FIXTURES/session-index.jsonl" "$CHAT_GRAPH_SESSION_INDEX"
+cp "$FIXTURES/claude-line.jsonl" \
+  "$CHAT_GRAPH_CLAUDE_ROOT/synthetic/11111111-1111-4111-8111-111111111111.jsonl"
+cp "$FIXTURES/codex-line.jsonl" \
+  "$CHAT_GRAPH_CODEX_ROOT/2030/01/01/rollout-01900000-0000-7000-8000-000000000002.jsonl"
+if "$CG" rebuild >/dev/null && python3 - "$CHAT_GRAPH_HOME/graph.db" <<'PYEOF'
+import sqlite3, sys
+con = sqlite3.connect(sys.argv[1])
+assert con.execute("SELECT COUNT(*) FROM edges WHERE src=? AND dst=? AND type='spawned' AND status='active'",
+    ("11111111-1111-4111-8111-111111111111", "01900000-0000-7000-8000-000000000002")).fetchone()[0] == 1
+assert con.execute("SELECT COUNT(*) FROM edges WHERE src=? AND dst=? AND type='signaled'",
+    ("11111111-1111-4111-8111-111111111111", "01900000-0000-7000-8000-000000000002")).fetchone()[0] == 1
+assert con.execute("SELECT COUNT(*) FROM edges WHERE src=? AND dst=? AND type='audits'",
+    ("01900000-0000-7000-8000-000000000002", "11111111-1111-4111-8111-111111111111")).fetchone()[0] == 1
+assert con.execute("SELECT COUNT(*) FROM session_topics WHERE code IN ('ER-087','GR-087')").fetchone()[0] == 2
+assert con.execute("SELECT COUNT(*) FROM session_outcomes WHERE session_id=?",
+    ("01900000-0000-7000-8000-000000000002",)).fetchone()[0] == 1
+PYEOF
+then pass "committed feeder specimens survive real graph collectors and transcript scan"
+else fail "committed feeder specimens drifted from graph collector contracts"; fi
+
 echo "----"
 if [ "$FAILS" -eq 0 ]; then echo "ALL PASS"; exit 0; else echo "$FAILS FAILED"; exit 1; fi

@@ -1,0 +1,10 @@
+{
+  "generated_at": "2030-01-01T00:00:00Z",
+  "providers": [
+    {
+      "name": "synthetic-provider",
+      "pct": 37,
+      "status": "ok"
+    }
+  ]
+}

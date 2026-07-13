@@ -1,0 +1,16 @@
+{
+  "generated": "2030-01-01T00:00:00Z",
+  "stale_days": 21,
+  "findings_total": 1,
+  "repos": [
+    {
+      "repo": "synthetic-repo",
+      "dirty": true,
+      "dirty_files": 1,
+      "ahead": 0,
+      "behind": 0,
+      "detached": false,
+      "branches": []
+    }
+  ]
+}
