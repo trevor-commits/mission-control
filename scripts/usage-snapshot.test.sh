@@ -70,8 +70,40 @@ EOF
   fi
 }
 
+c3() {
+  new_env
+  cat > "$T/bin/npx" <<'EOF'
+#!/bin/sh
+printf '%s\n' "$*" >> "$NPX_CAPTURE"
+case " $* " in
+  *" blocks "*) printf '%s\n' '{"blocks":[]}' ;;
+  *" weekly "*) printf '%s\n' '{"weekly":[]}' ;;
+  *) exit 64 ;;
+esac
+EOF
+  chmod +x "$T/bin/npx"
+  NPX_CAPTURE="$T/npx.out" \
+  PATH="$T/bin:$PATH" \
+  USAGE_SNAPSHOT_DIR="$T/state" \
+  USAGE_CREDITS_FILE="$T/missing-credits.json" \
+  CODEX_SESSIONS_DIR="$T/codex" \
+  CLAUDE_GLM_BIN="$T/bin/claude-glm" \
+  COPILOT_DB="$T/missing-copilot.db" \
+  HERMES_BIN="$T/missing-hermes" \
+    bash "$USAGE" >/dev/null 2>"$T/err"
+  if [ "$(wc -l < "$T/npx.out" | tr -d ' ')" = "2" ] \
+     && grep -Fxq -- '-y ccusage@20.0.17 blocks --json --active --offline' "$T/npx.out" \
+     && grep -Fxq -- '-y ccusage@20.0.17 weekly --json --offline' "$T/npx.out" \
+     && ! grep -q '@latest' "$T/npx.out"; then
+    ok "ccusage execution is version-pinned and offline"
+  else
+    no "ccusage execution drifted from the pinned offline contract"
+  fi
+}
+
 c1
 c2
+c3
 
 echo "----"
 echo "PASS=$PASS FAIL=$FAIL"

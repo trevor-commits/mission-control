@@ -20,6 +20,10 @@ COPILOT_DB_PATH="${COPILOT_DB:-$HOME/.copilot/session-store.db}"
 HERMES="${HERMES_BIN:-hermes}"
 NOW_EPOCH=$(date +%s)
 NOW_ISO=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+# Pinned after inspecting ccusage 20.0.17's npm metadata/tarball and exercising
+# its native macOS CLI. Keep scheduled collection reproducible and price lookup
+# offline; upgrade only as an explicit, verified repository change.
+CCUSAGE_PACKAGE="ccusage@20.0.17"
 
 DO_HISTORY=0; DO_HTML=0; NO_CCUSAGE="${SKIP_CCUSAGE:-0}"
 for a in "$@"; do
@@ -89,9 +93,9 @@ claude_rows() {
   fi
   local bj wj
   if [ -n "${CCUSAGE_BLOCKS_JSON:-}" ]; then bj=$(cat "$CCUSAGE_BLOCKS_JSON" 2>/dev/null)
-  else bj=$(npx -y ccusage@latest blocks --json --active 2>/dev/null); fi
+  else bj=$(npx -y "$CCUSAGE_PACKAGE" blocks --json --active --offline 2>/dev/null); fi
   if [ -n "${CCUSAGE_WEEKLY_JSON:-}" ]; then wj=$(cat "$CCUSAGE_WEEKLY_JSON" 2>/dev/null)
-  else wj=$(npx -y ccusage@latest weekly --json 2>/dev/null); fi
+  else wj=$(npx -y "$CCUSAGE_PACKAGE" weekly --json --offline 2>/dev/null); fi
 
   if printf '%s' "$bj" | jq -e '.blocks[0].isActive==true' >/dev/null 2>&1; then
     local tokens end_iso end_epoch burn cost models

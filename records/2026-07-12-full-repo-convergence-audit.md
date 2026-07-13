@@ -273,3 +273,75 @@ The complete verifier passed `SUITES PASS=21 FAIL=0` on exact functional commit
 `4d21023` (dashboard `67/0`, ER-134 `50/0`, browser `253`); `59814aa` changed only
 the challenged audit sentence and passed `git diff --check`. This records an
 evidence-backed reject → repair → re-audit → clean loop, not self-approval.
+
+---
+
+## 2026-07-13 recurring health and operations audit
+
+This pass started from clean `main`/`origin/main` at `bcee9147b9bd45fa05e848d0ae47a3d3f876e939` and re-ran the audit from current source and live state. The preserved dirty checkout at `/Users/gillettes/Coding Projects/mission-control` remained untouched.
+
+### Brooks-Lint Health Dashboard
+
+**Scope:** full Mission Control repository after the repair below
+
+**Composite Score:** 100/100
+
+**Trend:** First run — no trend data
+
+| Dimension | Score | Top Finding |
+|---|---:|---|
+| Code Quality | 100/100 | Clean after the pinned/offline dependency repair. |
+| Architecture | 100/100 | Source adapters flow through shared policy/state boundaries into local presentation; no cycle or upward dependency was found. |
+| Tech Debt | 100/100 | The only reproduced dependency-drift suggestion was repaired in this pass. |
+| Test Quality | 100/100 | Unit/integration, shell acceptance, committed feeder specimens, and real-browser gates remain behavior-focused and green. |
+
+The earlier 95/100 architecture-and-operability score measures product proof, including elapsed mornings and authorization. The Brooks score measures current code, architecture, debt, and tests. They are intentionally different measurements rather than conflicting verdicts.
+
+```mermaid
+flowchart LR
+  A["Provider and repository sources"] --> B["Source adapters and collectors"]
+  B --> C["Shared privacy and health policy"]
+  C --> D["JSON and JavaScript feed envelopes"]
+  D --> E["Local dashboard and menu panel"]
+  B --> F["Chat graph and decision stores"]
+  F --> D
+  B --> G["Morning Brief pipeline"]
+  G --> D
+  H["Installer and LaunchAgents"] --> B
+  I["Shell, fixture, and browser suites"] --> B
+  I --> D
+  I --> H
+```
+
+No current Critical, Warning, or Suggestion remains after repair.
+
+### Reproduced dependency-drift finding and repair
+
+**Dependency Disorder — unbounded scheduled `ccusage` version**
+
+Symptom: `scripts/usage-snapshot` ran `npx -y ccusage@latest` twice whenever the optional Claude usage source was enabled. The existing `ccusage/ccusage` source card explicitly allowed scheduled wrapping only after an exact version and native binary were verified.
+
+Source: *Software Engineering at Google* — Dependency Management and upgrade blockage.
+
+Consequence: a registry release could change scheduled output, native code, or failure behavior without any Mission Control commit, invalidating reproducibility and bypassing repository review.
+
+Remedy: pinned `ccusage@20.0.17`, added `--offline` to both report commands, inspected the npm metadata and tarball integrity (`sha512-MJU4qDs6DOMdam0PXWWFgo0dw/kXAK05rX586DdxIARTzj/zJylWfVlIywgJwW094nNbqwJyGRZvzO2ZsczXDg==`), exercised the native macOS CLI, and added a fake-`npx` regression that proves both exact argv contracts and rejects `@latest`. Red evidence was `PASS=2 FAIL=1`; focused green evidence was `PASS=3 FAIL=0`.
+
+### Live operations and session reconciliation
+
+- Mission Control's own implementation and interval collector remain green; install provenance was exact at the starting SHA.
+- The Automation feed is correctly non-green because the separate global Nightly Review last exited `75` under the resource governor (`swap-used-above-ceiling`) and Delegation Audit has historical exit `127` from a removed pinned worktree. These are truthful upstream failures, not renderer defects. They are now explicit cross-repo follow-ups in `todo.md`.
+- Outcome Extractor remains unloaded at `/Users/gillettes/Library/LaunchAgents/com.gillettes.outcome-extractor.plist.pending-calibration-20260713`. No provider calibration or send was attempted.
+- Three natural Morning Brief deliveries (July 10–12) exist. The July 13 natural run had not occurred at the 02:44 local snapshot; Trevor's comprehension fields remain blank.
+- The documented global session lookup route is itself regressed: `chat-source find` emits `line 77: turns: command not found` and `unknown command: find`. Provider-native fallback enumeration found no new material Mission Control feedback after the final reviewer clean result. The global checkout is dirty and behind concurrent work, so this repo audit recorded the exact external defect instead of editing that shared lane.
+- A one-time 07:25 local follow-up heartbeat was proposed through the native Codex automation surface with a 07:20–08:10 stale-wake guard. It remains pending Trevor's acceptance and is not claimed as scheduled.
+
+### Verification and convergence
+
+- Pre-repair authoritative verifier on exact `bcee914`: `SUITES PASS=21 FAIL=0`; dashboard `67/0`, ER-134 `50/0`, browser `253`.
+- Post-repair focused usage suite: `PASS=3 FAIL=0`; shell syntax and `git diff --check`: PASS.
+- Post-repair authoritative verifier: `SUITES PASS=21 FAIL=0`; dashboard `67/0`, ER-134 `50/0`, usage `3/0`, browser `253`; full log `/tmp/mission-control-20260713-recurring-audit-verify.log`.
+- Pinned/offline live-shape check: both real `blocks` and `weekly` JSON commands completed and exposed their expected top-level arrays without printing local usage data.
+- Final independent challenger verdict: pending against the immutable candidate commit; this record will be updated after the review loop converges.
+
+The repository goal remains active until the external/elapsed proof gates are either satisfied or explicitly dispositioned; a clean code audit does not manufacture those outcomes.
