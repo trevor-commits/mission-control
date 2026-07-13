@@ -1,6 +1,7 @@
 # TODO
 
 ## Active Next Steps
+- Full-repo convergence audit (2026-07-12, active): reconcile prior Mission Control sessions and open audit promises against live `origin/main`; reproduce and repair every confirmed code, privacy, reliability, accessibility, test, governance, and branch-lifecycle defect; rerun the full cold matrix plus installed/rendered evidence; then iterate with an independent read-only challenger until review-clean. Audit lane: `codex/full-repo-audit-20260712` at `/Users/gillettes/Coding Projects/mission-control-worktrees/full-repo-audit-20260712`. | owner: Codex thread `019f59f8-bb9e-70c0-9497-a9686ea24154` | linear: repo-only; no Mission Control Linear team is configured.
 - ER-134 desktop-first usability (2026-07-12): light Home ≤3 Needs-you, menu-bar panel, decide answer→Goal prompt. Suites: render-smoke OK; er134-usability 13/0; dashboard.test.sh PASS=55 FAIL=0.
 If it's not here, it isn't remembered.
 Capture the current goal plus the concrete dependency-ordered steps that are still open.
