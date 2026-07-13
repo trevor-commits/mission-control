@@ -71,6 +71,60 @@ grep -q 'beginActivity' "$ROOT/scripts/mc-panel.swift" && pass "panel RunningBoa
 grep -q 'mcDecide' "$ROOT/dashboard/panel.html" && pass "panel one-click bridge" || fail "panel one-click bridge"
 grep -q 'mcDecide' "$ROOT/scripts/mc-panel.swift" && pass "swift mcDecide handler" || fail "swift mcDecide handler"
 
+# Login KeepAlive template (no real launchctl bootstrap in hermetic/tmp).
+TMPL="$ROOT/launchd/com.gillettes.mc-panel.plist.template"
+if [ -f "$TMPL" ]; then
+  pass "mc-panel launchd template exists"
+else
+  fail "mc-panel launchd template missing"
+fi
+grep -q 'KeepAlive' "$TMPL" && pass "mc-panel template KeepAlive" || fail "mc-panel template KeepAlive"
+grep -q 'RunAtLoad' "$TMPL" && pass "mc-panel template RunAtLoad" || fail "mc-panel template RunAtLoad"
+grep -q '__MCHOME__/Mission Control Panel.app/Contents/MacOS/mc-panel' "$TMPL" \
+  && pass "mc-panel template app binary path" || fail "mc-panel template app binary path"
+# Must stay out of default install selected_plists (gated stamp tests).
+if grep -E 'selected_plists=.*mc-panel' "$ROOT/scripts/dashboard" >/dev/null; then
+  fail "mc-panel must not be in selected_plists"
+else
+  pass "mc-panel not in selected_plists"
+fi
+rendered="$tmp/mc-panel.rendered.plist"
+python3 - "$TMPL" "$rendered" "/Users/fake/.mission-control" "/Users/fake" "$ROOT" <<'PY'
+import sys
+source, dest, mc_home, home, repo = sys.argv[1:]
+text = open(source).read()
+text = text.replace("__MCHOME__", mc_home).replace("__HOME__", home).replace("__REPO__", repo)
+open(dest, "w").write(text)
+PY
+if grep -q '__MCHOME__' "$rendered"; then
+  fail "mc-panel render left __MCHOME__"
+else
+  pass "mc-panel render substitutes __MCHOME__"
+fi
+grep -q '/Users/fake/.mission-control/Mission Control Panel.app/Contents/MacOS/mc-panel' "$rendered" \
+  && pass "mc-panel render app path" || fail "mc-panel render app path"
+grep -q '/Users/fake/.mission-control/panel.html' "$rendered" \
+  && pass "mc-panel render panel.html arg" || fail "mc-panel render panel.html arg"
+if command -v plutil >/dev/null 2>&1; then
+  if plutil -lint "$rendered" >/dev/null 2>&1; then
+    pass "mc-panel rendered plist lints"
+  else
+    fail "mc-panel rendered plist lint"
+  fi
+else
+  pass "plutil absent — skip lint"
+fi
+# DASHBOARD_NO_OPEN + tmp home must not write LaunchAgents (hermetic).
+fake_home="$tmp/fake-home"
+mkdir -p "$fake_home/Library/LaunchAgents"
+HOME="$fake_home" DASHBOARD_NO_OPEN=1 "$ROOT/scripts/dashboard" panel >/dev/null 2>&1 || true
+if [ -f "$fake_home/Library/LaunchAgents/com.gillettes.mc-panel.plist" ]; then
+  fail "autoload wrote LaunchAgent under DASHBOARD_NO_OPEN"
+else
+  pass "no LaunchAgent under DASHBOARD_NO_OPEN"
+fi
+
+
 TEXT="$(python3 -c 'import json,os;print(json.load(open(os.environ["REPO_ROOT"]+"/dashboard/fixtures/decisions.json"))["data"]["pinned"][0]["text"])')"
 "$MISSION_CONTROL_HOME/bin/decision-alert" ingest \
   --source-kind chat \

@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.gillettes.mc-panel</string>
+  <!-- Menu-bar Mission Control Panel (LSUIElement). KeepAlive + RunAtLoad so MC
+       returns after login/reboot without re-running `dashboard panel`.
+       Points at the staged app binary under __MCHOME__ (not the repo path).
+       NOT in dashboard install selected_plists — `dashboard panel` installs it. -->
+  <key>ProgramArguments</key>
+  <array>
+    <string>__MCHOME__/Mission Control Panel.app/Contents/MacOS/mc-panel</string>
+    <string>__MCHOME__/panel.html</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>MISSION_CONTROL_HOME</key><string>__MCHOME__</string>
+  </dict>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>ThrottleInterval</key><integer>5</integer>
+  <key>StandardOutPath</key><string>__MCHOME__/logs/mc-panel.out.log</string>
+  <key>StandardErrorPath</key><string>__MCHOME__/logs/mc-panel.err.log</string>
+</dict>
+</plist>
