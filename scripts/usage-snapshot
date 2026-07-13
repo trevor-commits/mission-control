@@ -24,6 +24,8 @@ NOW_ISO=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 # its native macOS CLI. Keep scheduled collection reproducible and price lookup
 # offline; upgrade only as an explicit, verified repository change.
 CCUSAGE_PACKAGE="ccusage@20.0.17"
+CCUSAGE_TIMEOUT_SECONDS="${CCUSAGE_TIMEOUT_SECONDS:-120}"
+NPX_BIN="${NPX_BIN:-npx}"
 SNAPSHOT_RC=0
 
 DO_HISTORY=0; DO_HTML=0; NO_CCUSAGE="${SKIP_CCUSAGE:-0}"
@@ -55,6 +57,46 @@ row() { # provider window used_pct resets_at_epoch confidence health source note
      confidence:$c, health:$h, source:$s, notes:$n} + $x'
 }
 
+# Bound scheduled native/npm work without adding a third-party timeout utility.
+# A new process session lets timeout cleanup reap npx and any descendants.
+run_bounded() {
+  local timeout_s="$1"
+  shift
+  python3 -c '
+import os, signal, subprocess, sys
+try:
+    timeout_s = int(sys.argv[1])
+    if timeout_s < 1 or timeout_s > 600:
+        raise ValueError
+except ValueError:
+    sys.exit(64)
+argv = sys.argv[2:]
+try:
+    proc = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                            start_new_session=True)
+except OSError:
+    sys.exit(127)
+try:
+    out, _ = proc.communicate(timeout=timeout_s)
+except subprocess.TimeoutExpired:
+    try:
+        os.killpg(proc.pid, signal.SIGTERM)
+    except ProcessLookupError:
+        pass
+    try:
+        proc.communicate(timeout=1)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        proc.communicate()
+    sys.exit(124)
+sys.stdout.buffer.write(out)
+sys.exit(proc.returncode if proc.returncode >= 0 else 128 - proc.returncode)
+' "$timeout_s" "$@"
+}
+
 # ---------- codex: newest rollout carries real rate_limits (both windows) ----------
 codex_rows() {
   local newest="" mtime=0 age_h line
@@ -78,40 +120,52 @@ codex_rows() {
   local base_conf=live; [ "$age_h" -ge 6 ] && base_conf=stale
   local five weekly plan
   # `primary` and `secondary` are transport slots, not stable window names.
-  # Map by the declared duration and treat duplicate/invalid rows as unknown.
+  # Map by duration; classify malformed supported windows separately from omission.
   five=$(printf '%s' "$line" | jq -c '
-    [.primary, .secondary]
-    | map(select(type=="object"
-        and .window_minutes==300
-        and (((.used_percent|type)=="number") or .used_percent==null)
-        and (((.resets_at|type)=="number") or .resets_at==null)))
-    | if length==1 then .[0] else null end')
+    [.primary, .secondary] | map(select(type=="object" and .window_minutes==300)) as $matches
+    | if ($matches|length)==0 then {status:"missing"}
+      elif ($matches|length)!=1 then {status:"invalid"}
+      else $matches[0] as $v
+      | if (($v.used_percent==null) or (($v.used_percent|type)=="number" and $v.used_percent>=0 and $v.used_percent<=100))
+          and (($v.resets_at==null) or (($v.resets_at|type)=="number" and $v.resets_at>=0 and $v.resets_at<=4102444800 and ($v.resets_at|floor)==$v.resets_at))
+        then {status:"valid",value:$v} else {status:"invalid"} end
+      end')
   weekly=$(printf '%s' "$line" | jq -c '
-    [.primary, .secondary]
-    | map(select(type=="object"
-        and .window_minutes==10080
-        and (((.used_percent|type)=="number") or .used_percent==null)
-        and (((.resets_at|type)=="number") or .resets_at==null)))
-    | if length==1 then .[0] else null end')
+    [.primary, .secondary] | map(select(type=="object" and .window_minutes==10080)) as $matches
+    | if ($matches|length)==0 then {status:"missing"}
+      elif ($matches|length)!=1 then {status:"invalid"}
+      else $matches[0] as $v
+      | if (($v.used_percent==null) or (($v.used_percent|type)=="number" and $v.used_percent>=0 and $v.used_percent<=100))
+          and (($v.resets_at==null) or (($v.resets_at|type)=="number" and $v.resets_at>=0 and $v.resets_at<=4102444800 and ($v.resets_at|floor)==$v.resets_at))
+        then {status:"valid",value:$v} else {status:"invalid"} end
+      end')
   plan=$(printf '%s' "$line" | jq -r '.plan_type // "?"')
 
-  local used reset conf
-  if [ "$five" = "null" ]; then
+  local used reset conf status
+  status=$(printf '%s' "$five" | jq -r '.status')
+  if [ "$status" = "missing" ]; then
     emit "$(row codex 5h null null unknown ok rollout-rate_limits "plan=$plan; current event omitted a valid 5h window")"
+  elif [ "$status" = "invalid" ]; then
+    SNAPSHOT_RC=1
+    emit "$(row codex 5h null null unknown down rollout-rate_limits "plan=$plan; current event contains an invalid 5h window")"
   else
-    used=$(printf '%s' "$five" | jq -r 'if .used_percent==null then "null" else (.used_percent|tostring) end')
-    reset=$(printf '%s' "$five" | jq -r 'if .resets_at==null then "null" else (.resets_at|tostring) end')
+    used=$(printf '%s' "$five" | jq -r 'if .value.used_percent==null then "null" else (.value.used_percent|tostring) end')
+    reset=$(printf '%s' "$five" | jq -r 'if .value.resets_at==null then "null" else (.value.resets_at|tostring) end')
     conf="$base_conf"
     # A reset that already passed means the number is from a closed window.
     [ "$reset" != "null" ] && [ "$reset" -le "$NOW_EPOCH" ] 2>/dev/null && conf=stale
     emit "$(row codex 5h "$used" "$reset" "$conf" ok rollout-rate_limits "plan=$plan; rollout age ${age_h}h; mapped by window_minutes=300; refresh: run any tiny codex exec")"
   fi
 
-  if [ "$weekly" = "null" ]; then
+  status=$(printf '%s' "$weekly" | jq -r '.status')
+  if [ "$status" = "missing" ]; then
     emit "$(row codex weekly null null unknown ok rollout-rate_limits "plan=$plan; current event omitted a valid weekly window")"
+  elif [ "$status" = "invalid" ]; then
+    SNAPSHOT_RC=1
+    emit "$(row codex weekly null null unknown down rollout-rate_limits "plan=$plan; current event contains an invalid weekly window")"
   else
-    used=$(printf '%s' "$weekly" | jq -r 'if .used_percent==null then "null" else (.used_percent|tostring) end')
-    reset=$(printf '%s' "$weekly" | jq -r 'if .resets_at==null then "null" else (.resets_at|tostring) end')
+    used=$(printf '%s' "$weekly" | jq -r 'if .value.used_percent==null then "null" else (.value.used_percent|tostring) end')
+    reset=$(printf '%s' "$weekly" | jq -r 'if .value.resets_at==null then "null" else (.value.resets_at|tostring) end')
     conf="$base_conf"
     [ "$reset" != "null" ] && [ "$reset" -le "$NOW_EPOCH" ] 2>/dev/null && conf=stale
     emit "$(row codex weekly "$used" "$reset" "$conf" ok rollout-rate_limits "plan=$plan; mapped by window_minutes=10080")"
@@ -128,12 +182,12 @@ claude_rows() {
   if [ -n "${CCUSAGE_BLOCKS_JSON:-}" ]; then
     bj=$(cat "$CCUSAGE_BLOCKS_JSON" 2>/dev/null) || blocks_ok=0
   else
-    bj=$(npx -y "$CCUSAGE_PACKAGE" blocks --json --active --offline 2>/dev/null) || blocks_ok=0
+    bj=$(run_bounded "$CCUSAGE_TIMEOUT_SECONDS" "$NPX_BIN" -y "$CCUSAGE_PACKAGE" blocks --json --active --offline) || blocks_ok=0
   fi
   if [ -n "${CCUSAGE_WEEKLY_JSON:-}" ]; then
     wj=$(cat "$CCUSAGE_WEEKLY_JSON" 2>/dev/null) || weekly_ok=0
   else
-    wj=$(npx -y "$CCUSAGE_PACKAGE" weekly --json --offline 2>/dev/null) || weekly_ok=0
+    wj=$(run_bounded "$CCUSAGE_TIMEOUT_SECONDS" "$NPX_BIN" -y "$CCUSAGE_PACKAGE" weekly --json --offline) || weekly_ok=0
   fi
 
   if [ "$blocks_ok" -ne 1 ] || ! printf '%s' "$bj" | jq -e '.blocks | type=="array"' >/dev/null 2>&1; then

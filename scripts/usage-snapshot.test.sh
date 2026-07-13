@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/bash
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -34,7 +34,7 @@ c1() {
   COPILOT_DB="$T/missing-copilot.db" \
   HERMES_BIN="$T/missing-hermes" \
   USAGE_NOTIFY_CMD="/bin/echo ; touch $marker" \
-    bash "$USAGE" --no-ccusage >/dev/null 2>"$T/err"
+    /bin/bash "$USAGE" --no-ccusage >/dev/null 2>"$T/err"
   if [ ! -e "$marker" ] \
      && grep -q "notify failed" "$T/err" \
      && ! ls "$T/state"/.credit-alert-* >/dev/null 2>&1; then
@@ -59,7 +59,7 @@ EOF
   COPILOT_DB="$T/missing-copilot.db" \
   HERMES_BIN="$T/missing-hermes" \
   USAGE_NOTIFY_CMD="$T/bin/notify --fixed" \
-    bash "$USAGE" --no-ccusage >/dev/null 2>"$T/err"
+    /bin/bash "$USAGE" --no-ccusage >/dev/null 2>"$T/err"
   if [ -s "$T/notify.out" ] \
      && [ "$(sed -n '1p' "$T/notify.out")" = "2" ] \
      && grep -q '^--fixed$' "$T/notify.out" \
@@ -92,7 +92,7 @@ EOF
   CLAUDE_GLM_BIN="$T/bin/claude-glm" \
   COPILOT_DB="$T/missing-copilot.db" \
   HERMES_BIN="$T/missing-hermes" \
-    bash "$USAGE" >/dev/null 2>"$T/err"
+    /bin/bash "$USAGE" >/dev/null 2>"$T/err"
   cat > "$T/npx.expected" <<'EOF'
 argc=6
 arg=-y
@@ -131,7 +131,7 @@ EOF
   CLAUDE_GLM_BIN="$T/bin/claude-glm" \
   COPILOT_DB="$T/missing-copilot.db" \
   HERMES_BIN="$T/missing-hermes" \
-    bash "$USAGE" --no-ccusage >"$T/out"
+    /bin/bash "$USAGE" --no-ccusage >"$T/out"
   if jq -e '.providers[] | select(.provider=="codex" and .window=="5h") | .used_pct==22' "$T/out" >/dev/null \
      && jq -e '.providers[] | select(.provider=="codex" and .window=="weekly") | .used_pct==88' "$T/out" >/dev/null; then
     ok "Codex rate windows are mapped by duration, not transport slot"
@@ -154,7 +154,7 @@ EOF
   CLAUDE_GLM_BIN="$T/bin/claude-glm" \
   COPILOT_DB="$T/missing-copilot.db" \
   HERMES_BIN="$T/missing-hermes" \
-    bash "$USAGE" --no-ccusage >"$T/out"
+    /bin/bash "$USAGE" --no-ccusage >"$T/out"
   if jq -e '.providers[] | select(.provider=="codex" and .window=="5h") | .used_pct==null and .confidence=="unknown"' "$T/out" >/dev/null \
      && jq -e '.providers[] | select(.provider=="codex" and .window=="weekly") | .used_pct==88 and .confidence=="live"' "$T/out" >/dev/null; then
     ok "an omitted Codex window stays explicit instead of borrowing another slot"
@@ -178,7 +178,7 @@ EOF
   CLAUDE_GLM_BIN="$T/bin/claude-glm" \
   COPILOT_DB="$T/missing-copilot.db" \
   HERMES_BIN="$T/missing-hermes" \
-    bash "$USAGE" >"$T/out" 2>"$T/err"
+    /bin/bash "$USAGE" >"$T/out" 2>"$T/err"
   local rc=$?
   if [ "$rc" -eq 1 ] \
      && jq -e '[.providers[] | select(.provider=="claude")] | length == 2 and all(.health=="down" and .confidence=="unknown")' "$T/out" >/dev/null \
@@ -189,12 +189,69 @@ EOF
   fi
 }
 
+c7() {
+  new_env
+  mkdir -p "$T/codex/2026/07/13"
+  cat > "$T/codex/2026/07/13/rollout-test.jsonl" <<'EOF'
+{"payload":{"rate_limits":{"primary":{"used_percent":-50,"window_minutes":300,"resets_at":1e300},"secondary":{"used_percent":101,"window_minutes":10080,"resets_at":2000000000},"plan_type":"test"}}}
+EOF
+  USAGE_SNAPSHOT_DIR="$T/state" \
+  USAGE_CREDITS_FILE="$T/missing-credits.json" \
+  CODEX_SESSIONS_DIR="$T/codex" \
+  CLAUDE_GLM_BIN="$T/bin/claude-glm" \
+  COPILOT_DB="$T/missing-copilot.db" \
+  HERMES_BIN="$T/missing-hermes" \
+    /bin/bash "$USAGE" --no-ccusage >"$T/out" 2>"$T/err"
+  local rc=$?
+  if [ "$rc" -eq 1 ] && [ ! -s "$T/err" ] \
+     && jq -e '[.providers[] | select(.provider=="codex")] | length==2 and all(.used_pct==null and .confidence=="unknown" and .health=="down")' "$T/out" >/dev/null; then
+    ok "impossible Codex percentages and reset epochs fail closed without dropping rows"
+  else
+    no "malformed numeric Codex windows escaped validation or erased rows"
+  fi
+}
+
+c8() {
+  new_env
+  cat > "$T/bin/npx" <<'EOF'
+#!/bin/sh
+printf '%s\n' "$$" >> "$NPX_PID_LOG"
+trap '' TERM
+while :; do sleep 30; done
+EOF
+  chmod +x "$T/bin/npx"
+  local start elapsed rc leaked=0 pid
+  start=$(date +%s)
+  NPX_PID_LOG="$T/npx-pids" \
+  NPX_BIN="$T/bin/npx" \
+  CCUSAGE_TIMEOUT_SECONDS=1 \
+  USAGE_SNAPSHOT_DIR="$T/state" \
+  USAGE_CREDITS_FILE="$T/missing-credits.json" \
+  CODEX_SESSIONS_DIR="$T/codex" \
+  CLAUDE_GLM_BIN="$T/bin/claude-glm" \
+  COPILOT_DB="$T/missing-copilot.db" \
+  HERMES_BIN="$T/missing-hermes" \
+    /bin/bash "$USAGE" >"$T/out" 2>"$T/err"
+  rc=$?; elapsed=$(( $(date +%s) - start ))
+  while IFS= read -r pid; do
+    [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null && leaked=1
+  done < "$T/npx-pids"
+  if [ "$rc" -eq 1 ] && [ "$elapsed" -le 7 ] && [ "$leaked" -eq 0 ] \
+     && jq -e '[.providers[] | select(.provider=="claude")] | length==2 and all(.health=="down")' "$T/out" >/dev/null; then
+    ok "hung ccusage commands time out, fail down, and leave no npx process"
+  else
+    no "hung ccusage work was unbounded, falsely healthy, or leaked a process"
+  fi
+}
+
 c1
 c2
 c3
 c4
 c5
 c6
+c7
+c8
 
 echo "----"
 echo "PASS=$PASS FAIL=$FAIL"

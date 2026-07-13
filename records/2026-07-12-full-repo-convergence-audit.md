@@ -340,6 +340,11 @@ Fresh reviewer `/root/worker_019f59f8_final_challenger` rejected immutable
 | P1 | Mission Control's vendored collector treated `primary` as five-hour and `secondary` as weekly even though they are transport slots; reversed and omitted windows could be mislabeled. | Converged Mission and global parsers byte-for-byte, mapped only by `window_minutes` 300/10080, and added reversed-slot and omitted-window regressions. |
 | P2 | An `npx` exit 42 still returned snapshot exit 0 and emitted Claude rows as healthy/idle. | Propagated collector failure through a nonzero snapshot exit while preserving partial JSON/history, emitted `health=down`/`confidence=unknown`, and added a deterministic failure regression. |
 | P3 | The fake `npx` test flattened arguments through `$*`, so it did not prove argv boundaries. | Captured `argc` and every `arg=` independently and compared them to an exact fixture. |
+| P2 | Numeric-but-impossible percentages and reset epochs passed the first validation; an extreme epoch made `todate` fail twice, erased both Codex rows, and still exited 0. | Require percentages in 0–100 and integral reset epochs in the supported range, distinguish malformed windows from honest omission, emit explicit unknown/down rows, exit nonzero, and test `-50`, `101`, and `1e300`. |
+| P2 | Both scheduled `npx` commands were unbounded, so a wedged cache/registry child could hold the recurring job indefinitely. | Added a dependency-free Python process-session timeout with TERM/KILL cleanup, a 120-second production bound per command, and a hanging fake-`npx` regression that proves bounded failure and no surviving process. |
+| P2 | The global LaunchAgent template still used `/bin/bash -lc` while the record claimed direct argv; removing the login shell without resolving `npx` would also fail under launchd's restricted PATH. | Replaced the command string with direct `/bin/bash`, script, `--history`, and `--html` arguments; added an explicit rendered `NPX_BIN`; and test the exact plist argument/environment contract. |
+| P3 | Mission's test cases invoked unqualified Homebrew Bash even though production uses system Bash 3.2, and the global runbook retained a stale 17-test count. | Pin the test shebang and every inner invocation to `/bin/bash`; make the runbook require exit 0/no failures instead of a brittle count. |
+| P3 | The global full verifier recreated `scripts/lib/__pycache__` after its bytecode-clean check. | Replaced `py_compile` with an in-memory `compile()` syntax gate and proved it leaves the source tree bytecode-clean. |
 
 The repairs deliberately preserve `--no-ccusage` behavior for the dashboard,
 avoid provider egress, and retain the legacy notification test seam while the
@@ -358,9 +363,9 @@ LaunchAgent uses one executable plus fixed arguments without a shell.
 
 - Pre-repair authoritative verifier on exact `bcee914`: `SUITES PASS=21 FAIL=0`; dashboard `67/0`, ER-134 `50/0`, browser `253`.
 - Initial pin-only focused usage suite: `PASS=3 FAIL=0`; the independent challenger then rejected the incomplete operational boundary above.
-- Final expanded focused usage suite: `PASS=6 FAIL=0`; global usage-routing suite: `38 pass, 0 fail`; Mission/global collector source comparison, shell syntax, plist validation, and `git diff --check`: PASS.
-- Post-convergence authoritative Mission verifier: `SUITES PASS=21 FAIL=0`; dashboard `67/0`, ER-134 `50/0`, usage `6/0`, browser `253`; full log `/tmp/mission-control-usage-convergence-verify.log`.
-- Post-convergence authoritative global verifier: PASS; full log `/tmp/global-usage-convergence-verify.log`.
+- Final expanded focused usage suite: `PASS=8 FAIL=0` under `/bin/bash`; global usage-routing suite: `41 pass, 0 fail`; Mission/global collector source comparison, bounded-process cleanup, direct-argv plist contract, shell syntax, plist validation, bytecode-clean syntax gate, and `git diff --check`: PASS.
+- Second-replacement authoritative Mission verifier: `SUITES PASS=21 FAIL=0`; dashboard `67/0`, ER-134 `50/0`, usage `8/0`, browser `253`; full log `/tmp/mission-control-usage-convergence-v2-verify.log`.
+- Second-replacement authoritative global verifier: PASS with usage-routing `41/0` and no residual bytecode; full log `/tmp/global-usage-convergence-v2-verify.log`.
 - Pinned/offline live-shape check: both real `blocks` and `weekly` JSON commands completed and exposed their expected top-level arrays without printing local usage data.
 - Final independent challenger verdict: pending against immutable replacement commits and the installed-runtime proof; `105889e` is explicitly rejected and is not the final evidence commit.
 
