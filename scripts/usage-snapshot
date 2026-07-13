@@ -178,7 +178,7 @@ run_ccusage() {
 
 # ---------- codex: newest rollout carries real rate_limits (both windows) ----------
 codex_rows() {
-  local newest="" mtime=0 age_h line parse_rc=0
+  local newest="" mtime=0 age_h line parse_rc=0 read_rc=0 bounded_json=""
   newest=$(find "$CODEX_SESSIONS" -type f -name 'rollout-*.jsonl' 2>/dev/null -print0 \
     | xargs -0 stat -f '%m %N' 2>/dev/null | sort -rn | head -1 | cut -d' ' -f2-)
   if [ -z "$newest" ]; then
@@ -194,7 +194,14 @@ codex_rows() {
     return
   fi
   age_h=$(( (NOW_EPOCH - mtime) / 3600 ))
-  line=$(tail -n 400 "$newest" | jq -sc '
+  bounded_json=$(tail -n 400 "$newest" 2>/dev/null) || read_rc=$?
+  if [ "$read_rc" -ne 0 ]; then
+    SNAPSHOT_RC=1
+    emit "$(row codex 5h null null unknown down "$newest" 'selected rollout could not be read')"
+    emit "$(row codex weekly null null unknown down "$newest" 'selected rollout could not be read')"
+    return
+  fi
+  line=$(printf '%s\n' "$bounded_json" | jq -sc '
           [.[] | .. | objects | select(has("rate_limits")) | .rate_limits]
           | if length == 0 then empty else .[-1] end' 2>/dev/null) || parse_rc=$?
   if [ "$parse_rc" -ne 0 ]; then
