@@ -1,7 +1,7 @@
 # Full-repo convergence audit
 
 Date: 2026-07-12
-Status: GitHub-review follow-up `86cfff8` is full-suite green and independently `REVIEW-CLEAN`; merge/install closeout pending
+Status: complete; merged, installed, live-verified, and redundant branches/worktrees cleaned
 Audit branch: `codex/full-repo-audit-20260712`
 Audit worktree: `/Users/gillettes/Coding Projects/mission-control-worktrees/full-repo-audit-20260712`
 Merge target/base inspected: `origin/main` at `659b8d218cb57044506f949d0a3fd47de921eb42`
@@ -128,7 +128,17 @@ GitHub review then examined all 32 changed files. Two actionable P2 comments wer
 
 The independent UX/test challenger then re-reviewed exact `86cfff8`, including both GitHub-review repairs and their interaction with the prior transaction fixes, and returned `REVIEW-CLEAN`.
 
-Merge/install/push proof and final live state are appended in the closeout commit after those state moves occur.
+## Merge, installation, and live closeout
+
+- PR: [#9](https://github.com/trevor-commits/mission-control/pull/9), merged 2026-07-13 08:40 UTC.
+- Reviewed head: `60c9ece16ab1360c311f811424cd33f792f949e9`; GitHub Copilot reviewed all 32 changed files, CodeRabbit approved/passed, and GitGuardian passed.
+- Merge commit: `c44e5c967d0232df29ab46a7cfa07ba34d6d33a1` on `origin/main`; `git merge-base --is-ancestor` proved the reviewed head is contained.
+- Canonical clean `main` worktree fast-forwarded to the merge commit; installer copied seven runtimes and four assets, and `verify_install_stamp` returned `ok:true`, no missing/mismatched/unexpected paths, provenance `head`, exact head `c44e5c9`.
+- Menu-bar panel compiled/staged from the attested source, its login job is loaded and running, and the main Mission Control launchd job has last exit `0`.
+- A forced live collection returned `0`; Automation, Usage, Git, Chats, and Decisions were freshly generated. Overall status remained honestly nonzero because the separate global Nightly Review job is red and the July 12 daily brief is past its midnight validity horizon before the next 07:00 run. Neither is a failure of the reviewed repo implementation.
+- Outcome Extractor remains unloaded. Its pending-calibration plist remains at `/Users/gillettes/Library/LaunchAgents/com.gillettes.outcome-extractor.plist.pending-calibration-20260713`; no provider calibration or live model egress was performed.
+- Removed the audit worktree, its detached baseline worktree, five redundant ER-134 worktrees, their local branches, the redundant panel/CTA local branches, and seven patch-contained remote branches. The removal push reran `SUITES PASS=21 FAIL=0`.
+- Preserved `/Users/gillettes/Coding Projects/mission-control` on `codex/er103-git-state-and-morning-proof` because it contains Trevor-owned dirty files. Direct comparison proved those four files are older/superseded variants of merged main rather than uncontained implementation; preservation is intentional, not unfinished audit work.
 
 ## Honest residual gates
 
@@ -142,7 +152,7 @@ These are not unimplemented repo defects and must not be papered over with synth
 ## Self-audit and Ripple Check
 
 - Method: compared live `origin/main`, every local/origin branch tip, patch containment, the preserved dirty ER-103 checkout, exact resolved session metadata/latest exchanges, durable Work/Audit/Test logs, runtime code, installed-state contracts, and independent counterexample reports.
-- Outcome so far: every reproduced code, privacy, UI, test, and repo-governance defect has an implementation or explicit accepted-debt disposition plus a focused regression. The final immutable candidate passed the entire authoritative matrix and the independent challenger returned `REVIEW-CLEAN`; only merge, canonical installation, and live-state proof remain.
+- Outcome: every reproduced code, privacy, UI, test, and repo-governance defect has an implementation or explicit accepted-debt disposition plus a focused regression. The final implementation passed the complete matrix repeatedly, independent and GitHub reviewers converged clean, the reviewed head is contained by `origin/main`, the installed tree is stamp-verified, and live collection/panel execution work as designed.
 - Did not verify yet: five elapsed mornings, Trevor comprehension, or provider calibration, because those require time or explicit external authorization; no live provider send was performed.
 - Ripple Check: reviewed `PROJECT_INTENT.md`, `AGENTS.project.md`, `CONTINUITY.md`, `COHERENCE.md`, `LINEAR.md`, root `todo.md`, current OpenSpec state, dashboard feed consumers, install/stamp sets, and the morning-surface collision record. The product remains local/offline, repo-only for Linear, and external-provider gated.
 - Better-path challenge: fixed truth and deployment boundaries at their producers and authoritative verifier rather than adding another parallel audit harness or weakening fail-closed gates.

@@ -1,8 +1,6 @@
 # TODO
 
 ## Active Next Steps
-- Full-repo convergence audit (2026-07-12, active): reconcile prior Mission Control sessions and open audit promises against live `origin/main`; reproduce and repair every confirmed code, privacy, reliability, accessibility, test, governance, and branch-lifecycle defect; rerun the full cold matrix plus installed/rendered evidence; then iterate with an independent read-only challenger until review-clean. Audit lane: `codex/full-repo-audit-20260712` at `/Users/gillettes/Coding Projects/mission-control-worktrees/full-repo-audit-20260712`. | owner: Codex thread `019f59f8-bb9e-70c0-9497-a9686ea24154` | linear: repo-only; no Mission Control Linear team is configured.
-- ER-134 desktop-first usability (2026-07-12): light Home ≤3 Needs-you, menu-bar panel, decide answer→Goal prompt. Suites after GitHub review follow-up `86cfff8`: render-smoke all 7 tabs; er134-usability 50/0; dashboard.test.sh PASS=66 FAIL=0; real-browser desktop/mobile gate 253/0.
 If it's not here, it isn't remembered.
 Capture the current goal plus the concrete dependency-ordered steps that are still open.
 - Keep this section short, current, and ordered by impact/dependency.
@@ -32,6 +30,7 @@ Mirror every configured Linear issue here with the repo-side home that explains 
 ## Completed
 If it's not here, it isn't remembered.
 Preserve a durable completion trail for verified work instead of deleting it from active planning.
+- 2026-07-13 | Full-repo convergence audit and ER-134 desktop-first usability — reconciled every identified Mission Control session/branch, repaired all accepted independent and GitHub review findings, converged at repeated `21/21` full-suite passes plus dashboard `66/0`, ER-134 `50/0`, browser `253`, independent `REVIEW-CLEAN`, CodeRabbit approval, GitGuardian pass, and merged PR #9. Exact merge `c44e5c9` was installed/stamp-verified; menu-bar panel runs; redundant patch-contained branches/worktrees were removed; external elapsed/calibration gates remain honest.
 - 2026-07-11 | Chat-graph full-ingest health truth — separated the 30-minute incremental catch-up cadence from the 30-hour nightly full-ingest SLA in `show` and `doctor`, made missing and future-dated full-ingest markers fail health, and locked healthy/stale/missing/skew plus explicit-override boundaries in hermetic regression tests; implementation `245fb31`, audit repair `dcf11c2`, and test hardening `9843607`; full record below.
 - 2026-07-11 | Nightly repository-bundle health — registered the fail-closed semantic receipt, proved the repaired job green in the live Automation feed, and removed the unregistered blind spot through `4de0aef`; full record below.
 - 2026-07-11 | Chat truth-layer lifecycle repair — strict same-cycle Git evidence, owner-fenced ingest locking, and bounded feeder cleanup landed as `e2f5d60`, independently review-clean and installed/live-proven through `4de0aef`; full record below.
@@ -573,16 +572,16 @@ Keep materially new suggestions here so they survive beyond the current chat.
 
 ## Active Branch Ledger
 ### `codex/er103-git-state-and-morning-proof`
-- status: active
+- status: preserved-superseded dirty checkout
 - created: 2026-07-11
 - base: `main`
 - worktree: `/Users/gillettes/Coding Projects/mission-control`
 - source chat: 2026-07-11 Cursor subagent, Mission Control unfinished work implementation
-- last refreshed by chat: 2026-07-11 Cursor subagent, verification matrix green before commit
+- last refreshed by chat: 2026-07-13 full-repo convergence closeout
 - purpose: Implement ER-103 Git-state lifecycle metadata plus five-morning Morning Brief proof logging and morning-surface collision analysis.
 - linked issue: self-contained; Linear repo-only mode in `LINEAR.md`
 - plugin mirror: none; no live Mission Control Linear team/prefix verified
-- merge expectation: merge
+- merge expectation: none; branch commits and intended changes are patch-contained by `origin/main`
 - merge target: `main`
 - review surface: commit on this branch plus dashboard/scanner/test diff
 - exit checklist:
@@ -590,39 +589,14 @@ Keep materially new suggestions here so they survive beyond the current chat.
   - [x] Notification collision brief added without plist changes
   - [x] Git lifecycle scanner/dashboard fixture/rendering implemented
   - [x] Packet verification commands passed
-  - [ ] Commit pushed
-  - [ ] Merge or explicit no-merge closeout decided
-  - [ ] Local/remote branch cleanup complete
-- delete when: after merge to `main`, push verification, and branch cleanup
-- retain reason: n/a
+  - [x] Commits are patch-contained by merged PR #9
+  - [x] No unique uncontained implementation remains in the four dirty files; main carries later hardened variants
+  - [x] Explicit no-merge disposition recorded
+  - [ ] Trevor-owned dirty checkout cleanup is intentionally not performed by this audit
+- delete when: only after the dirty user-owned checkout receives a separate preservation/discard decision
+- retain reason: destructive cleanup would overwrite or delete uncommitted user state even though its intended behavior is superseded on main
 - cleanup command: `git branch -d codex/er103-git-state-and-morning-proof && git push origin --delete codex/er103-git-state-and-morning-proof`
 - linked PR/audit/completion record: Work Record Log `2026-07-11 — ER-103 Git-state lane and Morning Brief proof logging`
-
-### `codex/full-repo-audit-20260712`
-- status: active
-- created: 2026-07-12
-- base: `main`
-- worktree: `/Users/gillettes/Coding Projects/mission-control-worktrees/full-repo-audit-20260712`
-- source chat: Codex thread `019f59f8-bb9e-70c0-9497-a9686ea24154`
-- last refreshed by chat: 2026-07-12 independent challenger round four
-- purpose: Reconcile prior Mission Control sessions, repair confirmed end-to-end defects, and iterate independent audit plus full verification until clean.
-- linked issue: self-contained; Linear repo-only mode in `LINEAR.md`
-- plugin mirror: none; no live Mission Control Linear team/prefix verified
-- merge expectation: merge
-- merge target: `main`
-- review surface: full repository convergence record, complete verification matrix, and independent architecture/security plus UX/test challenger reports
-- exit checklist:
-  - [x] Prior-session implementation branches reconciled against `origin/main`
-  - [x] Confirmed first- and second-round findings repaired with regressions
-  - [x] Full final verification matrix passes from immutable candidate `b79d91d`
-  - [x] Independent challenger returns `REVIEW-CLEAN` on immutable candidate `b79d91d`
-  - [ ] Commit and push verified
-  - [ ] Merge or explicit no-merge closeout decided
-  - [ ] Local/remote branch and worktree cleanup complete
-- delete when: after merge to `main`, live installation verification, push verification, and audit worktree cleanup
-- retain reason: n/a
-- cleanup command: `git worktree remove /Users/gillettes/Coding Projects/mission-control-worktrees/full-repo-audit-20260712 && git branch -d codex/full-repo-audit-20260712 && git push origin --delete codex/full-repo-audit-20260712`
-- linked PR/audit/completion record: `records/2026-07-12-full-repo-convergence-audit.md`
 
 Keep one entry per non-trivial active branch so any chat can see why it exists, which chat opened or resumed it, what work is active, what must happen before merge or closeout, and whether the branch should be deleted or intentionally retained.
 Legacy branches opened before this workflow may still need manual backfill; use `TODO: verify` instead of guessing until those entries are added.
@@ -646,6 +620,8 @@ Each active branch entry should include:
 - `linked PR/audit/completion record`
 
 ## Branch History
+
+- 2026-07-13 | `codex/full-repo-audit-20260712` | reviewed head `60c9ece` merged through PR #9 as `c44e5c9`; repeated full verifier `21/21`, dashboard `66/0`, ER-134 `50/0`, browser `253`, independent `REVIEW-CLEAN`, CodeRabbit approval, GitGuardian pass, exact install/live proof | cleanup disposition: audit/detached baseline and redundant ER-134 worktrees removed; audit plus all patch-contained ER-134/panel/CTA local and remote branches deleted; Trevor-owned dirty ER-103 checkout preserved with explicit superseded disposition | record: `records/2026-07-12-full-repo-convergence-audit.md`.
 - 2026-07-11 | direct `main` full-ingest-health repair | implementation `245fb31`, independent-audit skew repair `dcf11c2`, and hermetic test follow-up `9843607` are on `origin/main`; no feature branch/worktree was created because the bounded logic repair matched the current checkout purpose and had mechanical rollback/tests | cleanup disposition: none required | source: Codex `019f51c1-5817-7872-a6ce-8b65428277ed`; record: Work Record `2026-07-11 — Chat-graph full-ingest health truth repair`.
 - 2026-07-11 | `codex/chat-graph-fresh-git-feed` | implementation `e2f5d60`, backup-health registration `4de0aef`, and live closeout `9191ebe` are contained by `origin/main` | cleanup disposition: local/remote branch and `/Users/gillettes/Coding Projects/mission-control-worktrees/chat-graph-fresh-git-feed` deleted after exact origin containment and canonical install/live proof | source: Codex `019f51c1-5817-7872-a6ce-8b65428277ed`; records: Chat truth-layer and Nightly repository-bundle Work Records above.
 - 2026-07-11 | `codex/morning-brief-final-gate-20260711` | code through `00da629`; immutable evidence SHA `1261c48` passed separate final code/runtime and records/provenance audits, then fast-forwarded to `origin/main` | cleanup disposition: worktree plus local/remote branch deleted after canonical containment | source: Codex `019f4f6c-e506-7551-876e-d9bb31f56c36`; record: Work Record `2026-07-11 — faad4dbe orchestration audit final-gate repair`.
