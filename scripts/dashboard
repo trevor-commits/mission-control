@@ -1463,190 +1463,23 @@ case "$cmd" in
         engine collect --force --strict decisions >/dev/null || exit $?
         printf '%s\n' "$decision_result"
         ;;
-      answer|__answer-locked)
-        answer_mode="$1"
-        if [ "$answer_mode" = "answer" ]; then
-          [ $# -eq 3 ] || { usage; exit 2; }
-        else
-          [ $# -eq 4 ] || { echo "decide answer: invalid internal lock invocation" >&2; exit 2; }
-        fi
+      answer)
+        [ $# -eq 3 ] || { usage; exit 2; }
         did="$2"; choice="$3"
         case "$choice" in *[!0-9]*|"") echo "decide answer: choice must be a positive integer" >&2; exit 2 ;; esac
         [ "$choice" -ge 1 ] || { echo "decide answer: choice must be >= 1" >&2; exit 2; }
         printf '%s\n' "$did" | grep -Eq '^decision:[0-9a-f]{24}$' || {
           echo "decide answer: invalid decision id" >&2; exit 2;
         }
-        # These directories hold private transaction state. Refuse a linked or
-        # non-directory root before lock/stage creation so artifacts cannot be
-        # redirected outside Mission Control state.
-        python3 - "$MISSION_CONTROL_HOME" <<'PY' || exit $?
-import os, stat, sys
-home=sys.argv[1]
-for path in (home,os.path.join(home,"answers"),os.path.join(home,"prompts")):
-    if os.path.lexists(path):
-        st=os.lstat(path)
-        if stat.S_ISLNK(st.st_mode) or not stat.S_ISDIR(st.st_mode):
-            raise SystemExit("decide answer: unsafe state directory: %s"%path)
-    else:
-        os.mkdir(path,0o700)
-    os.chmod(path,0o700)
-PY
-        lock_path="$MISSION_CONTROL_HOME/answers/.${did}.lock"
-        if [ "$answer_mode" = "answer" ]; then
-          # Hold a kernel-released advisory lock across the complete cross-store
-          # transaction. Lock ownership is carried by an inherited descriptor,
-          # never by a caller-controlled environment marker.
-          python3 - "$0" "$lock_path" "$did" "$choice" <<'PY'
-import fcntl, os, stat, subprocess, sys
-script, path, did, choice = sys.argv[1:]
-flags = os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0)
-fd = os.open(path, flags, 0o600)
-try:
-    os.fchmod(fd, 0o600)
-    if not stat.S_ISREG(os.fstat(fd).st_mode):
-        raise SystemExit("decision answer lock must be a regular file")
-    fcntl.flock(fd, fcntl.LOCK_EX)
-    result = subprocess.run([
-        "/bin/bash", os.path.abspath(script), "decide", "__answer-locked",
-        did, choice, str(fd),
-    ], pass_fds=(fd,))
-    raise SystemExit(result.returncode)
-finally:
-    os.close(fd)
-PY
-          exit $?
-        fi
-        # The internal path is usable only with an inherited descriptor for the
-        # exact lock inode. Acquiring flock here also makes direct internal calls
-        # safe: they either serialize correctly or fail closed.
-        python3 - "$4" "$lock_path" <<'PY' || exit $?
-import fcntl, os, stat, sys
-try:
-    fd = int(sys.argv[1])
-    held = os.fstat(fd)
-    path = os.lstat(sys.argv[2])
-except (OSError, ValueError) as exc:
-    raise SystemExit("decide answer: invalid inherited lock descriptor: %s" % exc)
-if not stat.S_ISREG(held.st_mode) or stat.S_ISLNK(path.st_mode):
-    raise SystemExit("decide answer: unsafe inherited lock")
-if (held.st_dev, held.st_ino) != (path.st_dev, path.st_ino):
-    raise SystemExit("decide answer: inherited lock inode mismatch")
-fcntl.flock(fd, fcntl.LOCK_EX)
-PY
-        # Validate current decision existence and state only after the lock is
-        # held, so a losing writer cannot build or publish partial artifacts.
-        history_json="$("$SCRIPT_DIR/decision-alert" history "$did" --json)" || exit $?
-        resolution_mode="$(HISTORY_JSON="$history_json" CHOICE="$choice" python3 - <<'PY'
-import json, os
-decision = json.loads(os.environ["HISTORY_JSON"]).get("decision") or {}
-if decision.get("state") == "open":
-    print("open")
-elif (decision.get("state") == "resolved" and
-      (decision.get("resolution") or {}).get("evidence_type") == "manual_resolution" and
-      (decision.get("resolution") or {}).get("evidence_ref") == "mc-answer:%s" % os.environ["CHOICE"]):
-    # A prior attempt may have resolved the database and crashed before both
-    # derived artifacts were published. Exact-choice replay repairs that gap.
-    print("recover")
-else:
-    raise SystemExit("decide answer: decision is no longer open for this choice")
-PY
-)" || exit $?
-        dec_json="$MISSION_CONTROL_HOME/data/decisions.json"
-        text=""
-        if [ -f "$dec_json" ]; then
-          text="$(DID="$did" DEC_JSON="$dec_json" python3 - <<'PY'
-import json, os
-path, did = os.environ["DEC_JSON"], os.environ["DID"]
-try:
-    data = json.load(open(path)).get("data") or {}
-except Exception:
-    data = {}
-for row in (data.get("pinned") or []) + (data.get("inferred") or []):
-    if row.get("id") == did:
-        print(row.get("text") or "")
-        break
-PY
-)"
-        fi
-        prompt_path="$MISSION_CONTROL_HOME/prompts/${did}.md"
-        answer_path="$MISSION_CONTROL_HOME/answers/${did}.json"
-        # Reject unsafe destinations before changing the decision database.
-        # This closes the ordinary blocked-path case; the exact-choice recovery
-        # mode below closes a crash or I/O failure after database resolution.
-        PROMPT_PATH="$prompt_path" ANSWER_PATH="$answer_path" python3 - <<'PY' || exit $?
-import os
-for label, path in (("prompt", os.environ["PROMPT_PATH"]),
-                    ("answer", os.environ["ANSWER_PATH"])):
-    if os.path.lexists(path) and (os.path.islink(path) or not os.path.isfile(path)):
-        raise SystemExit("decide answer: %s destination must be a regular non-symlink file" % label)
-PY
-        prompt_stage="$(mktemp "$MISSION_CONTROL_HOME/prompts/.decision-prompt-stage.XXXXXX")" || exit 1
-        answer_stage="$(mktemp "$MISSION_CONTROL_HOME/answers/.decision-answer-stage.XXXXXX")" || {
-          rm -f "$prompt_stage"; exit 1;
-        }
-        chmod 600 "$prompt_stage" "$answer_stage" || {
-          rm -f "$prompt_stage" "$answer_stage"; exit 1;
-        }
-        trap 'rm -f "${prompt_stage:-}" "${answer_stage:-}"' EXIT
-        trap 'exit 129' HUP
-        trap 'exit 130' INT
-        trap 'exit 143' TERM
         compose_bin="$REPO_ROOT/scripts/compose-decision-prompt.py"
         [ -f "$compose_bin" ] || compose_bin="$SCRIPT_DIR/compose-decision-prompt.py"
-        compose_out="$(python3 "$compose_bin" \
-          --decision-id "$did" --choice "$choice" --text "$text" --out "$prompt_stage")" || exit $?
-        compose_out="$(COMPOSE_OUT="$compose_out" PROMPT_PATH="$prompt_path" python3 - <<'PY'
-import json, os
-result=json.loads(os.environ["COMPOSE_OUT"])
-result["prompt_path"]=os.environ["PROMPT_PATH"]
-print(json.dumps(result,sort_keys=True))
-PY
-)" || exit $?
-        reason="Trevor chose option ${choice} via Mission Control"
-        # Stage the answer receipt before resolution. Neither artifact becomes
-        # visible until both stages are complete.
-        DID="$did" CHOICE="$choice" REASON="$reason" PROMPT_PATH="$prompt_path" \
-          ANSWER_STAGE="$answer_stage" python3 - <<'PY' || exit $?
-import json, os
-flags=os.O_WRONLY|os.O_TRUNC|getattr(os,"O_NOFOLLOW",0)
-fd=os.open(os.environ["ANSWER_STAGE"],flags)
-with os.fdopen(fd,"w") as handle:
-    json.dump({"decision_id":os.environ["DID"],
-               "choice":int(os.environ["CHOICE"]),
-               "reason":os.environ["REASON"],
-               "prompt_path":os.environ["PROMPT_PATH"]},handle,sort_keys=True)
-    handle.write("\n");handle.flush();os.fsync(handle.fileno())
-PY
-        if [ "$resolution_mode" = "open" ]; then
-          decision_result="$("$SCRIPT_DIR/decision-alert" resolve "$did" \
-            --evidence-type manual_resolution \
-            --evidence-ref "mc-answer:${choice}" \
-            --json)" || exit $?
-        else
-          decision_result="$history_json"
-        fi
-        # Publish both derived artifacts. If interruption occurs between the two
-        # atomic renames, exact-choice replay reconstructs and completes them.
-        PROMPT_STAGE="$prompt_stage" ANSWER_STAGE="$answer_stage" \
-          PROMPT_PATH="$prompt_path" ANSWER_PATH="$answer_path" python3 - <<'PY' || exit $?
-import os
-for label,path in (("prompt",os.environ["PROMPT_PATH"]),("answer",os.environ["ANSWER_PATH"])):
-    if os.path.lexists(path) and (os.path.islink(path) or not os.path.isfile(path)):
-        raise SystemExit("decide answer: %s destination became unsafe"%label)
-os.replace(os.environ["ANSWER_STAGE"],os.environ["ANSWER_PATH"])
-os.replace(os.environ["PROMPT_STAGE"],os.environ["PROMPT_PATH"])
-for parent in {os.path.dirname(os.environ["ANSWER_PATH"]),os.path.dirname(os.environ["PROMPT_PATH"])}:
-    fd=os.open(parent,os.O_RDONLY)
-    try:os.fsync(fd)
-    finally:os.close(fd)
-PY
-        prompt_stage=""; answer_stage=""
+        python3 "$compose_bin" --answer-transaction \
+          --home "$MISSION_CONTROL_HOME" \
+          --decision-alert "$SCRIPT_DIR/decision-alert" \
+          --decision-id "$did" --choice "$choice" || exit $?
         # Refresh feed for UI; do not fail the answer if collectors are unavailable.
         "$SCRIPT_DIR/decision-alert" sync-snapshot --json >/dev/null 2>&1 || \
           engine collect --force decisions >/dev/null 2>&1 || true
-        printf '%s\n' "$compose_out"
-        printf '%s\n' "$decision_result"
-        echo "prompt: $prompt_path"
         ;;
       alert-backfill)
         shift

@@ -1922,7 +1922,56 @@ PY
   fi
 }
 
-c1; c2; c3; c4; c5; c6; c7; c8; c8a; c8b; c9; c10; c11; c12; c13; c14; c14a; c15; c16; c17; c18; c19; c20; c21; c22; c23; c24; c25; c26; c27; c28; c29; c30; c31; c32; c33; c34; c35; c36; c37; c38; c39; c40; c41; c42; c43; c44; c45; c46; c47; c48; c49
+c50() { # renamed transaction directories fail before resolution or publication
+  local kind mch created did pid rc history miss=0 i
+  for kind in answers prompts; do
+    mch="$(newhome)"
+    created="$(MISSION_CONTROL_HOME="$mch" "$REPO/scripts/decision-alert" ingest \
+      --source-kind manual --source-key "answer-dir-swap-$kind" \
+      --text '**DECISION NEEDED:** Swap test. **`One`**. **`Two`**.' \
+      --trust structured --provenance manual --json)" || { miss=1; continue; }
+    did="$(python3 -c 'import json,sys;print(json.loads(sys.argv[1])["decision"]["id"])' "$created")"
+    env -u DASHBOARD_CMD_DECISIONS REPO_ROOT="$REPO" MISSION_CONTROL_HOME="$mch" \
+      bash "$DASH" collect --force decisions >/dev/null 2>&1 || { miss=1; continue; }
+    DASHBOARD_TESTING=1 env -u DASHBOARD_CMD_DECISIONS \
+      REPO_ROOT="$REPO" MISSION_CONTROL_HOME="$mch" \
+      bash "$DASH" decide answer "$did" 1 >"$mch/$kind-swap.out" 2>"$mch/$kind-swap.err" &
+    pid=$!
+    i=0
+    while [ ! -f "$mch/.decision-answer-test-ready" ] && [ "$i" -lt 500 ]; do
+      sleep 0.01; i=$((i + 1))
+    done
+    if [ ! -f "$mch/.decision-answer-test-ready" ]; then
+      kill "$pid" >/dev/null 2>&1 || true
+      wait "$pid" >/dev/null 2>&1 || true
+      miss=1; continue
+    fi
+    mv "$mch/$kind" "$mch/$kind-old" || { miss=1; kill "$pid" 2>/dev/null || true; continue; }
+    mkdir -m 700 "$mch/$kind" || { miss=1; kill "$pid" 2>/dev/null || true; continue; }
+    : > "$mch/.decision-answer-test-continue"
+    rc=0; wait "$pid" || rc=$?
+    history="$(MISSION_CONTROL_HOME="$mch" "$REPO/scripts/decision-alert" history "$did" --json)" || {
+      miss=1; continue;
+    }
+    if [ "$rc" -eq 0 ] || [ -e "$mch/answers/$did.json" ] || [ -e "$mch/prompts/$did.md" ] || \
+       [ -e "$mch/answers-old/$did.json" ] || [ -e "$mch/prompts-old/$did.md" ] || \
+       find "$mch" -maxdepth 2 -name '.decision-*-stage.*' -print -quit | grep -q . || \
+       ! HISTORY_JSON="$history" python3 - <<'PY'
+import json,os
+assert json.loads(os.environ["HISTORY_JSON"])["decision"]["state"] == "open"
+PY
+    then
+      miss=1
+    fi
+  done
+  if [ "$miss" -eq 0 ]; then
+    ok "decide-answer: pinned directory swap fails open with no redirected or staged artifacts"
+  else
+    no "decide-answer: directory rename/swap redirected output or changed decision state"
+  fi
+}
+
+c1; c2; c3; c4; c5; c6; c7; c8; c8a; c8b; c9; c10; c11; c12; c13; c14; c14a; c15; c16; c17; c18; c19; c20; c21; c22; c23; c24; c25; c26; c27; c28; c29; c30; c31; c32; c33; c34; c35; c36; c37; c38; c39; c40; c41; c42; c43; c44; c45; c46; c47; c48; c49; c50
 shell_contract
 echo "----"
 echo "PASS=$PASS FAIL=$FAIL"
