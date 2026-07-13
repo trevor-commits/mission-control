@@ -15,10 +15,10 @@ from collections import deque
 sys.dont_write_bytecode = True
 from mission_control_common import (ACTION, NARRATIVE, EgressCounters,
                                     full_ingest_sla_s, nested_ingest_stale,
-                                    nested_ingest_state, safe_text,
+                                    nested_ingest_state, process_start_identity, safe_text,
                                     sanitize_text)
 
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 STALE_INGEST_S = 30 * 60  # incremental export catch-up threshold only
 LOCK_STALE_S = 30 * 60      # ingest.lock older than this is treated as crashed
 _INGEST_SKIPPED = False     # set when export's catch-up ingest could not acquire lock
@@ -67,6 +67,51 @@ def ensure_dir(path, mode=0o700):
 # ---- shared field-aware boundary -----------------------------------------
 def redact(s):
     return safe_text(s or "", NARRATIVE)
+
+def _safe_optional(value, field_class=NARRATIVE):
+    return None if value is None else safe_text(value, field_class)
+
+def _sanitize_json_value(value):
+    """Recursively sanitize untrusted structured evidence before persistence."""
+    if isinstance(value, dict):
+        out = {}
+        for raw_key, raw_value in value.items():
+            key = safe_text(raw_key, NARRATIVE)
+            if key in out:
+                key = "%s#%s" % (key, _sha1(str(raw_key))[:8])
+            out[key] = _sanitize_json_value(raw_value)
+        return out
+    if isinstance(value, list):
+        return [_sanitize_json_value(item) for item in value]
+    if isinstance(value, tuple):
+        return [_sanitize_json_value(item) for item in value]
+    if isinstance(value, str):
+        return safe_text(value, NARRATIVE)
+    return value
+
+def _safe_evidence_json(raw):
+    try:
+        value = json.loads(raw) if isinstance(raw, str) else raw
+    except (TypeError, ValueError):
+        value = safe_text(raw, NARRATIVE)
+    return json.dumps(_sanitize_json_value(value), sort_keys=True)
+
+def _scrub_persisted_sensitive_fields_v8(con):
+    """One-time scrub for fields that older schemas stored before sanitizing."""
+    for row in con.execute(
+            "SELECT id,title,repo,first_prompt FROM sessions").fetchall():
+        con.execute("UPDATE sessions SET title=?,repo=?,first_prompt=? WHERE id=?", (
+            _safe_optional(row["title"], NARRATIVE),
+            _safe_optional(row["repo"], ACTION),
+            _safe_optional(row["first_prompt"], NARRATIVE), row["id"]))
+    for row in con.execute(
+            "SELECT rowid,evidence,note FROM edges").fetchall():
+        con.execute("UPDATE edges SET evidence=?,note=? WHERE rowid=?", (
+            _safe_evidence_json(row["evidence"]),
+            _safe_optional(row["note"], NARRATIVE), row["rowid"]))
+    for row in con.execute("SELECT id,text FROM open_ends").fetchall():
+        con.execute("UPDATE open_ends SET text=? WHERE id=?", (
+            _safe_optional(row["text"], NARRATIVE), row["id"]))
 
 # ---- edge model -----------------------------------------------------------
 EDGE_TYPES = ("audits", "spawned", "continues", "signaled",
@@ -369,6 +414,8 @@ def _migrate(con):
         con.execute("INSERT OR IGNORE INTO suppressions(src, dst, type) "
                     "SELECT src, dst, type FROM edges WHERE status='suppressed'")
     # linear idempotent forward migrations would chain here as versions grow.
+    if ver < 8:
+        _scrub_persisted_sensitive_fields_v8(con)
     if ver < SCHEMA_VERSION:
         con.execute("INSERT OR REPLACE INTO meta VALUES('schema_version', ?)",
                     (str(SCHEMA_VERSION),))
@@ -380,6 +427,9 @@ def touch_session(con, sid, provider=None, title=None, first_prompt=None):
         return
     now = int(time.time())
     con.execute("INSERT OR IGNORE INTO sessions(id, first_seen_at) VALUES(?, ?)", (sid, now))
+    provider = None if provider is None else _safe_provider(provider)
+    title = _safe_optional(title, NARRATIVE)
+    first_prompt = _safe_optional(first_prompt, NARRATIVE)
     for col, val in (("provider", provider), ("title", title), ("first_prompt", first_prompt)):
         if val:
             con.execute("UPDATE sessions SET %s=? WHERE id=? AND (%s IS NULL OR %s='')"
@@ -404,12 +454,14 @@ def display_title(row):
 # ---- edge write primitives (upsert NEVER writes status) -------------------
 def upsert_edge(con, src, dst, etype, source, confidence, evidence, note=None):
     s, d = canon(src, dst, etype)
+    evidence_json = _safe_evidence_json(evidence)
+    note = _safe_optional(note, NARRATIVE)
     con.execute("""INSERT INTO edges(src, dst, type, source, confidence, evidence, note, status)
        VALUES(?,?,?,?,?,?,?, 'active')
        ON CONFLICT(src, dst, type, source) DO UPDATE SET
          confidence=max(edges.confidence, excluded.confidence),
          evidence=excluded.evidence, note=excluded.note""",
-       (s, d, etype, source, confidence, json.dumps(evidence, sort_keys=True), note))
+       (s, d, etype, source, confidence, evidence_json, note))
 
 def _apply_link(con, a, b, etype, note):
     # re-linking clears any standing suppression for this exact pair/type so the
@@ -696,7 +748,10 @@ def _enrich_sessions(con, limit=50):
             "UPDATE sessions SET title=COALESCE(NULLIF(title,''),?), "
             "repo=COALESCE(NULLIF(repo,''),?), provider=COALESCE(NULLIF(provider,''),?), "
             "enriched_at=? WHERE id=?",
-            (meta.get("title"), meta.get("repo"), meta.get("provider"), now, r["id"]))
+            (_safe_optional(meta.get("title"), NARRATIVE),
+             _safe_optional(meta.get("repo"), ACTION),
+             (None if meta.get("provider") is None else
+              _safe_provider(meta.get("provider"))), now, r["id"]))
     con.commit()
 
 COLLECTORS = {
@@ -759,6 +814,7 @@ def _upsert_open_end(con, sid, kind, text, source_key=None, text_hash=None):
     # deduplicate the same open item. Kind salting prevents cross-kind collision;
     # stable per-source identity lives separately in item_key.
     h = text_hash or _sha1("%s:%s" % (kind, text))
+    text = safe_text(text, NARRATIVE)
     row = con.execute("SELECT text, text_hash, resolved_at, last_change_type FROM open_ends "
                       "WHERE session_id=? AND kind=? AND item_key=?",
                       (sid, kind, item_key)).fetchone()
@@ -1499,7 +1555,7 @@ def _scan_hermes_state(con, full=False):
             repo = os.path.basename((meta["cwd"] if meta else "") or "")
             con.execute("""UPDATE sessions SET last_activity=?,
                 repo=COALESCE(NULLIF(repo,''),?) WHERE id=?""",
-                (str(last_activity), repo, sid))
+                (str(last_activity), _safe_optional(repo, ACTION), sid))
             _persist_tier1_outcome(con, sid, "hermes", messages, path)
             scanned += 1
         _set_meta(con, "hermes_message_cursor", high_water)
@@ -1810,7 +1866,8 @@ def _repo_annotations():
 def _repo_node(con, repo):
     sid = "repo:%s" % repo
     touch_session(con, sid, provider="repo", title="Repo: %s" % repo, first_prompt="Repository work ledger")
-    con.execute("UPDATE sessions SET repo=COALESCE(NULLIF(repo,''), ?) WHERE id=?", (repo, sid))
+    con.execute("UPDATE sessions SET repo=COALESCE(NULLIF(repo,''), ?) WHERE id=?",
+                (_safe_optional(repo, ACTION), sid))
     return sid
 
 def _repo_paths_from_env():
@@ -2381,18 +2438,7 @@ def cmd_validate_export(args):
 
 # ---- ingest (mkdir-locked) ------------------------------------------------
 def _process_start(pid):
-    """Return (probe_ok, start_identity); None identity means the PID is absent."""
-    try:
-        p = subprocess.run(["/bin/ps", "-o", "lstart=", "-p", str(pid)],
-                           capture_output=True, text=True, timeout=2)
-    except (OSError, subprocess.TimeoutExpired):
-        return False, None
-    start = p.stdout.strip()
-    if p.returncode == 0 and start:
-        return True, start
-    if p.returncode in (0, 1) and not start:
-        return True, None
-    return False, None
+    return process_start_identity(pid)
 
 def _read_lock_owner():
     try:

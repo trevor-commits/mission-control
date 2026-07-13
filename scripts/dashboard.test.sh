@@ -83,18 +83,18 @@ newhome() { mktemp -d "$ROOT/home.XXXXXX"; }
 make_valid_stamp() {
   PYTHONPATH="$REPO/scripts" python3 - "$1" <<'PY'
 import os,sys
-from mission_control_common import write_install_stamp
+from mission_control_common import (REQUIRED_INSTALL_ASSETS,
+    REQUIRED_INSTALL_RUNTIMES, write_install_stamp)
 home=sys.argv[1]; bindir=os.path.join(home,"bin"); os.makedirs(bindir,exist_ok=True)
-for name in ("dashboard","morning-brief","morning-brief-deadman","decision-alert","mission_control_common.py"):
+for name in REQUIRED_INSTALL_RUNTIMES:
     open(os.path.join(bindir,name),"w").write("runtime "+name+"\n")
-    if name != "mission_control_common.py": os.chmod(os.path.join(bindir,name),0o700)
-os.makedirs(os.path.join(home,"vendor"),exist_ok=True)
-open(os.path.join(home,"index.html"),"w").write("<html></html>\n")
-open(os.path.join(home,"vendor","cytoscape.min.js"),"w").write("//vendor\n")
+    if name not in ("mission_control_common.py","mc-panel.swift"): os.chmod(os.path.join(bindir,name),0o700)
+assets={}
+for rel in REQUIRED_INSTALL_ASSETS:
+    path=os.path.join(home,rel); os.makedirs(os.path.dirname(path) or home,exist_ok=True)
+    open(path,"w").write("asset "+rel+"\n"); assets[rel]=path
 write_install_stamp(bindir,"a"*40,"head",
-  ["dashboard","morning-brief","morning-brief-deadman","decision-alert","mission_control_common.py"],
-  1783674000,assets={"index.html":os.path.join(home,"index.html"),
-  "vendor/cytoscape.min.js":os.path.join(home,"vendor","cytoscape.min.js")})
+  list(REQUIRED_INSTALL_RUNTIMES),1783674000,assets=assets)
 PY
 }
 
@@ -660,14 +660,33 @@ PY
   locked_id="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["decision"]["id"])' "$locked_created")"
   env -u DASHBOARD_CMD_DECISIONS REPO_ROOT="$REPO" MISSION_CONTROL_HOME="$mch" \
     bash "$DASH" collect --force decisions >/dev/null 2>&1
-  mkdir -p "$mch/data/.decisions.lock"
+  local lock_ready lock_pid
+  lock_ready="$mch/data/.decisions-lock-ready"
+  python3 - "$mch/data/.decisions.lockfile" "$lock_ready" <<'PY' &
+import fcntl, os, sys, time
+fd = os.open(sys.argv[1], os.O_CREAT | os.O_RDWR, 0o600)
+fcntl.flock(fd, fcntl.LOCK_EX)
+open(sys.argv[2], "w").close()
+try:
+    time.sleep(30)
+finally:
+    os.close(fd)
+PY
+  lock_pid=$!
+  local lock_wait=0
+  while [ ! -e "$lock_ready" ] && [ "$lock_wait" -lt 50 ]; do
+    sleep 0.02
+    lock_wait=$((lock_wait + 1))
+  done
   if env -u DASHBOARD_CMD_DECISIONS REPO_ROOT="$REPO" MISSION_CONTROL_HOME="$mch" \
        bash "$DASH" decide dismiss "$locked_id" >/dev/null 2>&1; then
     no "dashboard dismiss claimed refresh while decisions feed was locked"
   else
     ok "dashboard dismiss fails visibly when pinned feed refresh is locked"
   fi
-  rmdir "$mch/data/.decisions.lock"
+  kill "$lock_pid" 2>/dev/null || true
+  wait "$lock_pid" 2>/dev/null || true
+  rm -f "$lock_ready"
 }
 
 c19() { # code-only install cannot write or bootstrap launchd jobs
@@ -711,13 +730,16 @@ c21() { # install stamps provenance from committed HEAD; verify detects runtime 
   command -v git >/dev/null 2>&1 || { ok "install-stamp: git absent — provenance test skipped"; return; }
   local gr mch head; gr="$(mktemp -d)/repo"; mkdir -p "$gr/scripts" "$gr/dashboard/vendor"
   local n
-  for n in dashboard mission_control_common.py morning-brief morning-brief-deadman decision-alert; do
+  for n in dashboard mission_control_common.py morning-brief morning-brief-deadman decision-alert compose-decision-prompt.py mc-panel.swift; do
     cp "$REPO/scripts/$n" "$gr/scripts/$n"
   done
   # Deployment assets are part of the shipped surface: install must stamp them from
   # the SAME committed HEAD as the runtimes, and verify must catch their drift.
   printf '<html>shell %s</html>\n' "render-js" > "$gr/dashboard/index.html"
   printf '// vendored graph engine\n' > "$gr/dashboard/vendor/cytoscape.min.js"
+  cp "$REPO/dashboard/panel.html" "$gr/dashboard/panel.html"
+  mkdir -p "$gr/launchd"
+  cp "$REPO/launchd/com.gillettes.mc-panel.plist.template" "$gr/launchd/com.gillettes.mc-panel.plist.template"
   ( cd "$gr" && git init -q && git add -A && \
     git -c user.email=t@t -c user.name=t commit -qm init ) >/dev/null 2>&1
   head="$(git -C "$gr" rev-parse HEAD)"; mch="$(mktemp -d)"
@@ -876,11 +898,14 @@ c24() { # ER-109 round 6: installer honesty + safety. Each pathological input mu
   command -v git >/dev/null 2>&1 || { ok "install-safety: git absent — skipped"; return; }
   _mkrepo() { # -> committed repo path with all runtimes + index.html + vendor at HEAD
     local gr; gr="$(mktemp -d)/repo"; mkdir -p "$gr/scripts" "$gr/dashboard/vendor"; local n
-    for n in dashboard mission_control_common.py morning-brief morning-brief-deadman decision-alert; do
+    for n in dashboard mission_control_common.py morning-brief morning-brief-deadman decision-alert compose-decision-prompt.py mc-panel.swift; do
       cp "$REPO/scripts/$n" "$gr/scripts/$n"
     done
     printf '<html>shell HEAD</html>\n' > "$gr/dashboard/index.html"
     printf '// vendor HEAD\n' > "$gr/dashboard/vendor/cytoscape.min.js"
+    cp "$REPO/dashboard/panel.html" "$gr/dashboard/panel.html"
+    mkdir -p "$gr/launchd"
+    cp "$REPO/launchd/com.gillettes.mc-panel.plist.template" "$gr/launchd/com.gillettes.mc-panel.plist.template"
     ( cd "$gr" && git init -q && git add -A && \
       git -c user.email=t@t -c user.name=t commit -qm init ) >/dev/null 2>&1
     echo "$gr"
@@ -1011,11 +1036,13 @@ c27() { # committed plist source + checked atomic launchd reload/failure behavio
   local gr h mch sbin capture loaded rc out sentinel h2 mch2 h3 mch3 h4 mch4 failbin real_chmod mode fails=0
   gr="$(mktemp -d)/repo"; mkdir -p "$gr/scripts" "$gr/dashboard/vendor" "$gr/launchd"
   local n
-  for n in dashboard mission_control_common.py morning-brief morning-brief-deadman decision-alert; do
+  for n in dashboard mission_control_common.py morning-brief morning-brief-deadman decision-alert compose-decision-prompt.py mc-panel.swift; do
     cp "$REPO/scripts/$n" "$gr/scripts/$n"
   done
   cp "$REPO/dashboard/index.html" "$gr/dashboard/index.html"
   cp "$REPO/dashboard/vendor/cytoscape.min.js" "$gr/dashboard/vendor/cytoscape.min.js"
+  cp "$REPO/dashboard/panel.html" "$gr/dashboard/panel.html"
+  cp "$REPO/launchd/com.gillettes.mc-panel.plist.template" "$gr/launchd/com.gillettes.mc-panel.plist.template"
   cp "$REPO/launchd/com.gillettes.mission-control.plist.template" "$gr/launchd/com.gillettes.mission-control.plist.template"
   python3 - "$gr/launchd/com.gillettes.mission-control.plist.template" <<'PY'
 import sys
@@ -1210,10 +1237,12 @@ c31() { # the real macOS Bash 3.2 path executes embedded Python, not EOF
   local h count rc; h="$(newhome)"
   MISSION_CONTROL_HOME="$h" /bin/bash "$DASH" collect --force >/dev/null 2>&1; rc=$?
   count="$(find "$h/data" -type f \( -name '*.json' -o -name '*.js' \) 2>/dev/null | wc -l | tr -d ' ')"
-  if [ "$rc" -eq 0 ] && [ "$count" = 12 ]; then
+  # Six feeds emit canonical JSON + JS plus a healthy error sidecar. Keeping the
+  # sidecar present prevents browsers from logging a missing resource on success.
+  if [ "$rc" -eq 0 ] && [ "$count" = 18 ]; then
     ok "bash-3.2: system /bin/bash executes the embedded Python engine"
   else
-    no "bash-3.2: dashboard returned rc=$rc with $count/12 feed files"
+    no "bash-3.2: dashboard returned rc=$rc with $count/18 feed files"
   fi
 }
 
@@ -1595,7 +1624,6 @@ PY
   rmdir "$cgh/ingest.lock" 2>/dev/null || true
 }
 
-
 c41() { # decide alert-backfill is an explicit capped operator path (stub sender)
   local mch out id sender capture
   mch="$(mktemp -d)"; sender="$mch/sender.py"; capture="$mch/send.json"
@@ -1644,7 +1672,324 @@ PY
   fi
 }
 
-c1; c2; c3; c4; c5; c6; c7; c8; c8a; c8b; c9; c10; c11; c12; c13; c14; c14a; c15; c16; c17; c18; c19; c20; c21; c22; c23; c24; c25; c26; c27; c28; c29; c30; c31; c32; c33; c34; c35; c36; c37; c38; c39; c40; c41
+c42() { # a killed collector cannot leave a feed permanently locked
+  local mch stub runner engine feeder rc
+  mch="$(newhome)"; stub="$(mktemp -d)/usage-feeder"
+  cat > "$stub" <<'EOF'
+#!/bin/sh
+printf '%s\n' "$PPID" > "$LOCK_ENGINE_PID"
+printf '%s\n' "$$" > "$LOCK_FEEDER_PID"
+while :; do sleep 1; done
+EOF
+  chmod +x "$stub"
+  LOCK_ENGINE_PID="$mch/engine.pid" LOCK_FEEDER_PID="$mch/feeder.pid" \
+    DASHBOARD_CMD_USAGE="$stub" MISSION_CONTROL_HOME="$mch" \
+    bash "$DASH" collect --force usage >/dev/null 2>&1 &
+  runner=$!
+  for _ in $(seq 1 100); do [ -f "$mch/engine.pid" ] && break; sleep 0.05; done
+  engine="$(cat "$mch/engine.pid" 2>/dev/null || true)"
+  feeder="$(cat "$mch/feeder.pid" 2>/dev/null || true)"
+  [ -z "$engine" ] || kill -KILL "$engine" 2>/dev/null || true
+  wait "$runner" 2>/dev/null || true
+  [ -z "$feeder" ] || kill -KILL "$feeder" 2>/dev/null || true
+  DASHBOARD_CMD_USAGE="cat $STUB/usage.json" MISSION_CONTROL_HOME="$mch" \
+    bash "$DASH" collect --force --strict usage >/dev/null 2>&1; rc=$?
+  if [ "$rc" -eq 0 ] && [ -f "$mch/data/usage.json" ]; then
+    ok "feed-lock: process death releases ownership for the next collector"
+  else
+    no "feed-lock: killed collector permanently wedged the feed (rc=$rc)"
+  fi
+}
+
+c42a() { # lock setup failures are errors, not false contention
+  local mch rc=0
+  mch="$(newhome)"; mkdir -p "$mch/data/.usage.lockfile"
+  DASHBOARD_CMD_USAGE="cat $STUB/usage.json" MISSION_CONTROL_HOME="$mch" \
+    bash "$DASH" collect --force --strict usage >/dev/null 2>&1 || rc=$?
+  if [ "$rc" -ne 0 ] && python3 - "$mch/data/usage.error.json" <<'PY'
+import json,sys
+row=json.load(open(sys.argv[1]))
+assert row["ok"] is False
+assert "lock setup failed" in (row.get("error") or "")
+PY
+  then
+    ok "feed-lock: unsafe lock path writes an observable error instead of false contention"
+  else
+    no "feed-lock: lock setup failure was hidden as ordinary contention"
+  fi
+}
+
+c43() { # future-dated feed evidence is untrustworthy and must be recollected
+  local mch marker
+  mch="$(newhome)"; mkdir -p "$mch/data"
+  python3 - "$mch/data/usage.json" <<'PY'
+import json,sys
+json.dump({"schema":1,"feed":"usage","generated_epoch":2000,"data":{"marker":"old"}},open(sys.argv[1],"w"))
+PY
+  MISSION_CONTROL_NOW_EPOCH=1000 DASHBOARD_CMD_USAGE="cat $STUB/usage.json" \
+    MISSION_CONTROL_HOME="$mch" bash "$DASH" collect --due usage >/dev/null 2>&1
+  marker="$(python3 -c 'import json,sys;print((json.load(open(sys.argv[1])).get("data") or {}).get("providers",[{}])[0].get("name",""))' "$mch/data/usage.json")"
+  if [ "$marker" = claude ]; then
+    ok "cadence: future-dated feed is recollected instead of skipped"
+  else
+    no "cadence: future-dated feed suppressed collection"
+  fi
+}
+
+c44() { # invalid decision ids fail before any prompt or answer write
+  local mch did rc escaped
+  mch="$(newhome)"; did='../../escaped-audit'; escaped="$(dirname "$mch")/escaped-audit.md"
+  rm -f "$escaped"
+  MISSION_CONTROL_HOME="$mch" bash "$DASH" decide answer "$did" 1 >/dev/null 2>&1; rc=$?
+  if [ "$rc" -eq 2 ] && [ ! -e "$escaped" ] && \
+     [ ! -e "$mch/prompts" ] && [ ! -e "$mch/answers" ]; then
+    ok "decide-answer: invalid id is rejected before every filesystem write"
+  else
+    rm -f "$escaped"
+    no "decide-answer: invalid id reached the prompt writer (rc=$rc)"
+  fi
+}
+
+c45() { # every declared healthy browser asset exists in collected and demo state
+  local mch demo out name miss=0
+  mch="$(newhome)"
+  MISSION_CONTROL_HOME="$mch" bash "$DASH" collect --force >/dev/null 2>&1
+  for name in usage git chats automation decisions brief; do
+    [ -f "$mch/data/$name.error.js" ] || miss=1
+  done
+  out="$(DASHBOARD_NO_OPEN=1 MISSION_CONTROL_HOME="$mch" bash "$DASH" demo 2>/dev/null)"
+  demo="$(printf '%s\n' "$out" | sed -n 's/^demo state: //p' | tail -1)"
+  [ -n "$demo" ] && [ -f "$demo/vendor/cytoscape.min.js" ] || miss=1
+  for name in usage git chats automation decisions brief; do
+    [ -n "$demo" ] && [ -f "$demo/data/$name.error.js" ] || miss=1
+  done
+  if [ "$miss" -eq 0 ]; then
+    ok "browser-assets: healthy collection and demo satisfy every script src"
+  else
+    no "browser-assets: healthy page declares missing script assets"
+  fi
+}
+
+c46() { # ER-134 prompt/panel surfaces are immutable and stamp-attested
+  local gr mch expected before after miss=0
+  gr="$(_mkrepo)"; mch="$(mktemp -d)"; expected="$(mktemp)"
+  git -C "$gr" show HEAD:scripts/compose-decision-prompt.py > "$expected"
+  printf '\n# DIRTY_WORKTREE_SENTINEL\n' >> "$gr/scripts/compose-decision-prompt.py"
+  REPO_ROOT="$gr" MISSION_CONTROL_HOME="$mch" DASHBOARD_INSTALL_NO_LAUNCHD=1 \
+    bash "$gr/scripts/dashboard" install >/dev/null 2>&1 || miss=1
+  cmp -s "$expected" "$mch/bin/compose-decision-prompt.py" || miss=1
+  before="$(PYTHONPATH="$mch/bin" python3 - "$mch/bin" <<'PY'
+import json,sys
+from mission_control_common import verify_install_stamp
+print(json.dumps(verify_install_stamp(sys.argv[1]),sort_keys=True))
+PY
+)"
+  printf '\n# TAMPER\n' >> "$mch/bin/compose-decision-prompt.py"
+  printf '\n<!-- TAMPER -->\n' >> "$mch/panel.html"
+  after="$(PYTHONPATH="$mch/bin" python3 - "$mch/bin" <<'PY'
+import json,sys
+from mission_control_common import verify_install_stamp
+print(json.dumps(verify_install_stamp(sys.argv[1]),sort_keys=True))
+PY
+)"
+  python3 - "$before" "$after" <<'PY' || miss=1
+import json,sys
+before,after=map(json.loads,sys.argv[1:])
+assert before["ok"] is True, before
+assert after["ok"] is False, after
+assert "compose-decision-prompt.py" in after.get("mismatches",[]), after
+assert "panel.html" in after.get("mismatches",[]), after
+PY
+  if [ "$miss" -eq 0 ]; then
+    ok "install-attestation: panel/composer come from HEAD and tamper fails verification"
+  else
+    no "install-attestation: ER-134 surfaces remain outside immutable verification"
+  fi
+}
+
+c47() { # concurrent answers publish one internally consistent choice
+  local mch i created did p1 p2 miss=0
+  mch="$(newhome)"
+  for i in $(seq 1 12); do
+    created="$(MISSION_CONTROL_HOME="$mch" "$REPO/scripts/decision-alert" ingest \
+      --source-kind manual --source-key "answer-race-$i" \
+      --text '**DECISION NEEDED:** Pick one. **`One`**. **`Two`**.' \
+      --trust structured --provenance manual --json)" || { miss=1; break; }
+    did="$(python3 -c 'import json,sys;print(json.loads(sys.argv[1])["decision"]["id"])' "$created")"
+    env -u DASHBOARD_CMD_DECISIONS REPO_ROOT="$REPO" MISSION_CONTROL_HOME="$mch" \
+      bash "$DASH" collect --force decisions >/dev/null 2>&1
+    ( env -u DASHBOARD_CMD_DECISIONS MC_DECISION_ANSWER_LOCK_HELD=1 REPO_ROOT="$REPO" MISSION_CONTROL_HOME="$mch" \
+        bash "$DASH" decide answer "$did" 1 >"$mch/one-$i.out" 2>&1; echo $? >"$mch/one-$i.rc" ) & p1=$!
+    ( env -u DASHBOARD_CMD_DECISIONS MC_DECISION_ANSWER_LOCK_HELD=1 REPO_ROOT="$REPO" MISSION_CONTROL_HOME="$mch" \
+        bash "$DASH" decide answer "$did" 2 >"$mch/two-$i.out" 2>&1; echo $? >"$mch/two-$i.rc" ) & p2=$!
+    wait "$p1" || true; wait "$p2" || true
+    MISSION_CONTROL_HOME="$mch" "$REPO/scripts/decision-alert" history "$did" --json >"$mch/history-$i.json" || miss=1
+    python3 - "$mch/one-$i.rc" "$mch/two-$i.rc" \
+      "$mch/answers/$did.json" "$mch/prompts/$did.md" "$mch/history-$i.json" <<'PY' || miss=1
+import json,re,sys
+rcs=[int(open(p).read()) for p in sys.argv[1:3]]
+assert sum(rc == 0 for rc in rcs) == 1, rcs
+answer=json.load(open(sys.argv[3]))
+prompt=open(sys.argv[4]).read()
+history=json.load(open(sys.argv[5]))
+choice=answer["choice"]
+assert "Trevor choice: %s" % choice in prompt, (choice,prompt)
+assert history["decision"]["resolution"]["evidence_ref"] == "mc-answer:%s" % choice
+PY
+  done
+  if [ "$miss" -eq 0 ]; then
+    ok "decide-answer: concurrent writers ignore ambient lock markers and publish one consistent choice"
+  else
+    no "decide-answer: concurrent writers split prompt, answer, or decision state"
+  fi
+}
+
+c48() { # blocked publication stays open; exact resolved state is recoverable
+  local mch created did victim first_rc=0 miss=0 recover_created recover_did
+  mch="$(newhome)"; victim="$mch/outside-answer.json"
+  created="$(MISSION_CONTROL_HOME="$mch" "$REPO/scripts/decision-alert" ingest \
+    --source-kind manual --source-key "answer-blocked-retry" \
+    --text '**DECISION NEEDED:** Pick one. **`One`**. **`Two`**.' \
+    --trust structured --provenance manual --json)" || { no "decide-answer: blocked fixture ingest"; return; }
+  did="$(python3 -c 'import json,sys;print(json.loads(sys.argv[1])["decision"]["id"])' "$created")"
+  env -u DASHBOARD_CMD_DECISIONS REPO_ROOT="$REPO" MISSION_CONTROL_HOME="$mch" \
+    bash "$DASH" collect --force decisions >/dev/null 2>&1
+  mkdir -p "$mch/answers" "$mch/prompts"
+  printf 'unchanged\n' > "$victim"
+  ln -s "$victim" "$mch/answers/$did.json"
+  env -u DASHBOARD_CMD_DECISIONS REPO_ROOT="$REPO" MISSION_CONTROL_HOME="$mch" \
+    bash "$DASH" decide answer "$did" 1 >"$mch/blocked.out" 2>"$mch/blocked.err" || first_rc=$?
+  MISSION_CONTROL_HOME="$mch" "$REPO/scripts/decision-alert" history "$did" --json >"$mch/blocked-history.json" || miss=1
+  python3 - "$first_rc" "$victim" "$mch/answers/$did.json" \
+    "$mch/prompts/$did.md" "$mch/blocked-history.json" <<'PY' || miss=1
+import json,os,sys
+assert int(sys.argv[1]) != 0
+assert open(sys.argv[2]).read() == "unchanged\n"
+assert os.path.islink(sys.argv[3])
+assert not os.path.exists(sys.argv[4])
+assert json.load(open(sys.argv[5]))["decision"]["state"] == "open"
+PY
+  rm -f "$mch/answers/$did.json"
+  env -u DASHBOARD_CMD_DECISIONS REPO_ROOT="$REPO" MISSION_CONTROL_HOME="$mch" \
+    bash "$DASH" decide answer "$did" 1 >"$mch/retry.out" 2>"$mch/retry.err" || miss=1
+  MISSION_CONTROL_HOME="$mch" "$REPO/scripts/decision-alert" history "$did" --json >"$mch/retry-history.json" || miss=1
+  python3 - "$mch/answers/$did.json" "$mch/prompts/$did.md" "$mch/retry-history.json" <<'PY' || miss=1
+import json,sys
+answer=json.load(open(sys.argv[1]));prompt=open(sys.argv[2]).read();history=json.load(open(sys.argv[3]))
+assert answer["choice"] == 1
+assert "Trevor choice: 1" in prompt
+assert history["decision"]["state"] == "resolved"
+assert history["decision"]["resolution"]["evidence_ref"] == "mc-answer:1"
+PY
+  # Model a crash after the SQLite resolution but before either staged artifact
+  # is published. Exact-choice replay must derive both files and return success.
+  recover_created="$(MISSION_CONTROL_HOME="$mch" "$REPO/scripts/decision-alert" ingest \
+    --source-kind manual --source-key "answer-post-resolve-recovery" \
+    --text '**DECISION NEEDED:** Recover one. **`One`**. **`Two`**.' \
+    --trust structured --provenance manual --json)" || miss=1
+  recover_did="$(python3 -c 'import json,sys;print(json.loads(sys.argv[1])["decision"]["id"])' "$recover_created")"
+  env -u DASHBOARD_CMD_DECISIONS REPO_ROOT="$REPO" MISSION_CONTROL_HOME="$mch" \
+    bash "$DASH" collect --force decisions >/dev/null 2>&1
+  MISSION_CONTROL_HOME="$mch" "$REPO/scripts/decision-alert" resolve "$recover_did" \
+    --evidence-type manual_resolution --evidence-ref mc-answer:1 --json >/dev/null || miss=1
+  [ ! -e "$mch/answers/$recover_did.json" ] && [ ! -e "$mch/prompts/$recover_did.md" ] || miss=1
+  env -u DASHBOARD_CMD_DECISIONS REPO_ROOT="$REPO" MISSION_CONTROL_HOME="$mch" \
+    bash "$DASH" decide answer "$recover_did" 1 >"$mch/recover.out" 2>"$mch/recover.err" || miss=1
+  python3 - "$mch/answers/$recover_did.json" "$mch/prompts/$recover_did.md" <<'PY' || miss=1
+import json,sys
+assert json.load(open(sys.argv[1]))["choice"] == 1
+assert "Trevor choice: 1" in open(sys.argv[2]).read()
+PY
+  if [ "$miss" -eq 0 ]; then
+    ok "decide-answer: blocked sidecar stays open and exact-choice recovery completes coherently"
+  else
+    no "decide-answer: blocked sidecar caused partial or unretryable resolution"
+  fi
+}
+
+c49() { # linked transaction parent directories cannot redirect artifacts
+  local kind mch outside created did rc history miss=0 count
+  for kind in answers prompts; do
+    mch="$(newhome)"; outside="$(mktemp -d "$ROOT/outside-$kind.XXXXXX")"
+    printf 'unchanged\n' > "$outside/sentinel"
+    created="$(MISSION_CONTROL_HOME="$mch" "$REPO/scripts/decision-alert" ingest \
+      --source-kind manual --source-key "answer-parent-$kind" \
+      --text '**DECISION NEEDED:** Parent test. **`One`**. **`Two`**.' \
+      --trust structured --provenance manual --json)" || { miss=1; continue; }
+    did="$(python3 -c 'import json,sys;print(json.loads(sys.argv[1])["decision"]["id"])' "$created")"
+    [ "$kind" = prompts ] && mkdir -p "$mch/answers"
+    ln -s "$outside" "$mch/$kind"
+    rc=0
+    env -u DASHBOARD_CMD_DECISIONS REPO_ROOT="$REPO" MISSION_CONTROL_HOME="$mch" \
+      bash "$DASH" decide answer "$did" 1 >"$mch/$kind.out" 2>"$mch/$kind.err" || rc=$?
+    history="$(MISSION_CONTROL_HOME="$mch" "$REPO/scripts/decision-alert" history "$did" --json)" || { miss=1; continue; }
+    count="$(find "$outside" -mindepth 1 -maxdepth 1 -type f | wc -l | tr -d ' ')"
+    if [ "$rc" -eq 0 ] || [ "$count" -ne 1 ] || [ "$(cat "$outside/sentinel")" != unchanged ] || \
+       ! HISTORY_JSON="$history" python3 - <<'PY'
+import json,os
+assert json.loads(os.environ["HISTORY_JSON"])["decision"]["state"] == "open"
+PY
+    then
+      miss=1
+    fi
+  done
+  if [ "$miss" -eq 0 ]; then
+    ok "decide-answer: linked answer/prompt parent dirs fail before state or outside writes"
+  else
+    no "decide-answer: linked state parent redirected artifacts or changed decision"
+  fi
+}
+
+c50() { # renamed transaction directories fail before resolution or publication
+  local kind mch created did pid rc history miss=0 i
+  for kind in answers prompts; do
+    mch="$(newhome)"
+    created="$(MISSION_CONTROL_HOME="$mch" "$REPO/scripts/decision-alert" ingest \
+      --source-kind manual --source-key "answer-dir-swap-$kind" \
+      --text '**DECISION NEEDED:** Swap test. **`One`**. **`Two`**.' \
+      --trust structured --provenance manual --json)" || { miss=1; continue; }
+    did="$(python3 -c 'import json,sys;print(json.loads(sys.argv[1])["decision"]["id"])' "$created")"
+    env -u DASHBOARD_CMD_DECISIONS REPO_ROOT="$REPO" MISSION_CONTROL_HOME="$mch" \
+      bash "$DASH" collect --force decisions >/dev/null 2>&1 || { miss=1; continue; }
+    DASHBOARD_TESTING=1 env -u DASHBOARD_CMD_DECISIONS \
+      REPO_ROOT="$REPO" MISSION_CONTROL_HOME="$mch" \
+      bash "$DASH" decide answer "$did" 1 >"$mch/$kind-swap.out" 2>"$mch/$kind-swap.err" &
+    pid=$!
+    i=0
+    while [ ! -f "$mch/.decision-answer-test-ready" ] && [ "$i" -lt 500 ]; do
+      sleep 0.01; i=$((i + 1))
+    done
+    if [ ! -f "$mch/.decision-answer-test-ready" ]; then
+      kill "$pid" >/dev/null 2>&1 || true
+      wait "$pid" >/dev/null 2>&1 || true
+      miss=1; continue
+    fi
+    mv "$mch/$kind" "$mch/$kind-old" || { miss=1; kill "$pid" 2>/dev/null || true; continue; }
+    mkdir -m 700 "$mch/$kind" || { miss=1; kill "$pid" 2>/dev/null || true; continue; }
+    : > "$mch/.decision-answer-test-continue"
+    rc=0; wait "$pid" || rc=$?
+    history="$(MISSION_CONTROL_HOME="$mch" "$REPO/scripts/decision-alert" history "$did" --json)" || {
+      miss=1; continue;
+    }
+    if [ "$rc" -eq 0 ] || [ -e "$mch/answers/$did.json" ] || [ -e "$mch/prompts/$did.md" ] || \
+       [ -e "$mch/answers-old/$did.json" ] || [ -e "$mch/prompts-old/$did.md" ] || \
+       find "$mch" -maxdepth 2 -name '.decision-*-stage.*' -print -quit | grep -q . || \
+       ! HISTORY_JSON="$history" python3 - <<'PY'
+import json,os
+assert json.loads(os.environ["HISTORY_JSON"])["decision"]["state"] == "open"
+PY
+    then
+      miss=1
+    fi
+  done
+  if [ "$miss" -eq 0 ]; then
+    ok "decide-answer: pinned directory swap fails open with no redirected or staged artifacts"
+  else
+    no "decide-answer: directory rename/swap redirected output or changed decision state"
+  fi
+}
+
+c1; c2; c3; c4; c5; c6; c7; c8; c8a; c8b; c9; c10; c11; c12; c13; c14; c14a; c15; c16; c17; c18; c19; c20; c21; c22; c23; c24; c25; c26; c27; c28; c29; c30; c31; c32; c33; c34; c35; c36; c37; c38; c39; c40; c41; c42; c42a; c43; c44; c45; c46; c47; c48; c49; c50
 shell_contract
 echo "----"
 echo "PASS=$PASS FAIL=$FAIL"

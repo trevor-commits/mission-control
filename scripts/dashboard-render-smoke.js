@@ -90,6 +90,8 @@ const ACTIVATION_EPOCH = Date.UTC(2099, 11, 31, 23, 59, 0) / 1000;
 const ACTIVATION_STALE_LABEL = new Date(ACTIVATION_EPOCH * 1000).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' });
 const TOKEN_PREFIX_ONLY = 'sk-ant-oat01-';
 const TOKEN_SECRET_SUFFIX = 'uniqueSyntheticBody987654321';
+const PRIVACY_CASES = JSON.parse(fs.readFileSync(
+  path.join(REPO, 'tests', 'fixtures', 'privacy-boundaries.json'), 'utf8'));
 
 // --- fixtures as window.MC.feeds -------------------------------------------
 const FIX = path.join(REPO, 'dashboard', 'fixtures');
@@ -138,7 +140,8 @@ if (feeds.automation && feeds.automation.data && Array.isArray(feeds.automation.
       j.next_run_epoch = ACTIVATION_EPOCH;
       // Exercise display-time substring redaction for both documentation-only
       // prefixes and full tokens; neither prefix nor suffix may survive.
-      j.err_log_tail = 'docs ' + TOKEN_PREFIX_ONLY + ' full ' + TOKEN_PREFIX_ONLY + TOKEN_SECRET_SUFFIX;
+      j.err_log_tail = 'docs ' + TOKEN_PREFIX_ONLY + ' full ' + TOKEN_PREFIX_ONLY + TOKEN_SECRET_SUFFIX +
+        ' shared ' + PRIVACY_CASES.map(x => x.value).join(' | ');
     }
     else if (j.state === 'red' || j.state === 'degraded') j.state = 'green';
   });
@@ -294,6 +297,17 @@ for (const tab of TABS) {
     console.error('FAIL: #chats is missing the Open work list, temporary-hide action, or plain chat action labels');
     fails++; continue;
   }
+  if (tab === 'git' &&
+      (txt.indexOf('Branch lifecycle') === -1 ||
+       txt.indexOf('Branch needs purpose') === -1 ||
+       txt.indexOf('Branch metadata incomplete') === -1 ||
+       txt.indexOf('Worktree needs purpose') === -1 ||
+       txt.indexOf('Finish the Git lifecycle dashboard lane.') === -1 ||
+       txt.indexOf('2026-07-11 ER-103 implementation') === -1 ||
+       txt.indexOf('after merge to main and remote branch cleanup') === -1)) {
+    console.error('FAIL: #git is missing branch lifecycle labels, owner/source, purpose, or close conditions');
+    fails++; continue;
+  }
   if (tab === 'usage' && txt.indexOf('Decision cards') === -1) {
     console.error('FAIL: #usage is missing the decision-card section');
     fails++; continue;
@@ -307,7 +321,8 @@ for (const tab of TABS) {
        txt.indexOf('retries 06:47 and 06:54') === -1 ||
        txt.indexOf(ACTIVATION_STALE_LABEL) !== -1 ||
        txt.indexOf(TOKEN_PREFIX_ONLY) !== -1 || txt.indexOf(TOKEN_SECRET_SUFFIX) !== -1 ||
-       txt.indexOf('«REDACTED-SECRET»') === -1)) {
+       PRIVACY_CASES.some(x => txt.indexOf(x.value) !== -1) ||
+       PRIVACY_CASES.some(x => txt.indexOf(x.placeholder) === -1))) {
     console.error('FAIL: #automation is missing next-run, distinct history, streak, Run now, or activation fields');
     fails++; continue;
   }
@@ -783,6 +798,58 @@ function renderHomeWithChatsCounts(overrides) {
     }
   }
   console.log('PASS: malformed or contradictory full-ingest evidence cannot render green');
+})();
+
+// Browser-level audit gates that the DOM shim cannot measure directly: the light
+// secondary token must meet WCAG AA for ordinary text, and mobile-width content
+// must own its horizontal scrolling instead of widening the page viewport.
+(function accessibilityAndMobileCssContracts() {
+  function channel(v) {
+    v /= 255;
+    return v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
+  }
+  function luminance(hex) {
+    const n = parseInt(hex.slice(1), 16);
+    return 0.2126 * channel((n >> 16) & 255) +
+      0.7152 * channel((n >> 8) & 255) + 0.0722 * channel(n & 255);
+  }
+  const token = html.match(/--mc-fg-dim:\s*(#[0-9a-fA-F]{6})/);
+  const contrast = token ? (luminance('#ffffff') + 0.05) / (luminance(token[1]) + 0.05) : 0;
+  if (contrast < 4.5) {
+    console.error('FAIL: light --mc-fg-dim contrast is ' + contrast.toFixed(2) + ':1, below WCAG AA 4.5:1');
+    fails++;
+  } else {
+    console.log('PASS: light secondary text token meets WCAG AA contrast');
+  }
+  const nav = html.match(/\.mc-nav\s*\{([^}]*)\}/);
+  const table = html.match(/\.mc-table\s*\{([^}]*)\}/);
+  if (!nav || !/overflow-x:\s*auto/.test(nav[1]) || !/max-width:\s*100%/.test(nav[1])) {
+    console.error('FAIL: mobile navigation widens the body instead of owning horizontal overflow');
+    fails++;
+  } else if (!table || !/overflow-x:\s*auto/.test(table[1]) || !/max-width:\s*100%/.test(table[1])) {
+    console.error('FAIL: mobile tables widen the body instead of owning horizontal overflow');
+    fails++;
+  } else {
+    console.log('PASS: navigation and tables contain mobile horizontal overflow');
+  }
+  const copy = html.match(/\.mc-copy\s*\{([^}]*)\}/);
+  if (!copy || !/min-width:\s*(?:2[4-9]|[3-9]\d)px/.test(copy[1]) ||
+      !/min-height:\s*(?:2[4-9]|[3-9]\d)px/.test(copy[1])) {
+    console.error('FAIL: copy controls do not meet the 24x24 CSS-pixel target minimum');
+    fails++;
+  } else if (html.indexOf('"aria-label": label || "Copy command"') === -1 ||
+             html.indexOf('clipboardWrite(cmd).then') === -1) {
+    console.error('FAIL: copy controls lack an accessible name or truthful async result');
+    fails++;
+  } else {
+    console.log('PASS: copy controls are named, target-sized, and await clipboard success');
+  }
+  if (html.indexOf('h("button", { class: "mc-strip-seg", type: "button"') === -1) {
+    console.error('FAIL: global status strip navigation is not native keyboard-operable controls');
+    fails++;
+  } else {
+    console.log('PASS: global status strip uses native keyboard-operable controls');
+  }
 })();
 
 if (fails) { console.error('render-smoke: ' + fails + ' tab(s) FAILED'); process.exit(1); }

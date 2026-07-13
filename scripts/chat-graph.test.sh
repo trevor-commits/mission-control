@@ -582,8 +582,8 @@ con.execute("INSERT INTO edges VALUES('C','D','audits','titles',0.5,'{}','x','su
 con.commit(); con.close()
 PY
 "$CG" stats >/dev/null 2>&1              # any DB open triggers _migrate
-ok 7 "$(q "SELECT value FROM meta WHERE key='schema_version'")" \
-   "v1 DB open migrates meta.schema_version to 7"
+ok 8 "$(q "SELECT value FROM meta WHERE key='schema_version'")" \
+   "v1 DB open migrates meta.schema_version to 8"
 ok 2 "$(q "SELECT COUNT(*) FROM edges")" \
    "migration preserves all rows"
 ok suppressed "$(q "SELECT status FROM edges WHERE src='C' AND dst='D' AND type='audits'")" \
@@ -1127,8 +1127,8 @@ con.commit(); con.close()
 PYEOF
 "$CG" stats >/dev/null 2>&1
 "$CG" stats >/dev/null 2>&1
-ok 7 "$(q "SELECT value FROM meta WHERE key='schema_version'")" \
-   "v4 DB migrates to schema 7 exactly once"
+ok 8 "$(q "SELECT value FROM meta WHERE key='schema_version'")" \
+   "v4 DB migrates to schema 8 exactly once"
 ok 1 "$(q "SELECT COUNT(*) FROM open_ends WHERE text_hash='legacy-hash' AND text='finish it'")" \
    "v5 migration preserves the legacy open-end row"
 ok repo "$(q "SELECT node_kind FROM sessions WHERE id='repo:alpha'")" \
@@ -1865,6 +1865,44 @@ con.close()
 PYEOF
 then pass "Hermes pinned high-water handles concurrency and source reset"
 else fail "Hermes incremental high-water race"; fi
+
+# --- 48. persistence boundary: secrets never land in raw graph.db ----------
+new_env
+if python3 - "$HERE/chat-graph" <<'PYEOF'
+import importlib.machinery,importlib.util,json,os,sys
+tool=sys.argv[1]
+sys.path.insert(0,os.path.dirname(tool))
+l=importlib.machinery.SourceFileLoader("chat_graph_persistence_privacy",tool)
+s=importlib.util.spec_from_loader(l.name,l); cg=importlib.util.module_from_spec(s); l.exec_module(cg)
+secret="sk-"+("p"*32)
+con=cg.connect()
+cg.touch_session(con,"PRIVACY48",provider="codex",title="title "+secret,first_prompt="prompt "+secret)
+con.execute("UPDATE sessions SET repo=? WHERE id='PRIVACY48'",("repo "+secret,))
+cg.upsert_edge(con,"PRIVACY48","OTHER48","references","test",1.0,{"path":"evidence "+secret},"note "+secret)
+cg._upsert_open_end(con,"PRIVACY48","chat_open_end","open "+secret,source_key="privacy-source")
+con.execute("INSERT OR REPLACE INTO meta VALUES('schema_version','7')")
+con.commit(); con.close()
+# Reopening must scrub legacy v7 rows before ordinary readers can observe them.
+con=cg.connect()
+cg.touch_session(con,"PRIVACY48-NEW",provider="codex",title="new "+secret,first_prompt="new prompt "+secret)
+cg.upsert_edge(con,"PRIVACY48-NEW","OTHER48","references","test",1.0,{"nested":["new evidence "+secret]},"new note "+secret)
+cg._upsert_open_end(con,"PRIVACY48-NEW","chat_open_end","new open "+secret,source_key="privacy-new")
+con.commit()
+parts=[]
+for row in con.execute("SELECT title,repo,first_prompt FROM sessions"):
+    parts.extend("" if value is None else str(value) for value in row)
+for row in con.execute("SELECT evidence,note FROM edges"):
+    parts.extend("" if value is None else str(value) for value in row)
+for row in con.execute("SELECT text FROM open_ends"):
+    parts.append("" if row[0] is None else str(row[0]))
+blob="\n".join(parts)
+assert secret not in blob, blob
+assert "REDACTED-SECRET" in blob
+assert con.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()[0]=="8"
+con.close()
+PYEOF
+then pass "raw graph.db persistence sanitizes new and legacy sensitive fields"
+else fail "raw graph.db persistence retained sensitive transcript metadata"; fi
 
 echo "----"
 if [ "$FAILS" -eq 0 ]; then echo "ALL PASS"; exit 0; else echo "$FAILS FAILED"; exit 1; fi

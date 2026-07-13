@@ -113,9 +113,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
       return
     }
     guard n >= 1, n <= 9 else { return }
-    // Allow decision ids like decision:uuid or plain tokens — no shell metacharacters.
-    let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: ":_-."))
-    guard !idRaw.isEmpty, idRaw.unicodeScalars.allSatisfy({ allowed.contains($0) }) else { return }
+    guard idRaw.range(of: "^decision:[0-9a-f]{24}$", options: .regularExpression) != nil else { return }
 
     let home = FileManager.default.homeDirectoryForCurrentUser
       .appendingPathComponent(".mission-control/bin/dashboard")
@@ -129,21 +127,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
     proc.executableURL = URL(fileURLWithPath: dash)
     proc.arguments = ["decide", "answer", idRaw, String(n)]
     proc.environment = ProcessInfo.processInfo.environment
-    let out = Pipe()
     let err = Pipe()
-    proc.standardOutput = out
+    proc.standardOutput = FileHandle.nullDevice
     proc.standardError = err
+    proc.terminationHandler = { [weak self] completed in
+      let data = err.fileHandleForReading.readDataToEndOfFile()
+      let msg = String(data: data, encoding: .utf8)?
+        .trimmingCharacters(in: .whitespacesAndNewlines) ?? "decide failed"
+      DispatchQueue.main.async {
+        guard let self = self else { return }
+        if completed.terminationStatus == 0 {
+          self.notify("Mission Control", "Recorded choice \(n)")
+          self.reload()
+        } else {
+          self.notify("Mission Control", msg.isEmpty
+            ? "decide answer failed (\(completed.terminationStatus))"
+            : String(msg.prefix(180)))
+        }
+      }
+    }
     do {
       try proc.run()
-      proc.waitUntilExit()
-      if proc.terminationStatus == 0 {
-        notify("Mission Control", "Recorded choice \(n)")
-        DispatchQueue.main.async { [weak self] in self?.reload() }
-      } else {
-        let msg = String(data: err.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
-          .trimmingCharacters(in: .whitespacesAndNewlines) ?? "decide failed"
-        notify("Mission Control", msg.isEmpty ? "decide answer failed (\(proc.terminationStatus))" : String(msg.prefix(180)))
-      }
     } catch {
       notify("Mission Control", "Could not run decide answer")
     }

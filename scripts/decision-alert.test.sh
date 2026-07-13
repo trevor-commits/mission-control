@@ -537,7 +537,11 @@ PY
 then pass "context enrichment preserves human inferred-decision dispositions"
 else fail "context-only inferred decision recurrence"; fi
 
-# Feed/status shape pins confirmed open above inferred; DB uses WAL and private modes.
+# Feed/status shape pins confirmed open above inferred; presentation is structured
+# once at the producer boundary; DB uses WAL and private modes.
+run_json ingest --source-kind manual --source-key presentation-contract \
+  --text '**DECISION NEEDED:** Pick a release lane. **`Ship now`** (Recommended). **`Wait`**. **`Cancel`**.' \
+  --trust structured --provenance manual >/dev/null
 STATUS="$(run_json status)" || STATUS=""
 if python3 - "$STATUS" "$MISSION_CONTROL_HOME/decisions/decisions.db" <<'PY'
 import json,os,sqlite3,stat,sys
@@ -546,6 +550,10 @@ assert x["schema"] == 1 and x["feed"] == "decisions"
 assert x["ok"] is True and x["error"] is None and x["cadence_s"] == 300
 assert all(d["trust"] == "structured" and d["state"] == "open" for d in x["data"]["pinned"])
 assert all(d["trust"] == "inferred" for d in x["data"]["inferred"])
+p=next(d for d in x["data"]["pinned"] if d["source_key"]=="presentation-contract")
+assert p["question"] == "Pick a release lane."
+assert p["options"] == ["Ship now", "Wait", "Cancel"]
+assert p["recommended"] == 1
 c=sqlite3.connect(db)
 assert c.execute("PRAGMA journal_mode").fetchone()[0].lower()=="wal"
 assert c.execute("PRAGMA integrity_check").fetchone()[0]=="ok"

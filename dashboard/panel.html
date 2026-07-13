@@ -86,26 +86,45 @@ button.linkish, a.linkish {
   };
 
   function parseOptions(text) {
-    var raw = String(text || ""), opts = [], suggested = null, m;
+    var raw = String(text || ""), opts = [], suggested = null, m, firstChoice = -1;
     var tick = /\*\*`([^`]+)`\*\*/g;
-    while ((m = tick.exec(raw)) && opts.length < 3) opts.push(m[1].trim());
+    while ((m = tick.exec(raw)) && opts.length < 3) {
+      if (firstChoice < 0) firstChoice = m.index;
+      opts.push(m[1].trim());
+    }
     if (!opts.length) {
       var bold = /\*\*([^*]{2,80})\*\*/g;
       while ((m = bold.exec(raw)) && opts.length < 3) {
         var label = m[1].replace(/^`|`$/g, "").trim();
         if (/DECISION NEEDED|Confirmed|recommend/i.test(label)) continue;
+        if (firstChoice < 0) firstChoice = m.index;
         opts.push(label);
       }
     }
     if (/recommend(?:ed)?(?:\s+the)?\s+(?:first|1st|option\s*1)/i.test(raw) && opts.length) suggested = 1;
     else if (/Recommended/i.test(raw) && opts.length) suggested = 1;
-    var q = raw.replace(/\*\*|`/g, " ").replace(/\s+/g, " ").trim();
+    var questionRaw = firstChoice >= 0 ? raw.slice(0, firstChoice) : raw;
+    var q = questionRaw.replace(/^\s*\*\*DECISION NEEDED:\*\*\s*/i, "")
+      .replace(/\*\*|`/g, " ").replace(/\s+/g, " ").trim();
     if (q.length > 140) q = q.slice(0, 137) + "…";
     return { q: q || "Decision needs your answer", opts: opts, suggested: suggested };
   }
 
   function feeds() {
     return (window.MC && window.MC.feeds) || {};
+  }
+  function clipboardWrite(text) {
+    try {
+      if (typeof window.MC_CLIPBOARD_WRITE === "function") {
+        return Promise.resolve().then(function () { return window.MC_CLIPBOARD_WRITE(text); });
+      }
+      if (!navigator.clipboard || typeof navigator.clipboard.writeText !== "function") {
+        return Promise.reject(new Error("clipboard unavailable"));
+      }
+      return Promise.resolve(navigator.clipboard.writeText(text));
+    } catch (error) {
+      return Promise.reject(error);
+    }
   }
   function render() {
     var f = feeds();
@@ -117,7 +136,11 @@ button.linkish, a.linkish {
       list.appendChild(document.createTextNode("Nothing waiting on you right now."));
     } else {
       pinned.slice(0, 3).forEach(function (d, i) {
-        var parsed = parseOptions(d.text);
+        var parsed = (Array.isArray(d.options) && d.question) ? {
+          q: d.question,
+          opts: d.options.slice(0, 3),
+          suggested: d.recommended == null ? null : +d.recommended
+        } : parseOptions(d.text);
         var item = document.createElement("div");
         item.className = "item";
         var q = document.createElement("div");
@@ -143,8 +166,15 @@ button.linkish, a.linkish {
                 setTimeout(function () { btn.textContent = n + " — " + label; }, 1600);
                 return;
               }
-              try { navigator.clipboard.writeText(cmd); } catch (e) {}
-              btn.textContent = "Copied command";
+              var old = btn.textContent;
+              btn.disabled = true;
+              clipboardWrite(cmd).then(function () {
+                btn.textContent = "Copied command";
+              }, function () {
+                btn.textContent = "Copy failed — select command";
+              }).then(function () {
+                setTimeout(function () { btn.textContent = old; btn.disabled = false; }, 1600);
+              });
             };
             row.appendChild(btn);
           });

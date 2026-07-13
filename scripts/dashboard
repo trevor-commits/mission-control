@@ -32,7 +32,7 @@ export MISSION_CONTROL_HOME REPO_ROOT MISSION_CONTROL_RUNTIME_DIR
 # subcommand + args arrive as argv.
 engine() {
   python3 - "$@" <<'PYEOF'
-import json, math, os, re, shlex, shutil, signal, subprocess, sys, time
+import errno, fcntl, json, math, os, re, shlex, shutil, signal, stat, subprocess, sys, time
 
 HOME = os.environ["MISSION_CONTROL_HOME"]
 REPO = os.environ.get("REPO_ROOT", ".")
@@ -174,9 +174,12 @@ def _write_feed(name, env):
     err = os.path.join(DATA, name + ".error.json")
     if os.path.exists(err):
         os.remove(err)  # good collection clears a prior error note
-    err_js = os.path.join(DATA, name + ".error.js")
-    if os.path.exists(err_js):
-        os.remove(err_js)
+    # index.html declares every error sidecar unconditionally. Keep a healthy
+    # no-error script at that path so file:// loads stay console-clean while a
+    # successful refresh also clears an error from an already-open page.
+    err_js = ("window.MC=window.MC||{feeds:{}};window.MC.feedErrors="
+              "window.MC.feedErrors||{};delete window.MC.feedErrors.%s;" % name)
+    _atomic_write(os.path.join(DATA, name + ".error.js"), err_js)
 
 
 def _write_error(name, cadence, msg):
@@ -473,12 +476,39 @@ def _run_feeder(name, defcmd, envvar, timeout_s):
 
 
 def _collect_one(name, cadence, defcmd, envvar, timeout_s):
-    lock = os.path.join(DATA, "." + name + ".lock")
+    # Advisory file locks are released by the kernel when this process exits,
+    # including SIGKILL. The distinct suffix ignores crash-left mkdir locks from
+    # older runtimes without stealing ownership from a still-running old process.
+    lock = os.path.join(DATA, "." + name + ".lockfile")
     try:
-        os.mkdir(lock)  # mkdir-lock: another collect owns this feed
-    except OSError:
-        return "locked"
+        flags = os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0)
+        lock_fd = os.open(lock, flags, 0o600)
+        os.fchmod(lock_fd, 0o600)
+        if not stat.S_ISREG(os.fstat(lock_fd).st_mode):
+            raise OSError(errno.EINVAL, "feed lock is not a regular file")
+    except OSError as exc:
+        # A missing/unwritable/unsafe lock is an operational error, not proof
+        # that another healthy collector owns the lock.
+        code = errno.errorcode.get(exc.errno, "OS_ERROR")
+        try:
+            _write_error(name, cadence, "feed lock setup failed (%s)" % code)
+        except OSError:
+            pass
+        return "error"
     try:
+        try:
+            fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return "locked"
+        except OSError as exc:
+            if exc.errno in (errno.EACCES, errno.EAGAIN):
+                return "locked"
+            code = errno.errorcode.get(exc.errno, "OS_ERROR")
+            try:
+                _write_error(name, cadence, "feed lock acquisition failed (%s)" % code)
+            except OSError:
+                pass
+            return "error"
         obj, err = _run_feeder(name, defcmd, envvar, timeout_s)
         if err:
             _write_error(name, cadence, err)
@@ -492,7 +522,7 @@ def _collect_one(name, cadence, defcmd, envvar, timeout_s):
         return "ok"
     finally:
         try:
-            os.rmdir(lock)  # release even on failure/timeout so --due isn't wedged
+            os.close(lock_fd)
         except OSError:
             pass
 
@@ -504,7 +534,8 @@ def _is_due(name, cadence):
     try:
         with open(p) as f:
             env = json.load(f)
-        return (_now() - int(env.get("generated_epoch", 0))) >= cadence
+        age = _now() - int(env.get("generated_epoch", 0))
+        return age < 0 or age >= cadence
     except Exception:
         return True
 
@@ -695,10 +726,18 @@ def cmd_demo(argv):
             js = ("window.MC = window.MC||{feeds:{}}; window.MC.feeds.%s = %s;"
                   % (name, canon))
             _atomic_write(os.path.join(data_dir, name + ".js"), js)
+            no_error = ("window.MC=window.MC||{feeds:{}};window.MC.feedErrors="
+                        "window.MC.feedErrors||{};delete window.MC.feedErrors.%s;" % name)
+            _atomic_write(os.path.join(data_dir, name + ".error.js"), no_error)
             built.append(name)
     shell = os.path.join(REPO, "dashboard", "index.html")
     if os.path.isfile(shell):
         shutil.copy(shell, os.path.join(dest, "index.html"))
+    vendor = os.path.join(REPO, "dashboard", "vendor", "cytoscape.min.js")
+    if os.path.isfile(vendor):
+        vendor_dir = os.path.join(dest, "vendor")
+        os.makedirs(vendor_dir, exist_ok=True)
+        shutil.copy(vendor, os.path.join(vendor_dir, "cytoscape.min.js"))
     print("demo state: %s" % dest)
     print("demo feeds: %s" % ",".join(built))
     return 0
@@ -774,7 +813,7 @@ _mc_panel_autoload_allowed() {
 _ensure_mc_panel_autoload() {
   local label="com.gillettes.mc-panel"
   local plist="${label}.plist"
-  local tmpl="$REPO_ROOT/launchd/${plist}.template"
+  local tmpl="$MISSION_CONTROL_HOME/launchd/${plist}.template"
   local dest="$HOME/Library/LaunchAgents/$plist"
   local domain="gui/$(id -u)"
   local rendered changed loaded
@@ -842,31 +881,129 @@ PYEOF
   return 0
 }
 
+_mc_panel_build_valid() {
+  python3 - "$MISSION_CONTROL_HOME/bin/mc-panel.swift" \
+    "$MISSION_CONTROL_HOME/bin/mc-panel" "$MISSION_CONTROL_HOME/bin/mc-panel-build.json" <<'PYEOF'
+import hashlib,json,os,sys
+source,binary,stamp=sys.argv[1:]
+def digest(path):
+    h=hashlib.sha256()
+    with open(path,"rb") as handle:
+        for chunk in iter(lambda:handle.read(131072),b""):h.update(chunk)
+    return h.hexdigest()
+try:
+    data=json.load(open(stamp))
+    ok=(not os.path.islink(source) and not os.path.islink(binary) and
+        os.path.isfile(source) and os.path.isfile(binary) and
+        data.get("schema")==1 and data.get("source_sha256")==digest(source) and
+        data.get("binary_sha256")==digest(binary))
+except (OSError,ValueError,TypeError):
+    ok=False
+raise SystemExit(0 if ok else 1)
+PYEOF
+}
+
+_mc_stamp_panel_build() {
+  python3 - "$MISSION_CONTROL_HOME/bin/mc-panel.swift" \
+    "$MISSION_CONTROL_HOME/bin/mc-panel" "$MISSION_CONTROL_HOME/bin/mc-panel-build.json" <<'PYEOF'
+import hashlib,json,os,sys,tempfile,time
+source,binary,stamp=sys.argv[1:]
+def digest(path):
+    h=hashlib.sha256()
+    with open(path,"rb") as handle:
+        for chunk in iter(lambda:handle.read(131072),b""):h.update(chunk)
+    return h.hexdigest()
+payload={"schema":1,"source_sha256":digest(source),"binary_sha256":digest(binary),
+         "built_at":int(time.time())}
+fd,tmp=tempfile.mkstemp(prefix=".mc-panel-build.",dir=os.path.dirname(stamp))
+try:
+    os.fchmod(fd,0o600)
+    with os.fdopen(fd,"w") as handle:
+        json.dump(payload,handle,sort_keys=True);handle.write("\n")
+        handle.flush();os.fsync(handle.fileno())
+    os.replace(tmp,stamp)
+except BaseException:
+    try:os.unlink(tmp)
+    except OSError:pass
+    raise
+PYEOF
+}
+
 do_panel() {
-  engine collect --due decisions automation >/dev/null 2>&1 || engine collect --force decisions automation >/dev/null || true
-  mkdir -p "$MISSION_CONTROL_HOME/data" || return 1
-  chmod 700 "$MISSION_CONTROL_HOME" "$MISSION_CONTROL_HOME/data" 2>/dev/null || true
-  local src_panel="$REPO_ROOT/dashboard/panel.html"
-  if [ ! -f "$src_panel" ]; then
-    echo "panel: missing $src_panel" >&2
+  # Create the panel state roots without following a pre-seeded directory link.
+  # The collector and compiler both write below these paths.
+  if ! python3 - "$MISSION_CONTROL_HOME" <<'PYEOF'
+import os, stat, sys
+home=sys.argv[1]
+for path in (home, os.path.join(home,"data"), os.path.join(home,"bin")):
+    if os.path.lexists(path):
+        st=os.lstat(path)
+        if stat.S_ISLNK(st.st_mode) or not stat.S_ISDIR(st.st_mode):
+            raise SystemExit("panel: unsafe runtime directory: %s"%path)
+    else:
+        os.mkdir(path,0o700)
+    os.chmod(path,0o700)
+PYEOF
+  then
     return 1
   fi
-  cp "$src_panel" "$MISSION_CONTROL_HOME/panel.html" || return 1
-  chmod 600 "$MISSION_CONTROL_HOME/panel.html" || true
+  engine collect --due decisions automation >/dev/null 2>&1 || engine collect --force decisions automation >/dev/null || true
+  local src_panel="$MISSION_CONTROL_HOME/panel.html"
+  if [ -L "$src_panel" ] || { [ -e "$src_panel" ] && [ ! -f "$src_panel" ]; }; then
+    echo "panel: unsafe installed panel destination" >&2
+    return 1
+  fi
+  if [ ! -f "$src_panel" ] && [ "${DASHBOARD_INSTALL_ALLOW_WORKTREE:-0}" = "1" ]; then
+    if ! python3 - "$REPO_ROOT/dashboard/panel.html" "$src_panel" \
+        "$REPO_ROOT/scripts/mc-panel.swift" "$MISSION_CONTROL_HOME/bin/mc-panel.swift" <<'PYEOF'
+import os, stat, sys, tempfile
+for source, dest in zip(sys.argv[1::2], sys.argv[2::2]):
+    if not os.path.isfile(source) or os.path.islink(source):
+        raise SystemExit("panel: unsafe worktree source")
+    if os.path.lexists(dest):
+        st=os.lstat(dest)
+        if stat.S_ISLNK(st.st_mode) or not stat.S_ISREG(st.st_mode):
+            raise SystemExit("panel: unsafe installed destination")
+    fd,tmp=tempfile.mkstemp(prefix=".panel-install.",dir=os.path.dirname(dest))
+    try:
+        os.fchmod(fd,0o600)
+        with open(source,"rb") as src, os.fdopen(fd,"wb") as out:
+            out.write(src.read());out.flush();os.fsync(out.fileno())
+        os.replace(tmp,dest)
+    except BaseException:
+        try:os.unlink(tmp)
+        except OSError:pass
+        raise
+PYEOF
+    then
+      return 1
+    fi
+    chmod 600 "$src_panel" "$MISSION_CONTROL_HOME/bin/mc-panel.swift" || return 1
+  fi
+  if [ ! -f "$src_panel" ]; then
+    echo "panel: installed panel missing; run dashboard install" >&2
+    return 1
+  fi
   if [ "${1:-}" = "--install-only" ]; then
-    echo "installed panel -> $MISSION_CONTROL_HOME/panel.html"
+    echo "installed panel -> $src_panel"
     return 0
   fi
   local bin=""
-  if [ -x "$SCRIPT_DIR/mc-panel" ]; then bin="$SCRIPT_DIR/mc-panel"
-  elif [ -x "$REPO_ROOT/scripts/mc-panel" ]; then bin="$REPO_ROOT/scripts/mc-panel"
-  elif [ -x "$MISSION_CONTROL_HOME/bin/mc-panel" ]; then bin="$MISSION_CONTROL_HOME/bin/mc-panel"
-  elif [ -f "$REPO_ROOT/scripts/mc-panel.swift" ] && command -v swiftc >/dev/null 2>&1; then
+  if _mc_panel_build_valid; then
+    bin="$MISSION_CONTROL_HOME/bin/mc-panel"
+  elif [ -f "$MISSION_CONTROL_HOME/bin/mc-panel.swift" ] && command -v swiftc >/dev/null 2>&1; then
+    if [ -L "$MISSION_CONTROL_HOME/bin/mc-panel" ] || \
+       { [ -e "$MISSION_CONTROL_HOME/bin/mc-panel" ] && [ ! -f "$MISSION_CONTROL_HOME/bin/mc-panel" ]; }; then
+      echo "panel: unsafe compiled binary destination" >&2
+      return 1
+    fi
     echo "panel: compiling mc-panel…"
-    if swiftc -O -o "$MISSION_CONTROL_HOME/bin/mc-panel" "$REPO_ROOT/scripts/mc-panel.swift" \
+    rm -f "$MISSION_CONTROL_HOME/bin/mc-panel-build.json"
+    if swiftc -O -o "$MISSION_CONTROL_HOME/bin/mc-panel" "$MISSION_CONTROL_HOME/bin/mc-panel.swift" \
         -framework AppKit -framework WebKit 2>/dev/null; then
-      chmod 700 "$MISSION_CONTROL_HOME/bin/mc-panel" || true
-      bin="$MISSION_CONTROL_HOME/bin/mc-panel"
+      if chmod 700 "$MISSION_CONTROL_HOME/bin/mc-panel" && _mc_stamp_panel_build; then
+        bin="$MISSION_CONTROL_HOME/bin/mc-panel"
+      fi
     fi
   fi
   if [ -z "$bin" ]; then
@@ -881,37 +1018,80 @@ do_panel() {
   local app_dir="$MISSION_CONTROL_HOME/Mission Control Panel.app"
   local app_macos="$app_dir/Contents/MacOS"
   local app_bin="$app_macos/mc-panel"
-  mkdir -p "$app_macos" || true
-  cp "$bin" "$app_bin" || true
-  chmod 700 "$app_bin" || true
-  cat >"$app_dir/Contents/Info.plist" <<'PLIST'
-<?xml version="1.0" encoding="UTF-8"?>
+  # Treat the entire app staging tree as a deployment boundary. Refuse links
+  # and non-directories at every ancestor, then replace both files atomically.
+  # This prevents a pre-seeded app bundle from redirecting writes elsewhere.
+  if ! python3 - "$app_dir" "$bin" <<'PYEOF'
+import hashlib, os, stat, sys, tempfile
+
+app, source = sys.argv[1:]
+contents = os.path.join(app, "Contents")
+macos = os.path.join(contents, "MacOS")
+binary = os.path.join(macos, "mc-panel")
+plist = os.path.join(contents, "Info.plist")
+
+def safe_dir(path, mode=0o700):
+    if os.path.lexists(path):
+        st = os.lstat(path)
+        if stat.S_ISLNK(st.st_mode) or not stat.S_ISDIR(st.st_mode):
+            raise SystemExit("panel: unsafe app directory: %s" % path)
+    else:
+        os.mkdir(path, mode)
+    os.chmod(path, mode)
+
+def atomic_bytes(dest, payload, mode):
+    if os.path.lexists(dest):
+        st = os.lstat(dest)
+        if stat.S_ISLNK(st.st_mode) or not stat.S_ISREG(st.st_mode):
+            raise SystemExit("panel: unsafe app file: %s" % dest)
+    fd, tmp = tempfile.mkstemp(prefix=".mc-panel-stage.", dir=os.path.dirname(dest))
+    try:
+        os.fchmod(fd, mode)
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp, dest)
+    except BaseException:
+        try: os.unlink(tmp)
+        except OSError: pass
+        raise
+
+if os.path.islink(source) or not os.path.isfile(source):
+    raise SystemExit("panel: compiled binary is not a regular file")
+parent = os.path.dirname(app)
+if not os.path.isdir(parent) or os.path.islink(parent):
+    raise SystemExit("panel: unsafe runtime home")
+for directory in (app, contents, macos):
+    safe_dir(directory)
+with open(source, "rb") as handle:
+    source_bytes = handle.read()
+plist_bytes = b'''<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>CFBundleExecutable</key>
-  <string>mc-panel</string>
-  <key>CFBundleIdentifier</key>
-  <string>com.gillettes.mission-control.panel</string>
-  <key>CFBundleName</key>
-  <string>Mission Control Panel</string>
-  <key>CFBundlePackageType</key>
-  <string>APPL</string>
-  <key>CFBundleVersion</key>
-  <string>1</string>
-  <key>LSMinimumSystemVersion</key>
-  <string>13.0</string>
-  <key>LSUIElement</key>
-  <true/>
-  <key>NSHighResolutionCapable</key>
-  <true/>
-  <key>NSSupportsAutomaticTermination</key>
-  <false/>
-  <key>NSSupportsSuddenTermination</key>
-  <false/>
-</dict>
-</plist>
-PLIST
+<plist version="1.0"><dict>
+<key>CFBundleExecutable</key><string>mc-panel</string>
+<key>CFBundleIdentifier</key><string>com.gillettes.mission-control.panel</string>
+<key>CFBundleName</key><string>Mission Control Panel</string>
+<key>CFBundlePackageType</key><string>APPL</string>
+<key>CFBundleVersion</key><string>1</string>
+<key>LSMinimumSystemVersion</key><string>13.0</string>
+<key>LSUIElement</key><true/>
+<key>NSHighResolutionCapable</key><true/>
+<key>NSSupportsAutomaticTermination</key><false/>
+<key>NSSupportsSuddenTermination</key><false/>
+</dict></plist>
+'''
+atomic_bytes(binary, source_bytes, 0o700)
+atomic_bytes(plist, plist_bytes, 0o600)
+with open(binary, "rb") as handle:
+    deployed = handle.read()
+if hashlib.sha256(deployed).digest() != hashlib.sha256(source_bytes).digest():
+    raise SystemExit("panel: deployed binary hash mismatch")
+PYEOF
+  then
+    echo "panel: app staging failed closed" >&2
+    return 1
+  fi
   pkill -f '[m]c-panel' 2>/dev/null || true
   pkill -f 'Mission Control Panel' 2>/dev/null || true
   if [ "${DASHBOARD_NO_OPEN:-}" != "1" ]; then
@@ -982,8 +1162,10 @@ do_install() {
   fi
   local install_failed=0
   local stamp_path="$MISSION_CONTROL_HOME/bin/install-stamp.json"
-  local required_runtimes="dashboard morning-brief morning-brief-deadman decision-alert mission_control_common.py"
-  local required_assets="index.html vendor/cytoscape.min.js"
+  # Keep this Bash 3.2 install loop aligned with the canonical verifier manifest
+  # in mission_control_common.py; dashboard.test.sh asserts the exact set.
+  local required_runtimes="dashboard morning-brief morning-brief-deadman decision-alert mission_control_common.py compose-decision-prompt.py mc-panel.swift"
+  local required_assets="index.html vendor/cytoscape.min.js panel.html launchd/com.gillettes.mc-panel.plist.template"
   # Safe file install: refuse a symlink or non-regular-file destination (never
   # write THROUGH a link, which would escape the target dir), write via a temp
   # in the same dir then atomic mv (so a blocked/failed write cannot leave a
@@ -1057,7 +1239,7 @@ do_install() {
     fi
   fi
   local runtime dest
-  for runtime in morning-brief morning-brief-deadman decision-alert mission_control_common.py; do
+  for runtime in morning-brief morning-brief-deadman decision-alert mission_control_common.py compose-decision-prompt.py mc-panel.swift; do
     dest="$MISSION_CONTROL_HOME/bin/$runtime"
     if [ "$provenance" = "head" ]; then
       if git -C "$REPO_ROOT" cat-file -e "$head_sha:scripts/$runtime" 2>/dev/null; then
@@ -1073,7 +1255,7 @@ do_install() {
       install_failed=1; continue
     fi
     case "$runtime" in
-      *.py) chmod 600 "$dest" || { echo "install: could not secure runtime: $dest" >&2; install_failed=1; continue; } ;;
+      mission_control_common.py|mc-panel.swift) chmod 600 "$dest" || { echo "install: could not secure runtime: $dest" >&2; install_failed=1; continue; } ;;
       *) chmod 700 "$dest" || { echo "install: could not set executable mode: $dest" >&2; install_failed=1; continue; } ;;
     esac
     echo "installed runtime -> $dest"
@@ -1088,33 +1270,22 @@ do_install() {
       chmod 600 "$MISSION_CONTROL_HOME/index.html" || install_failed=1
       # Rebuild vendor from HEAD only: rm -rf drops any asset deleted upstream so a
       # stale vendor/index file can't linger and get stamped under the new HEAD.
-      rm -rf "$MISSION_CONTROL_HOME/vendor" || install_failed=1
-      mkdir -p "$MISSION_CONTROL_HOME/vendor" || install_failed=1
-      chmod 700 "$MISSION_CONTROL_HOME/vendor" || install_failed=1
+      rm -rf "$MISSION_CONTROL_HOME/vendor" "$MISSION_CONTROL_HOME/launchd" || install_failed=1
+      mkdir -p "$MISSION_CONTROL_HOME/vendor" "$MISSION_CONTROL_HOME/launchd" || install_failed=1
+      chmod 700 "$MISSION_CONTROL_HOME/vendor" "$MISSION_CONTROL_HOME/launchd" || install_failed=1
       for asset in $required_assets; do
+        local source_asset
         [ "$asset" = "index.html" ] && continue
-        if git -C "$REPO_ROOT" cat-file -e "$head_sha:dashboard/$asset" 2>/dev/null; then
-          git -C "$REPO_ROOT" show "$head_sha:dashboard/$asset" | _mc_write "$MISSION_CONTROL_HOME/$asset" || install_failed=1
+        case "$asset" in launchd/*) source_asset="$asset" ;; *) source_asset="dashboard/$asset" ;; esac
+        if git -C "$REPO_ROOT" cat-file -e "$head_sha:$source_asset" 2>/dev/null; then
+          git -C "$REPO_ROOT" show "$head_sha:$source_asset" | _mc_write "$MISSION_CONTROL_HOME/$asset" || install_failed=1
           chmod 600 "$MISSION_CONTROL_HOME/$asset" || install_failed=1
         else
-          echo "install: required asset missing at HEAD: dashboard/$asset" >&2
+          echo "install: required asset missing at HEAD: $source_asset" >&2
           install_failed=1
         fi
       done
       echo "installed shell -> $MISSION_CONTROL_HOME/index.html (head $head_sha)"
-    if git -C "$REPO_ROOT" cat-file -e "$head_sha:dashboard/panel.html" 2>/dev/null; then
-      git -C "$REPO_ROOT" show "$head_sha:dashboard/panel.html" | _mc_write "$MISSION_CONTROL_HOME/panel.html" || true
-      chmod 600 "$MISSION_CONTROL_HOME/panel.html" 2>/dev/null || true
-      echo "installed panel -> $MISSION_CONTROL_HOME/panel.html (head $head_sha)"
-    fi
-    if [ -x "$REPO_ROOT/scripts/mc-panel" ]; then
-      cp "$REPO_ROOT/scripts/mc-panel" "$MISSION_CONTROL_HOME/bin/mc-panel" 2>/dev/null || true
-      chmod 700 "$MISSION_CONTROL_HOME/bin/mc-panel" 2>/dev/null || true
-    fi
-    if [ -f "$REPO_ROOT/scripts/compose-decision-prompt.py" ]; then
-      cp "$REPO_ROOT/scripts/compose-decision-prompt.py" "$MISSION_CONTROL_HOME/bin/compose-decision-prompt.py" 2>/dev/null || true
-      chmod 700 "$MISSION_CONTROL_HOME/bin/compose-decision-prompt.py" 2>/dev/null || true
-    fi
     else
       # index.html is a shipped asset; missing at HEAD under provenance=head is a
       # broken install. Fail loud and DROP the stale installed shell + vendor so a
@@ -1127,16 +1298,18 @@ do_install() {
   elif [ -f "$REPO_ROOT/dashboard/index.html" ]; then
     _mc_write "$MISSION_CONTROL_HOME/index.html" < "$REPO_ROOT/dashboard/index.html" || install_failed=1
     chmod 600 "$MISSION_CONTROL_HOME/index.html" || install_failed=1
-    rm -rf "$MISSION_CONTROL_HOME/vendor" || install_failed=1
-    mkdir -p "$MISSION_CONTROL_HOME/vendor" || install_failed=1
-    chmod 700 "$MISSION_CONTROL_HOME/vendor" || install_failed=1
+    rm -rf "$MISSION_CONTROL_HOME/vendor" "$MISSION_CONTROL_HOME/launchd" || install_failed=1
+    mkdir -p "$MISSION_CONTROL_HOME/vendor" "$MISSION_CONTROL_HOME/launchd" || install_failed=1
+    chmod 700 "$MISSION_CONTROL_HOME/vendor" "$MISSION_CONTROL_HOME/launchd" || install_failed=1
     for asset in $required_assets; do
+      local source_asset
       [ "$asset" = "index.html" ] && continue
-      if [ -f "$REPO_ROOT/dashboard/$asset" ]; then
-        _mc_write "$MISSION_CONTROL_HOME/$asset" < "$REPO_ROOT/dashboard/$asset" || install_failed=1
+      case "$asset" in launchd/*) source_asset="$asset" ;; *) source_asset="dashboard/$asset" ;; esac
+      if [ -f "$REPO_ROOT/$source_asset" ]; then
+        _mc_write "$MISSION_CONTROL_HOME/$asset" < "$REPO_ROOT/$source_asset" || install_failed=1
         chmod 600 "$MISSION_CONTROL_HOME/$asset" || install_failed=1
       else
-        echo "install: required asset missing from worktree: dashboard/$asset" >&2
+        echo "install: required asset missing from worktree: $source_asset" >&2
         install_failed=1
       fi
     done
@@ -1153,21 +1326,18 @@ do_install() {
     return 1
   fi
   _write_install_stamp() {
-    # The stamp attests exactly the five installed runtimes and two render
-    # assets. LaunchAgents have a separate checked deployment/reload gate below.
+    # The stamp attests the canonical installed runtime and render/panel sets.
+    # LaunchAgents have a separate checked deployment/reload gate below.
     MC_BIN="$MISSION_CONTROL_HOME/bin" MC_HOME="$MISSION_CONTROL_HOME" \
     MC_HEAD_SHA="$head_sha" MC_PROVENANCE="$provenance" \
       python3 - "$MISSION_CONTROL_HOME/bin" <<'PYEOF'
 import os, sys, time
 sys.path.insert(0, sys.argv[1])
-from mission_control_common import write_install_stamp
-names = ["dashboard", "morning-brief", "morning-brief-deadman", "decision-alert",
-         "mission_control_common.py"]
+from mission_control_common import (REQUIRED_INSTALL_ASSETS,
+    REQUIRED_INSTALL_RUNTIMES, write_install_stamp)
+names = list(REQUIRED_INSTALL_RUNTIMES)
 home = os.environ["MC_HOME"]
-assets = {
-    "index.html": os.path.join(home, "index.html"),
-    "vendor/cytoscape.min.js": os.path.join(home, "vendor", "cytoscape.min.js"),
-}
+assets = {name: os.path.join(home, name) for name in REQUIRED_INSTALL_ASSETS}
 write_install_stamp(os.environ["MC_BIN"], os.environ.get("MC_HEAD_SHA") or None,
                     os.environ.get("MC_PROVENANCE") or "unknown", names,
                     int(time.time()), assets=assets)
@@ -1317,44 +1487,18 @@ case "$cmd" in
         did="$2"; choice="$3"
         case "$choice" in *[!0-9]*|"") echo "decide answer: choice must be a positive integer" >&2; exit 2 ;; esac
         [ "$choice" -ge 1 ] || { echo "decide answer: choice must be >= 1" >&2; exit 2; }
-        mkdir -p "$MISSION_CONTROL_HOME/answers" "$MISSION_CONTROL_HOME/prompts" || exit 1
-        chmod 700 "$MISSION_CONTROL_HOME/answers" "$MISSION_CONTROL_HOME/prompts" 2>/dev/null || true
-        dec_json="$MISSION_CONTROL_HOME/data/decisions.json"
-        text=""
-        if [ -f "$dec_json" ]; then
-          text="$(DID="$did" DEC_JSON="$dec_json" python3 - <<'PY'
-import json, os
-path, did = os.environ["DEC_JSON"], os.environ["DID"]
-try:
-    data = json.load(open(path)).get("data") or {}
-except Exception:
-    data = {}
-for row in (data.get("pinned") or []) + (data.get("inferred") or []):
-    if row.get("id") == did:
-        print(row.get("text") or "")
-        break
-PY
-)"
-        fi
-        prompt_path="$MISSION_CONTROL_HOME/prompts/${did}.md"
+        printf '%s\n' "$did" | grep -Eq '^decision:[0-9a-f]{24}$' || {
+          echo "decide answer: invalid decision id" >&2; exit 2;
+        }
         compose_bin="$REPO_ROOT/scripts/compose-decision-prompt.py"
         [ -f "$compose_bin" ] || compose_bin="$SCRIPT_DIR/compose-decision-prompt.py"
-        compose_out="$(python3 "$compose_bin" \
-          --decision-id "$did" --choice "$choice" --text "$text" --out "$prompt_path")" || exit $?
-        reason="Trevor chose option ${choice} via Mission Control"
-        decision_result="$("$SCRIPT_DIR/decision-alert" resolve "$did" \
-          --evidence-type manual_resolution \
-          --evidence-ref "mc-answer:${choice}" \
-          --json)" || exit $?
-        # Persist answer sidecar for audits / decision-relay handoff.
-        printf '%s\n' "{\"decision_id\": \"$did\", \"choice\": $choice, \"reason\": \"$reason\", \"prompt_path\": \"$prompt_path\"}" \
-          > "$MISSION_CONTROL_HOME/answers/${did}.json"
+        python3 "$compose_bin" --answer-transaction \
+          --home "$MISSION_CONTROL_HOME" \
+          --decision-alert "$SCRIPT_DIR/decision-alert" \
+          --decision-id "$did" --choice "$choice" || exit $?
         # Refresh feed for UI; do not fail the answer if collectors are unavailable.
         "$SCRIPT_DIR/decision-alert" sync-snapshot --json >/dev/null 2>&1 || \
           engine collect --force decisions >/dev/null 2>&1 || true
-        printf '%s\n' "$compose_out"
-        printf '%s\n' "$decision_result"
-        echo "prompt: $prompt_path"
         ;;
       alert-backfill)
         shift

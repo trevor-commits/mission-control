@@ -18,13 +18,14 @@ import tempfile
 import time
 
 from mission_control_common import (NARRATIVE, EgressCounters,
+                                    process_start_identity,
                                     sanitize_model_messages, sanitize_text)
 from outcome_sources import PROVIDERS, read_messages, recent_sources
 
 EXTRACTOR_VERSION = 1
 PROMPT_VERSION = 3
 EGRESS_POLICY_VERSION = 3
-DEFAULT_MODEL = "claude-haiku-4.5"
+DEFAULT_MODEL = "claude-haiku-4-5-20251001"
 DEFAULT_ESCALATION_MODEL = "claude-sonnet-4-6"
 DEFAULT_CLAUDE = os.path.expanduser("~/.local/bin/claude")
 DEFAULT_MAX_OUTPUT_TOKENS = 512
@@ -203,10 +204,13 @@ def _lock_owner_path(graph):
 
 def _write_lock_owner(graph):
     path = _lock_owner_path(graph)
+    probed, start = process_start_identity(os.getpid())
+    if not probed or not start:
+        raise RuntimeError("cannot establish extractor lock process identity")
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     with os.fdopen(fd, "w") as handle:
         json.dump({"pid": os.getpid(), "token": _LOCK_TOKEN,
-                   "started_at": int(time.time())}, handle, sort_keys=True)
+                   "start": start}, handle, sort_keys=True)
         handle.write("\n")
 
 
@@ -235,10 +239,20 @@ def _acquire_lock(graph):
         return True
     except FileExistsError:
         owner = _read_lock_owner(graph)
-        if owner and _pid_alive(owner.get("pid")):
-            return False
         try:
             if time.time() - os.path.getmtime(path) > LOCK_STALE_S:
+                reclaimable = owner is None
+                if owner is not None:
+                    probed, start = process_start_identity(owner.get("pid"))
+                    recorded = owner.get("start")
+                    if isinstance(recorded, str) and recorded:
+                        reclaimable = probed and start != recorded
+                    else:
+                        # Legacy owners lacked start identity. Only a proven-dead
+                        # PID is safe to reclaim; a live/reused PID stays held.
+                        reclaimable = probed and start is None
+                if not reclaimable:
+                    return False
                 try:
                     os.unlink(_lock_owner_path(graph))
                 except FileNotFoundError:

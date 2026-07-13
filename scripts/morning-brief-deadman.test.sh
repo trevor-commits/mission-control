@@ -13,20 +13,18 @@ HOME_T="$T/home"; STATE="$T/state"; mkdir -p "$HOME_T" "$STATE/morning-brief"
 # cases below remove/malformed it to exercise the independent install gate.
 PYTHONPATH="$ROOT/scripts" python3 - "$STATE" <<'PY'
 import os, sys
-from mission_control_common import write_install_stamp
+from mission_control_common import (REQUIRED_INSTALL_ASSETS,
+    REQUIRED_INSTALL_RUNTIMES, write_install_stamp)
 home=sys.argv[1]; bindir=os.path.join(home,"bin"); os.makedirs(bindir)
-for name in ("dashboard","morning-brief","morning-brief-deadman",
-             "decision-alert","mission_control_common.py"):
+for name in REQUIRED_INSTALL_RUNTIMES:
     open(os.path.join(bindir,name),"w").write("runtime "+name+"\n")
-    if name != "mission_control_common.py": os.chmod(os.path.join(bindir,name),0o700)
-os.makedirs(os.path.join(home,"vendor"))
-open(os.path.join(home,"index.html"),"w").write("<html></html>\n")
-open(os.path.join(home,"vendor","cytoscape.min.js"),"w").write("//vendor\n")
+    if name not in ("mission_control_common.py","mc-panel.swift"): os.chmod(os.path.join(bindir,name),0o700)
+assets={}
+for rel in REQUIRED_INSTALL_ASSETS:
+    path=os.path.join(home,rel); os.makedirs(os.path.dirname(path) or home,exist_ok=True)
+    open(path,"w").write("asset "+rel+"\n"); assets[rel]=path
 write_install_stamp(bindir,"a"*40,"head",
-  ["dashboard","morning-brief","morning-brief-deadman","decision-alert",
-   "mission_control_common.py"],1783675000,
-  assets={"index.html":os.path.join(home,"index.html"),
-          "vendor/cytoscape.min.js":os.path.join(home,"vendor","cytoscape.min.js")})
+  list(REQUIRED_INSTALL_RUNTIMES),1783675000,assets=assets)
 PY
 
 SENDER="$T/sender.py"

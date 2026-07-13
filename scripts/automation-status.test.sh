@@ -296,8 +296,11 @@ assert j["evidence"] == [{
     "path": "/Users/gillettes/.local/state/repo-nightly-bundle/last-status.json",
     "role": "run", "run_key": True, "semantic_status": True,
 }], j
+folded = next(x for x in d["jobs"] if x["name"] == "com.gillettes.morning-health-brief")
+assert folded["retired"] is True, folded
+assert "Folded into Mission Control" in folded["status_note"], folded
 PY
-then pass "registry: nightly bundles use the semantic fail-closed receipt"
+then pass "registry: nightly bundles are fail-closed and folded health brief is retired"
 else fail "registry: nightly bundle health contract is missing or diluted"; fi
 
 # --- distinct-run history, schedule math, globs, and atomic persistence ----

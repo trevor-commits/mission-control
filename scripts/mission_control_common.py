@@ -17,6 +17,7 @@ import math
 import os
 import re
 import stat
+import subprocess
 import time
 from collections import Counter
 from dataclasses import dataclass
@@ -41,8 +42,12 @@ FIELD_CLASSES = frozenset((
 REQUIRED_INSTALL_RUNTIMES = (
     "dashboard", "morning-brief", "morning-brief-deadman",
     "decision-alert", "mission_control_common.py",
+    "compose-decision-prompt.py", "mc-panel.swift",
 )
-REQUIRED_INSTALL_ASSETS = ("index.html", "vendor/cytoscape.min.js")
+REQUIRED_INSTALL_ASSETS = (
+    "index.html", "vendor/cytoscape.min.js", "panel.html",
+    "launchd/com.gillettes.mc-panel.plist.template",
+)
 
 SECRET_PLACEHOLDER = "«REDACTED-SECRET»"
 PII_PLACEHOLDER = "«REDACTED-PII»"
@@ -227,6 +232,26 @@ def sanitize_text(value, field_class, counters=None, denylist=None,
 def safe_text(value, field_class=NARRATIVE, counters=None, **kwargs):
     """Compatibility helper returning only the sanitized display value."""
     return sanitize_text(value, field_class, counters=counters, **kwargs).value
+
+
+def process_start_identity(pid, timeout_s=2):
+    """Return ``(probe_ok, identity)``; a missing PID has identity ``None``.
+
+    Process-start identity distinguishes a still-current owner from PID reuse.
+    Fail closed when the host probe itself is unavailable or ambiguous.
+    """
+    try:
+        proc = subprocess.run(
+            ["/bin/ps", "-o", "lstart=", "-p", str(int(pid))],
+            capture_output=True, text=True, timeout=timeout_s)
+    except (OSError, TypeError, ValueError, subprocess.TimeoutExpired):
+        return False, None
+    start = proc.stdout.strip()
+    if proc.returncode == 0 and start:
+        return True, start
+    if proc.returncode in (0, 1) and not start:
+        return True, None
+    return False, None
 
 
 def _message_is_tool_output(message):
@@ -659,7 +684,7 @@ def verify_install_stamp(bin_dir):
         else:
             try:
                 mode = os.stat(candidate).st_mode
-                if (name != "mission_control_common.py" and
+                if (name not in ("mission_control_common.py", "mc-panel.swift") and
                         not (mode & stat.S_IXUSR)):
                     mismatches.append(name)
                 elif _sha256_file(candidate) != expected:

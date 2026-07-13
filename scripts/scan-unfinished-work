@@ -77,6 +77,31 @@ if [ "$SELF_TEST" = 1 ]; then
   git -C "$UP" checkout -qb feature-safe
   git -C "$UP" commit -qm "feature base" --allow-empty
   git -C "$UP" checkout -q main
+  # A clean local-only protected default is not unfinished work, while an
+  # unexplained feature branch is lifecycle work and must make both JSON and
+  # process status non-green.
+  LOCAL_ONLY="$TMP/local-only"; mkdir -p "$LOCAL_ONLY"
+  git -C "$LOCAL_ONLY" init -q -b main .
+  git -C "$LOCAL_ONLY" config user.email t@t; git -C "$LOCAL_ONLY" config user.name t
+  echo local > "$LOCAL_ONLY/f"; git -C "$LOCAL_ONLY" add f; git -C "$LOCAL_ONLY" commit -qm "init"
+  set +e
+  LOCAL_MAIN=$("$0" --json --repo "$LOCAL_ONLY" 2>/dev/null); LOCAL_MAIN_RC=$?
+  git -C "$LOCAL_ONLY" checkout -qb feature-unexplained
+  git -C "$LOCAL_ONLY" commit -qm "feature" --allow-empty
+  LOCAL_FEATURE=$("$0" --json --repo "$LOCAL_ONLY" 2>/dev/null); LOCAL_FEATURE_RC=$?
+  set -e
+  [ "$LOCAL_MAIN_RC" -eq 0 ] || { echo "SELF-TEST FAIL: local main false finding"; exit 1; }
+  [ "$LOCAL_FEATURE_RC" -eq 1 ] || { echo "SELF-TEST FAIL: lifecycle finding returned $LOCAL_FEATURE_RC"; exit 1; }
+  printf '%s\n%s\n' "$LOCAL_MAIN" "$LOCAL_FEATURE" | python3 -c '
+import json,sys
+main, feature = [json.loads(line) for line in sys.stdin if line.strip()]
+mr, fr = main["repos"][0], feature["repos"][0]
+assert main["findings_total"] == 0, main
+assert mr["default_branch"] == "main", mr
+assert {b["name"]:b for b in mr["branch_facts"]}["main"]["metadata_status"] == "not-required", mr
+assert feature["findings_total"] > 0, feature
+assert any(r["kind"] == "unexplained-branch" for r in fr["decision_rows"]), fr
+' || { echo "SELF-TEST FAIL: local lifecycle assertions"; exit 1; }
   # Clone, create a non-current branch that is one old commit ahead, and prove
   # the branch-local contract independently from the current checkout.
   git clone -q "$UP" "$TMP/work"
@@ -86,6 +111,59 @@ if [ "$SELF_TEST" = 1 ]; then
   GIT_AUTHOR_DATE="$OLD_DATE" GIT_COMMITTER_DATE="$OLD_DATE" \
     git -C "$TMP/work" commit -qm "old sk-branch-subject-must-not-leak" --allow-empty
   git -C "$TMP/work" checkout -q main
+  LINKED_WT="$TMP/linked"
+  python3 - "$TMP/work/todo.md" "$LINKED_WT" <<'PYLEDGER'
+from pathlib import Path
+import sys
+todo, linked = Path(sys.argv[1]), sys.argv[2]
+todo.write_text(f"""## Active Branch Ledger
+### `feature-safe`
+- status: active
+- created: 2026-07-11
+- base: `main`
+- source chat: 2026-07-11 scanner self-test
+- last refreshed by chat: 2026-07-11 scanner self-test
+- purpose: Verify complete branch lifecycle metadata.
+- linked issue: self-contained
+- plugin mirror: none
+- merge expectation: merge
+- merge target: main
+- review surface: self-test
+- exit checklist: tests pass
+- delete when: after merge to main
+- retain reason: n/a
+- cleanup command: git branch -d feature-safe
+- linked PR/audit/completion record: self-test
+
+### `feature-linked`
+- status: active
+- created: 2026-07-11
+- base: `main`
+- worktree: {linked}
+- source chat: 2026-07-11 scanner self-test
+- last refreshed by chat: 2026-07-11 scanner self-test
+- purpose: Verify linked worktree lifecycle metadata.
+- linked issue: self-contained
+- plugin mirror: none
+- merge expectation: merge
+- merge target: main
+- review surface: self-test
+- exit checklist: tests pass
+- delete when: after merge to main
+- retain reason: n/a
+- cleanup command: git worktree remove {linked}
+- linked PR/audit/completion record: self-test
+""")
+PYLEDGER
+  git -C "$TMP/work" add todo.md
+  git -C "$TMP/work" commit -qm "branch ledger"
+  git -C "$TMP/work" checkout -qb feature-unexplained main
+  git -C "$TMP/work" commit -qm "unexplained branch" --allow-empty
+  git -C "$TMP/work" checkout -q main
+  git -C "$TMP/work" checkout -qb feature-linked main
+  git -C "$TMP/work" commit -qm "linked branch" --allow-empty
+  git -C "$TMP/work" checkout -q main
+  git -C "$TMP/work" worktree add -q "$TMP/linked" feature-linked
   git -C "$TMP/work" branch 'feature/sk-abcdefghijklmnopqrstuvwxyz123456' main
   INDEX_BEFORE=$(python3 -c 'import os,sys; print(os.stat(sys.argv[1]).st_mtime_ns)' "$TMP/work/.git/index")
   CLEAN=$("$0" --json --repo "$TMP/work" --stale-days 0 2>/dev/null || true)
@@ -132,11 +210,23 @@ assert f["ahead"] == 1 and f["behind"] == 0, f
 assert not f["checkout_paths"], f
 assert f["last_activity"]["state"] == "stale", f
 assert f["push_eligible"] and not f["refusal_reasons"], f
+assert f["metadata_status"] == "explained", f
+assert f["purpose"] == "Verify complete branch lifecycle metadata.", f
+assert f["owner_chat"] == "2026-07-11 scanner self-test", f
+assert f["merge_condition"] == "merge to main", f
+assert f["safe_delete_condition"] == "after merge to main", f
+u=br["feature-unexplained"]
+assert u["metadata_status"] == "unexplained", u
+assert any(r["kind"] == "unexplained-branch" and r["label"] == "Branch needs purpose" for r in clean["decision_rows"]), clean["decision_rows"]
+assert docs[0]["findings_total"] > 0, docs[0]
+linked=[w for w in clean["worktrees"] if w.get("branch") == "feature-linked"]
+assert linked and linked[0]["metadata_status"] == "explained", clean["worktrees"]
+assert linked[0]["purpose"] == "Verify linked worktree lifecycle metadata.", linked[0]
 expected=["git","-C",clean["path"],"push","--","origin",
           "refs/heads/feature-safe:refs/heads/feature-safe"]
 assert f["proposal_argv"] == expected, f
 main=br["main"]
-for reason in ("ahead_not_positive","default_branch","protected_branch","branch_checked_out"):
+for reason in ("default_branch","protected_branch","branch_checked_out"):
     assert reason in main["refusal_reasons"], (reason, main)
 raw=json.dumps(unsafe)
 assert "super-secret" not in raw and "example.invalid" not in raw, "credential URL leaked"
@@ -183,8 +273,9 @@ else
 fi
 
 findings_total=0
-# JSON mode: accumulate one JSONL line per repo, build final JSON at the end.
-JSONL_FILE=""; [ "$JSON" = 1 ] && JSONL_FILE=$(mktemp)
+# Always build the privacy-screened facts packet. Human and JSON output must use
+# the same lifecycle finding calculation and therefore the same exit status.
+JSONL_FILE=$(mktemp)
 trap '[ -n "$JSONL_FILE" ] && rm -f "$JSONL_FILE"' EXIT
 
 if [ "${#repos[@]}" -gt 0 ]; then
@@ -237,8 +328,7 @@ for repo in "${repos[@]}"; do
   [ -n "$stale_branches" ] && repo_findings=$((repo_findings+1))
   findings_total=$((findings_total + repo_findings))
 
-  if [ "$JSON" = 1 ]; then
-    # Emit one JSONL line per repo: python builds the object, TSV feeds branches.
+  # Emit one JSONL line per repo: python builds the object, TSV feeds branches.
     printf '%s' "$stale_records" | python3 -c '
 import json, os, re, subprocess, sys, time
 from urllib.parse import urlsplit
@@ -314,7 +404,7 @@ def worktree_facts():
     if not listing_text.strip():
         return [], False
     for block in re.split(r"\n\s*\n", listing_text.strip()):
-        row = {"path": None, "branch_ref": None, "branch": None,
+        row = {"path": None, "branch_ref": None, "branch": None, "head": None,
                "detached": False, "dirty": None}
         seen = set()
         malformed = False
@@ -324,6 +414,7 @@ def worktree_facts():
             elif line.startswith("HEAD ") and "HEAD" not in seen:
                 if not re.fullmatch(r"[0-9a-fA-F]{40,64}", line[5:]):
                     malformed = True
+                row["head"] = line[5:]
                 seen.add("HEAD")
             elif line.startswith("branch ") and "state" not in seen:
                 ref = line[7:]
@@ -360,9 +451,149 @@ def worktree_facts():
         item["path"] = screened(raw_path, ACTION)
         item["branch_ref"] = screened(raw_ref, IDENTIFIER) if raw_ref else None
         item["branch"] = screened(raw_branch, IDENTIFIER) if raw_branch else None
+        item["head"] = screened(item.get("head"), IDENTIFIER) if item.get("head") else None
         item["privacy_rejected"] = any(raw is not None and safe is None for raw, safe in (
             (raw_path, item["path"]), (raw_ref, item["branch_ref"]), (raw_branch, item["branch"])))
     return facts, True
+
+
+def parse_branch_ledger():
+    ledger = {"by_branch": {}, "by_worktree": {}, "read_ok": True}
+    todo_path = os.path.join(path, "todo.md")
+    try:
+        text = open(todo_path, encoding="utf-8").read()
+    except FileNotFoundError:
+        return ledger
+    except OSError:
+        ledger["read_ok"] = False
+        return ledger
+    current_section = None
+    current = None
+    for raw in text.splitlines():
+        if raw.startswith("## "):
+            title = raw[3:].strip().lower()
+            current_section = raw[3:].strip() if title in ("active branch ledger", "branch history") else None
+            current = None
+            continue
+        if current_section is None:
+            continue
+        m = re.match(r"^###\s+`?([^`]+?)`?\s*$", raw)
+        if m:
+            branch_name = m.group(1).strip()
+            safe_branch = screened(branch_name, IDENTIFIER)
+            current = {"branch": safe_branch, "_section": current_section, "_fields": {}}
+            if safe_branch is not None:
+                ledger["by_branch"][safe_branch] = current
+            continue
+        if current is None:
+            continue
+        m = re.match(r"^-\s+([^:]+):\s*(.*)$", raw)
+        if not m:
+            continue
+        key = m.group(1).strip().lower()
+        value = m.group(2).strip()
+        if key == "branch":
+            safe_value = screened(value.strip("`"), IDENTIFIER)
+        elif key == "worktree":
+            safe_value = screened(value.strip("`"), ACTION)
+        else:
+            safe_value = screened(value, NARRATIVE)
+        if safe_value is None:
+            continue
+        current["_fields"][key] = safe_value
+        if key == "branch":
+            current["branch"] = safe_value
+            ledger["by_branch"][safe_value] = current
+        elif key == "worktree":
+            ledger["by_worktree"][os.path.realpath(safe_value)] = current
+    return ledger
+
+def lifecycle_metadata(ledger, branch_name=None, worktree_path=None, default_branch=None,
+                       is_default=False, is_protected=False, dirty=False, detached=False):
+    record = ledger["by_branch"].get(branch_name) if branch_name else None
+    if record is None and worktree_path:
+        record = ledger["by_worktree"].get(os.path.realpath(worktree_path))
+    if record is None:
+        required = bool(dirty or detached or
+                        (branch_name and not is_default and not is_protected))
+        status = "unexplained" if required else "not-required"
+        return {"metadata_status": status, "purpose": None, "owner_chat": None,
+                "merge_condition": None, "safe_delete_condition": None,
+                "source": None, "confidence": 0.0,
+                "action": "add branch ledger entry" if status == "unexplained" else "none"}
+    fields = record.get("_fields", {})
+    source_chat = fields.get("source chat")
+    purpose = fields.get("purpose")
+    merge_expectation = fields.get("merge expectation")
+    merge_target = fields.get("merge target")
+    delete_when = fields.get("delete when")
+    retain_after = fields.get("retain after close")
+    retain_reason = fields.get("retain reason")
+    merge_condition = merge_expectation
+    if merge_condition and merge_target:
+        merge_condition = "%s to %s" % (merge_condition, merge_target)
+    safe_delete = delete_when
+    if not safe_delete and (retain_after or retain_reason):
+        safe_delete = "retain after close: %s%s" % (retain_after or "yes", ("; reason: %s" % retain_reason) if retain_reason else "")
+    complete = bool(record.get("branch") and source_chat and purpose and merge_expectation and (delete_when or (retain_after and retain_reason)))
+    return {"metadata_status": "explained" if complete else "partial",
+            "purpose": purpose, "owner_chat": source_chat,
+            "merge_condition": merge_condition,
+            "safe_delete_condition": safe_delete,
+            "review_surface": fields.get("review surface"),
+            "cleanup_command": fields.get("cleanup command"),
+            "evidence_ref": fields.get("linked pr/audit/completion record"),
+            "source": "todo.md %s" % record.get("_section", "Active Branch Ledger"),
+            "confidence": 1.0,
+            "action": "none" if complete else "complete branch ledger metadata"}
+
+def merge_lifecycle(row, meta):
+    for key, value in meta.items():
+        if value is not None:
+            row[key] = value
+    return row
+
+def decision_rows_for_repo(branch_rows, worktree_rows):
+    rows = []
+    seen = set()
+    def add(state, kind, label, detail, action):
+        key = (kind, label, detail)
+        if key in seen:
+            return
+        seen.add(key)
+        rows.append({"state": state, "kind": kind, "label": label, "detail": detail, "action": action})
+    if dirty == "1":
+        add("amber", "dirty-repo", "Dirty worktree", "%s has %s uncommitted file(s)" % (safe_short or short, dirty_files), "save changes to Git")
+    if int(ahead) > 0:
+        add("amber", "unpushed-branch", "Branch has local commits", "%s has %s commit(s) not on its upstream" % (safe_branch or branch or "current branch", ahead), "review push readiness")
+    if int(behind) > 0:
+        add("amber", "behind-upstream", "Branch is behind GitHub", "%s is %s commit(s) behind upstream" % (safe_branch or branch or "current branch", behind), "get GitHub updates")
+    if detached == "1":
+        add("amber", "detached-head", "Detached worktree", "%s is not on a named branch" % (safe_short or short), "check branch")
+    for row in branch_rows:
+        if row.get("is_default"):
+            continue
+        status = row.get("metadata_status")
+        if status == "unexplained":
+            add("amber", "unexplained-branch", "Branch needs purpose", "%s has no lifecycle metadata" % row.get("name", "branch"), "add branch ledger entry")
+        elif status == "partial":
+            add("amber", "partial-branch-metadata", "Branch metadata incomplete", "%s is missing lifecycle fields" % row.get("name", "branch"), "complete branch ledger metadata")
+        if row.get("ahead", 0) > 0:
+            add("amber", "unpushed-branch", "Branch has local commits", "%s has %s commit(s) not on its upstream" % (row.get("name", "branch"), row.get("ahead")), "review push readiness")
+        if ((row.get("last_activity") or {}).get("state") == "stale" and not row.get("merged_to_default")):
+            add("amber", "stale-branch", "Ready to check merge", "%s has not moved recently" % row.get("name", "branch"), "review merge readiness")
+    for row in worktree_rows:
+        status = row.get("metadata_status")
+        branch_label = row.get("branch") or "detached worktree"
+        if row.get("detached"):
+            add("amber", "detached-worktree", "Detached worktree", "%s is detached" % (row.get("path") or "worktree"), "check branch")
+        if row.get("dirty"):
+            add("amber", "dirty-worktree", "Dirty worktree", "%s has uncommitted changes" % (row.get("path") or branch_label), "save changes to Git")
+        if status == "unexplained":
+            add("amber", "unexplained-worktree", "Worktree needs purpose", "%s has no lifecycle metadata" % branch_label, "add branch ledger entry")
+        elif status == "partial":
+            add("amber", "partial-worktree-metadata", "Worktree metadata incomplete", "%s is missing lifecycle fields" % branch_label, "complete branch ledger metadata")
+    return rows
 
 generated_epoch = int(time.time())
 try:
@@ -385,8 +616,20 @@ for candidate_remote in remote_names:
     if head.startswith(prefix):
         default_by_remote[candidate_remote] = head[len(prefix):]
 
+# A repo with no remotes still has a safe local lifecycle default. Prefer the
+# conventional protected branch when it exists; do not apply this fallback to
+# a configured remote whose HEAD is unknown, because push safety must stay
+# fail-closed in that case.
+local_branch_names = git("for-each-ref", "--format=%(refname:short)", "refs/heads").splitlines()
+local_default = None
+if not remote_names:
+    for candidate in ("main", "master"):
+        if candidate in local_branch_names:
+            local_default = candidate
+            break
+
 branch_facts = []
-for name in git("for-each-ref", "--format=%(refname:short)", "refs/heads").splitlines():
+for name in local_branch_names:
     if not name:
         continue
     local_ref = "refs/heads/%s" % name
@@ -396,7 +639,7 @@ for name in git("for-each-ref", "--format=%(refname:short)", "refs/heads").split
     safe_remote_name = remote_name if re.match(r"^[A-Za-z0-9._-]+$", remote_name or "") else None
     remote_url = git("remote", "get-url", remote_name) if safe_remote_name else ""
     remote_class, has_credentials, has_query_or_fragment, remote_privacy_rejected = remote_classification(remote_url)
-    default_branch = default_by_remote.get(remote_name)
+    default_branch = default_by_remote.get(remote_name) or local_default
     branch_ahead = branch_behind = 0
     if upstream_ref:
         counts = git("rev-list", "--left-right", "--count", "%s...%s" % (upstream_ref, local_ref)).split()
@@ -520,8 +763,48 @@ safe_upstream = screened(upstream, IDENTIFIER) if upstream else None
 safe_sha = screened(sha, IDENTIFIER) if sha else None
 current_facts = next((b for b in branch_facts if b["name"] == safe_branch), {})
 safe_subject = screened(subject[:160], NARRATIVE)
+ledger = parse_branch_ledger()
+for b in branch_facts:
+    b["age_days"] = int((b.get("last_activity") or {}).get("age_seconds", 0) // 86400) if (b.get("last_activity") or {}).get("age_seconds") is not None else None
+    default_for_branch = b.get("default_branch")
+    if default_for_branch and b.get("name") != default_for_branch:
+        b["merged_to_default"] = git_result("merge-base", "--is-ancestor", "refs/heads/%s" % b.get("name"), "refs/heads/%s" % default_for_branch).returncode == 0
+    else:
+        b["merged_to_default"] = False
+    merge_lifecycle(b, lifecycle_metadata(
+        ledger, branch_name=b.get("name"), default_branch=default_for_branch,
+        is_default=b.get("is_default") is True,
+        is_protected=b.get("is_protected") is True, dirty=repo_dirty))
+branch_meta_by_name = {b.get("name"): b for b in branch_facts if b.get("name")}
+for item in stale_branches:
+    meta = branch_meta_by_name.get(item.get("name"))
+    if meta:
+        for key in ("metadata_status", "purpose", "owner_chat", "merge_condition", "safe_delete_condition", "source", "confidence", "action", "merged_to_default"):
+            if key in meta:
+                item[key] = meta[key]
+for item in worktrees:
+    item_branch = branch_meta_by_name.get(item.get("branch"), {})
+    merge_lifecycle(item, lifecycle_metadata(
+        ledger, branch_name=item.get("branch"), worktree_path=item.get("path"),
+        default_branch=item_branch.get("default_branch") or current_facts.get("default_branch"),
+        is_default=item_branch.get("is_default") is True,
+        is_protected=item_branch.get("is_protected") is True,
+        dirty=item.get("dirty") is True, detached=item.get("detached") is True))
+decision_rows = decision_rows_for_repo(branch_facts, worktrees)
+metadata_states = [row.get("metadata_status") for row in branch_facts + worktrees]
+if not ledger.get("read_ok"):
+    repo_metadata_status = "unknown"
+elif "unexplained" in metadata_states:
+    repo_metadata_status = "unexplained"
+elif "partial" in metadata_states:
+    repo_metadata_status = "partial"
+elif "explained" in metadata_states:
+    repo_metadata_status = "explained"
+else:
+    repo_metadata_status = "not-required"
 print(json.dumps({"repo": safe_short, "path": safe_path, "branch": safe_branch,
                   "upstream": safe_upstream, "remote": relationship,
+                  "no_remote": relationship == "no-remote",
                   "remote_name": current_facts.get("remote_name"),
                   "remote_classification": current_facts.get("remote_classification", "missing"),
                   "default_branch": current_facts.get("default_branch"),
@@ -530,13 +813,15 @@ print(json.dumps({"repo": safe_short, "path": safe_path, "branch": safe_branch,
                   "detached": detached == "1", "worktrees": worktrees,
                   "worktrees_known": worktrees_known,
                   "branches": stale_branches, "branch_facts": branch_facts,
+                  "decision_rows": decision_rows, "metadata_status": repo_metadata_status,
+                  "ledger_status": "ok" if ledger.get("read_ok") else "unknown",
                   "facts_generated_epoch": generated_epoch,
                   "last_commit": {"sha": safe_sha, "subject": safe_subject,
                                   "epoch": int(epoch) if epoch else None},
                   "recent_commits": recent,
                   "privacy_counters": counters.snapshot()}))
 ' "$short" "$repo" "$cur_branch" "$upstream" "$dirty" "$dirty_lines" "$ahead" "$behind" "$detached" "$SCRIPT_DIR" >> "$JSONL_FILE"
-  elif [ "$repo_findings" -gt 0 ]; then
+  if [ "$JSON" != 1 ] && [ "$repo_findings" -gt 0 ]; then
     # Human output uses content-free labels. The machine-readable path/refs are
     # screened by the shared field-aware policy above; raw shell values must
     # never bypass that boundary.
@@ -550,18 +835,24 @@ print(json.dumps({"repo": safe_short, "path": safe_path, "branch": safe_branch,
 done
 fi
 
-if [ "$JSON" = 1 ]; then
-  python3 -c '
-import json, sys, datetime
+final_json="$(python3 -c '
+import datetime, json, sys
 repos = []
 with open(sys.argv[1]) as fh:
     for line in fh:
         line = line.strip()
         if line: repos.append(json.loads(line))
-print(json.dumps({"generated": datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
-                  "stale_days": int(sys.argv[2]), "findings_total": int(sys.argv[3]),
+decision_total = sum(len(repo.get("decision_rows") or []) for repo in repos)
+total = max(int(sys.argv[3]), decision_total)
+print(json.dumps({"generated": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                  "stale_days": int(sys.argv[2]), "findings_total": total,
                   "repos": repos}))
-' "$JSONL_FILE" "$STALE_DAYS" "$findings_total"
+' "$JSONL_FILE" "$STALE_DAYS" "$findings_total")"
+findings_total="$(printf '%s\n' "$final_json" | \
+  python3 -c 'import json,sys; print(json.load(sys.stdin)["findings_total"])')"
+
+if [ "$JSON" = 1 ]; then
+  printf '%s\n' "$final_json"
   [ "$findings_total" -gt 0 ] && exit 1 || exit 0
 fi
 
@@ -570,5 +861,18 @@ echo "repos scanned: ${#repos[@]} | stale threshold: ${STALE_DAYS}d | findings: 
 echo
 if [ "$findings_total" -eq 0 ]; then
   echo "clean — no unfinished work detected."
+else
+  printf '%s\n' "$final_json" | python3 -c '
+import json,sys
+doc=json.load(sys.stdin)
+for repo in doc.get("repos",[]):
+    lifecycle=[r for r in repo.get("decision_rows",[]) if r.get("kind") in
+               ("unexplained-branch","partial-branch-metadata","unexplained-worktree","partial-worktree-metadata")]
+    if lifecycle:
+        print("## Lifecycle finding")
+        for row in lifecycle:
+            print("  ⚠ %s" % row.get("label","Lifecycle metadata needs attention"))
+        print()
+'
 fi
 [ "$findings_total" -gt 0 ] && exit 1 || exit 0
