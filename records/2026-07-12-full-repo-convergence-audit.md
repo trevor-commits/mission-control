@@ -135,7 +135,7 @@ The independent UX/test challenger then re-reviewed exact `86cfff8`, including b
 - Merge commit: `c44e5c967d0232df29ab46a7cfa07ba34d6d33a1` on `origin/main`; `git merge-base --is-ancestor` proved the reviewed head is contained.
 - Canonical clean `main` worktree fast-forwarded to the merge commit; installer copied seven runtimes and four assets, and `verify_install_stamp` returned `ok:true`, no missing/mismatched/unexpected paths, provenance `head`, exact head `c44e5c9`.
 - Menu-bar panel compiled/staged from the attested source, its login job is loaded and running, and the main Mission Control launchd job has last exit `0`.
-- A forced live collection returned `0`; Automation, Usage, Git, Chats, and Decisions were freshly generated. Overall status remained honestly nonzero because the separate global Nightly Review job is red and the July 12 daily brief is past its midnight validity horizon before the next 07:00 run. Neither is a failure of the reviewed repo implementation.
+- A forced live collection returned `0`; Automation, Usage, Git, Chats, and Decisions were freshly generated. Overall status remained honestly nonzero because the separate global Nightly Review job is red and the July 12 daily brief is past its midnight validity horizon before the next 05:00 run. Neither is a failure of the reviewed repo implementation.
 - Outcome Extractor remains unloaded. Its pending-calibration plist remains at `/Users/gillettes/Library/LaunchAgents/com.gillettes.outcome-extractor.plist.pending-calibration-20260713`; no provider calibration or live model egress was performed.
 - Removed the audit worktree, its detached baseline worktree, five redundant ER-134 worktrees, their local branches, the redundant panel/CTA local branches, and seven patch-contained remote branches. The removal push reran `SUITES PASS=21 FAIL=0`.
 - Preserved `/Users/gillettes/Coding Projects/mission-control` on `codex/er103-git-state-and-morning-proof` because it contains Trevor-owned dirty files. Direct comparison proved those four files are older/superseded variants of merged main rather than uncontained implementation; preservation is intentional, not unfinished audit work.
@@ -144,8 +144,8 @@ The independent UX/test challenger then re-reviewed exact `86cfff8`, including b
 
 These are not unimplemented repo defects and must not be papered over with synthetic evidence:
 
-1. The proof log contains three natural delivered mornings (July 10–12), not five, and Trevor's read/understood fields remain blank until he supplies them.
-2. Outcome Extractor needs a separately authorized privacy-screened live provider calibration before activation. Offline code/tests are complete. The prematurely registered zero-run label was unloaded and its byte-identical plist moved to `/Users/gillettes/Library/LaunchAgents/com.gillettes.outcome-extractor.plist.pending-calibration-20260713` (SHA-256 `e5e561f72e86bbc2cfcb0c00c10deab60ff5522d31d56e6fbd6a04337eb294d9`); the canonical plist is absent and the label is not loaded. Rollback after an approved calibration: move it back to `com.gillettes.outcome-extractor.plist`, validate with `plutil`, then bootstrap the label.
+1. The proof log contains four natural delivered mornings (July 10–13), not five, and Trevor's read/understood fields remain blank until he supplies them.
+2. Outcome Extractor needs a separately authorized privacy-screened live provider calibration before activation. Offline code/tests are complete. The prematurely registered zero-run label was unloaded and its pending plist remains at `/Users/gillettes/Library/LaunchAgents/com.gillettes.outcome-extractor.plist.pending-calibration-20260713`; its retry slots now precede the operator-ordered brief at 04:40/04:47/04:54 (SHA-256 `b9c2cf2aa297e084086c4cc4597df5f668b23b9683bfa7e05d30fe4162f044f5`). The canonical plist is absent and the label is not loaded. Rollback after an approved calibration: move it back to `com.gillettes.outcome-extractor.plist`, validate with `plutil`, then bootstrap the label.
 3. Provider delivery is intentionally at-least-once. Provider acceptance followed by a local crash before receipt persistence remains an explicit ambiguity; the queued reconciliation state machine is not falsely claimed here.
 4. The portfolio automatic work executor is a separately scoped global capability with broader authority and safety design. It is not silently pulled into this repo audit.
 
@@ -153,7 +153,7 @@ These are not unimplemented repo defects and must not be papered over with synth
 
 - Method: compared live `origin/main`, every local/origin branch tip, patch containment, the preserved dirty ER-103 checkout, exact resolved session metadata/latest exchanges, durable Work/Audit/Test logs, runtime code, installed-state contracts, and independent counterexample reports.
 - Outcome: every reproduced code, privacy, UI, test, and repo-governance defect has an implementation or explicit accepted-debt disposition plus a focused regression. The final implementation passed the complete matrix repeatedly, independent and GitHub reviewers converged clean, the reviewed head is contained by `origin/main`, the installed tree is stamp-verified, and live collection/panel execution work as designed.
-- Did not verify yet: five elapsed mornings, Trevor comprehension, or provider calibration, because those require time or explicit external authorization; no live provider send was performed.
+- Did not verify yet: the fifth elapsed morning, Trevor comprehension, or provider calibration, because those require time or explicit external authorization; no live provider calibration was performed.
 - Ripple Check: reviewed `PROJECT_INTENT.md`, `AGENTS.project.md`, `CONTINUITY.md`, `COHERENCE.md`, `LINEAR.md`, root `todo.md`, current OpenSpec state, dashboard feed consumers, install/stamp sets, and the morning-surface collision record. The product remains local/offline, repo-only for Linear, and external-provider gated.
 - Better-path challenge: fixed truth and deployment boundaries at their producers and authoritative verifier rather than adding another parallel audit harness or weakening fail-closed gates.
 
@@ -247,13 +247,13 @@ or pre-existing unused test locals and do not change runtime behavior.
 - Post-repair focused dashboard suite: `PASS=67 FAIL=0`, including committed feeder outputs through the real dashboard wrapper.
 - Fixture parse, `git diff --check`, shell syntax, Python syntax, and ShellCheck error-severity: PASS.
 - Forced installed collection succeeded. Install verification returned exact head `a7e4eda`, `ok:true`, and no missing, mismatched, or unexpected member. The menu panel was running; the interval job had last exit `0`.
-- Overall live status remained honestly non-green because a separate global Automation job was red and the prior daily Brief was expired before the next 07:00 run. This is operational input truth, not a repo test failure.
+- Overall live status remained honestly non-green because a separate global Automation job was red and the prior daily Brief was expired before the next 05:00 run. This is operational input truth, not a repo test failure.
 - Outcome Extractor remains unloaded at the explicit pending-calibration plist. No provider call, send, credential action, or fabricated morning was performed.
 
 ### Honest residual gates
 
-The prior four residual gates are unchanged: five natural mornings with Trevor
-comprehension (only three receipts existed at the 02:00 audit), separately
+The prior four residual gates remain open: five natural mornings with Trevor
+comprehension (four receipts exist after the July 13 05:00 run), separately
 authorized provider calibration/activation, at-least-once provider ambiguity, and
 the separately scoped portfolio executor. These remain active work or external
 proof—not hidden audit failures and not permission requests for already-scoped
@@ -379,10 +379,40 @@ LaunchAgent uses one executable plus fixed arguments without a shell.
 - Mission Control's own implementation and interval collector remain green; install provenance was exact at the starting SHA.
 - The Automation feed is correctly non-green because the separate global Nightly Review last exited `75` under the resource governor (`swap-used-above-ceiling`) and Delegation Audit has historical exit `127` from a removed pinned worktree. These are truthful upstream failures, not renderer defects. They are now explicit cross-repo follow-ups in `todo.md`.
 - Outcome Extractor remains unloaded at `/Users/gillettes/Library/LaunchAgents/com.gillettes.outcome-extractor.plist.pending-calibration-20260713`. No provider calibration or send was attempted.
-- Three natural Morning Brief deliveries (July 10–12) exist. The July 13 natural run had not occurred at the 02:44 local snapshot; Trevor's comprehension fields remain blank.
+- Four natural Morning Brief deliveries (July 10–13) exist. The July 13 05:00 brief delivered 2/2 chunks and the 05:20 deadman completed naturally with exit `0`; Trevor's comprehension fields remain blank.
 - The documented global session lookup route is itself regressed: `chat-source find` emits `line 77: turns: command not found` and `unknown command: find`. Provider-native fallback enumeration found no new material Mission Control feedback after the final reviewer clean result. The global checkout is dirty and behind concurrent work, so this repo audit recorded the exact external defect instead of editing that shared lane.
 - The global `.codex` usage-policy test-count text is also a deliberate non-landing: its only containing main worktree is dirty and based 38 commits behind current origin, while current origin omits that section. The audit records the blocker rather than overwriting concurrent uncommitted policy work.
-- A one-time 07:25 local follow-up heartbeat was proposed through the native Codex automation surface with a 07:20–08:10 stale-wake guard. It remains pending Trevor's acceptance and is not claimed as scheduled.
+- The proposed one-time 07:25 follow-up heartbeat was never scheduled and is now obsolete: the canonical 05:00/05:20 jobs supplied the natural proof directly.
+
+### Post-closeout schedule and producer repair
+
+The July 13 natural run exposed stale schedule claims that prior reviewers had
+missed. Commit `1eeb45d` had intentionally moved the operator brief/deadman to
+05:00/05:20, but current registry/spec/runbook surfaces still said 07:00/07:20,
+Outcome Extractor retries remained after the brief at 06:40/06:47/06:54, and the
+30-hour full-ingest SLA could accept a schedule-aligned missed nightly at 29.5
+hours. Mission commit `6a06df3` aligns the current surfaces, moves inactive
+extractor retries to 04:40/04:47/04:54, and sets a 28-hour default with regressions
+proving 26 hours remains tolerated while 29.5 hours is stale.
+
+The independent challenger then rejected source-only closure: live Nightly Review
+ran the model-resource governor before its local chat-graph refresh, so the July 12
+swap-pressure defer exited `75` without advancing the marker. The first global
+ordering repair also revealed that its fallback selected the preserved dirty
+Mission checkout's schema-7 CLI against the live schema-8 database. Mission commit
+`c66d7fb95ef80b737976216c7acc00e326e3258b` therefore installs and attests
+`chat-graph` as an eighth stable runtime (source/runtime SHA-256
+`2d5c3f5d63ea0ef65da2f017abac389ad3585faec2e6947a9858e414cc5dfa81`), and global
+commits `dc7a77c` plus `6f21f4f` refresh through it before model admission while
+making a present producer failure visible.
+
+A real launchctl kickstart advanced `~/.chat-graph/last-ingest` to
+2026-07-13 06:21:59 PDT before the expected model defer. The graph export reported
+age `1`, SLA `100800`, state `fresh`, stale `false`; the normal installed
+`dashboard refresh chats` then wrote the live Chats feed with age `26`, the same
+SLA/state, and install provenance exact at `c66d7fb`. Automation remains honestly
+red for the deferred model-backed report; the local truth producer no longer
+depends on that admission result.
 
 ### Verification and convergence
 
@@ -395,5 +425,6 @@ LaunchAgent uses one executable plus fixed arguments without a shell.
 - Exact landed global verifier at `8b1ee9147dd165d81054665b9e84f58202002ffa`: PASS with focused usage-routing `64/0`; log `/tmp/global-8b1ee91-verify.log`.
 - Installed runtime: detached clean tree at the exact global SHA; collector SHA-256 `bb8b092ed1101ebdc1c85030ead70be4cc7fe05c639318ab4592349392b84423`; native ccusage 20.0.17 SHA-256 `08c455a4307345ca2b0fcda3a81edd9421a7edd53ea0acea19309925a7af54c0`; loaded direct-argv 1800-second LaunchAgent; RunAtLoad exit 0; coherent history/dashboard/stdout advance; historical stderr unchanged; no live probe, scoped provider/npm process, temp, or lock residue.
 - Final independent challenger verdicts: `CODE-REVIEW-CLEAN`, `INTEGRATION-REVIEW-CLEAN`, and `RUNTIME-REVIEW-CLEAN`. Earlier immutable generations remain explicitly rejected and are not final evidence commits.
+- Schedule/producer replacement verification: exact Mission `c66d7fb` passes `SUITES PASS=21 FAIL=0`, dashboard `67/0`, usage `24/0`, browser `253`; exact global `6f21f4f` passes its complete verifier. Logs: `/tmp/mission-control-c66d7fb-verify.log` and `/tmp/global-6f21f4f-verify.log`.
 
 The repository goal remains active until the external/elapsed proof gates are either satisfied or explicitly dispositioned; a clean code audit does not manufacture those outcomes.
