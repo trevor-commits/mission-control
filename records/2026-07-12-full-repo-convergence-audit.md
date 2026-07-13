@@ -258,3 +258,18 @@ authorized provider calibration/activation, at-least-once provider ambiguity, an
 the separately scoped portfolio executor. These remain active work or external
 proof—not hidden audit failures and not permission requests for already-scoped
 repo work.
+
+### Independent convergence result
+
+The UX/test challenger audited immutable `192d243` and rejected it with the P2
+consumer-boundary finding recorded above. It then audited immutable `4d21023`,
+accepted the functional repair, and rejected one remaining P3 phrase that still
+blurred the dashboard wrapper with graph collectors. Commit `59814aa` corrected
+that exact sentence. The same independent reviewer checked the full
+`a7e4eda..59814aa` change and returned `REVIEW-CLEAN` with no remaining P0-P3
+finding.
+
+The complete verifier passed `SUITES PASS=21 FAIL=0` on exact functional commit
+`4d21023` (dashboard `67/0`, ER-134 `50/0`, browser `253`); `59814aa` changed only
+the challenged audit sentence and passed `git diff --check`. This records an
+evidence-backed reject → repair → re-audit → clean loop, not self-approval.
