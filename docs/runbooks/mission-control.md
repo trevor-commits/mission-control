@@ -56,5 +56,5 @@ It combines usage, git, chats, and automation feeds from the ER-087 scripts into
 ## Desktop-first glance surface (ER-134)
 
 - **Home** opens light by default with at most three **Needs you** decisions; use **Show more details** for the full depth view. Toggle **Dark mode** in the top strip.
-- **Corner panel:** `dashboard panel` installs `~/.mission-control/panel.html` and launches the menu-bar app (`MC`). First launch may compile `scripts/mc-panel.swift` with `swiftc`.
-- **Answer a choice:** `dashboard decide answer <decision-id> <n>` writes a Goal prompt under `~/.mission-control/prompts/` and resolves the decision. Home/panel option buttons copy that command.
+- **Corner panel:** `dashboard panel` installs `~/.mission-control/panel.html` and launches the menu-bar app (`MC`). First launch may compile `scripts/mc-panel.swift` with `swiftc`. The panel disables AppKit automatic termination so Mission Control stays in the menu bar when idle.
+- **Answer a choice:** `dashboard decide answer <decision-id> <n>` writes a Goal prompt under `~/.mission-control/prompts/` and resolves the decision. Menu-bar option clicks run `dashboard decide answer` directly via the `mcDecide` bridge; Home browser option buttons still copy that command.

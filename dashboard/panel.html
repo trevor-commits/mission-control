@@ -124,9 +124,16 @@ button.linkish, a.linkish {
             btn.type = "button";
             btn.className = "opt" + (parsed.suggested === n ? " suggested" : "");
             btn.textContent = n + " — " + label;
-            btn.title = "dashboard decide answer " + d.id + " " + n;
+            btn.title = "Record choice " + n + " (or copies: dashboard decide answer " + d.id + " " + n + ")";
             btn.onclick = function () {
               var cmd = "dashboard decide answer " + d.id + " " + n;
+              if (window.webkit && window.webkit.messageHandlers &&
+                  window.webkit.messageHandlers.mcDecide) {
+                btn.textContent = "Recording…";
+                window.webkit.messageHandlers.mcDecide.postMessage({ id: d.id, n: n });
+                setTimeout(function () { btn.textContent = n + " — " + label; }, 1600);
+                return;
+              }
               try { navigator.clipboard.writeText(cmd); } catch (e) {}
               btn.textContent = "Copied command";
             };
