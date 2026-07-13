@@ -1789,7 +1789,44 @@ PY
   fi
 }
 
-c1; c2; c3; c4; c5; c6; c7; c8; c8a; c8b; c9; c10; c11; c12; c13; c14; c14a; c15; c16; c17; c18; c19; c20; c21; c22; c23; c24; c25; c26; c27; c28; c29; c30; c31; c32; c33; c34; c35; c36; c37; c38; c39; c40; c41; c42; c43; c44; c45; c46
+c47() { # concurrent answers publish one internally consistent choice
+  local mch i created did p1 p2 miss=0
+  mch="$(newhome)"
+  for i in $(seq 1 12); do
+    created="$(MISSION_CONTROL_HOME="$mch" "$REPO/scripts/decision-alert" ingest \
+      --source-kind manual --source-key "answer-race-$i" \
+      --text '**DECISION NEEDED:** Pick one. **`One`**. **`Two`**.' \
+      --trust structured --provenance manual --json)" || { miss=1; break; }
+    did="$(python3 -c 'import json,sys;print(json.loads(sys.argv[1])["decision"]["id"])' "$created")"
+    env -u DASHBOARD_CMD_DECISIONS REPO_ROOT="$REPO" MISSION_CONTROL_HOME="$mch" \
+      bash "$DASH" collect --force decisions >/dev/null 2>&1
+    ( env -u DASHBOARD_CMD_DECISIONS REPO_ROOT="$REPO" MISSION_CONTROL_HOME="$mch" \
+        bash "$DASH" decide answer "$did" 1 >"$mch/one-$i.out" 2>&1; echo $? >"$mch/one-$i.rc" ) & p1=$!
+    ( env -u DASHBOARD_CMD_DECISIONS REPO_ROOT="$REPO" MISSION_CONTROL_HOME="$mch" \
+        bash "$DASH" decide answer "$did" 2 >"$mch/two-$i.out" 2>&1; echo $? >"$mch/two-$i.rc" ) & p2=$!
+    wait "$p1" || true; wait "$p2" || true
+    MISSION_CONTROL_HOME="$mch" "$REPO/scripts/decision-alert" history "$did" --json >"$mch/history-$i.json" || miss=1
+    python3 - "$mch/one-$i.rc" "$mch/two-$i.rc" \
+      "$mch/answers/$did.json" "$mch/prompts/$did.md" "$mch/history-$i.json" <<'PY' || miss=1
+import json,re,sys
+rcs=[int(open(p).read()) for p in sys.argv[1:3]]
+assert sum(rc == 0 for rc in rcs) == 1, rcs
+answer=json.load(open(sys.argv[3]))
+prompt=open(sys.argv[4]).read()
+history=json.load(open(sys.argv[5]))
+choice=answer["choice"]
+assert "Trevor choice: %s" % choice in prompt, (choice,prompt)
+assert history["decision"]["resolution"]["evidence_ref"] == "mc-answer:%s" % choice
+PY
+  done
+  if [ "$miss" -eq 0 ]; then
+    ok "decide-answer: concurrent writers publish one consistent choice"
+  else
+    no "decide-answer: concurrent writers split prompt, answer, or decision state"
+  fi
+}
+
+c1; c2; c3; c4; c5; c6; c7; c8; c8a; c8b; c9; c10; c11; c12; c13; c14; c14a; c15; c16; c17; c18; c19; c20; c21; c22; c23; c24; c25; c26; c27; c28; c29; c30; c31; c32; c33; c34; c35; c36; c37; c38; c39; c40; c41; c42; c43; c44; c45; c46; c47
 shell_contract
 echo "----"
 echo "PASS=$PASS FAIL=$FAIL"

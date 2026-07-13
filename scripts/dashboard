@@ -1381,9 +1381,42 @@ case "$cmd" in
         [ "$choice" -ge 1 ] || { echo "decide answer: choice must be >= 1" >&2; exit 2; }
         # Validate both the identifier shape and current decision existence
         # through the owning tool before constructing any filesystem path.
-        "$SCRIPT_DIR/decision-alert" history "$did" --json >/dev/null || exit $?
+        history_json="$("$SCRIPT_DIR/decision-alert" history "$did" --json)" || exit $?
         mkdir -p "$MISSION_CONTROL_HOME/answers" "$MISSION_CONTROL_HOME/prompts" || exit 1
         chmod 700 "$MISSION_CONTROL_HOME/answers" "$MISSION_CONTROL_HOME/prompts" 2>/dev/null || true
+        if [ "${MC_DECISION_ANSWER_LOCK_HELD:-0}" != "1" ]; then
+          # Hold a kernel-released advisory lock across the complete cross-store
+          # answer transaction. A killed parent releases it automatically; a
+          # validated ID makes the per-decision filename non-traversable.
+          DASHBOARD_SELF="$0" LOCK_PATH="$MISSION_CONTROL_HOME/answers/.${did}.lock" \
+            DID="$did" CHOICE="$choice" python3 - <<'PY'
+import fcntl, os, stat, subprocess
+path = os.environ["LOCK_PATH"]
+flags = os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0)
+fd = os.open(path, flags, 0o600)
+try:
+    os.fchmod(fd, 0o600)
+    if not stat.S_ISREG(os.fstat(fd).st_mode):
+        raise SystemExit("decision answer lock must be a regular file")
+    fcntl.flock(fd, fcntl.LOCK_EX)
+    env = dict(os.environ)
+    env["MC_DECISION_ANSWER_LOCK_HELD"] = "1"
+    result = subprocess.run([
+        "/bin/bash", os.path.abspath(env["DASHBOARD_SELF"]), "decide", "answer",
+        env["DID"], env["CHOICE"],
+    ], env=env)
+    raise SystemExit(result.returncode)
+finally:
+    os.close(fd)
+PY
+          exit $?
+        fi
+        HISTORY_JSON="$history_json" python3 - <<'PY' || exit $?
+import json, os
+decision = json.loads(os.environ["HISTORY_JSON"]).get("decision") or {}
+if decision.get("state") != "open":
+    raise SystemExit("decide answer: decision is no longer open")
+PY
         dec_json="$MISSION_CONTROL_HOME/data/decisions.json"
         text=""
         if [ -f "$dec_json" ]; then
