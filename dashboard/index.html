@@ -78,6 +78,14 @@
   --mc-shadow-lift: 0 2px 4px rgba(26,29,36,.08), 0 10px 28px -8px rgba(26,29,36,.14);
   --mc-ease: cubic-bezier(.22,.61,.36,1);
   --mc-dur: 160ms;
+
+  /* page depth: one quiet glow behind the sticky strip so the canvas isn't flat */
+  --mc-bg-glow: #e7eaf2;
+  /* activity heatmap ramp — light greens on paper */
+  --mc-heat-1: #d5ecdf;
+  --mc-heat-2: #a0d9bd;
+  --mc-heat-3: #57bb92;
+  --mc-heat-4: #08734d;
 }
 html[data-theme="dark"] {
   --mc-bg:        #0e1013;
@@ -103,6 +111,11 @@ html[data-theme="dark"] {
   --mc-blue-bg:  #10222e;
   --mc-shadow: 0 1px 2px rgba(0,0,0,.30), 0 4px 16px -6px rgba(0,0,0,.45);
   --mc-shadow-lift: 0 2px 4px rgba(0,0,0,.35), 0 10px 28px -8px rgba(0,0,0,.55);
+  --mc-bg-glow: #14171e;
+  --mc-heat-1: #173427;
+  --mc-heat-2: #20523b;
+  --mc-heat-3: #2b7a58;
+  --mc-heat-4: #35b98a;
 }
 </style>
 
@@ -126,10 +139,19 @@ html[data-theme="dark"] {
 .mc-glance-q { font-size: var(--mc-fs-3); font-weight: 600; margin-bottom: var(--mc-sp-2); }
 .mc-glance-opts { display: flex; flex-wrap: wrap; gap: var(--mc-sp-2); margin: var(--mc-sp-2) 0; }
 .mc-opt {
-  border: 1px solid var(--mc-border); background: var(--mc-surface-2); color: var(--mc-fg);
-  border-radius: var(--mc-r-2); padding: 6px 10px; font-size: var(--mc-fs-2); cursor: pointer; text-align: left;
+  display: inline-flex; align-items: center; gap: var(--mc-sp-2);
+  border: 1px solid var(--mc-border-2); background: var(--mc-surface-1); color: var(--mc-fg);
+  border-radius: var(--mc-r-2); padding: 5px 12px 5px 5px; font-size: var(--mc-fs-2);
+  cursor: pointer; text-align: left; font-family: var(--mc-font); box-shadow: var(--mc-shadow);
+  transition: border-color var(--mc-dur) var(--mc-ease), background var(--mc-dur) var(--mc-ease), transform var(--mc-dur) var(--mc-ease);
 }
-.mc-opt:hover { border-color: var(--mc-accent-bd); background: var(--mc-accent-bg); }
+.mc-opt:hover { border-color: var(--mc-accent); background: var(--mc-accent-bg); transform: translateY(-1px); }
+.mc-opt-num {
+  display: inline-flex; align-items: center; justify-content: center; flex: none;
+  width: 22px; height: 22px; border-radius: var(--mc-r-1);
+  background: var(--mc-accent-bg); color: var(--mc-accent); border: 1px solid var(--mc-accent-bd);
+  font-weight: 650; font-size: var(--mc-fs-1); font-variant-numeric: tabular-nums;
+}
 .mc-opt-suggested { border-color: var(--mc-accent); background: var(--mc-accent-bg); font-weight: 600; }
 .mc-glance-suggested { color: var(--mc-fg-muted); font-size: var(--mc-fs-1); margin-top: var(--mc-sp-1); }
 .mc-glance-health {
@@ -146,7 +168,10 @@ html[data-theme="dark"] {
 * { box-sizing: border-box; }
 html, body { margin: 0; padding: 0; }
 body {
-  background: var(--mc-bg);
+  background:
+    radial-gradient(1100px 520px at 85% -8%, var(--mc-bg-glow) 0%, transparent 60%),
+    var(--mc-bg);
+  background-attachment: fixed;
   color: var(--mc-fg);
   font-family: var(--mc-font);
   font-size: var(--mc-fs-2);
@@ -309,6 +334,11 @@ body {
 
 /* --- generic truncation (CSS only, never JS slicing) --- */
 .mc-ellipsis { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* two-line clamp for names that must stay identifiable (job cards) */
+.mc-clamp2 {
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  overflow: hidden; line-height: 1.3;
+}
 
 /* --- filters bar --- */
 .mc-filters { display: flex; gap: var(--mc-sp-2); flex-wrap: wrap; align-items: center; margin: var(--mc-sp-3) 0; }
@@ -321,6 +351,9 @@ body {
 .mc-chip-btn { cursor: pointer; transition: background var(--mc-dur) var(--mc-ease), border-color var(--mc-dur) var(--mc-ease), color var(--mc-dur) var(--mc-ease); }
 .mc-chip-btn:hover { border-color: var(--mc-border-2); color: var(--mc-fg); }
 .mc-chip-on { background: var(--mc-accent-bg); border-color: var(--mc-accent-bd); color: var(--mc-accent); }
+/* default-on filter chips stay neutral; only the toggled-OFF state reads different */
+.mc-chip-off { opacity: .45; }
+.mc-chip-off .mc-chip-label { text-decoration: line-through; }
 .mc-badge {
   display: inline-flex; align-items: center; border-radius: var(--mc-r-pill);
   padding: 1px var(--mc-sp-2); font-size: var(--mc-fs-1); font-weight: 500;
@@ -343,7 +376,7 @@ body {
 }
 .mc-table td { padding: var(--mc-sp-2) var(--mc-sp-3); border-bottom: 1px solid var(--mc-border); vertical-align: middle; }
 .mc-table tr:last-child td { border-bottom: none; }
-.mc-table tr:hover td { background: var(--mc-surface-1); }
+.mc-table tr:hover td { background: var(--mc-surface-2); }
 .mc-panel-table {
   background: var(--mc-surface-1); border: 1px solid var(--mc-border);
   border-radius: var(--mc-r-3); box-shadow: var(--mc-shadow); overflow: hidden;
@@ -381,6 +414,16 @@ body {
   font-size: var(--mc-fs-1); padding: 4px 6px; font-weight: 500;
   min-width: 32px; min-height: 32px;
 }
+/* labeled copy-action button: one control, plain words, command on hover */
+.mc-act {
+  display: inline-flex; align-items: center; gap: var(--mc-sp-1); cursor: pointer; flex: none;
+  background: var(--mc-surface-1); border: 1px solid var(--mc-border-2); color: var(--mc-fg);
+  border-radius: var(--mc-r-2); padding: 5px 10px; font-size: var(--mc-fs-1); font-weight: 500;
+  font-family: var(--mc-font); min-width: 32px; min-height: 32px;
+  transition: background var(--mc-dur) var(--mc-ease), border-color var(--mc-dur) var(--mc-ease), color var(--mc-dur) var(--mc-ease);
+}
+.mc-act:hover { background: var(--mc-accent-bg); border-color: var(--mc-accent-bd); color: var(--mc-accent); }
+.mc-act[disabled] { opacity: .75; cursor: default; }
 .mc-edge-label {
   color: var(--mc-fg-dim); font-size: var(--mc-fs-1); font-weight: 500;
   border: 1px solid var(--mc-border); border-radius: var(--mc-r-pill);
@@ -409,6 +452,13 @@ body {
 .mc-decision-title { font-size: var(--mc-fs-3); font-weight: 650; }
 .mc-decision-state { margin-left: auto; white-space: nowrap; }
 .mc-kpi { font-size: var(--mc-fs-5); font-weight: 650; letter-spacing: -0.02em; margin: var(--mc-sp-2) 0 0; }
+/* a missing reading is an absence, not an alarm — keep it quiet */
+.mc-kpi-quiet { font-size: var(--mc-fs-3); font-weight: 500; color: var(--mc-fg-dim); margin: var(--mc-sp-2) 0 0; }
+/* the one source that is actually usable right now gets the visual vote */
+.mc-card-go {
+  border-color: color-mix(in srgb, var(--mc-green) 45%, transparent);
+  background: color-mix(in srgb, var(--mc-green-bg) 35%, var(--mc-surface-1));
+}
 .mc-next-action { color: var(--mc-fg); font-size: var(--mc-fs-2); margin-top: var(--mc-sp-2); }
 .mc-mini-stack { display: flex; flex-direction: column; gap: 2px; margin-top: var(--mc-sp-2); }
 
@@ -427,10 +477,10 @@ body {
   width: 14px; height: 14px; border-radius: 4px;
   background: var(--mc-surface-3); border: 1px solid transparent;
 }
-.mc-heat-l1 { background: #173427; }
-.mc-heat-l2 { background: #20523b; }
-.mc-heat-l3 { background: #2b7a58; }
-.mc-heat-l4 { background: #35b98a; }
+.mc-heat-l1 { background: var(--mc-heat-1); }
+.mc-heat-l2 { background: var(--mc-heat-2); }
+.mc-heat-l3 { background: var(--mc-heat-3); }
+.mc-heat-l4 { background: var(--mc-heat-4); }
 .mc-heat-open { border-color: var(--mc-amber); }
 .mc-heat-empty { background: transparent; border-color: transparent; }
 .mc-weekdays { display: grid; grid-template-rows: repeat(7, 14px); gap: 4px; }
@@ -462,7 +512,7 @@ body {
 .mc-map-wrap { display: grid; grid-template-columns: 1fr 300px; gap: var(--mc-sp-3); }
 @media (max-width: 860px) { .mc-map-wrap { grid-template-columns: 1fr; } }
 @media (max-width: 600px) {
-  .mc-copy { min-width: 44px; min-height: 44px; }
+  .mc-copy, .mc-act { min-width: 44px; min-height: 44px; }
 }
 .mc-graph {
   height: 68vh; min-height: 460px;
@@ -722,11 +772,25 @@ body {
     }
   }
   function copyable(cmd, label) {
-    var code = label
-      ? h("span", { class: "mc-ellipsis" }, label)
-      : h("code", { class: "mc-ellipsis" }, cmd);
+    if (label) {
+      // one labeled button: the label says what it does, hover shows the command,
+      // clicking copies it (fixes the old "Copy action  copy" double-label control)
+      var act = h("button", { class: "mc-act", type: "button",
+        "aria-label": label + " — copies a command", title: cmd, onclick: function () {
+        act.disabled = true;
+        clipboardWrite(cmd).then(function () {
+          act.textContent = "Copied — paste in a terminal";
+        }, function () {
+          act.textContent = "Copy failed — hover for the command";
+        }).then(function () {
+          setTimeout(function () { act.textContent = label; act.disabled = false; }, 1400);
+        });
+      } }, label);
+      return act;
+    }
+    var code = h("code", { class: "mc-ellipsis" }, cmd);
     var btn = h("button", { class: "mc-copy", type: "button",
-      "aria-label": label || "Copy command", title: "Copy command", onclick: function () {
+      "aria-label": "Copy command", title: "Copy command", onclick: function () {
       btn.disabled = true;
       clipboardWrite(cmd).then(function () {
         btn.textContent = "copied";
@@ -737,6 +801,13 @@ body {
       });
     } }, "copy");
     return h("span", { class: "mc-cmd", title: cmd }, code, btn);
+  }
+
+  // display-time markdown guard: narrative feed strings sometimes leak raw
+  // **bold** / `code` markers; strip the markers, keep the words. Belt-and-
+  // suspenders with collector-side sanitization — harmless once that lands.
+  function displayText(s) {
+    return String(s == null ? "" : s).replace(/\*\*|__|`/g, "");
   }
 
   // --- plain-words helpers ---------------------------------------------------
@@ -1151,15 +1222,22 @@ body {
     return { label: "Can use", state: "green", next: "Best current choice for routine work." };
   }
   function renderUsageDecisionCard(item, epoch) {
-    var card = h("div", { class: "mc-card" });
     var decision = usageDecision(item);
+    // the one source you can actually use right now carries the visual vote
+    var card = h("div", { class: "mc-card" + (decision.label === "Can use" ? " mc-card-go" : "") });
     var pct = numericPct(item.pct);
     card.appendChild(h("div", { class: "mc-decision-top" },
       h("div", null,
         h("div", { class: "mc-decision-title" }, item.title),
         h("div", { class: "mc-card-foot" }, item.models ? "Models: " + item.models : (item.window ? "Window: " + item.window : "Local source"))),
       h("span", { class: "mc-chip mc-decision-state " + (decision.state === "green" ? "mc-badge-live" : "") }, decision.label)));
-    card.appendChild(h("div", { class: "mc-kpi mc-num " + (STATE_CLASS[decision.state] || "") }, usagePctText(item)));
+    var kpiText = usagePctText(item);
+    if (kpiText === "no numeric read") {
+      // a missing reading is an absence, not an alarm — small and grey, not big and amber
+      card.appendChild(h("div", { class: "mc-kpi-quiet" }, "no usage number from this source"));
+    } else {
+      card.appendChild(h("div", { class: "mc-kpi mc-num " + (STATE_CLASS[decision.state] || "") }, kpiText));
+    }
     if (isFinite(pct)) {
       card.appendChild(h("div", { class: "mc-bar-track" },
         h("div", { class: "mc-bar-fill " + (STATE_CLASS[decision.state] || ""), style: "--mc-w:" + Math.max(0, Math.min(100, pct)) + "%" })));
@@ -1282,17 +1360,28 @@ body {
   try { HOME_EXPANDED = sessionStorage.getItem("mc-home-expanded") === "1"; } catch (e) {}
 
   function currentTheme() {
-    try { return localStorage.getItem("mc-theme") || "light"; } catch (e) { return "light"; }
+    // ?theme=dark|light overrides for testing/deep links (never persisted)
+    var m = /[?&]theme=(dark|light)\b/.exec(location.search || "");
+    if (m) return m[1];
+    try {
+      var stored = localStorage.getItem("mc-theme");
+      if (stored) return stored;
+    } catch (e) {}
+    // no explicit choice yet: follow the Mac's appearance
+    try {
+      if (window.matchMedia && matchMedia("(prefers-color-scheme: dark)").matches) return "dark";
+    } catch (e) {}
+    return "light";
   }
-  function applyTheme(theme) {
+  function applyTheme(theme, persist) {
     var t = theme === "dark" ? "dark" : "light";
     document.documentElement.setAttribute("data-theme", t);
-    try { localStorage.setItem("mc-theme", t); } catch (e) {}
+    if (persist !== false) { try { localStorage.setItem("mc-theme", t); } catch (e) {} }
   }
   function toggleTheme() {
     applyTheme(currentTheme() === "dark" ? "light" : "dark");
   }
-  applyTheme(currentTheme());
+  applyTheme(currentTheme(), false);
 
   function parseDecisionOptions(text) {
     var raw = String(text || "");
@@ -1336,7 +1425,11 @@ body {
     var question = questionRaw.replace(/^\s*\*\*DECISION NEEDED:\*\*\s*/i, "")
       .replace(/\*\*|`/g, " ").replace(/\s+/g, " ").trim();
     if (question.length > 160) question = question.slice(0, 157) + "…";
-    return { question: question || "Decision needs your answer", options: opts.slice(0, 3), suggested: suggested };
+    // option labels are buttons: no markdown remnants, no trailing colon/dash
+    var cleanOpts = opts.slice(0, 3).map(function (o) {
+      return displayText(o).replace(/[\s:—–-]+$/, "").trim();
+    });
+    return { question: question || "Decision needs your answer", options: cleanOpts, suggested: suggested };
   }
 
   function healthLine() {
@@ -1368,7 +1461,8 @@ body {
         onclick: function () { location.hash = "#" + k; } },
         glyphSpan(d.state),
         h("span", { class: "mc-strip-seg-label" }, label),
-        h("span", { class: "mc-num" }, String(d.count))));
+        h("span", { class: "mc-num", title: String(d.count) },
+          d.count > 999 ? "999+" : String(d.count))));
     });
     strip.appendChild(h("span", { class: "mc-strip-spacer" }));
     strip.appendChild(h("button", { class: "mc-theme-toggle", type: "button",
@@ -1421,7 +1515,7 @@ body {
         glyphSpan(section && section.title === "NEEDS YOU" ? "red" :
           (line.trust === "Confirmed" ? "green" : "amber")),
         h("div", { class: "mc-row-body" },
-          h("div", { class: "mc-row-problem" }, line.text || ""),
+          h("div", { class: "mc-row-problem" }, displayText(line.text)),
           h("div", { class: "mc-row-meta" }, (line.trust || "Unknown trust") +
             (line.source ? " · " + line.source : ""))));
       if (line.action_cmd) row.appendChild(copyable(line.action_cmd, "Copy action"));
@@ -1456,8 +1550,11 @@ body {
     limit = limit == null ? 3 : limit;
     opts = opts || {};
     var section = h("section", { class: opts.glance ? "mc-glance-card" : "mc-attention" });
+    // glance sits under the page's own "Needs you" h1 — repeat the count, not the title
     section.appendChild(h("div", { class: "mc-section-head" },
-      h("h2", { text: opts.glance ? "Needs you" : "Decisions waiting for you" }), ageSpan(g.epoch)));
+      h("h2", { text: opts.glance
+        ? (pinned.length === 1 ? "1 decision waiting" : pinned.length + " decisions waiting")
+        : "Decisions waiting for you" }), ageSpan(g.epoch)));
     if (!opts.glance) {
       appendPanelProvenance(section, "decisions", g,
         pinned.length + " confirmed open decision(s)");
@@ -1466,8 +1563,10 @@ body {
     shown.forEach(function (decision, idx) {
       var id = decision.id || "";
       var parsed = (Array.isArray(decision.options) && decision.question) ? {
-        question: decision.question,
-        options: decision.options.slice(0, 3),
+        question: displayText(decision.question),
+        options: decision.options.slice(0, 3).map(function (o) {
+          return displayText(o).replace(/[\s:—–-]+$/, "").trim();
+        }),
         suggested: decision.recommended == null ? null : +decision.recommended
       } : parseDecisionOptions(decision.text || "");
       if (opts.glance) {
@@ -1479,18 +1578,22 @@ body {
           parsed.options.forEach(function (label, oi) {
             var n = oi + 1;
             var cls = "mc-opt" + (parsed.suggested === n ? " mc-opt-suggested" : "");
+            var num = h("span", { class: "mc-opt-num" }, String(n));
             var btn = h("button", { class: cls, type: "button",
               title: answerCommand(id, n) },
-              n + " — " + label);
+              num, label);
             btn.addEventListener("click", function () {
-              var old = btn.textContent;
               btn.disabled = true;
               clipboardWrite(answerCommand(id, n)).then(function () {
-                btn.textContent = "Copied: " + answerCommand(id, n);
+                btn.textContent = "Copied — paste in a terminal";
               }, function () {
-                btn.textContent = "Copy failed — select the command";
+                btn.textContent = "Copy failed — hover for the command";
               }).then(function () {
-                setTimeout(function () { btn.textContent = old; btn.disabled = false; }, 1600);
+                setTimeout(function () {
+                  btn.textContent = "";
+                  btn.appendChild(num); btn.appendChild(nodeOf(label));
+                  btn.disabled = false;
+                }, 1600);
               });
             });
             row.appendChild(btn);
@@ -1519,7 +1622,7 @@ body {
       } else {
         var row2 = h("div", { class: "mc-row" }, glyphSpan("red"),
           h("div", { class: "mc-row-body" },
-            h("div", { class: "mc-row-problem" }, decision.text || "Decision needs review"),
+            h("div", { class: "mc-row-problem" }, displayText(decision.text) || "Decision needs review"),
             h("div", { class: "mc-row-meta" }, "Confirmed · " +
               (decision.provenance || decision.source_kind || "structured source"))));
         if (id) row2.appendChild(copyable("dashboard decide dismiss " + id, "Copy dismiss command"));
@@ -1527,7 +1630,8 @@ body {
       }
     });
     if (pinned.length > limit) section.appendChild(h("div", { class: "mc-card-foot" },
-      "+" + (pinned.length - limit) + " more confirmed decision(s)"));
+      "+" + (pinned.length - limit) + " more waiting — " +
+      (opts.glance ? "press Show more details below to see them" : "answer or dismiss the ones above first")));
     main.appendChild(section);
     return pinned.length;
   }
@@ -1976,7 +2080,7 @@ body {
             "background-color": function (n) { return provColor(n.data("prov")); },
             "width": function (n) { return 16 + Math.min(28, n.degree(true) * 3); },
             "height": function (n) { return 16 + Math.min(28, n.degree(true) * 3); },
-            "label": "", "color": "#c9cdd6", "font-size": 9,
+            "label": "", "color": cssVar("--mc-fg-muted") || "#c9cdd6", "font-size": 9,
             "text-margin-y": 4, "text-valign": "bottom", "text-halign": "center",
             "text-max-width": 110, "text-wrap": "ellipsis",
             "border-width": function (n) { return n.data("live") ? 3 : 0; }, "border-color": "#35b98a",
@@ -1986,7 +2090,7 @@ body {
             "curve-style": "bezier", "target-arrow-color": "data(col)",
             "target-arrow-shape": "triangle", "arrow-scale": 0.7,
             "line-style": function (e) { return (EDGE_INFO[e.data("type")] || [0, false])[1] ? "dashed" : "solid"; } } },
-        { selector: "node:selected", style: { "border-width": 4, "border-color": "#7c8cff", "label": "data(label)" } },
+        { selector: "node:selected", style: { "border-width": 4, "border-color": cssVar("--mc-accent") || "#7c8cff", "label": "data(label)" } },
         { selector: ".mc-dim", style: { "opacity": 0.12 } }
       ],
       layout: FOCUS_CHAT
@@ -2096,6 +2200,11 @@ body {
   }
   function shortLabel(s) { s = String(s || ""); return s.length > 26 ? s.slice(0, 24) + "…" : s; }
   function cssEsc(s) { return String(s).replace(/[^a-zA-Z0-9_-]/g, "\\$&"); }
+  // theme-aware color for the canvas-drawn map (CSS vars don't reach cytoscape)
+  function cssVar(name) {
+    try { return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); }
+    catch (e) { return ""; }
+  }
 
   // ===========================================================================
   //  CHATS TAB
@@ -2129,10 +2238,17 @@ body {
     filters.appendChild(sel);
     filters.appendChild(h("span", { class: "mc-chip mc-chip-btn" + (chatFilter.openOnly ? " mc-chip-on" : ""),
       onclick: function () { chatFilter.openOnly = !chatFilter.openOnly; rerender(); } }, "Only chats with unfinished work"));
+    // provider chips default to ON — the noteworthy state is OFF (dimmed +
+    // struck through + glyph), so an untouched filter bar reads quiet.
     providers.forEach(function (pr) {
       var on = !chatFilter.providers[pr];
-      filters.appendChild(h("span", { class: "mc-chip mc-chip-btn" + (on ? " mc-chip-on" : ""),
-        onclick: function () { chatFilter.providers[pr] = !chatFilter.providers[pr]; rerender(); } }, providerLabel(pr)));
+      filters.appendChild(h("span", {
+        class: "mc-chip mc-chip-btn" + (on ? "" : " mc-chip-off"),
+        title: on ? "Shown — click to hide " + providerLabel(pr) + " chats"
+                  : "Hidden — click to show " + providerLabel(pr) + " chats",
+        onclick: function () { chatFilter.providers[pr] = !chatFilter.providers[pr]; rerender(); } },
+        h("span", { class: "mc-glyph" }, on ? "✓" : "✕"),
+        h("span", { class: "mc-chip-label" }, providerLabel(pr))));
     });
     p.body.appendChild(filters);
 
@@ -2199,7 +2315,8 @@ body {
         h("div", { class: "mc-row-action mc-ellipsis", title: item.text || "" }, item.action_hint || openEndHuman(item)),
         h("div", { class: "mc-row-meta mc-ellipsis" },
           (item.repo ? "Repo: " + item.repo + " · " : "") + ((item.age_days || 0) ? item.age_days + "d old" : "new"))));
-    if (item.source_node && n) row.appendChild(h("span", { class: "mc-chip mc-chip-btn", onclick: function () {
+    if (item.source_node && n) row.appendChild(h("button", { class: "mc-act", type: "button",
+      title: "Open this chat on the connection map", onclick: function () {
       FOCUS_CHAT = item.source_node; location.hash = "#map"; rerender();
     } }, "Show chat"));
     if (item.resolve_cmd) row.appendChild(copyable(item.resolve_cmd, "Hide until refresh"));
@@ -2357,7 +2474,13 @@ body {
     p.body.appendChild(h("div", { class: "mc-section-head" }, h("h2", { text: "Decision cards" })));
     p.body.appendChild(h("div", { class: "mc-card-foot" }, "Each card answers whether you can use that source now, how trustworthy the reading is, and what to do next."));
     var grid = h("div", { class: "mc-decision-grid" });
-    usageItems(data).forEach(function (item) { grid.appendChild(renderUsageDecisionCard(item, g.epoch)); });
+    // actionable answers first: usable now, then hard limits, then watch/unknown
+    var DECISION_RANK = { "Can use": 0, "Wait": 1, "Watch": 2, "Not captured": 3 };
+    usageItems(data).map(function (item, i) {
+      var d = usageDecision(item);
+      return { item: item, i: i, rank: DECISION_RANK[d.label] != null ? DECISION_RANK[d.label] : 9 };
+    }).sort(function (a, b) { return a.rank - b.rank || a.i - b.i; })
+      .forEach(function (x) { grid.appendChild(renderUsageDecisionCard(x.item, g.epoch)); });
     p.body.appendChild(grid);
 
     // waste table
@@ -2432,7 +2555,7 @@ body {
       var card = h("div", { class: "mc-svc" });
       var head = h("div", { class: "mc-svc-head" },
         glyphSpan(jb.state),
-        h("span", { class: "mc-svc-name mc-ellipsis", title: jb.name || "" }, jb.label || jb.name || "?"),
+        h("span", { class: "mc-svc-name mc-clamp2", title: jb.name || "" }, jb.label || jb.name || "?"),
         h("span", { class: "mc-provider" }, jb.kind ? "schedule: " + jb.kind : ""));
       card.appendChild(head);
       if (jb.state === "awaiting-activation") {

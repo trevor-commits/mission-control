@@ -837,8 +837,11 @@ function renderHomeWithChatsCounts(overrides) {
       !/min-height:\s*(?:2[4-9]|[3-9]\d)px/.test(copy[1])) {
     console.error('FAIL: copy controls do not meet the 24x24 CSS-pixel target minimum');
     fails++;
-  } else if (html.indexOf('"aria-label": label || "Copy command"') === -1 ||
+  } else if (html.indexOf('"aria-label": label + " — copies a command"') === -1 ||
+             html.indexOf('"aria-label": "Copy command"') === -1 ||
              html.indexOf('clipboardWrite(cmd).then') === -1) {
+    // both copyable paths must carry an accessible name: the labeled action
+    // button (label + explanation) and the bare-command fallback ("Copy command")
     console.error('FAIL: copy controls lack an accessible name or truthful async result');
     fails++;
   } else {

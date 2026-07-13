@@ -143,7 +143,9 @@ function contrast(a, b) {
           catch (_) { return true; }
         });
         assert(clipboardRejects, `${mode}: clipboard rejection seam did not install`);
-        const copy = page.locator('.mc-copy').first();
+        // labeled copy-action buttons (.mc-act) replaced the bare .mc-copy pair
+        // wherever a plain-words label exists; truth + target checks apply to both
+        const copy = page.locator('.mc-act, .mc-copy').first();
         await copy.click();
         await page.waitForTimeout(100);
         const copyText = await copy.innerText();
