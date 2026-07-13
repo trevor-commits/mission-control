@@ -69,6 +69,14 @@ Preserve a durable completion trail for verified work instead of deleting it fro
 
 ## Work Record Log
 
+### 2026-07-13 — Recognized-icon controls (theme toggle + copy glyph)
+- Problem: Trevor flagged the "Dark mode"/"Light mode" text pill — standard controls should use the universally recognized icon idiom (sun/moon, copy glyph), a global convention-first standard captured in the enforcement register (recognized-icon-controls record, widened the same day to the broader convention-first principle with a website-creation taste-profile landing).
+- Fix: `dashboard/index.html` gained an inline-SVG `svgIcon()` helper (`currentColor`, no icon font/CDN, `aria-hidden` on the pixels); the theme toggle is now a sun/moon icon button showing the mode you would switch TO, with `aria-label` + `title` carrying the words, and it rerenders on toggle so the icon never goes stale; the bare "copy" text button became the standard overlapping-squares glyph with unchanged truthful async feedback. Labeled task-specific action buttons intentionally keep words per the rule's carve-out. The render-smoke DOM shim gained `createElementNS` (namespace-ignored) to model real browsers.
+- Self-audit: dashboard `67/0`, render smoke 7/7 tabs, browser `253`, usability `50/0`; both-theme captures confirm the sun icon in dark and moon in light. Not verified: panel.html (still text-based; separate surface).
+- Ripple Check: register record + global instructions bullet committed in their own repos (`f1b712d`); no feed or fixture changes.
+- by: Claude Fable session `39e0e8fb-5805-4a78-8b75-5467a849fe39`.
+- linear: repo-only.
+
 ### 2026-07-13 — Dashboard command-center redesign (v2) and answer-dispatch design
 - Problem: Trevor reviewed the first visual pass and asked for a complete redesign — "much easier to act on and more visually appealing and useful" — plus a durable capability: answering a decision should dispatch a model-tuned goal prompt with usage-aware routing (captured globally as ER-141 before design work began).
 - Fix: second, structural pass on `dashboard/index.html` — command-center header (Mission Control wordmark with accent mark, stat pills with strong numerals), filled-pill navigation, larger type scale (17/21/30px steps) and radii, deeper dark background, and a fully relaid Home: two-column grid where every waiting decision is its own accent-spined card with full-width keycap-numbered answer buttons (suggested option tagged inline), beside a sticky "Status now" rail showing open work, Git, jobs health with alert notes, and the top numeric usage bars — all visible without pressing "Show more details". Answer-dispatch architecture written to `docs/ANSWER_DISPATCH_DESIGN.md` (click→queue→compose→route→send+receipt over existing decide queue, prompt lint, tiered delegation, usage feed, mailbox, spawn helpers; sender stubbed in slice 1).

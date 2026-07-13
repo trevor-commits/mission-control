@@ -79,6 +79,9 @@ function attachThemeShims(sandbox, expandHome) {
 }
 const documentShim = {
   createElement: makeEl,
+  // real browsers all expose createElementNS; the inline-SVG icon controls use
+  // it. The shim ignores the namespace — element bookkeeping is identical here.
+  createElementNS: (_ns, tag) => makeEl(tag),
   createTextNode: makeTextNode,
   getElementById(id) { if (!byId[id]) byId[id] = makeEl('div'); return byId[id]; },
   addEventListener() {}, removeEventListener() {},

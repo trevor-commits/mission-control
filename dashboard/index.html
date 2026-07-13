@@ -123,11 +123,16 @@ html[data-theme="dark"] {
 /* === LAYOUT CSS === */
 /* selectors bind ONLY the mc-* class vocabulary. */
 /* --- ER-134 glance Home (v2 command-center layout) --- */
+/* icon-only control (ER-142 idiom): the pixels are the sun/moon, the words live
+   in aria-label + title */
 .mc-theme-toggle {
-  border: 1px solid var(--mc-border); background: var(--mc-surface-1); color: var(--mc-fg);
-  border-radius: var(--mc-r-pill); padding: 4px 10px; font-size: var(--mc-fs-1); cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 30px; height: 30px; padding: 0;
+  border: 1px solid var(--mc-border); background: var(--mc-surface-1); color: var(--mc-fg-muted);
+  border-radius: var(--mc-r-pill); cursor: pointer;
+  transition: color var(--mc-dur) var(--mc-ease), border-color var(--mc-dur) var(--mc-ease), background var(--mc-dur) var(--mc-ease);
 }
-.mc-theme-toggle:hover { border-color: var(--mc-border-2); background: var(--mc-surface-2); }
+.mc-theme-toggle:hover { border-color: var(--mc-border-2); background: var(--mc-surface-2); color: var(--mc-fg); }
 .mc-glance { max-width: 1160px; margin: 0 auto; padding: var(--mc-sp-6) var(--mc-sp-5) var(--mc-sp-4); }
 .mc-glance-title {
   font-size: 28px; font-weight: 700; letter-spacing: -0.03em;
@@ -671,6 +676,34 @@ body {
   }
   function nodeOf(x) { return typeof x === "string" || typeof x === "number" ? document.createTextNode(String(x)) : x; }
 
+  // inline SVG for universally recognized controls (sun/moon toggle, copy glyph)
+  // — recognized-icon idiom: pixels carry the meaning, aria-label/title carry
+  // the words; currentColor keeps them theme-correct with no icon font or CDN.
+  function svgIcon(name) {
+    var NS = "http://www.w3.org/2000/svg";
+    var svg = document.createElementNS(NS, "svg");
+    svg.setAttribute("viewBox", "0 0 24 24");
+    svg.setAttribute("width", "15"); svg.setAttribute("height", "15");
+    svg.setAttribute("fill", "none");
+    svg.setAttribute("stroke", "currentColor");
+    svg.setAttribute("stroke-width", "2");
+    svg.setAttribute("stroke-linecap", "round");
+    svg.setAttribute("stroke-linejoin", "round");
+    svg.setAttribute("aria-hidden", "true");
+    var PATHS = {
+      sun: ["M12 16a4 4 0 1 0 0-8 4 4 0 0 0 0 8z",
+            "M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"],
+      moon: ["M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"],
+      copy: ["M9 9h12v12H9z", "M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"]
+    };
+    (PATHS[name] || []).forEach(function (d) {
+      var p = document.createElementNS(NS, "path");
+      p.setAttribute("d", d);
+      svg.appendChild(p);
+    });
+    return svg;
+  }
+
   // --- state glyphs (never color alone) --------------------------------------
   var GLYPH = { green: "✓", amber: "!", yellow: "!", red: "✕", blue: "○",
                 grey: "○", never: "○", retired: "⏸", "offline-media": "◐", degraded: "◍",
@@ -836,9 +869,13 @@ body {
       }, function () {
         btn.textContent = "copy failed";
       }).then(function () {
-        setTimeout(function () { btn.textContent = "copy"; btn.disabled = false; }, 1200);
+        setTimeout(function () {
+          btn.textContent = "";
+          btn.appendChild(svgIcon("copy"));
+          btn.disabled = false;
+        }, 1200);
       });
-    } }, "copy");
+    } }, svgIcon("copy"));
     return h("span", { class: "mc-cmd", title: cmd }, code, btn);
   }
 
@@ -1505,9 +1542,12 @@ body {
           d.count > 999 ? "999+" : String(d.count))));
     });
     strip.appendChild(h("span", { class: "mc-strip-spacer" }));
+    var toDark = currentTheme() !== "dark";
     strip.appendChild(h("button", { class: "mc-theme-toggle", type: "button",
-      title: "Toggle light/dark", onclick: toggleTheme },
-      currentTheme() === "dark" ? "Light mode" : "Dark mode"));
+      "aria-label": toDark ? "Switch to dark mode" : "Switch to light mode",
+      title: toDark ? "Switch to dark mode" : "Switch to light mode",
+      onclick: function () { toggleTheme(); rerender(); } },
+      svgIcon(toDark ? "moon" : "sun")));
 
     // right end: page-loaded time · freshness dots · collector self-health
     var meta = h("span", { class: "mc-strip-meta" });
