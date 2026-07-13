@@ -38,7 +38,7 @@ loop: until all checks pass
 max_iterations: 3
 verify: bash scripts/dispatch-runner.test.sh && REPO_ROOT="$PWD" bash scripts/dashboard.test.sh --require-shell && bash scripts/decision-alert.test.sh && git diff --check
 
-- [ ] **Step 6: Audit and close out durable state**
+- [x] **Step 6: Audit and close out durable state**
 action: Run an independent review, resolve accepted findings, perform the Ripple Check, write the Work Record, Completed entry, test evidence, branch status, and honest Self-audit, then commit and push.
 loop: until no blocking findings remain
 max_iterations: 3
