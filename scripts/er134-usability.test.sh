@@ -67,6 +67,7 @@ grep -q -- '--mc-bg:        #f4f5f7' "$ROOT/dashboard/index.html" && pass "index
 grep -q 'data-theme="dark"' "$ROOT/dashboard/index.html" && pass "dark theme tokens present" || fail "dark theme tokens"
 test -x "$ROOT/scripts/mc-panel" && pass "mc-panel binary built" || fail "mc-panel binary"
 grep -q 'disableAutomaticTermination' "$ROOT/scripts/mc-panel.swift" && pass "panel disables TAL" || fail "panel disables TAL"
+grep -q 'beginActivity' "$ROOT/scripts/mc-panel.swift" && pass "panel RunningBoard activity" || fail "panel RunningBoard activity"
 grep -q 'mcDecide' "$ROOT/dashboard/panel.html" && pass "panel one-click bridge" || fail "panel one-click bridge"
 grep -q 'mcDecide' "$ROOT/scripts/mc-panel.swift" && pass "swift mcDecide handler" || fail "swift mcDecide handler"
 
