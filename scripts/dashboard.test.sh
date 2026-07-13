@@ -1595,7 +1595,56 @@ PY
   rmdir "$cgh/ingest.lock" 2>/dev/null || true
 }
 
-c1; c2; c3; c4; c5; c6; c7; c8; c8a; c8b; c9; c10; c11; c12; c13; c14; c14a; c15; c16; c17; c18; c19; c20; c21; c22; c23; c24; c25; c26; c27; c28; c29; c30; c31; c32; c33; c34; c35; c36; c37; c38; c39; c40
+
+c41() { # decide alert-backfill is an explicit capped operator path (stub sender)
+  local mch out id sender capture
+  mch="$(mktemp -d)"; sender="$mch/sender.py"; capture="$mch/send.json"
+  cat > "$sender" <<'PY'
+#!/usr/bin/env python3
+import fcntl,json,os,sys
+p=os.environ["DECISION_SEND_CAPTURE"]
+with open(p,"a+") as handle:
+    fcntl.flock(handle,fcntl.LOCK_EX)
+    handle.seek(0)
+    try: rows=json.load(handle)
+    except Exception: rows=[]
+    rows.append(sys.argv[1:])
+    handle.seek(0); handle.truncate(); json.dump(rows,handle); handle.flush()
+sys.exit(0)
+PY
+  chmod +x "$sender"
+  printf '[]\n' > "$capture"
+  created="$(MISSION_CONTROL_HOME="$mch" DECISION_ALERT_NOW_EPOCH=1784365200 \
+    "$REPO/scripts/decision-alert" ingest \
+    --source-kind git --source-key dash-bf \
+    --text 'Choose dashboard backfill decision' --evidence 'dash-bf' \
+    --trust structured --provenance git-facts --json)" || { no "alert-backfill fixture ingest failed"; return; }
+  id="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["decision"]["id"])' "$created")"
+  if env -u DASHBOARD_CMD_DECISIONS REPO_ROOT="$REPO" MISSION_CONTROL_HOME="$mch" \
+       bash "$DASH" decide alert-backfill --max 26 >/dev/null 2>&1; then
+    no "dashboard alert-backfill accepted max above ceiling"; return
+  fi
+  out="$(DECISION_ALERT_SEND_BIN="$sender" DECISION_ALERT_CHAT_ID=12345 \
+    DECISION_SEND_CAPTURE="$capture" \
+    env -u DASHBOARD_CMD_DECISIONS REPO_ROOT="$REPO" MISSION_CONTROL_HOME="$mch" \
+    bash "$DASH" decide alert-backfill --max 2)" || { no "dashboard alert-backfill send failed"; return; }
+  if python3 - "$out" "$id" "$capture" <<'PY'
+import json,sys
+x=json.loads(sys.argv[1])
+assert x["mode"] == "backfill" and x["ok"] is True
+assert x["sent_count"] == 1 and sys.argv[2] in x["sent"]
+assert x.get("max") == 2
+calls=json.load(open(sys.argv[3]))
+assert len(calls) == 1
+PY
+  then
+    ok "dashboard decide alert-backfill caps, sends via stub, and stamps path"
+  else
+    no "dashboard decide alert-backfill missed cap/send/receipt contract"
+  fi
+}
+
+c1; c2; c3; c4; c5; c6; c7; c8; c8a; c8b; c9; c10; c11; c12; c13; c14; c14a; c15; c16; c17; c18; c19; c20; c21; c22; c23; c24; c25; c26; c27; c28; c29; c30; c31; c32; c33; c34; c35; c36; c37; c38; c39; c40; c41
 shell_contract
 echo "----"
 echo "PASS=$PASS FAIL=$FAIL"

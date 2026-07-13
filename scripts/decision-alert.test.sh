@@ -620,6 +620,59 @@ export DECISION_ALERT_CHAT_ID=12345
 unset MOBILE_CONNECT_CONFIG
 
 
+
+# Explicit alert-backfill: capped, newest-first, always sends, stamps receipts.
+export DECISION_ALERT_NOW_EPOCH=1784192400
+BF1="$(run_json ingest --source-kind git --source-key bf-old \
+  --text 'Choose backfill old decision' --evidence 'bf-old' \
+  --trust structured --provenance git-facts)" || BF1=""
+export DECISION_ALERT_NOW_EPOCH=1784278800
+BF2="$(run_json ingest --source-kind git --source-key bf-new \
+  --text 'Choose backfill new decision' --evidence 'bf-new' \
+  --trust structured --provenance git-facts)" || BF2=""
+BF_OLD="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["decision"]["id"])' "$BF1")"
+BF_NEW="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["decision"]["id"])' "$BF2")"
+: > "$CAPTURE"
+BF_SENT="$(run_json alert-backfill --max 1)" || BF_SENT=""
+if python3 - "$BF_SENT" "$BF_NEW" "$BF_OLD" "$CAPTURE" <<'PY'
+import json,sys,os,sqlite3
+x=json.loads(sys.argv[1]); calls=json.load(open(sys.argv[4]))
+assert x["mode"] == "backfill"
+assert x["sent_count"] == 1 and sys.argv[2] in x["sent"] and sys.argv[3] not in x["sent"]
+assert x.get("max") == 1
+assert x.get("backfill_ceiling") == 25
+assert x.get("fresh_within_s") is None
+assert any(sys.argv[2] in row[2] for row in calls)
+db=os.path.join(os.environ["MISSION_CONTROL_HOME"], "decisions", "decisions.db")
+con=sqlite3.connect(db)
+row=con.execute("SELECT 1 FROM alert_receipts WHERE decision_id=?", (sys.argv[2],)).fetchone()
+assert row is not None
+PY
+then pass "alert-backfill --max sends newest-first and stamps receipt"
+else fail "alert-backfill --max sends newest-first and stamps receipt"; fi
+if ! run_json alert-backfill --max 26 >"$T/bf-ceiling.out" 2>"$T/bf-ceiling.err"; then
+  if python3 - "$T/bf-ceiling.err" <<'PY'
+import json,sys
+err=json.loads(open(sys.argv[1]).read())
+assert err.get("ok") is False and "ceiling" in str(err.get("error","")).lower()
+PY
+  then pass "alert-backfill refuses --max above hard ceiling"
+  else fail "alert-backfill refuses --max above hard ceiling"; fi
+else fail "alert-backfill refuses --max above hard ceiling"; fi
+: > "$CAPTURE"
+BF_DEF="$(run_json alert-backfill)" || BF_DEF=""
+if python3 - "$BF_DEF" <<'PY'
+import json,sys
+x=json.loads(sys.argv[1])
+assert x["mode"] == "backfill"
+assert x.get("max") == 10
+assert x.get("backfill_default_max") == 10
+assert x["sent_count"] >= 1
+assert x["sent_count"] <= 10
+PY
+then pass "alert-backfill defaults to max 10 and sends"
+else fail "alert-backfill defaults to max 10 and sends"; fi
+
 printf '%s\n' '----'
 if [ "$FAIL" -eq 0 ]; then echo 'ALL PASS'; exit 0; fi
 echo "$FAIL FAILED"; exit 1

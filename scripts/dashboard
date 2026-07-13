@@ -729,6 +729,7 @@ usage: dashboard <command>
   extract-outcomes [options]       run bounded Tier 2 outcome enrichment
   decide dismiss <decision-id>     dismiss one queued decision; execute no action
   decide answer <decision-id> <n>  record Trevor choice n, write Goal prompt, resolve decision
+  decide alert-backfill [--max N]  send remaining eligible alerts (default 10, ceiling 25)
   panel [--install-only]           refresh feeds + open corner menu-bar panel; installs login KeepAlive (ER-134)
   open [--serve]                   collect --due, open the shell (--serve: local http)
   install                          install shell + launchd job (no flags; idempotent)
@@ -1354,6 +1355,36 @@ PY
         printf '%s\n' "$compose_out"
         printf '%s\n' "$decision_result"
         echo "prompt: $prompt_path"
+        ;;
+      alert-backfill)
+        shift
+        max_n=""
+        while [ $# -gt 0 ]; do
+          case "$1" in
+            --max)
+              [ $# -ge 2 ] || { echo "decide alert-backfill: --max needs a value" >&2; exit 2; }
+              max_n="$2"; shift 2 ;;
+            --max=*)
+              max_n="${1#--max=}"; shift ;;
+            --sender|--chat-id|--timeout)
+              echo "decide alert-backfill: pass sender/chat/timeout via decision-alert env defaults" >&2
+              exit 2 ;;
+            -h|--help)
+              echo "usage: dashboard decide alert-backfill [--max N]" >&2
+              exit 0 ;;
+            *)
+              echo "decide alert-backfill: unknown argument: $1" >&2
+              usage; exit 2 ;;
+          esac
+        done
+        if [ -n "$max_n" ]; then
+          case "$max_n" in *[!0-9]*|"") echo "decide alert-backfill: --max must be a positive integer" >&2; exit 2 ;; esac
+          [ "$max_n" -ge 1 ] || { echo "decide alert-backfill: --max must be >= 1" >&2; exit 2; }
+          decision_result="$("$SCRIPT_DIR/decision-alert" alert-backfill --max "$max_n" --json)" || exit $?
+        else
+          decision_result="$("$SCRIPT_DIR/decision-alert" alert-backfill --json)" || exit $?
+        fi
+        printf '%s\n' "$decision_result"
         ;;
       *) usage; exit 2 ;;
     esac
