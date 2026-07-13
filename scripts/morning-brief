@@ -15,7 +15,7 @@ import sys
 import time
 
 from mission_control_common import (ACTION, IDENTIFIER, NARRATIVE, NOTIFICATION,
-                                    EgressCounters, feed_health,
+                                    DESKTOP_GLANCE_CTA, EgressCounters, feed_health,
                                     next_local_midnight, sanitize_chunks,
                                     sanitize_text, safe_text, same_local_day)
 
@@ -552,7 +552,8 @@ def _usage(snapshot, top_n):
 
 def _render_markdown(sidecar):
     out = ["# Mission Control Morning Brief", "",
-           "Brief ID: `%s`" % sidecar["brief_id"], ""]
+           "Brief ID: `%s`" % sidecar["brief_id"], "",
+           DESKTOP_GLANCE_CTA, ""]
     if sidecar["stale_required_inputs"]:
         out.extend(["**STALE DATA WARNING:** Required inputs are incomplete or stale.", ""])
     for section in sidecar["sections"]:

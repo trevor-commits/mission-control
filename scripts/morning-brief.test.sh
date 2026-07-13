@@ -137,6 +137,10 @@ expected=["NEEDS YOU", "What happened", "Possible follow-ups — Inferred",
           "Open work changes", "Machinery health", "Usage headroom"]
 assert [s["title"] for s in d["sections"]] == expected
 assert md.index("## NEEDS YOU") < md.index("## What happened") < md.index("## Open work changes")
+cta="Glance: menu-bar MC (dashboard panel) or light Home (dashboard open)."
+assert cta in md, md[:400]
+assert md.index(cta) < md.index("## NEEDS YOU")
+assert "Slack" not in md
 assert "Confirmed" in md and "Inferred" not in d["sections"][0]["lines"][0]["trust"]
 assert d["sections"][0]["lines"][0]["text"] == "Choose the rollout window"
 assert d["sections"][0]["lines"][0]["action_cmd"].startswith("dashboard decide dismiss decision:")

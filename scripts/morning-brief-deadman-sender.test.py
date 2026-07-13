@@ -138,7 +138,7 @@ class DeadmanSenderTests(unittest.TestCase):
         payload = json.loads(request["body"].decode("utf-8"))
         self.assertEqual(payload, {
             "chat_id": int(CHAT_ID),
-            "text": "Morning Brief deadman: %s. Check Mission Control delivery." % category,
+            "text": "Morning Brief deadman: %s. Glance: menu-bar MC (dashboard panel) or light Home (dashboard open)." % category,
             "disable_web_page_preview": True,
         })
 
@@ -173,7 +173,7 @@ class DeadmanSenderTests(unittest.TestCase):
             self.assertTrue(DEADMAN._send("stale"))
         args, kwargs = run.call_args
         self.assertEqual(args[0], [sender, "send", CHAT_ID,
-            "Morning Brief deadman: stale. Check Mission Control delivery."])
+            "Morning Brief deadman: stale. Glance: menu-bar MC (dashboard panel) or light Home (dashboard open)."])
         self.assertNotIn("shell", kwargs)
         self.assertNotIn("MORNING_BRIEF_TELEGRAM_BOT_TOKEN", kwargs["env"])
         self.assertNotIn("TELEGRAM_BOT_TOKEN", kwargs["env"])
@@ -211,7 +211,7 @@ class DeadmanSenderTests(unittest.TestCase):
         self.assertEqual(captured["token"], TOKEN)
         self.assertNotEqual(captured["token"], fallback)
         self.assertEqual(captured["message"],
-            "Morning Brief deadman: empty. Check Mission Control delivery.")
+            "Morning Brief deadman: empty. Glance: menu-bar MC (dashboard panel) or light Home (dashboard open).")
 
     def test_safe_plaintext_config_is_parsed_without_execution(self):
         marker = os.path.join(self.tmp.name, "injection-ran")
@@ -235,7 +235,7 @@ class DeadmanSenderTests(unittest.TestCase):
         self.assertEqual(captured["chat_id"], CHAT_ID)
         self.assertEqual(captured["token"], TOKEN)
         self.assertEqual(captured["message"],
-            "Morning Brief deadman: unsent. Check Mission Control delivery.")
+            "Morning Brief deadman: unsent. Glance: menu-bar MC (dashboard panel) or light Home (dashboard open).")
 
     def test_keychain_failure_uses_fallback_but_malformed_service_fails_closed(self):
         fallback = "123456:FALLBACK_abcdefghijklmnopqrstuvwxyz"

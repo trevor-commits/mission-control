@@ -220,5 +220,21 @@ unset ALERT_CAPTURE DECISION_ALERT_SEND_BIN DECISION_ALERT_CHAT_ID DECISION_ALER
 rm -rf "$ALERT_TMP"
 
 
+
+# Desktop-first Morning Brief / operator CTA (ER-134)
+CTA='Glance: menu-bar MC (dashboard panel) or light Home (dashboard open).'
+grep -Fq "$CTA" "$ROOT/scripts/mission_control_common.py" && pass "DESKTOP_GLANCE_CTA constant" || fail "DESKTOP_GLANCE_CTA constant"
+grep -Fq 'DESKTOP_GLANCE_CTA' "$ROOT/scripts/morning-brief" && pass "brief uses DESKTOP_GLANCE_CTA" || fail "brief uses DESKTOP_GLANCE_CTA"
+grep -Fq 'DESKTOP_GLANCE_CTA' "$ROOT/scripts/morning-brief-deadman" && pass "deadman uses DESKTOP_GLANCE_CTA" || fail "deadman uses DESKTOP_GLANCE_CTA"
+grep -Fq 'DESKTOP_GLANCE_CTA' "$ROOT/scripts/decision-alert" && pass "decision-alert uses DESKTOP_GLANCE_CTA" || fail "decision-alert uses DESKTOP_GLANCE_CTA"
+grep -Fq "$CTA" "$ROOT/dashboard/index.html" && pass "Home empty-state CTA" || fail "Home empty-state CTA"
+# Telegram stays optional transport; Slack must not be primary operator where-to-look copy
+if ! grep -qi slack "$ROOT/scripts/morning-brief" "$ROOT/scripts/morning-brief-deadman" "$ROOT/scripts/decision-alert" 2>/dev/null; then
+  pass "no Slack primary in brief/deadman/alert"
+else
+  fail "Slack appears in brief/deadman/alert operator path"
+fi
+
+
 echo "er134-usability: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]
