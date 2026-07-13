@@ -809,14 +809,26 @@ def sync_snapshot(args):
     return result
 
 
-def _alert_eligible(con, now):
+def _alert_eligible(con, now, fresh_within_s=None, newest_first=False):
+    order = "first_seen DESC, decision_id DESC" if newest_first else "first_seen, decision_id"
     rows = con.execute("""SELECT * FROM decisions
         WHERE state='open' AND trust_state='structured'
-        ORDER BY first_seen,decision_id""").fetchall()
+        ORDER BY %s""" % order).fetchall()
     out = []
     success_cutoff = now - ALERT_WINDOW_S
     lease_cutoff = now - ALERT_RESERVATION_LEASE_S
+    fresh_cutoff = None
+    if fresh_within_s is not None:
+        try:
+            window = int(fresh_within_s)
+        except (TypeError, ValueError):
+            raise DecisionError("fresh-within must be a non-negative integer")
+        if window < 0:
+            raise DecisionError("fresh-within must be a non-negative integer")
+        fresh_cutoff = now - window
     for row in rows:
+        if fresh_cutoff is not None and int(row["first_seen"]) < fresh_cutoff:
+            continue
         succeeded = con.execute("""SELECT 1 FROM alert_receipts
             WHERE decision_id=? AND evidence_fingerprint=? AND succeeded_at>?
             LIMIT 1""", (
@@ -941,8 +953,35 @@ def _finish_alert(attempt_id, decision, now, success, message,
         con.close()
 
 
+def _default_sender_bin():
+    configured = os.environ.get("DECISION_ALERT_SEND_BIN", "").strip()
+    if configured:
+        return os.path.expanduser(configured)
+    return os.path.expanduser(
+        "/Users/gillettes/Coding Projects/mobile-connect/mobile-connect.sh")
+
+
+def _default_chat_id():
+    configured = os.environ.get("DECISION_ALERT_CHAT_ID", "").strip()
+    if re.match(r"^-?[0-9]+$", configured):
+        return configured
+    path = os.path.expanduser(os.environ.get(
+        "MOBILE_CONNECT_CONFIG", "~/.mobile-connect/config"))
+    try:
+        with open(path) as handle:
+            for line in handle:
+                match = re.match(
+                    r"^\s*ALLOWED_USER_ID\s*=\s*['\"]?(-?\d+)['\"]?\s*$",
+                    line)
+                if match:
+                    return match.group(1)
+    except OSError:
+        pass
+    return ""
+
+
 def _chat_id(configured):
-    value = str(configured or os.environ.get("DECISION_ALERT_CHAT_ID", "")).strip()
+    value = str(configured or _default_chat_id()).strip()
     if not re.match(r"^-?[0-9]+$", value):
         raise DecisionError("alert chat id must be numeric")
     return value
@@ -950,18 +989,28 @@ def _chat_id(configured):
 
 def alert(args):
     now = _now()
+    try:
+        max_send = int(getattr(args, "max", 0) or 0)
+    except (TypeError, ValueError):
+        raise DecisionError("max must be a non-negative integer")
+    if max_send < 0:
+        raise DecisionError("max must be a non-negative integer")
+    fresh_within = getattr(args, "fresh_within", None)
+    newest_first = bool(getattr(args, "newest_first", False))
     con = _connect()
     try:
-        eligible = _alert_eligible(con, now)
+        eligible = _alert_eligible(
+            con, now, fresh_within_s=fresh_within, newest_first=newest_first)
         preview = [_decision_dict(con, row) for row in eligible]
     finally:
         con.close()
     if not args.send:
         return {"ok": True, "mode": "preview", "eligible_count": len(preview),
-                "sent_count": 0, "failed_count": 0, "decisions": preview}
+                "sent_count": 0, "failed_count": 0, "decisions": preview,
+                "max": max_send or None,
+                "fresh_within_s": fresh_within}
 
-    sender = os.path.expanduser(args.sender or os.environ.get(
-        "DECISION_ALERT_SEND_BIN", ""))
+    sender = os.path.expanduser(args.sender or _default_sender_bin())
     if not sender or not os.path.isfile(sender) or not os.access(sender, os.X_OK):
         raise DecisionError("alert sender is missing or not executable")
     chat_id = _chat_id(args.chat_id)
@@ -969,7 +1018,8 @@ def alert(args):
     sent = []
     failed = []
     skipped = []
-    for candidate in eligible:
+    candidates = eligible if max_send <= 0 else eligible[:max_send]
+    for candidate in candidates:
         attempt_id, current = _reserve_alert(candidate["decision_id"], now)
         if not attempt_id:
             skipped.append(candidate["decision_id"])
@@ -1000,11 +1050,14 @@ def alert(args):
         "ok": not failed,
         "mode": "send",
         "eligible_count": len(eligible),
+        "attempted_count": len(candidates),
         "sent_count": len(sent),
         "failed_count": len(failed),
         "sent": sent,
         "failed": failed,
         "skipped_race": skipped,
+        "max": max_send or None,
+        "fresh_within_s": fresh_within,
         "egress_counters": counters.snapshot(),
         "_exit": 0 if not failed else 1,
     }
@@ -1051,6 +1104,12 @@ def _parser():
     p.add_argument("--sender")
     p.add_argument("--chat-id")
     p.add_argument("--timeout", type=int, default=30)
+    p.add_argument("--max", type=int, default=0,
+                   help="cap sends this run (0 = unlimited)")
+    p.add_argument("--fresh-within", type=int, default=None,
+                   help="only alert decisions first_seen within N seconds")
+    p.add_argument("--newest-first", action="store_true",
+                   help="prefer newest open decisions when capping")
     return parser
 
 
