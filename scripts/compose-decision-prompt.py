@@ -183,6 +183,73 @@ def _test_pause_after_stage(home_fd: int) -> None:
     raise RuntimeError("decide answer: test transaction release timed out")
 
 
+TIER_FLOOR_RE = re.compile(
+    r"\b(?:security|auth(?:entication|orization)?|migration|merge[- ]gate|governance)\b",
+    re.I,
+)
+
+
+def _dispatch_context(home: str, decision: dict, text: str) -> tuple[str | None, str | None]:
+    """Resolve provider:id and repo from the already-collected chat feed."""
+    session_id = None
+    for value, pattern in (
+        (decision.get("anchor_ref"), r"^chat-graph:([^:]+):"),
+        (decision.get("source_key"), r"^outcome:([^:]+):"),
+    ):
+        match = re.match(pattern, str(value or ""))
+        if match:
+            session_id = match.group(1)
+            break
+    try:
+        with open(os.path.join(home, "data", "chats.json"), encoding="utf-8") as handle:
+            nodes = ((json.load(handle).get("data") or {}).get("nodes") or [])
+    except (OSError, ValueError, AttributeError):
+        nodes = []
+    for node in nodes:
+        if not isinstance(node, dict) or str(node.get("id") or "") != session_id:
+            continue
+        provider = str(node.get("provider") or "").strip().lower()
+        repo = node.get("repo") if isinstance(node.get("repo"), str) else None
+        return (("%s:%s" % (provider, session_id)) if provider else None), repo
+    return None, None
+
+
+def _write_dispatch_queue(home_fd: int, home: str, entry: dict) -> str:
+    """Publish one private queue file without following dispatch symlinks."""
+    dispatch_fd = queue_fd = receipts_fd = -1
+    stage = None
+    try:
+        dispatch_fd = _open_private_dir(home_fd, "dispatch")
+        queue_fd = _open_private_dir(dispatch_fd, "queue")
+        receipts_fd = _open_private_dir(dispatch_fd, "receipts")
+        for fd in (dispatch_fd, queue_fd, receipts_fd):
+            os.fchmod(fd, 0o700)
+        name = "%s.json" % entry["decision_id"]
+        _safe_destination(queue_fd, name, "dispatch queue")
+        try:
+            receipt = os.stat(name, dir_fd=receipts_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            receipt = None
+        if receipt is not None:
+            if not stat.S_ISREG(receipt.st_mode):
+                raise RuntimeError("dispatch receipt must be a regular file")
+            return os.path.join(home, "dispatch", "queue", name)
+        stage = _write_stage(
+            queue_fd, ".dispatch-queue-stage.",
+            (json.dumps(entry, ensure_ascii=True, sort_keys=True) + "\n").encode("utf-8"))
+        _safe_destination(queue_fd, name, "dispatch queue")
+        os.replace(stage, name, src_dir_fd=queue_fd, dst_dir_fd=queue_fd)
+        stage = None
+        os.fsync(queue_fd)
+        return os.path.join(home, "dispatch", "queue", name)
+    finally:
+        if queue_fd >= 0:
+            _unlink_stage(queue_fd, stage)
+        for fd in (receipts_fd, queue_fd, dispatch_fd):
+            if fd >= 0:
+                os.close(fd)
+
+
 def _run_alert(decision_alert: str, home: str, *args: str) -> dict:
     env = dict(os.environ)
     env["MISSION_CONTROL_HOME"] = home
@@ -238,16 +305,20 @@ def answer_transaction(home: str, decision_alert: str, decision_id: str, choice:
             raise RuntimeError("decide answer: decision is no longer open for this choice")
 
         text = ""
+        decision_row = {}
         decisions_path = os.path.join(home, "data", "decisions.json")
         try:
             with open(decisions_path, encoding="utf-8") as handle:
                 data = (json.load(handle).get("data") or {})
             for row in (data.get("pinned") or []) + (data.get("inferred") or []):
                 if row.get("id") == decision_id:
+                    decision_row = row
                     text = row.get("text") or ""
                     break
         except (OSError, ValueError):
             pass
+        if not text:
+            text = decision.get("text") or ""
 
         answer_name = "%s.json" % decision_id
         prompt_name = "%s.md" % decision_id
@@ -298,6 +369,28 @@ def answer_transaction(home: str, decision_alert: str, decision_id: str, choice:
             "ok": True, "prompt_path": prompt_path,
             "choice": choice, "label": label,
         }
+        source_chat, repo = _dispatch_context(home, decision_row or decision, text)
+        answered_epoch = (((decision_result.get("decision") or {}).get("resolution") or {}).get("at"))
+        if not isinstance(answered_epoch, int):
+            answered_epoch = int(time.time())
+        entry = {
+            "decision_id": decision_id,
+            "decision_text": text,
+            "option_number": choice,
+            "option_text": label,
+            "source_chat": source_chat,
+            "repo": repo,
+            "severity": "high" if TIER_FLOOR_RE.search("%s %s" % (text, label)) else "normal",
+            "answered_at": datetime.fromtimestamp(
+                answered_epoch, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        }
+        try:
+            queue_path = _write_dispatch_queue(home_fd, home, entry)
+            compose_result["dispatch"] = {"ok": True, "queue_path": queue_path}
+        except (OSError, RuntimeError, ValueError):
+            # The answer and decision resolution are already durable. Dispatch is
+            # deliberately best-effort so a local queue fault cannot undo Trevor's answer.
+            compose_result["dispatch"] = {"ok": False, "error": "dispatch queue failed"}
         return compose_result, decision_result, prompt_path
     finally:
         if answers_fd >= 0:
@@ -325,6 +418,8 @@ def answer_transaction_main(argv: list[str]) -> int:
     print(json.dumps(compose, sort_keys=True))
     print(json.dumps(decision, sort_keys=True))
     print("prompt: %s" % prompt_path)
+    if not (compose.get("dispatch") or {}).get("ok"):
+        print("dispatch queue failed; answer remains recorded", file=sys.stderr)
     return 0
 
 

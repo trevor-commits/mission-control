@@ -1,0 +1,332 @@
+#!/usr/bin/env bash
+# Mission Control answer dispatcher, slice 1: compose + route + stub receipt only.
+# Bash 3.2-safe wrapper; the stdlib Python engine owns all JSON and file writes.
+set -uo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO_ROOT="${REPO_ROOT:-$(dirname "$SCRIPT_DIR")}"
+MISSION_CONTROL_HOME="${MISSION_CONTROL_HOME:-$HOME/.mission-control}"
+DISPATCH_TEMPLATES_DIR="${DISPATCH_TEMPLATES_DIR:-$REPO_ROOT/dispatch/templates}"
+DISPATCH_LINT="${DISPATCH_LINT:-$HOME/.codex/scripts/prompt-handoff-lint}"
+export REPO_ROOT MISSION_CONTROL_HOME DISPATCH_TEMPLATES_DIR DISPATCH_LINT
+
+python3 - "$@" <<'PYEOF'
+import fcntl
+import json
+import os
+import re
+import stat
+import subprocess
+import sys
+import tempfile
+
+HOME = os.path.abspath(os.path.expanduser(os.environ["MISSION_CONTROL_HOME"]))
+TEMPLATES = os.path.abspath(os.path.expanduser(os.environ["DISPATCH_TEMPLATES_DIR"]))
+LINT = os.path.abspath(os.path.expanduser(os.environ["DISPATCH_LINT"]))
+DISPATCH = os.path.join(HOME, "dispatch")
+QUEUE = os.path.join(DISPATCH, "queue")
+PROMPTS = os.path.join(DISPATCH, "prompts")
+RECEIPTS = os.path.join(DISPATCH, "receipts")
+ID_RE = re.compile(r"^decision:[0-9a-f]{24}$")
+SOURCE_RE = re.compile(r"^([a-z][a-z0-9_-]{0,31}):([^:]+)$")
+PLACEHOLDER_RE = re.compile(r"\{\{([a-z_]+)\}\}")
+TIER_FLOOR_RE = re.compile(
+    r"\b(?:security|auth(?:entication|orization)?|migration|merge[- ]gate|governance)\b",
+    re.I,
+)
+MODELS = {
+    "codex": {"normal": "gpt-5.6-sol", "high": "gpt-5.6-sol"},
+    "claude": {"normal": "claude-fable-5", "high": "claude-opus-4-8"},
+    "glm": {"normal": "glm-5.1", "high": None},
+    "cursor": {"normal": "cursor", "high": None},
+}
+
+
+def model_for(platform, floor):
+    return (MODELS.get(platform) or {}).get(floor)
+
+
+def route_dispatch(decision_text, source_chat, usage, preferred_platform):
+    """Pure route decision. All inputs and the returned mapping are JSON values."""
+    floor = "high" if TIER_FLOOR_RE.search(str(decision_text or "")) else "normal"
+    source_chat = source_chat if isinstance(source_chat, dict) else {}
+    usage = usage if isinstance(usage, dict) else {}
+    source_platform = str(source_chat.get("provider") or "").lower()
+    preferred = str(preferred_platform or source_platform or "codex").lower()
+    tier_override = floor == "high" and not model_for(preferred, floor)
+    if tier_override:
+        preferred = "codex"
+
+    if (floor == "normal" and source_chat.get("live") is True and source_chat.get("same_repo") is True
+            and source_platform == preferred and model_for(preferred, floor)):
+        return {"route": "same-chat", "platform": preferred,
+                "model": model_for(preferred, floor),
+                "reason": "live same-repo source chat"}
+
+    if usage.get(preferred) == "Can use" and model_for(preferred, floor):
+        return {"route": "new-platform" if tier_override else "new-chat",
+                "platform": preferred, "model": model_for(preferred, floor),
+                "reason": "tier-floor override" if floor == "high" else
+                          "preferred platform has headroom"}
+
+    for platform in ("codex", "claude", "glm", "cursor"):
+        if platform == preferred or usage.get(platform) != "Can use":
+            continue
+        model = model_for(platform, floor)
+        if model:
+            return {"route": "new-platform", "platform": platform,
+                    "model": model,
+                    "reason": "preferred platform unavailable or at its usage limit"}
+    return {"route": "hold", "platform": None, "model": None,
+            "reason": "no platform has headroom at the required tier"}
+
+
+def private_dir(path):
+    if os.path.lexists(path):
+        current = os.lstat(path)
+        if stat.S_ISLNK(current.st_mode) or not stat.S_ISDIR(current.st_mode):
+            raise RuntimeError("unsafe dispatch directory")
+    else:
+        os.mkdir(path, 0o700)
+    os.chmod(path, 0o700)
+
+
+def prepare_dirs():
+    if (not os.path.isdir(HOME) or os.path.islink(HOME)):
+        raise RuntimeError("state home is missing or unsafe")
+    for path in (DISPATCH, QUEUE, PROMPTS, RECEIPTS):
+        private_dir(path)
+
+
+def atomic_write(path, text):
+    parent = os.path.dirname(path)
+    if os.path.lexists(path):
+        current = os.lstat(path)
+        if stat.S_ISLNK(current.st_mode) or not stat.S_ISREG(current.st_mode):
+            raise RuntimeError("unsafe dispatch destination")
+    fd, tmp = tempfile.mkstemp(prefix=".dispatch-stage.", dir=parent)
+    try:
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(text)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def atomic_json(path, value):
+    atomic_write(path, json.dumps(value, ensure_ascii=True, sort_keys=True) + "\n")
+
+
+def load_json(path):
+    with open(path, encoding="utf-8") as handle:
+        return json.load(handle)
+
+
+def usage_decisions():
+    try:
+        data = load_json(os.path.join(HOME, "data", "usage.json")).get("data") or {}
+        rows = data.get("providers") or []
+        result = {key: value for key, value in (data.get("decisions") or {}).items()
+                  if key in MODELS and value in ("Can use", "Wait")}
+    except (OSError, ValueError, AttributeError):
+        rows = []
+        result = {}
+    grouped = {}
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        platform = str(row.get("provider") or "").lower()
+        if platform not in MODELS:
+            continue
+        explicit = row.get("decision")
+        if explicit in ("Can use", "Wait"):
+            grouped.setdefault(platform, []).append(explicit)
+            continue
+        used = row.get("used_pct")
+        if isinstance(used, (int, float)) and not isinstance(used, bool):
+            grouped.setdefault(platform, []).append("Wait" if used >= 90 else "Can use")
+    for platform, values in grouped.items():
+        if platform not in result:
+            result[platform] = "Wait" if "Wait" in values else "Can use"
+    return result
+
+
+def source_context(entry):
+    raw = entry.get("source_chat")
+    match = SOURCE_RE.match(raw) if isinstance(raw, str) else None
+    if not match:
+        return {"key": None, "provider": None, "live": False, "same_repo": False}
+    provider, session_id = match.groups()
+    try:
+        nodes = ((load_json(os.path.join(HOME, "data", "chats.json")).get("data") or {})
+                 .get("nodes") or [])
+    except (OSError, ValueError, AttributeError):
+        nodes = []
+    for node in nodes:
+        if not isinstance(node, dict):
+            continue
+        if str(node.get("id") or "") == session_id and str(node.get("provider") or "").lower() == provider:
+            return {"key": raw, "provider": provider, "live": node.get("live") is True,
+                    "same_repo": node.get("repo") == entry.get("repo")}
+    return {"key": raw, "provider": provider, "live": False, "same_repo": False}
+
+
+def validate_entry(entry, expected_id):
+    if not isinstance(entry, dict) or entry.get("decision_id") != expected_id:
+        raise ValueError("decision id mismatch")
+    if not isinstance(entry.get("decision_text"), str) or not entry["decision_text"].strip():
+        raise ValueError("decision text missing")
+    number = entry.get("option_number")
+    if isinstance(number, bool) or not isinstance(number, int) or number < 1:
+        raise ValueError("option number invalid")
+    if not isinstance(entry.get("option_text"), str) or not entry["option_text"].strip():
+        raise ValueError("option text missing")
+    if entry.get("source_chat") is not None and not SOURCE_RE.match(str(entry["source_chat"])):
+        raise ValueError("source chat invalid")
+    if entry.get("repo") is not None and not isinstance(entry.get("repo"), str):
+        raise ValueError("repo invalid")
+    if entry.get("severity") not in ("normal", "high"):
+        raise ValueError("severity invalid")
+    if not isinstance(entry.get("answered_at"), str) or not entry["answered_at"]:
+        raise ValueError("answered timestamp missing")
+
+
+def compose(entry, routing):
+    platform = routing["platform"]
+    template_path = os.path.join(TEMPLATES, "%s.md" % platform)
+    template = open(template_path, encoding="utf-8").read()
+    runner = {"codex": "Codex", "claude": "Claude", "glm": "Claude-compatible GLM",
+              "cursor": "Cursor"}[platform]
+    context = dict(entry)
+    context.update({
+        "goal": entry["option_text"], "runner": runner, "model": routing["model"],
+        "reasoning": "high", "route": routing["route"],
+        "routing_reason": routing["reason"],
+        "source_chat": entry.get("source_chat") or "unknown",
+        "repo": entry.get("repo") or "unknown",
+        "evidence_paths": "TODO", "verification_commands": "TODO",
+        "durable_records": "TODO", "stop_condition": "TODO",
+        "delegation_defaults": "TODO",
+    })
+    missing = sorted(set(PLACEHOLDER_RE.findall(template)) - set(context))
+    if missing:
+        raise ValueError("template placeholders missing: %s" % ",".join(missing))
+    return PLACEHOLDER_RE.sub(lambda match: str(context[match.group(1)]), template)
+
+
+def receipt(entry, state, routing, prompt_path, lint_state, lint_detail):
+    return {
+        "decision_id": entry["decision_id"], "state": state,
+        "route": routing["route"],
+        "target": {"platform": routing["platform"], "model": routing["model"],
+                   "chat": entry.get("source_chat") if routing["route"] == "same-chat" else None},
+        "prompt_path": prompt_path,
+        "lint": {"state": lint_state, "detail": lint_detail},
+        "routing_reason": routing["reason"], "attempts": 1, "stubbed": True,
+    }
+
+
+def run_one(path, entry):
+    source = source_context(entry)
+    preferred = source.get("provider") or "codex"
+    routing = route_dispatch(
+        "%s %s" % (entry["decision_text"], entry["option_text"]),
+        source, usage_decisions(), preferred)
+    receipt_path = os.path.join(RECEIPTS, "%s.json" % entry["decision_id"])
+    if routing["route"] == "hold":
+        atomic_json(receipt_path, receipt(entry, "held-route", routing, None,
+                                          "not-run", "route held"))
+        return "held-route"
+    prompt_path = os.path.join(PROMPTS, "%s.md" % entry["decision_id"])
+    try:
+        prompt = compose(entry, routing)
+    except (OSError, ValueError) as exc:
+        atomic_json(receipt_path, receipt(entry, "held-compose", routing, None,
+                                          "not-run", str(exc)))
+        return "held-compose"
+    atomic_write(prompt_path, prompt)
+    try:
+        proc = subprocess.run([LINT, "--response", prompt_path], text=True,
+                              stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                              timeout=30)
+        detail = (proc.stdout if proc.returncode == 0 else proc.stderr).strip()[:500]
+    except (OSError, subprocess.TimeoutExpired):
+        proc = None
+        detail = "prompt lint unavailable"
+    if proc is None or proc.returncode != 0:
+        atomic_json(receipt_path, receipt(entry, "held-lint", routing, prompt_path,
+                                          "failed", detail))
+        return "held-lint"
+    atomic_json(receipt_path, receipt(entry, "stubbed", routing, prompt_path,
+                                      "passed", detail))
+    os.unlink(path)
+    return "stubbed"
+
+
+def main():
+    if len(sys.argv) == 3 and sys.argv[1] == "--route-json":
+        payload = json.loads(sys.argv[2])
+        print(json.dumps(route_dispatch(
+            payload.get("decision_text"), payload.get("source_chat"),
+            payload.get("usage"), payload.get("preferred_platform")), sort_keys=True))
+        return 0
+    if len(sys.argv) != 1:
+        print("usage: dispatch-runner [--route-json JSON]", file=sys.stderr)
+        return 2
+    prepare_dirs()
+    lock_path = os.path.join(DISPATCH, ".dispatch-runner.lock")
+    lock_fd = os.open(lock_path, os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0), 0o600)
+    try:
+        if not stat.S_ISREG(os.fstat(lock_fd).st_mode):
+            raise RuntimeError("unsafe dispatch lock")
+        try:
+            fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            print(json.dumps({"status": "locked", "processed": 0, "malformed": []}))
+            return 0
+        processed = 0
+        held = []
+        malformed = []
+        skipped_receipt = []
+        for name in sorted(os.listdir(QUEUE)):
+            if name.startswith("."):
+                continue
+            match = re.match(r"^(decision:[0-9a-f]{24})\.json$", name)
+            if not match:
+                malformed.append(name)
+                continue
+            decision_id = match.group(1)
+            path = os.path.join(QUEUE, name)
+            receipt_path = os.path.join(RECEIPTS, name)
+            if os.path.isfile(receipt_path) and not os.path.islink(receipt_path):
+                skipped_receipt.append(name)
+                continue
+            try:
+                if os.path.islink(path) or not os.path.isfile(path):
+                    raise ValueError("queue entry is not a regular file")
+                entry = load_json(path)
+                validate_entry(entry, decision_id)
+                state = run_one(path, entry)
+                processed += state == "stubbed"
+                if state != "stubbed":
+                    held.append({"file": name, "state": state})
+            except (OSError, ValueError, RuntimeError, json.JSONDecodeError):
+                malformed.append(name)
+        print(json.dumps({"status": "ok", "processed": processed, "held": held,
+                          "malformed": malformed, "skipped_receipt": skipped_receipt},
+                         sort_keys=True))
+        return 0
+    finally:
+        os.close(lock_fd)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+PYEOF

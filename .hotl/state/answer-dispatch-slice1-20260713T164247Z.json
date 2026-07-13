@@ -1,0 +1,150 @@
+{
+  "run_id": "answer-dispatch-slice1-20260713T164247Z",
+  "workflow_path": "hotl-workflow-answer-dispatch-slice1.md",
+  "intent": "Implement the stubbed first slice of Mission Control answer dispatch from recorded decision through queue, linted prompt, route, and receipt.",
+  "success_criteria": "Queue failure does not undo answers; router truth table and stub drain pass; decisions feed exposes receipt state; requested regressions and dry run are green.",
+  "risk_level": "medium",
+  "auto_approve": true,
+  "branch": "codex/answer-dispatch-slice1",
+  "started_at": "2026-07-13T16:42:47+00:00",
+  "completed_at": null,
+  "status": "running",
+  "current_step": 5,
+  "total_steps": 6,
+  "report_path": ".hotl/reports/answer-dispatch-slice1-20260713T164247Z.md",
+  "steps": [
+    {
+      "number": 1,
+      "name": "Lock contracts and branch state",
+      "action": "Record the branch ledger, self-contained tracking disposition, approved design source, and exact acceptance commands.",
+      "status": "done",
+      "attempts": 1,
+      "max_iterations": 3,
+      "loop": "false",
+      "started_at": "2026-07-13T16:42:54+00:00",
+      "completed_at": "2026-07-13T16:42:54+00:00",
+      "verify": {
+        "type": "shell",
+        "command": "git status --short && test \"$(git branch --show-current)\" = codex/answer-dispatch-slice1",
+        "passed": true,
+        "stdout": " M todo.md\n?? .hotl/reports/answer-dispatch-slice1-20260713T164247Z.md\n?? .hotl/state/answer-dispatch-slice1-20260713T164247Z.json\n?? hotl-workflow-answer-dispatch-slice1.md\n",
+        "stderr": "\n"
+      },
+      "gate": null,
+      "gate_result": null,
+      "gate_mode": null,
+      "block_reason": null
+    },
+    {
+      "number": 2,
+      "name": "Write failing behavior tests",
+      "action": "Add focused tests for queue failure isolation, queue fields, router precedence, malformed drain behavior, lint hold, stub receipt, and feed receipt fields.",
+      "status": "done",
+      "attempts": 1,
+      "max_iterations": 3,
+      "loop": "false",
+      "started_at": "2026-07-13T16:44:32+00:00",
+      "completed_at": "2026-07-13T16:48:10+00:00",
+      "verify": {
+        "type": "shell",
+        "command": "bash scripts/dispatch-runner.test.sh",
+        "passed": true,
+        "stdout": "PASS: router tier-floor\nPASS: router live-same-chat\nPASS: router stale-source\nPASS: router headroom-switch\nPASS: router no-target\nPASS: answer recording succeeds\nPASS: answer writes complete dispatch queue entry\nPASS: drain skips and surfaces malformed entries\nPASS: stub sender writes linted prompt and receipt\nPASS: successful stub receipt drains queue\nPASS: lint failure holds receipt and queue\nPASS: dispatch queue failure preserves and surfaces answer\nPASS: decisions collector attaches receipt fields\nPASS=13 FAIL=0\n",
+        "stderr": "\n"
+      },
+      "gate": null,
+      "gate_result": null,
+      "gate_mode": null,
+      "block_reason": null
+    },
+    {
+      "number": 3,
+      "name": "Implement the minimum dispatch slice",
+      "action": "Extend the existing answer transaction, add the Bash 3.2-safe embedded-Python runner, add Claude-owned template skeletons, and attach receipt state in the decisions collector without editing dashboard/index.html.",
+      "status": "done",
+      "attempts": 1,
+      "max_iterations": 3,
+      "loop": "until focused tests pass",
+      "started_at": "2026-07-13T16:48:13+00:00",
+      "completed_at": "2026-07-13T16:48:14+00:00",
+      "verify": {
+        "type": "shell",
+        "command": "bash scripts/dispatch-runner.test.sh",
+        "passed": true,
+        "stdout": "PASS: router tier-floor\nPASS: router live-same-chat\nPASS: router stale-source\nPASS: router headroom-switch\nPASS: router no-target\nPASS: answer recording succeeds\nPASS: answer writes complete dispatch queue entry\nPASS: drain skips and surfaces malformed entries\nPASS: stub sender writes linted prompt and receipt\nPASS: successful stub receipt drains queue\nPASS: lint failure holds receipt and queue\nPASS: dispatch queue failure preserves and surfaces answer\nPASS: decisions collector attaches receipt fields\nPASS=13 FAIL=0\n",
+        "stderr": "\n"
+      },
+      "gate": null,
+      "gate_result": null,
+      "gate_mode": null,
+      "block_reason": null
+    },
+    {
+      "number": 4,
+      "name": "Prove the end-to-end dry run",
+      "action": "Answer a synthetic structured decision, drain the queue with the stub sender, and assert the queue packet, linted prompt, route, and receipt.",
+      "status": "done",
+      "attempts": 1,
+      "max_iterations": 3,
+      "loop": "until dry run passes",
+      "started_at": "2026-07-13T16:48:34+00:00",
+      "completed_at": "2026-07-13T16:48:34+00:00",
+      "verify": {
+        "type": "shell",
+        "command": "bash scripts/dispatch-runner.test.sh --e2e-only",
+        "passed": true,
+        "stdout": "PASS: answer recording succeeds\nPASS: answer writes complete dispatch queue entry\nPASS: drain skips and surfaces malformed entries\nPASS: stub sender writes linted prompt and receipt\nPASS: successful stub receipt drains queue\nPASS: lint failure holds receipt and queue\nPASS: dispatch queue failure preserves and surfaces answer\nPASS: decisions collector attaches receipt fields\nPASS=8 FAIL=0\n",
+        "stderr": "\n"
+      },
+      "gate": null,
+      "gate_result": null,
+      "gate_mode": null,
+      "block_reason": null
+    },
+    {
+      "number": 5,
+      "name": "Run regression gates",
+      "action": "Run the requested existing suites plus syntax, whitespace, and focused dispatch checks.",
+      "status": "done",
+      "attempts": 1,
+      "max_iterations": 3,
+      "loop": "until all checks pass",
+      "started_at": "2026-07-13T16:48:44+00:00",
+      "completed_at": "2026-07-13T16:48:44+00:00",
+      "verify": {
+        "type": "shell",
+        "command": "bash scripts/dispatch-runner.test.sh && REPO_ROOT=\"$PWD\" bash scripts/dashboard.test.sh --require-shell && bash scripts/decision-alert.test.sh && git diff --check",
+        "passed": true,
+        "stdout": "PASS: router tier-floor\nPASS: router live-same-chat\nPASS: router stale-source\nPASS: router headroom-switch\nPASS: router no-target\nPASS: answer recording succeeds\nPASS: answer writes complete dispatch queue entry\nPASS: drain skips and surfaces malformed entries\nPASS: stub sender writes linted prompt and receipt\nPASS: successful stub receipt drains queue\nPASS: lint failure holds receipt and queue\nPASS: dispatch queue failure preserves and surfaces answer\nPASS: decisions collector attaches receipt fields\nPASS=13 FAIL=0\nPASS: collect --force writes 12 files, all .json envelope-valid\nPASS: .js == .json canonical incl hostile title (apostrophe+emoji+</script>)\nPASS: failing feeder: git ok:false, 3 others written, prior git.json preserved\nPASS: --due re-collects stale feed, skips fresh feed\nPASS: status exit 0 on all-green feeds\nPASS: status nonzero when automation feed has a red job\nPASS: demo builds contract-valid fixtures into temp dir, no open under DASHBOARD_NO_OPEN=1\nPASS: defaults: repo-sibling feeders resolve without env overrides\nPASS: git feeder exit 1 (findings) accepted as valid\nPASS: feeder override shell metacharacters are rejected\nPASS: status: fresh chats feed still surfaces unknown full graph ingest\nPASS: install: baked bin/dashboard resolves feeders headless + writes all feeds\nPASS: install: dashboard imports adjacent stamped common despite repo drift\nPASS: plist: real template substitutes to the runtime path, no double-prefix\nPASS: render: all tabs execute over fixtures (node smoke)\nPASS: render: smoke catches a throwing renderer (negative control)\nPASS: feed order: chats, decisions, then brief are last (automation usage git chats decisions brief )\nPASS: data dir perms 700 (got 700)\nPASS: install: composer, decisions, deadman, common policy, and plists wire in isolation\nPASS: default install leaves activation-gated jobs uninstalled\nPASS: brief freshness preserves the sidecar compose age\nPASS: brief rejects malformed timestamps and surfaces last-good refresh errors\nPASS: error persistence sanitizes secrets, PII, and denylisted terms\nPASS: dashboard dismiss refreshes pinned feed without executing action\nPASS: dashboard dismiss fails visibly when pinned feed refresh is locked\nPASS: code-only install updates runtime without launchd side effects\nPASS: status honors daily brief validity: same-day brief past 6x cadence not stale\nPASS: install-stamp: committed HEAD provenance + runtime AND asset drift are detected\nPASS: collect copies the brief sidecar valid_until into the envelope (_wrap)\nPASS: same-day delivered brief migrated -> dashboard status rc=0 (was stale)\nPASS: brief-migrate validity expires exactly after next local midnight\nPASS: brief-migrate delivered receipt prevents re-send\nPASS: install-safety: missing required runtime/asset, deleted asset, unwritable file/stamp, and symlink dests all fail loud; clean install still green\nPASS: status: missing install stamp is an explicit red row\nPASS: status: malformed install stamp fails closed without traceback\nPASS: install: missing git HEAD fails closed without a stamp\nPASS: plist install: committed bytes, atomic safety, checked reload, and fatal launchd failures\nPASS: status: malformed epoch/ok/cadence/data fields fail closed without traceback\nPASS: install: unsupported flags fail before filesystem or launchd mutation\nPASS: install: captured immutable commit survives concurrent HEAD movement\nPASS: bash-3.2: system /bin/bash executes the embedded Python engine\nPASS: install: runtime chmod failure is fatal and leaves no green stamp\nPASS: install-lock: concurrent commit cannot interleave files and stamp\nPASS: timeout: SIGKILL reaps a non-cooperative group and removes its owned lock\nPASS: pipeline: Git success/failure each invokes scanner once with explicit uncertainty\nPASS: timeout: owner nonce mismatch leaves another lock untouched\nPASS: timeout: escaped pipe holder is bounded and its lock remains fail-closed\nPASS: runtime: source tree remains free of Python bytecode\nPASS: interrupt: BaseException path reaps feeder and removes its proven lock\nPASS: decode: post-rea\n",
+        "stderr": "\n"
+      },
+      "gate": null,
+      "gate_result": null,
+      "gate_mode": null,
+      "block_reason": null
+    },
+    {
+      "number": 6,
+      "name": "Audit and close out durable state",
+      "action": "Run an independent review, resolve accepted findings, perform the Ripple Check, write the Work Record, Completed entry, test evidence, branch status, and honest Self-audit, then commit and push.",
+      "status": "pending",
+      "attempts": 0,
+      "max_iterations": 3,
+      "loop": "until no blocking findings remain",
+      "started_at": null,
+      "completed_at": null,
+      "verify": {
+        "type": "shell",
+        "command": "git status --short && git log -1 --oneline",
+        "passed": null,
+        "stdout": null,
+        "stderr": null
+      },
+      "gate": null,
+      "gate_result": null,
+      "gate_mode": null,
+      "block_reason": null
+    }
+  ],
+  "last_update": "2026-07-13T16:48:44+00:00"
+}

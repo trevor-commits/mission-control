@@ -349,6 +349,59 @@ def _run_builtin_brief(timeout_s):
         return None, "cannot read Morning Brief sidecar: %s" % e
 
 
+def _attach_dispatch_receipts(payload):
+    """Attach bounded dispatch state to pinned feed rows; never mutate the renderer."""
+    if not isinstance(payload, dict):
+        return payload
+    data = payload.get("data")
+    if not isinstance(data, dict):
+        return payload
+    dispatch = os.path.join(HOME, "dispatch")
+    receipts = os.path.join(dispatch, "receipts")
+    queue = os.path.join(dispatch, "queue")
+    id_re = re.compile(r"^decision:[0-9a-f]{24}$")
+    for row in data.get("pinned") or []:
+        if not isinstance(row, dict) or not id_re.match(str(row.get("id") or "")):
+            continue
+        name = "%s.json" % row["id"]
+        receipt_path = os.path.join(receipts, name)
+        queue_path = os.path.join(queue, name)
+        receipt = None
+        try:
+            if os.path.islink(receipt_path) or not os.path.isfile(receipt_path):
+                raise OSError("receipt unavailable")
+            with open(receipt_path) as handle:
+                candidate = json.load(handle)
+            if (isinstance(candidate, dict) and
+                    candidate.get("decision_id") == row["id"]):
+                receipt = candidate
+        except (OSError, ValueError):
+            receipt = None
+        if receipt is None:
+            row["dispatch"] = {
+                "state": "queued" if os.path.isfile(queue_path) and not os.path.islink(queue_path)
+                         else "not-queued",
+                "route": None, "target_platform": None, "target_model": None,
+                "prompt_path": None, "stubbed": None,
+            }
+            continue
+        target = receipt.get("target") if isinstance(receipt.get("target"), dict) else {}
+        receipt_state = receipt.get("state")
+        if receipt_state not in ("stubbed", "held-lint", "held-route", "held-compose"):
+            receipt_state = "malformed"
+        row["dispatch"] = {
+            "state": receipt_state,
+            "route": receipt.get("route") if receipt.get("route") in
+                     ("same-chat", "new-chat", "new-platform", "hold") else None,
+            "target_platform": target.get("platform") if target.get("platform") in
+                               ("codex", "claude", "glm", "cursor") else None,
+            "target_model": str(target.get("model") or "")[:80] or None,
+            "prompt_path": str(receipt.get("prompt_path") or "")[:1000] or None,
+            "stubbed": receipt.get("stubbed") is True,
+        }
+    return payload
+
+
 def _run_builtin_decisions(timeout_s):
     installed = os.path.join(HOME, "bin", "decision-alert")
     tool = installed if os.path.isfile(installed) and os.access(installed, os.X_OK) \
@@ -363,6 +416,7 @@ def _run_builtin_decisions(timeout_s):
         payload = json.loads(p.stdout)
     except Exception:
         return None, "decision queue output not JSON"
+    payload = _attach_dispatch_receipts(payload)
     # Best-effort loud channel: after sync, alert a small newest batch through
     # the existing mobile-connect sender. Failures never poison the decisions
     # feed; they surface under data.alert for glance trust.
