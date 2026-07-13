@@ -2,7 +2,7 @@
 
 ## Active Next Steps
 - Full-repo convergence audit (2026-07-12, active): reconcile prior Mission Control sessions and open audit promises against live `origin/main`; reproduce and repair every confirmed code, privacy, reliability, accessibility, test, governance, and branch-lifecycle defect; rerun the full cold matrix plus installed/rendered evidence; then iterate with an independent read-only challenger until review-clean. Audit lane: `codex/full-repo-audit-20260712` at `/Users/gillettes/Coding Projects/mission-control-worktrees/full-repo-audit-20260712`. | owner: Codex thread `019f59f8-bb9e-70c0-9497-a9686ea24154` | linear: repo-only; no Mission Control Linear team is configured.
-- ER-134 desktop-first usability (2026-07-12): light Home ≤3 Needs-you, menu-bar panel, decide answer→Goal prompt. Suites on the current full-audit candidate: render-smoke all 7 tabs; er134-usability 50/0; dashboard.test.sh PASS=62 FAIL=0; real-browser desktop/mobile gate 253/0.
+- ER-134 desktop-first usability (2026-07-12): light Home ≤3 Needs-you, menu-bar panel, decide answer→Goal prompt. Suites on the current full-audit candidate: render-smoke all 7 tabs; er134-usability 50/0; dashboard.test.sh PASS=63 FAIL=0; real-browser desktop/mobile gate 253/0.
 If it's not here, it isn't remembered.
 Capture the current goal plus the concrete dependency-ordered steps that are still open.
 - Keep this section short, current, and ordered by impact/dependency.
@@ -596,7 +596,7 @@ Keep materially new suggestions here so they survive beyond the current chat.
 - base: `main`
 - worktree: `/Users/gillettes/Coding Projects/mission-control-worktrees/full-repo-audit-20260712`
 - source chat: Codex thread `019f59f8-bb9e-70c0-9497-a9686ea24154`
-- last refreshed by chat: 2026-07-12 independent challenger round two
+- last refreshed by chat: 2026-07-12 independent challenger round three
 - purpose: Reconcile prior Mission Control sessions, repair confirmed end-to-end defects, and iterate independent audit plus full verification until clean.
 - linked issue: self-contained; Linear repo-only mode in `LINEAR.md`
 - plugin mirror: none; no live Mission Control Linear team/prefix verified

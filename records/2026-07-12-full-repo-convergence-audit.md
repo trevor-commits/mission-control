@@ -1,7 +1,7 @@
 # Full-repo convergence audit
 
 Date: 2026-07-12
-Status: implementation repaired; final immutable verification and challenger recheck pending
+Status: third-round transaction repair implemented; final immutable verification and challenger recheck pending
 Audit branch: `codex/full-repo-audit-20260712`
 Audit worktree: `/Users/gillettes/Coding Projects/mission-control-worktrees/full-repo-audit-20260712`
 Merge target/base inspected: `origin/main` at `659b8d218cb57044506f949d0a3fd47de921eb42`
@@ -79,6 +79,7 @@ Fresh topology proof found only two branches with commits not ancestrally reacha
 |---|---|---|
 | P1 | Decision-answer writers could split prompt, answer JSON, and decision history | Per-decision advisory lock spans the whole transaction; state is rechecked under lock; concurrent regression requires exactly one coherent winner. |
 | P1 | Caller-controlled `MC_DECISION_ANSWER_LOCK_HELD=1` bypassed the first lock repair | Removed environment trust. The lock is now an inherited, inode-verified file descriptor; the regression deliberately sets the old marker on both writers. |
+| P1 | A blocked answer-sidecar path failed after database resolution, leaving a prompt plus unretryable resolved decision but no answer receipt | Both filesystem artifacts are now preflighted and staged before resolution, then atomically published. Exact-choice replay recognizes a matching manual resolution and repairs a crash between database resolution and artifact publication. The regression covers both blocked-first-attempt and post-resolution recovery. |
 | P1 | Proof harvesting replaced Trevor-owned read/understood/notes fields | Machine columns merge into existing rows while the three operator columns remain unchanged. |
 | P1 | Proof rows broke on Markdown delimiters and could lose parseability | Escaped-cell parser/writer covers pipes, backslashes, and line breaks. |
 | P1 | Proof harvesting copied private `latest.md` prose into a tracked record | Raw brief prose is never read or copied; only bounded receipt state, counts, timestamps, section count, and validated digest are retained. Malicious ID/state/prose fixtures are rejected or excluded. |
@@ -103,19 +104,19 @@ Focused repaired-candidate evidence before the immutable full run:
 
 - `scripts/harvest-morning-brief-proof --self-test` — PASS, including human-field preservation, escaped operator note, private-prose exclusion, and invalid receipt rejection.
 - `scripts/scan-unfinished-work --self-test` — PASS, including clean no-remote default and lifecycle-only nonzero exit.
-- `scripts/dashboard.test.sh` — `PASS=62 FAIL=0`, including 12 concurrent answer races with the forged legacy marker.
+- `scripts/dashboard.test.sh` — `PASS=63 FAIL=0`, including 12 concurrent answer races with the forged legacy marker, blocked-sidecar no-resolution proof, successful retry, and exact-choice post-resolution recovery.
 - `scripts/er134-usability.test.sh` — `50 passed, 0 failed`, including three app-bundle symlink counterexamples.
 - `node scripts/dashboard-browser.test.js` — `253 assertions passed` across installed/demo desktop and mobile surfaces.
 - `git diff --check` and Bash syntax — PASS.
 
-Final immutable candidate SHA, authoritative `scripts/verify.sh` result, independent final verdicts, merge/install/push proof, and live state are recorded in the final closeout update to this record.
+The superseded `df7ab2c` candidate completed the authoritative matrix with `SUITES PASS=21 FAIL=0`, but the independent reviewer then found the blocked-sidecar P1 above. That green run is retained as suite evidence, not accepted as a final verdict. Final immutable candidate SHA, a fresh authoritative result after the transaction repair, independent final verdicts, merge/install/push proof, and live state are recorded in the final closeout update to this record.
 
 ## Honest residual gates
 
 These are not unimplemented repo defects and must not be papered over with synthetic evidence:
 
 1. The proof log contains three natural delivered mornings (July 10–12), not five, and Trevor's read/understood fields remain blank until he supplies them.
-2. Outcome Extractor needs a separately authorized privacy-screened live provider calibration before activation. Offline code/tests are complete; an already-loaded uncalibrated label is a runtime-state defect to be returned to fail-closed before closeout.
+2. Outcome Extractor needs a separately authorized privacy-screened live provider calibration before activation. Offline code/tests are complete. The prematurely registered zero-run label was unloaded and its byte-identical plist moved to `/Users/gillettes/Library/LaunchAgents/com.gillettes.outcome-extractor.plist.pending-calibration-20260713` (SHA-256 `e5e561f72e86bbc2cfcb0c00c10deab60ff5522d31d56e6fbd6a04337eb294d9`); the canonical plist is absent and the label is not loaded. Rollback after an approved calibration: move it back to `com.gillettes.outcome-extractor.plist`, validate with `plutil`, then bootstrap the label.
 3. Provider delivery is intentionally at-least-once. Provider acceptance followed by a local crash before receipt persistence remains an explicit ambiguity; the queued reconciliation state machine is not falsely claimed here.
 4. The portfolio automatic work executor is a separately scoped global capability with broader authority and safety design. It is not silently pulled into this repo audit.
 

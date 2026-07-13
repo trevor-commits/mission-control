@@ -1826,7 +1826,70 @@ PY
   fi
 }
 
-c1; c2; c3; c4; c5; c6; c7; c8; c8a; c8b; c9; c10; c11; c12; c13; c14; c14a; c15; c16; c17; c18; c19; c20; c21; c22; c23; c24; c25; c26; c27; c28; c29; c30; c31; c32; c33; c34; c35; c36; c37; c38; c39; c40; c41; c42; c43; c44; c45; c46; c47
+c48() { # blocked publication stays open; exact resolved state is recoverable
+  local mch created did victim first_rc=0 miss=0 recover_created recover_did
+  mch="$(newhome)"; victim="$mch/outside-answer.json"
+  created="$(MISSION_CONTROL_HOME="$mch" "$REPO/scripts/decision-alert" ingest \
+    --source-kind manual --source-key "answer-blocked-retry" \
+    --text '**DECISION NEEDED:** Pick one. **`One`**. **`Two`**.' \
+    --trust structured --provenance manual --json)" || { no "decide-answer: blocked fixture ingest"; return; }
+  did="$(python3 -c 'import json,sys;print(json.loads(sys.argv[1])["decision"]["id"])' "$created")"
+  env -u DASHBOARD_CMD_DECISIONS REPO_ROOT="$REPO" MISSION_CONTROL_HOME="$mch" \
+    bash "$DASH" collect --force decisions >/dev/null 2>&1
+  mkdir -p "$mch/answers" "$mch/prompts"
+  printf 'unchanged\n' > "$victim"
+  ln -s "$victim" "$mch/answers/$did.json"
+  env -u DASHBOARD_CMD_DECISIONS REPO_ROOT="$REPO" MISSION_CONTROL_HOME="$mch" \
+    bash "$DASH" decide answer "$did" 1 >"$mch/blocked.out" 2>"$mch/blocked.err" || first_rc=$?
+  MISSION_CONTROL_HOME="$mch" "$REPO/scripts/decision-alert" history "$did" --json >"$mch/blocked-history.json" || miss=1
+  python3 - "$first_rc" "$victim" "$mch/answers/$did.json" \
+    "$mch/prompts/$did.md" "$mch/blocked-history.json" <<'PY' || miss=1
+import json,os,sys
+assert int(sys.argv[1]) != 0
+assert open(sys.argv[2]).read() == "unchanged\n"
+assert os.path.islink(sys.argv[3])
+assert not os.path.exists(sys.argv[4])
+assert json.load(open(sys.argv[5]))["decision"]["state"] == "open"
+PY
+  rm -f "$mch/answers/$did.json"
+  env -u DASHBOARD_CMD_DECISIONS REPO_ROOT="$REPO" MISSION_CONTROL_HOME="$mch" \
+    bash "$DASH" decide answer "$did" 1 >"$mch/retry.out" 2>"$mch/retry.err" || miss=1
+  MISSION_CONTROL_HOME="$mch" "$REPO/scripts/decision-alert" history "$did" --json >"$mch/retry-history.json" || miss=1
+  python3 - "$mch/answers/$did.json" "$mch/prompts/$did.md" "$mch/retry-history.json" <<'PY' || miss=1
+import json,sys
+answer=json.load(open(sys.argv[1]));prompt=open(sys.argv[2]).read();history=json.load(open(sys.argv[3]))
+assert answer["choice"] == 1
+assert "Trevor choice: 1" in prompt
+assert history["decision"]["state"] == "resolved"
+assert history["decision"]["resolution"]["evidence_ref"] == "mc-answer:1"
+PY
+  # Model a crash after the SQLite resolution but before either staged artifact
+  # is published. Exact-choice replay must derive both files and return success.
+  recover_created="$(MISSION_CONTROL_HOME="$mch" "$REPO/scripts/decision-alert" ingest \
+    --source-kind manual --source-key "answer-post-resolve-recovery" \
+    --text '**DECISION NEEDED:** Recover one. **`One`**. **`Two`**.' \
+    --trust structured --provenance manual --json)" || miss=1
+  recover_did="$(python3 -c 'import json,sys;print(json.loads(sys.argv[1])["decision"]["id"])' "$recover_created")"
+  env -u DASHBOARD_CMD_DECISIONS REPO_ROOT="$REPO" MISSION_CONTROL_HOME="$mch" \
+    bash "$DASH" collect --force decisions >/dev/null 2>&1
+  MISSION_CONTROL_HOME="$mch" "$REPO/scripts/decision-alert" resolve "$recover_did" \
+    --evidence-type manual_resolution --evidence-ref mc-answer:1 --json >/dev/null || miss=1
+  [ ! -e "$mch/answers/$recover_did.json" ] && [ ! -e "$mch/prompts/$recover_did.md" ] || miss=1
+  env -u DASHBOARD_CMD_DECISIONS REPO_ROOT="$REPO" MISSION_CONTROL_HOME="$mch" \
+    bash "$DASH" decide answer "$recover_did" 1 >"$mch/recover.out" 2>"$mch/recover.err" || miss=1
+  python3 - "$mch/answers/$recover_did.json" "$mch/prompts/$recover_did.md" <<'PY' || miss=1
+import json,sys
+assert json.load(open(sys.argv[1]))["choice"] == 1
+assert "Trevor choice: 1" in open(sys.argv[2]).read()
+PY
+  if [ "$miss" -eq 0 ]; then
+    ok "decide-answer: blocked sidecar stays open and exact-choice recovery completes coherently"
+  else
+    no "decide-answer: blocked sidecar caused partial or unretryable resolution"
+  fi
+}
+
+c1; c2; c3; c4; c5; c6; c7; c8; c8a; c8b; c9; c10; c11; c12; c13; c14; c14a; c15; c16; c17; c18; c19; c20; c21; c22; c23; c24; c25; c26; c27; c28; c29; c30; c31; c32; c33; c34; c35; c36; c37; c38; c39; c40; c41; c42; c43; c44; c45; c46; c47; c48
 shell_contract
 echo "----"
 echo "PASS=$PASS FAIL=$FAIL"
