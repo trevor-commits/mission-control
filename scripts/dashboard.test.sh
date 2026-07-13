@@ -1889,7 +1889,40 @@ PY
   fi
 }
 
-c1; c2; c3; c4; c5; c6; c7; c8; c8a; c8b; c9; c10; c11; c12; c13; c14; c14a; c15; c16; c17; c18; c19; c20; c21; c22; c23; c24; c25; c26; c27; c28; c29; c30; c31; c32; c33; c34; c35; c36; c37; c38; c39; c40; c41; c42; c43; c44; c45; c46; c47; c48
+c49() { # linked transaction parent directories cannot redirect artifacts
+  local kind mch outside created did rc history miss=0 count
+  for kind in answers prompts; do
+    mch="$(newhome)"; outside="$(mktemp -d "$ROOT/outside-$kind.XXXXXX")"
+    printf 'unchanged\n' > "$outside/sentinel"
+    created="$(MISSION_CONTROL_HOME="$mch" "$REPO/scripts/decision-alert" ingest \
+      --source-kind manual --source-key "answer-parent-$kind" \
+      --text '**DECISION NEEDED:** Parent test. **`One`**. **`Two`**.' \
+      --trust structured --provenance manual --json)" || { miss=1; continue; }
+    did="$(python3 -c 'import json,sys;print(json.loads(sys.argv[1])["decision"]["id"])' "$created")"
+    [ "$kind" = prompts ] && mkdir -p "$mch/answers"
+    ln -s "$outside" "$mch/$kind"
+    rc=0
+    env -u DASHBOARD_CMD_DECISIONS REPO_ROOT="$REPO" MISSION_CONTROL_HOME="$mch" \
+      bash "$DASH" decide answer "$did" 1 >"$mch/$kind.out" 2>"$mch/$kind.err" || rc=$?
+    history="$(MISSION_CONTROL_HOME="$mch" "$REPO/scripts/decision-alert" history "$did" --json)" || { miss=1; continue; }
+    count="$(find "$outside" -mindepth 1 -maxdepth 1 -type f | wc -l | tr -d ' ')"
+    if [ "$rc" -eq 0 ] || [ "$count" -ne 1 ] || [ "$(cat "$outside/sentinel")" != unchanged ] || \
+       ! HISTORY_JSON="$history" python3 - <<'PY'
+import json,os
+assert json.loads(os.environ["HISTORY_JSON"])["decision"]["state"] == "open"
+PY
+    then
+      miss=1
+    fi
+  done
+  if [ "$miss" -eq 0 ]; then
+    ok "decide-answer: linked answer/prompt parent dirs fail before state or outside writes"
+  else
+    no "decide-answer: linked state parent redirected artifacts or changed decision"
+  fi
+}
+
+c1; c2; c3; c4; c5; c6; c7; c8; c8a; c8b; c9; c10; c11; c12; c13; c14; c14a; c15; c16; c17; c18; c19; c20; c21; c22; c23; c24; c25; c26; c27; c28; c29; c30; c31; c32; c33; c34; c35; c36; c37; c38; c39; c40; c41; c42; c43; c44; c45; c46; c47; c48; c49
 shell_contract
 echo "----"
 echo "PASS=$PASS FAIL=$FAIL"

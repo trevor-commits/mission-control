@@ -1476,8 +1476,21 @@ case "$cmd" in
         printf '%s\n' "$did" | grep -Eq '^decision:[0-9a-f]{24}$' || {
           echo "decide answer: invalid decision id" >&2; exit 2;
         }
-        mkdir -p "$MISSION_CONTROL_HOME/answers" "$MISSION_CONTROL_HOME/prompts" || exit 1
-        chmod 700 "$MISSION_CONTROL_HOME/answers" "$MISSION_CONTROL_HOME/prompts" 2>/dev/null || true
+        # These directories hold private transaction state. Refuse a linked or
+        # non-directory root before lock/stage creation so artifacts cannot be
+        # redirected outside Mission Control state.
+        python3 - "$MISSION_CONTROL_HOME" <<'PY' || exit $?
+import os, stat, sys
+home=sys.argv[1]
+for path in (home,os.path.join(home,"answers"),os.path.join(home,"prompts")):
+    if os.path.lexists(path):
+        st=os.lstat(path)
+        if stat.S_ISLNK(st.st_mode) or not stat.S_ISDIR(st.st_mode):
+            raise SystemExit("decide answer: unsafe state directory: %s"%path)
+    else:
+        os.mkdir(path,0o700)
+    os.chmod(path,0o700)
+PY
         lock_path="$MISSION_CONTROL_HOME/answers/.${did}.lock"
         if [ "$answer_mode" = "answer" ]; then
           # Hold a kernel-released advisory lock across the complete cross-store
@@ -1574,7 +1587,10 @@ PY
         chmod 600 "$prompt_stage" "$answer_stage" || {
           rm -f "$prompt_stage" "$answer_stage"; exit 1;
         }
-        trap 'rm -f "${prompt_stage:-}" "${answer_stage:-}"' EXIT HUP INT TERM
+        trap 'rm -f "${prompt_stage:-}" "${answer_stage:-}"' EXIT
+        trap 'exit 129' HUP
+        trap 'exit 130' INT
+        trap 'exit 143' TERM
         compose_bin="$REPO_ROOT/scripts/compose-decision-prompt.py"
         [ -f "$compose_bin" ] || compose_bin="$SCRIPT_DIR/compose-decision-prompt.py"
         compose_out="$(python3 "$compose_bin" \

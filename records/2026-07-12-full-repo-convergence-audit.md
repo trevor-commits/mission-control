@@ -1,7 +1,7 @@
 # Full-repo convergence audit
 
 Date: 2026-07-12
-Status: third-round transaction repair implemented; final immutable verification and challenger recheck pending
+Status: fourth-round transaction boundary repair implemented; final immutable verification and challenger recheck pending
 Audit branch: `codex/full-repo-audit-20260712`
 Audit worktree: `/Users/gillettes/Coding Projects/mission-control-worktrees/full-repo-audit-20260712`
 Merge target/base inspected: `origin/main` at `659b8d218cb57044506f949d0a3fd47de921eb42`
@@ -80,6 +80,7 @@ Fresh topology proof found only two branches with commits not ancestrally reacha
 | P1 | Decision-answer writers could split prompt, answer JSON, and decision history | Per-decision advisory lock spans the whole transaction; state is rechecked under lock; concurrent regression requires exactly one coherent winner. |
 | P1 | Caller-controlled `MC_DECISION_ANSWER_LOCK_HELD=1` bypassed the first lock repair | Removed environment trust. The lock is now an inherited, inode-verified file descriptor; the regression deliberately sets the old marker on both writers. |
 | P1 | A blocked answer-sidecar path failed after database resolution, leaving a prompt plus unretryable resolved decision but no answer receipt | Both filesystem artifacts are now preflighted and staged before resolution, then atomically published. Exact-choice replay recognizes a matching manual resolution and repairs a crash between database resolution and artifact publication. The regression covers both blocked-first-attempt and post-resolution recovery. |
+| P1 | Symlinked `answers/` or `prompts/` parent directories redirected private transaction artifacts outside the Mission Control state root | State home plus both transaction parents are now `lstat`-validated as real directories before chmod, lock, or staging. Regressions cover both linked parents, unchanged external sentinels, no outside artifact, and an open decision after refusal. |
 | P1 | Proof harvesting replaced Trevor-owned read/understood/notes fields | Machine columns merge into existing rows while the three operator columns remain unchanged. |
 | P1 | Proof rows broke on Markdown delimiters and could lose parseability | Escaped-cell parser/writer covers pipes, backslashes, and line breaks. |
 | P1 | Proof harvesting copied private `latest.md` prose into a tracked record | Raw brief prose is never read or copied; only bounded receipt state, counts, timestamps, section count, and validated digest are retained. Malicious ID/state/prose fixtures are rejected or excluded. |
@@ -104,12 +105,12 @@ Focused repaired-candidate evidence before the immutable full run:
 
 - `scripts/harvest-morning-brief-proof --self-test` — PASS, including human-field preservation, escaped operator note, private-prose exclusion, and invalid receipt rejection.
 - `scripts/scan-unfinished-work --self-test` — PASS, including clean no-remote default and lifecycle-only nonzero exit.
-- `scripts/dashboard.test.sh` — `PASS=63 FAIL=0`, including 12 concurrent answer races with the forged legacy marker, blocked-sidecar no-resolution proof, successful retry, and exact-choice post-resolution recovery.
+- `scripts/dashboard.test.sh` — `PASS=64 FAIL=0`, including 12 concurrent answer races with the forged legacy marker, blocked-sidecar no-resolution proof, successful retry, exact-choice post-resolution recovery, and linked-parent refusal for both artifact roots.
 - `scripts/er134-usability.test.sh` — `50 passed, 0 failed`, including three app-bundle symlink counterexamples.
 - `node scripts/dashboard-browser.test.js` — `253 assertions passed` across installed/demo desktop and mobile surfaces.
 - `git diff --check` and Bash syntax — PASS.
 
-The superseded `df7ab2c` candidate completed the authoritative matrix with `SUITES PASS=21 FAIL=0`, but the independent reviewer then found the blocked-sidecar P1 above. That green run is retained as suite evidence, not accepted as a final verdict. Final immutable candidate SHA, a fresh authoritative result after the transaction repair, independent final verdicts, merge/install/push proof, and live state are recorded in the final closeout update to this record.
+The superseded `df7ab2c` and `f67e079` candidates each completed the authoritative matrix with `SUITES PASS=21 FAIL=0`, but independent review then found, respectively, the blocked-sidecar and linked-parent P1s above. Those green runs are retained as suite evidence, not accepted as final verdicts. Final immutable candidate SHA, a fresh authoritative result after the parent-boundary repair, independent final verdicts, merge/install/push proof, and live state are recorded in the final closeout update to this record.
 
 ## Honest residual gates
 
