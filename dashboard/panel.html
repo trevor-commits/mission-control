@@ -57,7 +57,7 @@ button.linkish, a.linkish {
 <div class="row">
   <button class="linkish" type="button" id="refresh">Refresh</button>
   <button class="linkish" type="button" id="theme">Dark mode</button>
-  <a class="linkish" id="open-full" href="index.html">Open full Mission Control</a>
+  <button class="linkish" type="button" id="open-full">Open full Mission Control</button>
 </div>
 <script>
 (function () {
@@ -75,6 +75,15 @@ button.linkish, a.linkish {
     applyTheme(theme() === "dark" ? "light" : "dark");
   };
   document.getElementById("refresh").onclick = function () { location.reload(); };
+  document.getElementById("open-full").onclick = function () {
+    if (window.webkit && window.webkit.messageHandlers &&
+        window.webkit.messageHandlers.mcOpenFull) {
+      window.webkit.messageHandlers.mcOpenFull.postMessage({});
+      return;
+    }
+    // Browser fallback when not inside mc-panel WKWebView.
+    try { location.href = "index.html"; } catch (e) {}
+  };
 
   function parseOptions(text) {
     var raw = String(text || ""), opts = [], suggested = null, m;

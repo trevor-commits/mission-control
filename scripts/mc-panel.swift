@@ -33,6 +33,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
 
     let config = WKWebViewConfiguration()
     config.userContentController.add(self, name: "mcDecide")
+    config.userContentController.add(self, name: "mcOpenFull")
     let web = WKWebView(frame: NSRect(x: 0, y: 0, width: 380, height: 460), configuration: config)
     web.setValue(false, forKey: "drawsBackground")
     webView = web
@@ -84,8 +85,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
     return false
   }
 
+  func openFullMissionControl() {
+    let index = FileManager.default.homeDirectoryForCurrentUser
+      .appendingPathComponent(".mission-control/index.html")
+    guard FileManager.default.fileExists(atPath: index.path) else {
+      notify("Mission Control", "index.html missing — run dashboard install")
+      return
+    }
+    NSWorkspace.shared.open(index)
+  }
+
   func userContentController(_ userContentController: WKUserContentController,
                              didReceive message: WKScriptMessage) {
+    if message.name == "mcOpenFull" {
+      DispatchQueue.main.async { [weak self] in self?.openFullMissionControl() }
+      return
+    }
     guard message.name == "mcDecide" else { return }
     guard let body = message.body as? [String: Any] else { return }
     let idRaw = (body["id"] as? String) ?? ""
