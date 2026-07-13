@@ -292,11 +292,11 @@ stamp = time.time() - 3 * 3600
 os.utime(sys.argv[1], (stamp, stamp))
 PYEOF
 "$CG" doctor >/dev/null; RC=$?
-ok 0 "$RC" "doctor accepts a 3h-old full ingest inside the 30h nightly SLA"
+ok 0 "$RC" "doctor accepts a 3h-old full ingest inside the 28h nightly SLA"
 if "$CG" show DA 2>&1 | grep -q "warning: last ingest"; then
   fail "show warns for a healthy 3h-old nightly full ingest"
 else
-  pass "show accepts a 3h-old full ingest inside the 30h nightly SLA"
+  pass "show accepts a 3h-old full ingest inside the 28h nightly SLA"
 fi
 MISSION_CONTROL_FULL_INGEST_SLA_S=3600 "$CG" doctor >/dev/null; RC=$?
 ok 1 "$RC" "doctor honors a stricter 1h full-ingest SLA override"
@@ -304,14 +304,14 @@ MISSION_CONTROL_FULL_INGEST_SLA_S=172800 "$CG" doctor >/dev/null; RC=$?
 ok 0 "$RC" "doctor honors a wider 48h full-ingest SLA override"
 python3 - "$CHAT_GRAPH_HOME/last-ingest" <<'PYEOF'
 import os, sys, time
-stamp = time.time() - 31 * 3600
+stamp = time.time() - (29 * 3600 + 1800)
 os.utime(sys.argv[1], (stamp, stamp))
 PYEOF
 "$CG" doctor >/dev/null; RC=$?
-ok 1 "$RC" "doctor rejects a 31h-old full ingest outside the 30h nightly SLA"
+ok 1 "$RC" "doctor rejects a schedule-aligned 29.5h-old missed ingest outside the 28h SLA"
 "$CG" show DA 2>&1 | grep -q "warning: last ingest" \
-  && pass "show warns for a genuinely stale 31h-old full ingest" \
-  || fail "show omits warning for a stale 31h-old full ingest"
+  && pass "show warns for a genuinely stale 29.5h-old full ingest" \
+  || fail "show omits warning for a stale 29.5h-old full ingest"
 python3 - "$CHAT_GRAPH_HOME/last-ingest" <<'PYEOF'
 import os, sys, time
 stamp = time.time() + 3600
@@ -700,7 +700,7 @@ assert "last_full_ingest_epoch" in c
 assert "last_full_ingest_age_s" in c
 assert c["last_full_ingest_epoch"] is None
 assert c["last_full_ingest_age_s"] is None
-assert c["full_ingest_sla_s"] == 30 * 3600, c
+assert c["full_ingest_sla_s"] == 28 * 3600, c
 assert c["full_ingest_state"] == "unknown", c
 assert c["full_ingest_stale"] is True, c
 PYEOF

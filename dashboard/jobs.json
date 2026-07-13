@@ -15,8 +15,8 @@
       "label": "Outcome Extractor",
       "name": "com.gillettes.outcome-extractor",
       "activation_required": true,
-      "retry_schedule": "06:47 and 06:54",
-      "schedule": "06:40 daily"
+      "retry_schedule": "04:47 and 04:54",
+      "schedule": "04:40 daily"
     },
     {
       "evidence": [
@@ -169,7 +169,7 @@
       "label": "Morning Brief",
       "name": "com.gillettes.morning-brief",
       "activation_required": true,
-      "schedule": "07:00 daily"
+      "schedule": "05:00 daily"
     },
     {
       "evidence": [
@@ -185,7 +185,7 @@
       "label": "Morning Brief Deadman",
       "name": "com.gillettes.morning-brief-deadman",
       "activation_required": true,
-      "schedule": "07:20 daily"
+      "schedule": "05:20 daily"
     },
     {
       "evidence": [

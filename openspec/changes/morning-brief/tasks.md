@@ -33,8 +33,8 @@
 ## 6. Delivery and deadman
 
 - [x] 6.1 Add failing tests for fixed-argv send, field-aware chunks, brief/chunk identity, partial-send retry, completed-send no-op, failed-send cursor retention, and scrubbed launchd environment.
-- [x] 6.2 Implement `--send`, per-chunk receipts, delivery status, dedupe, and the 7:00 AM fully-expanded launchd template.
-- [x] 6.3 Implement and test the independent 7:20 delivery deadman, throttling, direct redacted failure path, and registry/installer wiring.
+- [x] 6.2 Implement `--send`, per-chunk receipts, delivery status, dedupe, and the operator-ordered 5:00 AM fully-expanded launchd template.
+- [x] 6.3 Implement and test the independent 5:20 delivery deadman, throttling, direct redacted failure path, and registry/installer wiring.
 - [x] 6.4 Complete the high-risk privacy/side-effect review gate before the first authorized live transcript egress or Telegram proof.
 
 ## 7. Session outcomes and coverage calibration

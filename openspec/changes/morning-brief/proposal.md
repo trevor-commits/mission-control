@@ -42,6 +42,6 @@ None. Mission Control has no prior OpenSpec living requirements; existing runtim
 
 - Code: `scripts/chat-graph`, `scripts/automation-status`, `scripts/scan-unfinished-work`, `scripts/dashboard`, new brief/decision/runner scripts, dashboard renderers, and tests.
 - State: additive SQLite tables/columns, `$MISSION_CONTROL_HOME/job-history.json`, brief cursor/delivery files, runner log, and launchd job state.
-- Runtime: new 7:00 AM brief and 7:20 AM deadman labels; existing Telegram/mobile-connect configuration is reused without copying secrets.
+- Runtime: 5:00 AM brief and 5:20 AM deadman labels; existing Telegram/mobile-connect configuration is reused without copying secrets. This reflects the operator-ordered schedule change in commit `1eeb45d`.
 - Operations: installed runtime, job registry, doctor/health evidence, rollback commands, and five-morning proof.
 - Governance: ER-107, Mission Control `todo.md`, project memory, OpenSpec verify/retrospective, independent Codex audit loop, and source-card provenance.

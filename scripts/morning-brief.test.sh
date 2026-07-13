@@ -348,7 +348,8 @@ else fail "section dedup keeps different-provenance rows and drops exact duplica
 # Defect (a) regression: nested full-ingest freshness uses the NIGHTLY SLA, not
 # the 1800s envelope cadence. The full transcript pass runs nightly (23:30
 # com.gillettes.nightly-review -> chat-graph ingest), so a healthy last-night
-# ingest (~26h band) must NOT flag, while a genuinely MISSED nightly (>30h SLA)
+# ingest (~26h band) must NOT flag, while a schedule-aligned missed nightly
+# (~29.5h old at the 05:00 brief) exceeds the 28h SLA and MUST flag.
 # MUST flag. (Round-3 encoded the defect: 26h treated as stale under the 1800s
 # cadence, so a healthy nightly ingest read as stale every morning.)
 NEST="$TMP/nested"; mkdir -p "$NEST/state/data"
@@ -363,7 +364,7 @@ def write(name, data, cadence):
 write("automation", {"jobs": [], "counts": {"red":0,"green":1}}, 300)
 write("git", {"repos": []}, 900)
 # envelope fresh (generated_epoch == now); nested full-ingest age varies.
-state = "stale" if age > 30 * 3600 else "fresh"
+state = "stale" if age > 28 * 3600 else "fresh"
 write("chats", {"nodes":[],"edges":[],"loose_ends":[],"loose_end_changes":[],
                 "counts":{"last_full_ingest_age_s": age,
                           "full_ingest_state": state,
@@ -382,8 +383,8 @@ assert "chats" not in d["stale_required_inputs"], d["stale_required_inputs"]
 PY
 then pass "healthy last-night full ingest (26h) is NOT flagged stale by the morning brief"
 else fail "healthy last-night full ingest (26h) is NOT flagged stale by the morning brief"; fi
-# Genuinely missed nightly (50h) must be reported stale.
-mk_nest "$NEST/missed/state" $((50*3600))
+# A missed 23:30 nightly at the 05:00 brief is 29.5h old and must be stale.
+mk_nest "$NEST/missed/state" $((29*3600+1800))
 if MISSION_CONTROL_HOME="$NEST/missed/state" MORNING_BRIEF_NOW_EPOCH=1783674000 "$BRIEF" >/dev/null 2>&1 && \
    python3 - "$NEST/missed/state/morning-brief/latest.json" <<'PY'
 import json, sys
@@ -391,8 +392,8 @@ d=json.load(open(sys.argv[1]))
 assert d["inputs"]["chats"]["state"] == "stale", d["inputs"]["chats"]
 assert "chats" in d["stale_required_inputs"], d["stale_required_inputs"]
 PY
-then pass "genuinely missed nightly full ingest (50h) is reported stale (nested freshness)"
-else fail "genuinely missed nightly full ingest (50h) is reported stale (nested freshness)"; fi
+then pass "schedule-aligned missed nightly full ingest (29.5h) is reported stale"
+else fail "schedule-aligned missed nightly full ingest (29.5h) is reported stale"; fi
 
 # Skew regression: a chats input whose generated_epoch is in the FUTURE (clock
 # skew / invalid envelope) must render as its own visible "skew" warning, never

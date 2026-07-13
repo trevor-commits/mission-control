@@ -318,7 +318,7 @@ for (const tab of TABS) {
        txt.indexOf('failure streak 2') === -1 || txt.indexOf('Run now') === -1 ||
        txt.indexOf('Status: awaiting activation') === -1 ||
        txt.indexOf('Next run: available after activation') === -1 ||
-       txt.indexOf('retries 06:47 and 06:54') === -1 ||
+       txt.indexOf('retries 04:47 and 04:54') === -1 ||
        txt.indexOf(ACTIVATION_STALE_LABEL) !== -1 ||
        txt.indexOf(TOKEN_PREFIX_ONLY) !== -1 || txt.indexOf(TOKEN_SECRET_SUFFIX) !== -1 ||
        PRIVACY_CASES.some(x => txt.indexOf(x.value) !== -1) ||
@@ -683,8 +683,8 @@ for (const tab of TABS) {
 // ER-109 round 5: full-ingest freshness must come from the feed's computed
 // full_ingest_stale flag (nightly SLA via mission_control_common.nested_ingest_stale),
 // not a re-implemented 1800s threshold. A healthy nightly ingest ~3286s old (past the
-// old buggy 30-minute threshold, well inside the 30h SLA) must render NOT-stale; a
-// genuinely missed nightly (>30h) must render stale. Both fixtures carry the raw age
+// old buggy 30-minute threshold, well inside the 28h SLA) must render NOT-stale; a
+// schedule-aligned missed nightly (~29.5h) must render stale. Both fixtures carry the raw age
 // AND the flag a real chat-graph export would stamp for that age, so a renderer that
 // regresses to reading last_full_ingest_age_s directly fails the healthy case.
 function renderHomeWithChatsCounts(overrides) {
@@ -728,17 +728,17 @@ function renderHomeWithChatsCounts(overrides) {
 (function fullIngestFreshnessMissed() {
   let txt;
   try {
-    txt = renderHomeWithChatsCounts({ last_full_ingest_age_s: 111600,
-      full_ingest_state: 'stale', full_ingest_stale: true }); // ~31h
+    txt = renderHomeWithChatsCounts({ last_full_ingest_age_s: 106200,
+      full_ingest_state: 'stale', full_ingest_stale: true }); // 29.5h
   } catch (e) {
     console.error('FAIL: missed full-ingest home render THREW: ' + (e && e.message));
     fails++; return;
   }
   if (txt.indexOf('full chat scan is stale') === -1) {
-    console.error('FAIL: genuinely missed nightly ingest (age 111600s, full_ingest_stale=true) did not render stale');
+    console.error('FAIL: genuinely missed nightly ingest (age 106200s, full_ingest_stale=true) did not render stale');
     fails++; return;
   }
-  console.log('PASS: genuinely missed nightly full ingest (age ~31h) renders stale');
+  console.log('PASS: schedule-aligned missed nightly full ingest (age 29.5h) renders stale');
 })();
 (function fullIngestFreshnessUnknown() {
   let txt;
@@ -781,7 +781,7 @@ function renderHomeWithChatsCounts(overrides) {
     { last_full_ingest_age_s: 7 * 3600, full_ingest_stale: false },
     { last_full_ingest_age_s: 7 * 3600, ingest_skipped: 'false',
       full_ingest_state: 'fresh', full_ingest_stale: false },
-    { last_full_ingest_age_s: 30 * 3600 + 0.1,
+    { last_full_ingest_age_s: 28 * 3600 + 0.1,
       full_ingest_state: 'fresh', full_ingest_stale: false },
   ];
   for (const counts of cases) {

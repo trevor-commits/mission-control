@@ -275,12 +275,17 @@ for tmpl in "$ROOT/launchd/com.gillettes.morning-brief.plist.template" \
   else fail "$(basename "$tmpl") plist contract"; fi
 done
 
-if python3 - "$ROOT/launchd/com.gillettes.outcome-extractor.plist.template" <<'PY'
+if python3 - "$ROOT/launchd/com.gillettes.outcome-extractor.plist.template" \
+             "$ROOT/launchd/com.gillettes.morning-brief.plist.template" <<'PY'
 import plistlib,sys
 with open(sys.argv[1],"rb") as handle:
-    data=plistlib.load(handle)
-slots=data["StartCalendarInterval"]
-assert [(slot["Hour"],slot["Minute"]) for slot in slots] == [(6,40),(6,47),(6,54)]
+    outcome=plistlib.load(handle)
+with open(sys.argv[2],"rb") as handle:
+    brief=plistlib.load(handle)
+slots=[(slot["Hour"],slot["Minute"]) for slot in outcome["StartCalendarInterval"]]
+brief_slot=(brief["StartCalendarInterval"]["Hour"],brief["StartCalendarInterval"]["Minute"])
+assert slots == [(4,40),(4,47),(4,54)]
+assert max(slots) < brief_slot == (5,0)
 PY
 then pass "outcome extractor has bounded pre-brief retry slots"
 else fail "outcome extractor retry schedule"; fi

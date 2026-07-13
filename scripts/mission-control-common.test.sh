@@ -183,7 +183,7 @@ assert h["state"] == "stale" and h["red"] is True, h
 h = feed_health(env(generated_epoch=BR, valid_until=MID), CAD, MID + 300)
 assert h["state"] == "stale" and h["red"] is True, h
 
-# --- nightly full-ingest SLA (30h default), NOT the 1800s envelope cadence ---
+# --- nightly full-ingest SLA (28h default), NOT the 1800s envelope cadence ---
 def chats(age_s, **counts):
     c = {"last_full_ingest_age_s": age_s}
     c.update(counts)
@@ -191,6 +191,7 @@ def chats(age_s, **counts):
                data={"counts": c})
 assert nested_ingest_stale(chats(7 * 3600)) is False        # healthy last-night
 assert nested_ingest_stale(chats(26 * 3600)) is False       # within nightly band
+assert nested_ingest_stale(chats(29 * 3600 + 1800)) is True # missed 23:30 run at 05:00
 assert nested_ingest_stale(chats(50 * 3600)) is True        # missed nightly
 assert nested_ingest_stale(chats(None)) is True             # unknown -> stale
 assert nested_ingest_stale(env(feed="chats", generated_epoch=NOW, data={"counts": {}})) is True
@@ -234,9 +235,9 @@ for partial in ({"full_ingest_state": "fresh"},
     assert h["nested_state"] == "unknown" and h["nested_stale"] is True, h
 # Numeric comparison is exact and int-safe: no float truncation and no
 # math.isfinite conversion of arbitrary-size integers.
-assert nested_ingest_state(chats(30 * 3600, full_ingest_state="fresh",
+assert nested_ingest_state(chats(28 * 3600, full_ingest_state="fresh",
                                   full_ingest_stale=False)) == "fresh"
-assert nested_ingest_state(chats(30 * 3600 + 0.1,
+assert nested_ingest_state(chats(28 * 3600 + 0.1,
                                   full_ingest_state="fresh",
                                   full_ingest_stale=False)) == "unknown"
 assert nested_ingest_state(chats(10 ** 10000)) == "stale"
@@ -256,7 +257,7 @@ os.environ["MISSION_CONTROL_FULL_INGEST_SLA_S"] = "3600"
 assert nested_ingest_stale(chats(2 * 3600)) is True
 assert full_ingest_sla_s() == 3600
 os.environ["MISSION_CONTROL_FULL_INGEST_SLA_S"] = "-1"
-assert full_ingest_sla_s() == 30 * 3600
+assert full_ingest_sla_s() == 28 * 3600
 del os.environ["MISSION_CONTROL_FULL_INGEST_SLA_S"]
 
 # Persisted JSON time fields are strict finite integer seconds. Malformed,

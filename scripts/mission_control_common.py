@@ -387,11 +387,11 @@ def next_local_midnight(epoch):
 # 2026-07-10 23:31:21). Its staleness horizon is therefore a nightly one, NOT the
 # 1800s envelope cadence the chats FEED is regenerated on. Band: a healthy last-night
 # ingest tops out near the 24h cycle (marker stamped at completion, no meaningful
-# export lag), while a genuinely missed nightly is >=~31.5h at the 07:00 brief
-# (~48h general). 30h separates the two; an envelope may override with its own
+# export lag), while a genuinely missed nightly is >=~29.5h at the 05:00 brief.
+# 28h separates the two while allowing four hours of scheduler delay; an envelope may override with its own
 # completion SLA via counts.full_ingest_sla_s.
 def full_ingest_sla_s():
-    default = 30 * 3600
+    default = 28 * 3600
     try:
         value = int(os.environ.get("MISSION_CONTROL_FULL_INGEST_SLA_S", default))
     except (TypeError, ValueError):

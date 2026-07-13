@@ -48,7 +48,7 @@ Decision: evidence-gated state. `chat_open_end` and unanswered decisions remain 
 
 ### Q6 — What is the notification model?
 
-Decision: one short NEEDS-YOU-first 7:00 AM Telegram push plus the full local brief and dashboard view. The brief asserts every input's freshness. A separate 7:20 delivery deadman checks send-status, not file existence. Existing notification surfaces coexist during proof, but live-proof must end with an explicit subsume/keep/fold decision for each one.
+Decision: one short NEEDS-YOU-first 5:00 AM Telegram push plus the full local brief and dashboard view. The brief asserts every input's freshness. A separate 5:20 delivery deadman checks send-status, not file existence. Existing notification surfaces coexist during proof, but live-proof must end with an explicit subsume/keep/fold decision for each one. The original 7:00/7:20 design was superseded by the operator-ordered 5:00/5:20 schedule in commit `1eeb45d`.
 
 ### Q7 — How much autonomy ships?
 

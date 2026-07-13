@@ -61,7 +61,7 @@ scripts/chat-graph extract-outcomes \
   --json
 ```
 
-The resulting config is `~/.mission-control/outcome-extractor/config.json`. Only providers with a successful sampled result are enabled; unsampled or failed providers remain off. The scheduled 06:40 extractor remains fail-closed until this calibrated config exists.
+The resulting config is `~/.mission-control/outcome-extractor/config.json`. Only providers with a successful sampled result are enabled; unsampled or failed providers remain off. The scheduled 04:40 extractor remains fail-closed until this calibrated config exists.
 
 ## Manual proof before activation
 
@@ -95,7 +95,7 @@ Disabling Tier 2 does not remove or weaken Tier 1. Persistent off dominates any 
 
 ## Scheduling
 
-`launchd/com.gillettes.outcome-extractor.plist.template` starts at 06:40, ahead of the 07:00 brief, with bounded 06:47 and 06:54 retry opportunities. Successful unchanged work is served from cache without another model call; OAuth defers back off for five minutes, so a later slot can retry. It invokes the stable installed dashboard command, which routes to the explicit extractor command. The job writes a content-free last-run marker for Automation health.
+`launchd/com.gillettes.outcome-extractor.plist.template` starts at 04:40, ahead of the 05:00 brief, with bounded 04:47 and 04:54 retry opportunities. Successful unchanged work is served from cache without another model call; OAuth defers back off for five minutes, so a later slot can retry. It invokes the stable installed dashboard command, which routes to the explicit extractor command. The job writes a content-free last-run marker for Automation health.
 
 Do not install or bootstrap the LaunchAgent until the authorized sample, calibration, manual proof, and explicit activation decision are complete.
 

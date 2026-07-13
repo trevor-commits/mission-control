@@ -334,7 +334,7 @@ def _run_builtin_brief(timeout_s):
     path = os.path.join(HOME, "morning-brief", "latest.json")
     # Collection is a reader after the first bootstrap. Re-composing on every
     # 5-minute dashboard poll would overwrite a delivered sidecar with not_sent
-    # before the 7:20 deadman checks it.
+    # before the 05:20 deadman checks it.
     if not os.path.isfile(path):
         p, run_error = _run_argv([composer], timeout_s)
         if run_error:
