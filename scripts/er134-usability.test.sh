@@ -65,11 +65,24 @@ if grep -q 'innerHTML' "$MISSION_CONTROL_HOME/panel.html"; then fail "panel uses
 grep -q '#f4f5f7' "$MISSION_CONTROL_HOME/panel.html" && pass "panel light default" || fail "panel light default"
 grep -q -- '--mc-bg:        #f4f5f7' "$ROOT/dashboard/index.html" && pass "index light default" || fail "index light default"
 grep -q 'data-theme="dark"' "$ROOT/dashboard/index.html" && pass "dark theme tokens present" || fail "dark theme tokens"
+if [ ! -x "$ROOT/scripts/mc-panel" ] && [ -f "$ROOT/scripts/mc-panel.swift" ] && command -v swiftc >/dev/null 2>&1; then
+  swiftc -O -o "$ROOT/scripts/mc-panel" "$ROOT/scripts/mc-panel.swift"     -framework AppKit -framework WebKit >/dev/null 2>&1 || true
+fi
 test -x "$ROOT/scripts/mc-panel" && pass "mc-panel binary built" || fail "mc-panel binary"
 grep -q 'disableAutomaticTermination' "$ROOT/scripts/mc-panel.swift" && pass "panel disables TAL" || fail "panel disables TAL"
 grep -q 'beginActivity' "$ROOT/scripts/mc-panel.swift" && pass "panel RunningBoard activity" || fail "panel RunningBoard activity"
 grep -q 'mcDecide' "$ROOT/dashboard/panel.html" && pass "panel one-click bridge" || fail "panel one-click bridge"
 grep -q 'mcDecide' "$ROOT/scripts/mc-panel.swift" && pass "swift mcDecide handler" || fail "swift mcDecide handler"
+grep -q 'mcOpenFull' "$ROOT/dashboard/panel.html" && pass "panel open-full bridge" || fail "panel open-full bridge"
+grep -q 'mcOpenFull' "$ROOT/scripts/mc-panel.swift" && pass "swift mcOpenFull handler" || fail "swift mcOpenFull handler"
+grep -q 'openFullMissionControl' "$ROOT/scripts/mc-panel.swift" && pass "swift openFullMissionControl" || fail "swift openFullMissionControl"
+grep -q '.mission-control/index.html' "$ROOT/scripts/mc-panel.swift" && pass "swift opens index.html" || fail "swift opens index.html"
+grep -q 'NSWorkspace.shared.open' "$ROOT/scripts/mc-panel.swift" && pass "swift NSWorkspace open" || fail "swift NSWorkspace open"
+if grep -E 'id="open-full"[^>]*href="index\.html"' "$ROOT/dashboard/panel.html" >/dev/null; then
+  fail "open-full must not use relative index.html href"
+else
+  pass "open-full not relative href"
+fi
 
 # Login KeepAlive template (no real launchctl bootstrap in hermetic/tmp).
 TMPL="$ROOT/launchd/com.gillettes.mc-panel.plist.template"
