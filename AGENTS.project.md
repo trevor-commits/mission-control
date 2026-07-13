@@ -33,11 +33,12 @@ Read `/Users/gillettes/Coding Projects/mission-control/AGENTS.md` first. Use thi
   - leaking transcript text, secrets, or host-local state into git
   - state-dir permission regressions for `~/.mission-control` and `~/.chat-graph`
 - Release gates:
+  - run `scripts/verify.sh` before non-trivial release or merge closeout; it is the authoritative full matrix
   - run `bash scripts/chat-graph.test.sh` when `scripts/chat-graph` changes
   - run `bash scripts/automation-status.test.sh` when job registry or automation-status logic changes
   - run `REPO_ROOT="$PWD" bash scripts/dashboard.test.sh --require-shell` when dashboard collection, install, or shell logic changes
   - run `node scripts/dashboard-render-smoke.js .` when `dashboard/index.html` or fixtures change
-  - record a browser capture for release-sensitive visual or file:// loading changes
+  - run `node scripts/dashboard-browser.test.js` and record its capture for release-sensitive visual or file:// loading changes
 - Boundaries:
   - keep changes scoped to this project unless the user explicitly widens the scope
   - prefer no-new-dependency solutions unless the new dependency materially improves reliability or delivery

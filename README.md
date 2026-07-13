@@ -15,7 +15,7 @@ The page lives at `~/.mission-control/index.html` (installed copy), refreshes it
 
 | Tool | Job |
 |---|---|
-| `scripts/dashboard` | The CLI: `open`, `collect`, `refresh`, `status`, `install`, `demo`. Builds the four data feeds and serves the page. |
+| `scripts/dashboard` | The CLI: `open`, `collect`, `refresh`, `status`, `install`, `demo`. Builds the Automation, Usage, Git, Chats, Decisions, and Brief feeds and serves the page. |
 | `scripts/chat-graph` | Records how AI chats connect (audits, spawned workers, signals, shared issues) into `~/.chat-graph/graph.db`; `link`/`unlink`/`show`/`export`/`doctor`/`rebuild`. |
 | `scripts/automation-status` | Reads the background-job registry (`dashboard/jobs.json`) + the scheduler and reports each job green/amber/red. |
 | `scripts/usage-snapshot`, `scripts/scan-unfinished-work` | Vendored data sources for the usage + git tabs. Upstream copies live in the `global-implementations` repo; keep these in sync when the upstream changes. |
@@ -31,11 +31,12 @@ this repo now: `PROJECT_INTENT.md`, `todo.md`, `CONTINUITY.md`, `COHERENCE.md`,
 ## Tests
 
 ```bash
-bash scripts/chat-graph.test.sh
-bash scripts/automation-status.test.sh
-bash scripts/dashboard.test.sh --require-shell   # includes the node render smoke test
-node scripts/dashboard-render-smoke.js .         # direct renderer smoke
+scripts/verify.sh
 ```
+
+That command runs every committed shell/Python/Node suite, the real-browser
+desktop/mobile file:// gate, the scanner self-test, strict OpenSpec validation,
+and static syntax checks. Focused suites remain available for narrow iteration.
 
 ## Safety
 

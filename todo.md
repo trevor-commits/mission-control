@@ -2,7 +2,7 @@
 
 ## Active Next Steps
 - Full-repo convergence audit (2026-07-12, active): reconcile prior Mission Control sessions and open audit promises against live `origin/main`; reproduce and repair every confirmed code, privacy, reliability, accessibility, test, governance, and branch-lifecycle defect; rerun the full cold matrix plus installed/rendered evidence; then iterate with an independent read-only challenger until review-clean. Audit lane: `codex/full-repo-audit-20260712` at `/Users/gillettes/Coding Projects/mission-control-worktrees/full-repo-audit-20260712`. | owner: Codex thread `019f59f8-bb9e-70c0-9497-a9686ea24154` | linear: repo-only; no Mission Control Linear team is configured.
-- ER-134 desktop-first usability (2026-07-12): light Home ≤3 Needs-you, menu-bar panel, decide answer→Goal prompt. Suites: render-smoke OK; er134-usability 13/0; dashboard.test.sh PASS=55 FAIL=0.
+- ER-134 desktop-first usability (2026-07-12): light Home ≤3 Needs-you, menu-bar panel, decide answer→Goal prompt. Suites on the post-PR8 audit candidate: render-smoke all 7 tabs; er134-usability 40/0; dashboard.test.sh PASS=60 FAIL=0; real-browser desktop/mobile gate 253/0.
 If it's not here, it isn't remembered.
 Capture the current goal plus the concrete dependency-ordered steps that are still open.
 - Keep this section short, current, and ordered by impact/dependency.
@@ -657,8 +657,9 @@ If it's not here, it isn't remembered.
 | Automation status or job registry change | `bash scripts/automation-status.test.sh` | Per change | Tests pass and registry states remain honest |
 | Dashboard collector/install/status change | `REPO_ROOT="$PWD" bash scripts/dashboard.test.sh --require-shell` | Per change | Shell, fixtures, status, install, and render smoke pass |
 | Dashboard renderer or fixture change | `node scripts/dashboard-render-smoke.js .` | Per change | Every tab renders fixture content; Map builds graph elements |
+| Any non-trivial release or merge closeout | `scripts/verify.sh` | Per closeout | Every committed suite, real-browser gate, scanner self-test, strict OpenSpec, and syntax check passes |
 | Usage snapshot logic change | `bash scripts/usage-snapshot.test.sh` | Per change | Credit notification command handling remains argv-only and advice is delivered as one message |
-| Release-sensitive visual/file:// change | browser capture of `~/.mission-control/index.html` or demo output | Per change | Rendered page is nonblank and expected controls are visible |
+| Release-sensitive visual/file:// change | `node scripts/dashboard-browser.test.js` plus a capture of installed or demo output | Per change | All seven tabs are console-clean and nonblank at desktop/mobile widths; no document overflow; Map canvas, keyboard controls, contrast, and truthful clipboard failure pass |
 
 ## Feedback Decision Log
 If it's not here, it isn't remembered.

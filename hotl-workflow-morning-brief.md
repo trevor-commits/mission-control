@@ -219,12 +219,13 @@ verify:
   check: Review the actual diff and synthetic leakage evidence before first live cross-provider transcript egress or Telegram delivery.
 gate: human
 
-- [ ] **Step 30: Perform one authorized manual delivery and deadman proof**
+- [x] **Step 30: Perform one authorized manual delivery and deadman proof**
 action: Use the existing authorized channel to send one manually invoked short brief, record receipt, then safely exercise the suppressed/failed delivery path without exposing tokens or waiting for wall-clock 7:20.
 loop: until receipt and failure-path evidence both exist
 max_iterations: 2
 verify: test -s /tmp/morning-brief-live-delivery-proof.txt && test -s /tmp/morning-brief-deadman-proof.txt
 gate: human
+completion: Verified by the durable 2026-07-10 2/2 delivery receipt and isolated deadman failure proof recorded in `openspec/changes/morning-brief/verify.md`; the original `/tmp` paths were ephemeral evidence pointers, not the canonical record.
 
 - [x] **Step 31: Write red Tier 1 outcome fixtures**
 action: Add synthetic real-shape Claude/Codex/audit/handoff/unstructured/late/unknown-provider fixtures and exact structured command/SHA anchoring assertions.

@@ -62,7 +62,7 @@ run "usage snapshot" /bin/bash scripts/usage-snapshot.test.sh
 run "dashboard browser" node scripts/dashboard-browser.test.js
 run "unfinished-work scanner" scripts/scan-unfinished-work --self-test
 run "OpenSpec strict" openspec validate --all --strict
-run "Python syntax" python3 -m py_compile scripts/chat-graph scripts/decision-alert scripts/mission_control_common.py scripts/outcome_extractor.py scripts/compose-decision-prompt.py
+run "Python syntax" python3 -c 'import pathlib; files=["scripts/chat-graph","scripts/decision-alert","scripts/mission_control_common.py","scripts/outcome_extractor.py","scripts/compose-decision-prompt.py"]; [compile(pathlib.Path(p).read_text(),p,"exec") for p in files]'
 run "shell syntax" /bin/bash -n scripts/dashboard scripts/*.test.sh scripts/verify.sh
 
 printf '\n====\nSUITES PASS=%s FAIL=%s\n' "$PASS" "$FAIL"
