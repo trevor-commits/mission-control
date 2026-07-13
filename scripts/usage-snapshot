@@ -52,7 +52,6 @@ if ! mkdir -p "$STATE_DIR" 2>/dev/null; then
   exit 73
 fi
 ROWS_TMP=$(mktemp "${TMPDIR:-/tmp}/usage-snapshot.XXXXXX") || exit 1
-HISTORY_LOCK_FILE=""
 HISTORY_LOCK_HELD=0
 
 process_start_identity() {
@@ -109,7 +108,6 @@ acquire_history_lock() {
     [ "$lock_rc" -eq 75 ] && return 75
     return 73
   fi
-  HISTORY_LOCK_FILE="$lock"
   HISTORY_LOCK_HELD=1
   return 0
 }
