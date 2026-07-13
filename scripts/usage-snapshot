@@ -7,6 +7,7 @@
 #   usage-snapshot --history       # also append ~/.usage-snapshot/history.jsonl + roll waste.tsv
 #   usage-snapshot --html          # also render ~/.usage-snapshot/dashboard.html
 #   usage-snapshot --no-ccusage    # skip the (slower) Claude ccusage source
+#   usage-snapshot --live-probes   # explicitly permit provider-backed health probes
 #
 # Env overrides (used by tests): USAGE_SNAPSHOT_DIR, CODEX_SESSIONS_DIR, CLAUDE_GLM_BIN,
 # COPILOT_DB, HERMES_BIN, SKIP_CCUSAGE=1, CCUSAGE_BLOCKS_JSON/CCUSAGE_WEEKLY_JSON (fixture files).
@@ -15,6 +16,8 @@ umask 077
 
 STATE_DIR="${USAGE_SNAPSHOT_DIR:-$HOME/.usage-snapshot}"
 CODEX_SESSIONS="${CODEX_SESSIONS_DIR:-$HOME/.codex/sessions}"
+GLM_CONFIGURED=0; [ -n "${CLAUDE_GLM_BIN+x}" ] && GLM_CONFIGURED=1
+HERMES_CONFIGURED=0; [ -n "${HERMES_BIN+x}" ] && HERMES_CONFIGURED=1
 GLM_BIN="${CLAUDE_GLM_BIN:-claude-glm}"
 COPILOT_DB_PATH="${COPILOT_DB:-$HOME/.copilot/session-store.db}"
 HERMES="${HERMES_BIN:-hermes}"
@@ -32,11 +35,13 @@ CCUSAGE_BIN="${CCUSAGE_BIN:-}"
 SNAPSHOT_RC=0
 
 DO_HISTORY=0; DO_HTML=0; NO_CCUSAGE="${SKIP_CCUSAGE:-0}"
+DO_LIVE_PROBES=0
 for a in "$@"; do
   case "$a" in
     --history) DO_HISTORY=1 ;;
     --html) DO_HTML=1 ;;
     --no-ccusage) NO_CCUSAGE=1 ;;
+    --live-probes) DO_LIVE_PROBES=1 ;;
     -h|--help) sed -n '2,14p' "$0"; exit 0 ;;
     *) echo "usage-snapshot: unknown arg: $a" >&2; exit 64 ;;
   esac
@@ -47,7 +52,7 @@ if ! mkdir -p "$STATE_DIR" 2>/dev/null; then
   exit 73
 fi
 ROWS_TMP=$(mktemp "${TMPDIR:-/tmp}/usage-snapshot.XXXXXX") || exit 1
-HISTORY_LOCK=""
+HISTORY_LOCK_FILE=""
 HISTORY_LOCK_HELD=0
 
 process_start_identity() {
@@ -56,11 +61,7 @@ process_start_identity() {
 
 release_history_lock() {
   [ "$HISTORY_LOCK_HELD" -eq 1 ] || return 0
-  [ -d "$HISTORY_LOCK" ] && [ ! -L "$HISTORY_LOCK" ] || return 0
-  [ "$(cat "$HISTORY_LOCK/pid" 2>/dev/null)" = "$$" ] || return 0
-  [ "$(cat "$HISTORY_LOCK/start" 2>/dev/null)" = "$(process_start_identity $$)" ] || return 0
-  rm -f "$HISTORY_LOCK/pid" "$HISTORY_LOCK/start" 2>/dev/null || return 0
-  rmdir "$HISTORY_LOCK" 2>/dev/null || return 0
+  exec 9>&-
   HISTORY_LOCK_HELD=0
 }
 
@@ -71,10 +72,12 @@ cleanup() {
 trap cleanup EXIT
 
 acquire_history_lock() {
-  local lock="$1" owner_pid="" owner_start="" live_start="" unexpected=""
-  if ! mkdir "$lock" 2>/dev/null; then
-    [ -d "$lock" ] && [ ! -L "$lock" ] || return 73
-    [ ! -L "$lock/pid" ] && [ ! -L "$lock/start" ] || return 73
+  local lock="$1" lock_rc=0 owner_pid="" owner_start="" live_start="" unexpected="" lock_mtime=0 lock_age=0
+  [ ! -L "$lock" ] || return 73
+  # One-time migration for directory locks written by older releases. No new
+  # directory lock is ever created, so concurrent migration converges on lockf.
+  if [ -d "$lock" ]; then
+    [ ! -L "$lock/pid" ] && [ ! -L "$lock/start" ] && [ ! -L "$lock/.recovery" ] || return 73
     owner_pid=$(cat "$lock/pid" 2>/dev/null || true)
     owner_start=$(cat "$lock/start" 2>/dev/null || true)
     case "$owner_pid" in
@@ -86,18 +89,26 @@ acquire_history_lock() {
         fi
         ;;
     esac
-    unexpected=$(find "$lock" -mindepth 1 -maxdepth 1 ! -name pid ! -name start -print -quit 2>/dev/null)
+    unexpected=$(find "$lock" -mindepth 1 -maxdepth 1 ! -name pid ! -name start ! -name .recovery -print -quit 2>/dev/null)
     [ -z "$unexpected" ] || return 73
+    [ ! -e "$lock/.recovery" ] || [ -d "$lock/.recovery" ] || return 73
+    [ ! -d "$lock/.recovery" ] || [ -z "$(find "$lock/.recovery" -mindepth 1 -print -quit 2>/dev/null)" ] || return 73
+    lock_mtime=$(stat -f %m "$lock" 2>/dev/null || echo 0)
+    lock_age=$(( $(date +%s) - lock_mtime ))
+    [ "$lock_mtime" -gt 0 ] && [ "$lock_age" -ge 5 ] || return 75
     rm -f "$lock/pid" "$lock/start" 2>/dev/null || return 73
-    rmdir "$lock" 2>/dev/null || return 73
-    mkdir "$lock" 2>/dev/null || return 73
+    rmdir "$lock/.recovery" 2>/dev/null || true
+    rmdir "$lock" 2>/dev/null || true
+    [ ! -d "$lock" ] || return 75
   fi
-  owner_start=$(process_start_identity $$)
-  [ -n "$owner_start" ] || { rmdir "$lock" 2>/dev/null; return 73; }
-  printf '%s\n' "$$" > "$lock/pid" 2>/dev/null \
-    && printf '%s\n' "$owner_start" > "$lock/start" 2>/dev/null \
-    || { rm -f "$lock/pid" "$lock/start" 2>/dev/null; rmdir "$lock" 2>/dev/null; return 73; }
-  HISTORY_LOCK="$lock"
+  exec 9>"$lock" || return 73
+  /usr/bin/lockf -s -t 0 9 || lock_rc=$?
+  if [ "$lock_rc" -ne 0 ]; then
+    exec 9>&-
+    [ "$lock_rc" -eq 75 ] && return 75
+    return 73
+  fi
+  HISTORY_LOCK_FILE="$lock"
   HISTORY_LOCK_HELD=1
   return 0
 }
@@ -175,13 +186,31 @@ codex_rows() {
     return
   fi
   mtime=$(stat -f %m "$newest" 2>/dev/null || echo 0)
+  if [ "$mtime" -le 0 ] || [ "$mtime" -gt $((NOW_EPOCH + 300)) ]; then
+    SNAPSHOT_RC=1
+    emit "$(row codex 5h null null unknown down "$newest" 'rollout mtime is invalid or materially future-dated')"
+    emit "$(row codex weekly null null unknown down "$newest" 'rollout mtime is invalid or materially future-dated')"
+    return
+  fi
   age_h=$(( (NOW_EPOCH - mtime) / 3600 ))
   line=$(tail -n 400 "$newest" | jq -c '.. | objects
-          | select(has("primary") and has("secondary"))' \
+          | select(has("rate_limits")) | .rate_limits' \
           2>/dev/null | tail -1)
   if [ -z "$line" ]; then
     emit "$(row codex 5h null null unknown unknown "$newest" 'rollout has no valid rate_limits window')"
     emit "$(row codex weekly null null unknown unknown "$newest" 'rollout has no valid rate_limits window')"
+    return
+  fi
+  if [ "$(printf '%s' "$line" | jq -r 'type=="object"')" != "true" ]; then
+    SNAPSHOT_RC=1
+    emit "$(row codex 5h null null unknown down rollout-rate_limits 'newest rate_limits value is not an object')"
+    emit "$(row codex weekly null null unknown down rollout-rate_limits 'newest rate_limits value is not an object')"
+    return
+  fi
+  if [ "$(printf '%s' "$line" | jq -r 'has("primary") and has("secondary")')" != "true" ]; then
+    SNAPSHOT_RC=1
+    emit "$(row codex 5h null null unknown down rollout-rate_limits 'newest rate_limits event is missing a transport slot')"
+    emit "$(row codex weekly null null unknown down rollout-rate_limits 'newest rate_limits event is missing a transport slot')"
     return
   fi
   local slots_valid
@@ -331,14 +360,21 @@ claude_rows() {
 # ---------- glm / copilot / hermes / cursor ----------
 glm_row() {
   if command -v "$GLM_BIN" >/dev/null 2>&1; then
-    if run_bounded "$GLM_TIMEOUT_SECONDS" "$GLM_BIN" --doctor >/dev/null 2>&1; then
+    if [ "$DO_LIVE_PROBES" -ne 1 ]; then
+      emit "$(row glm plan null null unknown present binary 'local executable present; live provider probe disabled')"
+    elif run_bounded "$GLM_TIMEOUT_SECONDS" "$GLM_BIN" --doctor >/dev/null 2>&1; then
       emit "$(row glm plan null null unknown ok claude-glm-doctor 'quota API not wired; treat abundant while healthy')"
     else
       SNAPSHOT_RC=1
       emit "$(row glm plan null null unknown down claude-glm-doctor 'doctor failed — do not route')"
     fi
   else
-    emit "$(row glm plan null null unknown absent none 'claude-glm not installed')"
+    if [ "$GLM_CONFIGURED" -eq 1 ]; then
+      SNAPSHOT_RC=1
+      emit "$(row glm plan null null unknown down claude-glm-doctor 'configured claude-glm executable is missing')"
+    else
+      emit "$(row glm plan null null unknown absent none 'claude-glm not installed')"
+    fi
   fi
 }
 copilot_row() {
@@ -353,7 +389,12 @@ hermes_row() {
   if command -v "$HERMES" >/dev/null 2>&1; then
     emit "$(row hermes plan null null unknown present binary 'credits exhausted until news cycle — do not route by default')"
   else
-    emit "$(row hermes plan null null unknown absent none 'hermes not installed')"
+    if [ "$HERMES_CONFIGURED" -eq 1 ]; then
+      SNAPSHOT_RC=1
+      emit "$(row hermes plan null null unknown down binary 'configured hermes executable is missing')"
+    else
+      emit "$(row hermes plan null null unknown absent none 'hermes not installed')"
+    fi
   fi
 }
 cursor_row() {
@@ -447,7 +488,7 @@ SNAPSHOT=$(jq -s --arg ts "$NOW_ISO" '{fetched_at:$ts, providers:.}' "$ROWS_TMP"
 
 # ---------- history + wasted-at-reset ----------
 if [ "$DO_HISTORY" = "1" ]; then
-  # Owner-fenced mkdir lock: recover proven-dead residue, refuse live/unsafe locks.
+  # Kernel-backed BSD lock: crash-safe; a leftover lock file carries no ownership.
   LOCK="$STATE_DIR/.history.lock"
   acquire_history_lock "$LOCK"
   LOCK_RC=$?
@@ -457,6 +498,13 @@ if [ "$DO_HISTORY" = "1" ]; then
   elif [ "$LOCK_RC" -ne 0 ]; then
     SNAPSHOT_RC=1; DO_HISTORY=0
     echo "usage-snapshot: cannot safely acquire the history lock" >&2
+  fi
+  if [ "$LOCK_RC" -eq 0 ] && [ "${USAGE_SNAPSHOT_TESTING:-0}" = "1" ]; then
+    case "${USAGE_SNAPSHOT_TEST_HOLD_LOCK_SECONDS:-0}" in
+      0) ;;
+      1|2|3) sleep "${USAGE_SNAPSHOT_TEST_HOLD_LOCK_SECONDS}" ;;
+      *) SNAPSHOT_RC=1; DO_HISTORY=0; echo "usage-snapshot: invalid test lock hold" >&2 ;;
+    esac
   fi
 fi
 if [ "$DO_HISTORY" = "1" ]; then

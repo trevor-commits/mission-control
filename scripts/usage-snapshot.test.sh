@@ -17,7 +17,11 @@ new_env() {
 #!/bin/sh
 exit 0
 EOF
-  chmod +x "$T/bin/claude-glm"
+  cat > "$T/bin/hermes" <<'EOF'
+#!/bin/sh
+exit 0
+EOF
+  chmod +x "$T/bin/claude-glm" "$T/bin/hermes"
   EXPIRES="$(date -v+1d +%Y-%m-%d)"
   cat > "$T/credits.json" <<EOF
 {"credits":[{"provider":"codex","kind":"weekly","count":1,"expires":"$EXPIRES"}]}
@@ -32,7 +36,7 @@ c1() {
   CODEX_SESSIONS_DIR="$T/codex" \
   CLAUDE_GLM_BIN="$T/bin/claude-glm" \
   COPILOT_DB="$T/missing-copilot.db" \
-  HERMES_BIN="$T/missing-hermes" \
+  HERMES_BIN="$T/bin/hermes" \
   USAGE_NOTIFY_CMD="/bin/echo ; touch $marker" \
     /bin/bash "$USAGE" --no-ccusage >/dev/null 2>"$T/err"
   if [ ! -e "$marker" ] \
@@ -57,7 +61,7 @@ EOF
   CODEX_SESSIONS_DIR="$T/codex" \
   CLAUDE_GLM_BIN="$T/bin/claude-glm" \
   COPILOT_DB="$T/missing-copilot.db" \
-  HERMES_BIN="$T/missing-hermes" \
+  HERMES_BIN="$T/bin/hermes" \
   USAGE_NOTIFY_CMD="$T/bin/notify --fixed" \
     /bin/bash "$USAGE" --no-ccusage >/dev/null 2>"$T/err"
   if [ -s "$T/notify.out" ] \
@@ -91,7 +95,7 @@ EOF
   CODEX_SESSIONS_DIR="$T/codex" \
   CLAUDE_GLM_BIN="$T/bin/claude-glm" \
   COPILOT_DB="$T/missing-copilot.db" \
-  HERMES_BIN="$T/missing-hermes" \
+  HERMES_BIN="$T/bin/hermes" \
     /bin/bash "$USAGE" >/dev/null 2>"$T/err"
   cat > "$T/npx.expected" <<'EOF'
 argc=6
@@ -130,7 +134,7 @@ EOF
   CODEX_SESSIONS_DIR="$T/codex" \
   CLAUDE_GLM_BIN="$T/bin/claude-glm" \
   COPILOT_DB="$T/missing-copilot.db" \
-  HERMES_BIN="$T/missing-hermes" \
+  HERMES_BIN="$T/bin/hermes" \
     /bin/bash "$USAGE" --no-ccusage >"$T/out"
   if jq -e '.providers[] | select(.provider=="codex" and .window=="5h") | .used_pct==22' "$T/out" >/dev/null \
      && jq -e '.providers[] | select(.provider=="codex" and .window=="weekly") | .used_pct==88' "$T/out" >/dev/null; then
@@ -153,7 +157,7 @@ EOF
   CODEX_SESSIONS_DIR="$T/codex" \
   CLAUDE_GLM_BIN="$T/bin/claude-glm" \
   COPILOT_DB="$T/missing-copilot.db" \
-  HERMES_BIN="$T/missing-hermes" \
+  HERMES_BIN="$T/bin/hermes" \
     /bin/bash "$USAGE" --no-ccusage >"$T/out"
   if jq -e '.providers[] | select(.provider=="codex" and .window=="5h") | .used_pct==null and .confidence=="unknown"' "$T/out" >/dev/null \
      && jq -e '.providers[] | select(.provider=="codex" and .window=="weekly") | .used_pct==88 and .confidence=="live"' "$T/out" >/dev/null; then
@@ -177,7 +181,7 @@ EOF
   CODEX_SESSIONS_DIR="$T/codex" \
   CLAUDE_GLM_BIN="$T/bin/claude-glm" \
   COPILOT_DB="$T/missing-copilot.db" \
-  HERMES_BIN="$T/missing-hermes" \
+  HERMES_BIN="$T/bin/hermes" \
     /bin/bash "$USAGE" >"$T/out" 2>"$T/err"
   local rc=$?
   if [ "$rc" -eq 1 ] \
@@ -200,7 +204,7 @@ EOF
   CODEX_SESSIONS_DIR="$T/codex" \
   CLAUDE_GLM_BIN="$T/bin/claude-glm" \
   COPILOT_DB="$T/missing-copilot.db" \
-  HERMES_BIN="$T/missing-hermes" \
+  HERMES_BIN="$T/bin/hermes" \
     /bin/bash "$USAGE" --no-ccusage >"$T/out" 2>"$T/err"
   local rc=$?
   if [ "$rc" -eq 1 ] && [ ! -s "$T/err" ] \
@@ -230,7 +234,7 @@ EOF
   CODEX_SESSIONS_DIR="$T/codex" \
   CLAUDE_GLM_BIN="$T/bin/claude-glm" \
   COPILOT_DB="$T/missing-copilot.db" \
-  HERMES_BIN="$T/missing-hermes" \
+  HERMES_BIN="$T/bin/hermes" \
     /bin/bash "$USAGE" >"$T/out" 2>"$T/err"
   rc=$?; elapsed=$(( $(date +%s) - start ))
   while IFS= read -r pid; do
@@ -255,7 +259,7 @@ c9() {
     printf '{"payload":{"rate_limits":%s}}\n' "$payload" > "$T/codex/2026/07/13/rollout-test.jsonl"
     USAGE_SNAPSHOT_DIR="$T/state" USAGE_CREDITS_FILE="$T/missing-credits.json" \
       CODEX_SESSIONS_DIR="$T/codex" CLAUDE_GLM_BIN="$T/bin/claude-glm" \
-      COPILOT_DB="$T/missing-copilot.db" HERMES_BIN="$T/missing-hermes" \
+      COPILOT_DB="$T/missing-copilot.db" HERMES_BIN="$T/bin/hermes" \
       /bin/bash "$USAGE" --no-ccusage >"$T/out" 2>"$T/err"
     rc=$?
     if [ "$rc" -eq 1 ] && [ ! -s "$T/err" ] \
@@ -278,7 +282,7 @@ EOF
   CCUSAGE_BLOCKS_JSON="$T/blocks-bad.json" CCUSAGE_WEEKLY_JSON="$T/weekly-bad.json" \
   USAGE_SNAPSHOT_DIR="$T/state" USAGE_CREDITS_FILE="$T/missing-credits.json" \
   CODEX_SESSIONS_DIR="$T/codex" CLAUDE_GLM_BIN="$T/bin/claude-glm" \
-  COPILOT_DB="$T/missing-copilot.db" HERMES_BIN="$T/missing-hermes" \
+  COPILOT_DB="$T/missing-copilot.db" HERMES_BIN="$T/bin/hermes" \
     /bin/bash "$USAGE" >"$T/out" 2>"$T/err"
   local rc=$?
   if [ "$rc" -eq 1 ] && [ ! -s "$T/err" ] \
@@ -303,8 +307,8 @@ EOF
   GLM_PID_FILE="$T/glm.pid" GLM_TIMEOUT_SECONDS=1 \
   USAGE_SNAPSHOT_DIR="$T/state" USAGE_CREDITS_FILE="$T/missing-credits.json" \
   CODEX_SESSIONS_DIR="$T/codex" CLAUDE_GLM_BIN="$T/bin/glm-hang" \
-  COPILOT_DB="$T/missing-copilot.db" HERMES_BIN="$T/missing-hermes" \
-    /bin/bash "$USAGE" --no-ccusage >"$T/out" 2>"$T/err"
+  COPILOT_DB="$T/missing-copilot.db" HERMES_BIN="$T/bin/hermes" \
+    /bin/bash "$USAGE" --no-ccusage --live-probes >"$T/out" 2>"$T/err"
   rc=$?; elapsed=$(( $(date +%s) - start )); pid=$(cat "$T/glm.pid")
   kill -0 "$pid" 2>/dev/null && leaked=1
   if [ "$rc" -eq 1 ] && [ "$elapsed" -le 4 ] && [ "$leaked" -eq 0 ] \
@@ -327,7 +331,7 @@ EOF
   NOTIFY_PID_FILE="$T/notify.pid" NOTIFY_TIMEOUT_SECONDS=1 USAGE_NOTIFY_BIN="$T/bin/notify-hang" \
   USAGE_SNAPSHOT_DIR="$T/state" USAGE_CREDITS_FILE="$T/credits.json" \
   CODEX_SESSIONS_DIR="$T/codex" CLAUDE_GLM_BIN="$T/bin/claude-glm" \
-  COPILOT_DB="$T/missing-copilot.db" HERMES_BIN="$T/missing-hermes" \
+  COPILOT_DB="$T/missing-copilot.db" HERMES_BIN="$T/bin/hermes" \
     /bin/bash "$USAGE" --no-ccusage >"$T/out" 2>"$T/err"
   rc=$?; elapsed=$(( $(date +%s) - start )); pid=$(cat "$T/notify.pid")
   kill -0 "$pid" 2>/dev/null && leaked=1
@@ -340,13 +344,14 @@ EOF
 c13() {
   new_env
   mkdir -p "$T/state/.history.lock"
+  touch -t 200001010000 "$T/state/.history.lock"
   USAGE_SNAPSHOT_DIR="$T/state" USAGE_CREDITS_FILE="$T/missing-credits.json" \
   CODEX_SESSIONS_DIR="$T/codex" CLAUDE_GLM_BIN="$T/bin/claude-glm" \
-  COPILOT_DB="$T/missing-copilot.db" HERMES_BIN="$T/missing-hermes" \
+  COPILOT_DB="$T/missing-copilot.db" HERMES_BIN="$T/bin/hermes" \
     /bin/bash "$USAGE" --no-ccusage --history >"$T/out" 2>"$T/err"
   local rc=$?
-  if [ "$rc" -eq 0 ] && [ -s "$T/state/history.jsonl" ] && [ ! -e "$T/state/.history.lock" ]; then
-    ok "an orphaned history lock is recovered and does not strand future runs"
+  if [ "$rc" -eq 0 ] && [ -s "$T/state/history.jsonl" ] && [ -f "$T/state/.history.lock" ]; then
+    ok "a legacy orphaned lock directory migrates to a kernel lock"
   else no "orphaned history lock did not recover autonomously"; fi
 }
 
@@ -355,7 +360,7 @@ c14() {
   mkdir -p "$T/readonly"; chmod 500 "$T/readonly"
   USAGE_SNAPSHOT_DIR="$T/readonly" USAGE_CREDITS_FILE="$T/missing-credits.json" \
   CODEX_SESSIONS_DIR="$T/codex" CLAUDE_GLM_BIN="$T/bin/claude-glm" \
-  COPILOT_DB="$T/missing-copilot.db" HERMES_BIN="$T/missing-hermes" \
+  COPILOT_DB="$T/missing-copilot.db" HERMES_BIN="$T/bin/hermes" \
     /bin/bash "$USAGE" --no-ccusage --history --html >"$T/out" 2>"$T/err"
   local rc=$?; chmod 700 "$T/readonly"
   if [ "$rc" -ne 0 ] && ! grep -q 'another --history writer' "$T/err" \
@@ -369,12 +374,124 @@ c15() {
   printf '%s\n' '{"credits":[{"count":"many"}]}' > "$T/credits-bad.json"
   USAGE_SNAPSHOT_DIR="$T/state" USAGE_CREDITS_FILE="$T/credits-bad.json" \
   CODEX_SESSIONS_DIR="$T/codex" CLAUDE_GLM_BIN="$T/bin/claude-glm" \
-  COPILOT_DB="$T/missing-copilot.db" HERMES_BIN="$T/missing-hermes" \
+  COPILOT_DB="$T/missing-copilot.db" HERMES_BIN="$T/bin/hermes" \
     /bin/bash "$USAGE" --no-ccusage >"$T/out" 2>"$T/err"
   local rc=$?
   if [ "$rc" -eq 1 ] && jq -e '.providers[] | select(.provider=="credits" and .window=="config") | .health=="down"' "$T/out" >/dev/null; then
     ok "malformed credits configuration is explicit and nonzero"
   else no "malformed credits configuration disappeared silently"; fi
+}
+
+c16() {
+  local missing ok_count=0
+  for missing in primary secondary; do
+    new_env; mkdir -p "$T/codex/2026/07/13"
+    cat > "$T/codex/2026/07/13/rollout-test.jsonl" <<'EOF'
+{"payload":{"rate_limits":{"primary":{"used_percent":11,"window_minutes":300,"resets_at":2000000000},"secondary":{"used_percent":22,"window_minutes":10080,"resets_at":2000000000},"plan_type":"old"}}}
+EOF
+    if [ "$missing" = "secondary" ]; then
+      printf '%s\n' '{"payload":{"rate_limits":{"primary":{"used_percent":33,"window_minutes":300,"resets_at":2000000000},"plan_type":"new-corrupt"}}}' >> "$T/codex/2026/07/13/rollout-test.jsonl"
+    else
+      printf '%s\n' '{"payload":{"rate_limits":{"secondary":{"used_percent":44,"window_minutes":10080,"resets_at":2000000000},"plan_type":"new-corrupt"}}}' >> "$T/codex/2026/07/13/rollout-test.jsonl"
+    fi
+    USAGE_SNAPSHOT_DIR="$T/state" USAGE_CREDITS_FILE="$T/missing-credits.json" \
+    CODEX_SESSIONS_DIR="$T/codex" CLAUDE_GLM_BIN="$T/bin/claude-glm" \
+    COPILOT_DB="$T/missing-copilot.db" HERMES_BIN="$T/bin/hermes" \
+      /bin/bash "$USAGE" --no-ccusage >"$T/out" 2>"$T/err"
+    if [ $? -eq 1 ] && jq -e '[.providers[] | select(.provider=="codex")] | length==2 and all(.health=="down" and .used_pct==null)' "$T/out" >/dev/null; then
+      ok_count=$((ok_count+1))
+    fi
+  done
+  if [ "$ok_count" -eq 2 ]; then ok "newest rate event with a missing slot cannot reuse older live values"
+  else no "missing transport slot fell back to an older rate event"; fi
+}
+
+c17() {
+  new_env
+  USAGE_SNAPSHOT_DIR="$T/state" USAGE_CREDITS_FILE="$T/missing-credits.json" \
+  CODEX_SESSIONS_DIR="$T/codex" CLAUDE_GLM_BIN="$T/missing-glm" \
+  COPILOT_DB="$T/missing-copilot.db" HERMES_BIN="$T/missing-hermes" \
+    /bin/bash "$USAGE" --no-ccusage >"$T/out" 2>"$T/err"
+  local rc=$?
+  if [ "$rc" -eq 1 ] \
+     && jq -e 'any(.providers[]; .provider=="glm" and .health=="down") and any(.providers[]; .provider=="hermes" and .health=="down")' "$T/out" >/dev/null; then
+    ok "configured missing provider executables are down and nonzero"
+  else no "configured missing provider executables were treated as optional absence"; fi
+}
+
+c18() {
+  new_env
+  mkdir -p "$T/state/.history.lock" "$T/results"
+  touch -t 200001010000 "$T/state/.history.lock"
+  local i success=0 lines=0 residue=0
+  for i in $(seq 1 16); do
+    ( USAGE_SNAPSHOT_TESTING=1 USAGE_SNAPSHOT_TEST_HOLD_LOCK_SECONDS=1 \
+      USAGE_SNAPSHOT_DIR="$T/state" USAGE_CREDITS_FILE="$T/missing-credits.json" \
+      CODEX_SESSIONS_DIR="$T/codex" CLAUDE_GLM_BIN="$T/bin/claude-glm" \
+      COPILOT_DB="$T/missing-copilot.db" HERMES_BIN="$T/bin/hermes" \
+      /bin/bash "$USAGE" --no-ccusage --history >"$T/results/$i.out" 2>"$T/results/$i.err"; \
+      printf '%s\n' "$?" > "$T/results/$i.rc" ) &
+  done
+  wait
+  for i in $(seq 1 16); do [ "$(cat "$T/results/$i.rc")" -eq 0 ] && success=$((success+1)); done
+  [ -f "$T/state/history.jsonl" ] && lines=$(wc -l < "$T/state/history.jsonl" | tr -d ' ')
+  [ -f "$T/state/.history.lock" ] || residue=1
+  if [ "$success" -eq 1 ] && [ "$lines" -eq 1 ] && [ "$residue" -eq 0 ]; then
+    ok "high-contention migration permits exactly one kernel-locked writer"
+  else no "orphan-lock recovery split into multiple writers or left residue"; fi
+}
+
+c19() {
+  new_env
+  mkdir -p "$T/state/.history.lock/.recovery"
+  touch -t 200001010000 "$T/state/.history.lock" "$T/state/.history.lock/.recovery"
+  USAGE_SNAPSHOT_DIR="$T/state" USAGE_CREDITS_FILE="$T/missing-credits.json" \
+  CODEX_SESSIONS_DIR="$T/codex" CLAUDE_GLM_BIN="$T/bin/claude-glm" \
+  COPILOT_DB="$T/missing-copilot.db" HERMES_BIN="$T/bin/hermes" \
+    /bin/bash "$USAGE" --no-ccusage --history >"$T/out" 2>"$T/err"
+  if [ $? -eq 0 ] && [ -s "$T/state/history.jsonl" ] && [ -f "$T/state/.history.lock" ]; then
+    ok "crashed legacy recovery marker migrates without stranding history"
+  else no "legacy .recovery crash residue permanently blocked history"; fi
+}
+
+c20() {
+  local variant ok_count=0
+  for variant in nonobject future; do
+    new_env; mkdir -p "$T/codex/2026/07/13"
+    printf '%s\n' '{"payload":{"rate_limits":{"primary":{"used_percent":11,"window_minutes":300,"resets_at":2000000000},"secondary":{"used_percent":22,"window_minutes":10080,"resets_at":2000000000}}}}' > "$T/codex/2026/07/13/rollout-test.jsonl"
+    if [ "$variant" = "nonobject" ]; then
+      printf '%s\n' '{"payload":{"rate_limits":"corrupt-newest-value"}}' >> "$T/codex/2026/07/13/rollout-test.jsonl"
+    else
+      touch -t 209901010000 "$T/codex/2026/07/13/rollout-test.jsonl"
+    fi
+    USAGE_SNAPSHOT_DIR="$T/state" USAGE_CREDITS_FILE="$T/missing-credits.json" \
+    CODEX_SESSIONS_DIR="$T/codex" CLAUDE_GLM_BIN="$T/bin/claude-glm" \
+    COPILOT_DB="$T/missing-copilot.db" HERMES_BIN="$T/bin/hermes" \
+      /bin/bash "$USAGE" --no-ccusage >"$T/out" 2>"$T/err"
+    if [ $? -eq 1 ] && jq -e '[.providers[] | select(.provider=="codex")] | length==2 and all(.health=="down" and .used_pct==null)' "$T/out" >/dev/null; then
+      ok_count=$((ok_count+1))
+    fi
+  done
+  if [ "$ok_count" -eq 2 ]; then ok "newest non-object rates and future rollouts fail closed"
+  else no "corrupt newest rate value or future rollout produced live usage"; fi
+}
+
+c21() {
+  new_env
+  cat > "$T/bin/glm-marker" <<EOF
+#!/bin/sh
+touch "$T/glm-invoked"
+exit 99
+EOF
+  chmod +x "$T/bin/glm-marker"
+  USAGE_SNAPSHOT_DIR="$T/state" USAGE_CREDITS_FILE="$T/missing-credits.json" \
+  CODEX_SESSIONS_DIR="$T/codex" CLAUDE_GLM_BIN="$T/bin/glm-marker" \
+  COPILOT_DB="$T/missing-copilot.db" HERMES_BIN="$T/bin/hermes" \
+    /bin/bash "$USAGE" --no-ccusage >"$T/out" 2>"$T/err"
+  if [ $? -eq 0 ] && [ ! -e "$T/glm-invoked" ] \
+     && jq -e 'any(.providers[]; .provider=="glm" and .health=="present" and .source=="binary")' "$T/out" >/dev/null; then
+    ok "default scheduled path performs no provider-backed GLM probe"
+  else no "default snapshot invoked a model-backed provider probe"; fi
 }
 
 c1
@@ -392,6 +509,12 @@ c12
 c13
 c14
 c15
+c16
+c17
+c18
+c19
+c20
+c21
 
 echo "----"
 echo "PASS=$PASS FAIL=$FAIL"
