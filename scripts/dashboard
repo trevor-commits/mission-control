@@ -708,9 +708,49 @@ do_panel() {
     fi
     return 0
   fi
+  # Stage a tiny LSUIElement .app so Control Center keeps the status item alive.
+  # Anonymous raw binaries get "after-life.interrupted" and exit within ~20s on modern macOS.
+  local app_dir="$MISSION_CONTROL_HOME/Mission Control Panel.app"
+  local app_macos="$app_dir/Contents/MacOS"
+  local app_bin="$app_macos/mc-panel"
+  mkdir -p "$app_macos" || true
+  cp "$bin" "$app_bin" || true
+  chmod 700 "$app_bin" || true
+  cat >"$app_dir/Contents/Info.plist" <<'PLIST'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleExecutable</key>
+  <string>mc-panel</string>
+  <key>CFBundleIdentifier</key>
+  <string>com.gillettes.mission-control.panel</string>
+  <key>CFBundleName</key>
+  <string>Mission Control Panel</string>
+  <key>CFBundlePackageType</key>
+  <string>APPL</string>
+  <key>CFBundleVersion</key>
+  <string>1</string>
+  <key>LSMinimumSystemVersion</key>
+  <string>13.0</string>
+  <key>LSUIElement</key>
+  <true/>
+  <key>NSHighResolutionCapable</key>
+  <true/>
+  <key>NSSupportsAutomaticTermination</key>
+  <false/>
+  <key>NSSupportsSuddenTermination</key>
+  <false/>
+</dict>
+</plist>
+PLIST
   pkill -f '[m]c-panel' 2>/dev/null || true
+  pkill -f 'Mission Control Panel' 2>/dev/null || true
   if [ "${DASHBOARD_NO_OPEN:-}" != "1" ]; then
-    nohup "$bin" "$MISSION_CONTROL_HOME/panel.html" >/dev/null 2>&1 &
+    # open(1) registers a real app identity with Launch Services / Control Center.
+    if ! open -n -a "$app_dir" --args "$MISSION_CONTROL_HOME/panel.html" >/dev/null 2>&1; then
+      nohup "$app_bin" "$MISSION_CONTROL_HOME/panel.html" >/dev/null 2>&1 &
+    fi
     echo "panel: menu-bar Mission Control started (look for MC)"
   else
     echo "panel: binary present; DASHBOARD_NO_OPEN=1 skipped launch"

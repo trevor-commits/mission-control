@@ -11,10 +11,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
   var popover: NSPopover!
   var webView: WKWebView!
   var timer: Timer?
+  // Retained RunningBoard activity — anonymous menu-bar binaries otherwise get
+  // Control Center "after-life.interrupted" / workspace invalidation and exit.
+  var stayAliveActivity: NSObjectProtocol?
 
   func applicationDidFinishLaunching(_ notification: Notification) {
     ProcessInfo.processInfo.disableAutomaticTermination("Mission Control menu bar")
     ProcessInfo.processInfo.disableSuddenTermination()
+    stayAliveActivity = ProcessInfo.processInfo.beginActivity(
+      options: [.userInitiatedAllowingIdleSystemSleep],
+      reason: "Mission Control menu bar stay-alive")
 
     let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     if let button = item.button {
@@ -72,6 +78,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
       """
       webView.loadHTMLString(html, baseURL: nil)
     }
+  }
+
+  func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+    return false
   }
 
   func userContentController(_ userContentController: WKUserContentController,
