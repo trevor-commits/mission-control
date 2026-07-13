@@ -1,7 +1,7 @@
 # Full-repo convergence audit
 
 Date: 2026-07-12
-Status: fourth-round transaction boundary repair implemented; final immutable verification and challenger recheck pending
+Status: immutable candidate `b79d91d` is full-suite green and independently `REVIEW-CLEAN`; merge/install closeout pending
 Audit branch: `codex/full-repo-audit-20260712`
 Audit worktree: `/Users/gillettes/Coding Projects/mission-control-worktrees/full-repo-audit-20260712`
 Merge target/base inspected: `origin/main` at `659b8d218cb57044506f949d0a3fd47de921eb42`
@@ -81,6 +81,7 @@ Fresh topology proof found only two branches with commits not ancestrally reacha
 | P1 | Caller-controlled `MC_DECISION_ANSWER_LOCK_HELD=1` bypassed the first lock repair | Removed environment trust. The lock is now an inherited, inode-verified file descriptor; the regression deliberately sets the old marker on both writers. |
 | P1 | A blocked answer-sidecar path failed after database resolution, leaving a prompt plus unretryable resolved decision but no answer receipt | Both filesystem artifacts are now preflighted and staged before resolution, then atomically published. Exact-choice replay recognizes a matching manual resolution and repairs a crash between database resolution and artifact publication. The regression covers both blocked-first-attempt and post-resolution recovery. |
 | P1 | Symlinked `answers/` or `prompts/` parent directories redirected private transaction artifacts outside the Mission Control state root | State home plus both transaction parents are now `lstat`-validated as real directories before chmod, lock, or staging. Regressions cover both linked parents, unchanged external sentinels, no outside artifact, and an open decision after refusal. |
+| P1 | An attacker or concurrent process could rename and replace a previously validated `answers/` or `prompts/` directory between validation and publication | The complete answer transaction now runs in one Python process with `O_DIRECTORY|O_NOFOLLOW` directory descriptors and the advisory-lock descriptor held throughout. Stage writes and atomic replacements are relative to pinned descriptors; inode bindings are revalidated immediately before database resolution and again before publication. The deterministic rename/swap regression covers both directories and proves open state, no redirected output, and no surviving stage files. |
 | P1 | Proof harvesting replaced Trevor-owned read/understood/notes fields | Machine columns merge into existing rows while the three operator columns remain unchanged. |
 | P1 | Proof rows broke on Markdown delimiters and could lose parseability | Escaped-cell parser/writer covers pipes, backslashes, and line breaks. |
 | P1 | Proof harvesting copied private `latest.md` prose into a tracked record | Raw brief prose is never read or copied; only bounded receipt state, counts, timestamps, section count, and validated digest are retained. Malicious ID/state/prose fixtures are rejected or excluded. |
@@ -105,12 +106,23 @@ Focused repaired-candidate evidence before the immutable full run:
 
 - `scripts/harvest-morning-brief-proof --self-test` — PASS, including human-field preservation, escaped operator note, private-prose exclusion, and invalid receipt rejection.
 - `scripts/scan-unfinished-work --self-test` — PASS, including clean no-remote default and lifecycle-only nonzero exit.
-- `scripts/dashboard.test.sh` — `PASS=64 FAIL=0`, including 12 concurrent answer races with the forged legacy marker, blocked-sidecar no-resolution proof, successful retry, exact-choice post-resolution recovery, and linked-parent refusal for both artifact roots.
+- `scripts/dashboard.test.sh` — `PASS=65 FAIL=0`, including 12 concurrent answer races with the forged legacy marker, blocked-sidecar no-resolution proof, successful retry, exact-choice post-resolution recovery, linked-parent refusal, and live rename/replacement of both artifact roots after staging.
 - `scripts/er134-usability.test.sh` — `50 passed, 0 failed`, including three app-bundle symlink counterexamples.
 - `node scripts/dashboard-browser.test.js` — `253 assertions passed` across installed/demo desktop and mobile surfaces.
 - `git diff --check` and Bash syntax — PASS.
 
-The superseded `df7ab2c` and `f67e079` candidates each completed the authoritative matrix with `SUITES PASS=21 FAIL=0`, but independent review then found, respectively, the blocked-sidecar and linked-parent P1s above. Those green runs are retained as suite evidence, not accepted as final verdicts. Final immutable candidate SHA, a fresh authoritative result after the parent-boundary repair, independent final verdicts, merge/install/push proof, and live state are recorded in the final closeout update to this record.
+The superseded `df7ab2c`, `f67e079`, and `051bfe1` candidates each completed the authoritative matrix with `SUITES PASS=21 FAIL=0`, but independent review then found, respectively, the blocked-sidecar, linked-parent, and directory rename/swap P1s above. Those green runs are retained as suite evidence, not accepted as final verdicts.
+
+Final immutable pre-merge evidence at `b79d91d`:
+
+- `/bin/bash scripts/verify.sh` — `SUITES PASS=21 FAIL=0`; full log `/tmp/mission-control-b79d91d-verify.log`.
+- Dashboard shell/integration suite — `PASS=65 FAIL=0`.
+- ER-134 decision/panel suite — `50 passed, 0 failed`.
+- Installed/demo Playwright browser gate — `253 assertions passed`.
+- OpenSpec strict validation, Python syntax, shell syntax, scanner self-test, privacy, graph, delivery, deadman, extractor, usage, and all remaining authoritative suites — PASS.
+- Independent UX/test challenger `/root/worker_019f59f8_tests_ux` reviewed the exact immutable source after four finding/repair cycles and returned `REVIEW-CLEAN` on `b79d91d`.
+
+Merge/install/push proof and final live state are appended in the closeout commit after those state moves occur.
 
 ## Honest residual gates
 
@@ -124,7 +136,7 @@ These are not unimplemented repo defects and must not be papered over with synth
 ## Self-audit and Ripple Check
 
 - Method: compared live `origin/main`, every local/origin branch tip, patch containment, the preserved dirty ER-103 checkout, exact resolved session metadata/latest exchanges, durable Work/Audit/Test logs, runtime code, installed-state contracts, and independent counterexample reports.
-- Outcome so far: every reproduced code, privacy, UI, test, and repo-governance defect has an implementation or explicit accepted-debt disposition plus a focused regression. Final immutable verification and challenger replay remain pending, so this record does not yet claim `review-clean`.
+- Outcome so far: every reproduced code, privacy, UI, test, and repo-governance defect has an implementation or explicit accepted-debt disposition plus a focused regression. The final immutable candidate passed the entire authoritative matrix and the independent challenger returned `REVIEW-CLEAN`; only merge, canonical installation, and live-state proof remain.
 - Did not verify yet: five elapsed mornings, Trevor comprehension, or provider calibration, because those require time or explicit external authorization; no live provider send was performed.
 - Ripple Check: reviewed `PROJECT_INTENT.md`, `AGENTS.project.md`, `CONTINUITY.md`, `COHERENCE.md`, `LINEAR.md`, root `todo.md`, current OpenSpec state, dashboard feed consumers, install/stamp sets, and the morning-surface collision record. The product remains local/offline, repo-only for Linear, and external-provider gated.
 - Better-path challenge: fixed truth and deployment boundaries at their producers and authoritative verifier rather than adding another parallel audit harness or weakening fail-closed gates.
