@@ -507,6 +507,19 @@ c22() {
   else no "future legacy lock was misclassified as a permanent live owner"; fi
 }
 
+c23() {
+  new_env; mkdir -p "$T/codex/2026/07/13"
+  printf '%s\n' '{"payload":{"rate_limits":{"primary":{"used_percent":12,"window_minutes":300,"resets_at":2000000000},"secondary":{"used_percent":34,"window_minutes":10080,"resets_at":2000000000}}}}' > "$T/codex/2026/07/13/rollout-test.jsonl"
+  printf '%s' '{"payload":{"rate_limits":' >> "$T/codex/2026/07/13/rollout-test.jsonl"
+  USAGE_SNAPSHOT_DIR="$T/state" USAGE_CREDITS_FILE="$T/missing-credits.json" \
+  CODEX_SESSIONS_DIR="$T/codex" CLAUDE_GLM_BIN="$T/bin/claude-glm" \
+  COPILOT_DB="$T/missing-copilot.db" HERMES_BIN="$T/bin/hermes" \
+    /bin/bash "$USAGE" --no-ccusage >"$T/out" 2>"$T/err"
+  if [ $? -eq 1 ] && jq -e '[.providers[] | select(.provider=="codex")] | length==2 and all(.health=="down" and .used_pct==null)' "$T/out" >/dev/null; then
+    ok "truncated newest JSONL record cannot preserve an older live rate event"
+  else no "malformed final JSONL reused older Codex usage as live"; fi
+}
+
 c1
 c2
 c3
@@ -529,6 +542,7 @@ c19
 c20
 c21
 c22
+c23
 
 echo "----"
 echo "PASS=$PASS FAIL=$FAIL"
