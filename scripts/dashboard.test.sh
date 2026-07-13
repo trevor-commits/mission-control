@@ -730,7 +730,7 @@ c21() { # install stamps provenance from committed HEAD; verify detects runtime 
   command -v git >/dev/null 2>&1 || { ok "install-stamp: git absent — provenance test skipped"; return; }
   local gr mch head; gr="$(mktemp -d)/repo"; mkdir -p "$gr/scripts" "$gr/dashboard/vendor"
   local n
-  for n in dashboard mission_control_common.py morning-brief morning-brief-deadman decision-alert compose-decision-prompt.py mc-panel.swift; do
+  for n in dashboard chat-graph mission_control_common.py morning-brief morning-brief-deadman decision-alert compose-decision-prompt.py mc-panel.swift; do
     cp "$REPO/scripts/$n" "$gr/scripts/$n"
   done
   # Deployment assets are part of the shipped surface: install must stamp them from
@@ -898,7 +898,7 @@ c24() { # ER-109 round 6: installer honesty + safety. Each pathological input mu
   command -v git >/dev/null 2>&1 || { ok "install-safety: git absent — skipped"; return; }
   _mkrepo() { # -> committed repo path with all runtimes + index.html + vendor at HEAD
     local gr; gr="$(mktemp -d)/repo"; mkdir -p "$gr/scripts" "$gr/dashboard/vendor"; local n
-    for n in dashboard mission_control_common.py morning-brief morning-brief-deadman decision-alert compose-decision-prompt.py mc-panel.swift; do
+    for n in dashboard chat-graph mission_control_common.py morning-brief morning-brief-deadman decision-alert compose-decision-prompt.py mc-panel.swift; do
       cp "$REPO/scripts/$n" "$gr/scripts/$n"
     done
     printf '<html>shell HEAD</html>\n' > "$gr/dashboard/index.html"
@@ -1036,7 +1036,7 @@ c27() { # committed plist source + checked atomic launchd reload/failure behavio
   local gr h mch sbin capture loaded rc out sentinel h2 mch2 h3 mch3 h4 mch4 failbin real_chmod mode fails=0
   gr="$(mktemp -d)/repo"; mkdir -p "$gr/scripts" "$gr/dashboard/vendor" "$gr/launchd"
   local n
-  for n in dashboard mission_control_common.py morning-brief morning-brief-deadman decision-alert compose-decision-prompt.py mc-panel.swift; do
+  for n in dashboard chat-graph mission_control_common.py morning-brief morning-brief-deadman decision-alert compose-decision-prompt.py mc-panel.swift; do
     cp "$REPO/scripts/$n" "$gr/scripts/$n"
   done
   cp "$REPO/dashboard/index.html" "$gr/dashboard/index.html"

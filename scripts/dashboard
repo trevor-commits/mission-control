@@ -1239,7 +1239,7 @@ do_install() {
     fi
   fi
   local runtime dest
-  for runtime in morning-brief morning-brief-deadman decision-alert mission_control_common.py compose-decision-prompt.py mc-panel.swift; do
+  for runtime in chat-graph morning-brief morning-brief-deadman decision-alert mission_control_common.py compose-decision-prompt.py mc-panel.swift; do
     dest="$MISSION_CONTROL_HOME/bin/$runtime"
     if [ "$provenance" = "head" ]; then
       if git -C "$REPO_ROOT" cat-file -e "$head_sha:scripts/$runtime" 2>/dev/null; then

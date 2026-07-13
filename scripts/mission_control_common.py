@@ -40,7 +40,7 @@ FIELD_CLASSES = frozenset((
 ))
 
 REQUIRED_INSTALL_RUNTIMES = (
-    "dashboard", "morning-brief", "morning-brief-deadman",
+    "dashboard", "chat-graph", "morning-brief", "morning-brief-deadman",
     "decision-alert", "mission_control_common.py",
     "compose-decision-prompt.py", "mc-panel.swift",
 )
