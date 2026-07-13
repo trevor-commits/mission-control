@@ -2,7 +2,7 @@
 
 ## Active Next Steps
 - Full-repo convergence audit (2026-07-12, active): reconcile prior Mission Control sessions and open audit promises against live `origin/main`; reproduce and repair every confirmed code, privacy, reliability, accessibility, test, governance, and branch-lifecycle defect; rerun the full cold matrix plus installed/rendered evidence; then iterate with an independent read-only challenger until review-clean. Audit lane: `codex/full-repo-audit-20260712` at `/Users/gillettes/Coding Projects/mission-control-worktrees/full-repo-audit-20260712`. | owner: Codex thread `019f59f8-bb9e-70c0-9497-a9686ea24154` | linear: repo-only; no Mission Control Linear team is configured.
-- ER-134 desktop-first usability (2026-07-12): light Home ≤3 Needs-you, menu-bar panel, decide answer→Goal prompt. Suites on the post-PR8 audit candidate: render-smoke all 7 tabs; er134-usability 40/0; dashboard.test.sh PASS=60 FAIL=0; real-browser desktop/mobile gate 253/0.
+- ER-134 desktop-first usability (2026-07-12): light Home ≤3 Needs-you, menu-bar panel, decide answer→Goal prompt. Suites on the current full-audit candidate: render-smoke all 7 tabs; er134-usability 50/0; dashboard.test.sh PASS=62 FAIL=0; real-browser desktop/mobile gate 253/0.
 If it's not here, it isn't remembered.
 Capture the current goal plus the concrete dependency-ordered steps that are still open.
 - Keep this section short, current, and ordered by impact/dependency.
@@ -557,6 +557,7 @@ Keep materially new suggestions here so they survive beyond the current chat.
 - Do not delete old entries; mark them completed, declined, deferred, or superseded with date and chat context.
 - Keep audit-created items here only when they are deferred, optional, or not yet execution-ready; otherwise promote them into `## Active Next Steps`.
 - When a suggestion comes from an audit or feedback review, link back to the originating audit record or `Feedback Decision Log` entry and later note which chat implemented or declined it.
+- 2026-07-12 | recommendation: accepted compatibility debt — migrate `mc-panel.swift` from deprecated `NSUserNotification` APIs to `UserNotifications` only when a supported macOS SDK removes the current API, notifications fail in live use, or the panel already needs a permission-flow redesign. | why: the current binary compiles and runs, while migration would add notification authorization behavior and is not a correctness fix for this local menu-bar surface. | by: Codex thread `019f59f8-bb9e-70c0-9497-a9686ea24154`, from independent UX/test audit. | linear: repo-only; no live Mission Control Linear team is configured.
 - 2026-07-11 | recommendation: design an inflight/reconciliation state machine before claiming exactly-once or provider-idempotent Morning Brief chunk delivery. | why: the current delivery contract is at-least-once; if a provider accepts a chunk and the local process crashes before recording the receipt, the retry path must treat it as ambiguous and may resend. The queued state machine should track provider-accepted/local-unconfirmed chunks and reconcile them without changing the current sender in round 8. | by: Codex thread `019f5056-bc55-7043-88ad-b87b1ac48a6f`, governed by Claude `e85411a1-b74b-4556-9939-8eaf5d8f2ea9`. | linear: repo-only; no Mission Control Linear team is configured.
 - 2026-07-04 | recommendation: pattern-mine the dashboard/coding-tracker search audit during the next ER-089/UI polish pass: provider reset/pace cards, usage attribution tables, active-session state list, source-confidence labels, and a later git-yield lens; do not rewrite Mission Control into Next/React, a remote-control platform, or a generic drag/drop dashboard. | why: the highest-fit repos confirm Mission Control's local/static architecture but reveal better visual and workflow affordances for usage, sessions, and attention routing. | by: Codex thread `019f2dec-d36b-7093-8259-8d9df30dede0`; record: `records/2026-07-04-dashboard-coding-tracker-search-audit.md`. | linear: self-contained until Linear is configured.
 - 2026-07-04 | recommendation: pattern-mine `tabler/tabler` during the next Mission Control UI polish pass, especially cards, dense tables, badges, tabs, segmented controls, and offline-safe icon affordances; do not install `@tabler/core` wholesale unless a later implementation proves the static file:// bundle stays simpler and safer. | why: Tabler is a mature MIT Bootstrap dashboard kit, but this repo's product intent is still a single-file local/offline dashboard. | by: Codex thread `019f2d4e-54ba-7273-8188-12506a3daf19`; source card: third-party index `researched-repos/tabler-tabler.md` commit `171a122`. | linear: self-contained until Linear is configured.
@@ -588,6 +589,32 @@ Keep materially new suggestions here so they survive beyond the current chat.
 - retain reason: n/a
 - cleanup command: `git branch -d codex/er103-git-state-and-morning-proof && git push origin --delete codex/er103-git-state-and-morning-proof`
 - linked PR/audit/completion record: Work Record Log `2026-07-11 — ER-103 Git-state lane and Morning Brief proof logging`
+
+### `codex/full-repo-audit-20260712`
+- status: active
+- created: 2026-07-12
+- base: `main`
+- worktree: `/Users/gillettes/Coding Projects/mission-control-worktrees/full-repo-audit-20260712`
+- source chat: Codex thread `019f59f8-bb9e-70c0-9497-a9686ea24154`
+- last refreshed by chat: 2026-07-12 independent challenger round two
+- purpose: Reconcile prior Mission Control sessions, repair confirmed end-to-end defects, and iterate independent audit plus full verification until clean.
+- linked issue: self-contained; Linear repo-only mode in `LINEAR.md`
+- plugin mirror: none; no live Mission Control Linear team/prefix verified
+- merge expectation: merge
+- merge target: `main`
+- review surface: full repository convergence record, complete verification matrix, and independent architecture/security plus UX/test challenger reports
+- exit checklist:
+  - [x] Prior-session implementation branches reconciled against `origin/main`
+  - [x] Confirmed first- and second-round findings repaired with regressions
+  - [ ] Full final verification matrix passes from the candidate commit
+  - [ ] Independent challengers return review-clean on the candidate commit
+  - [ ] Commit and push verified
+  - [ ] Merge or explicit no-merge closeout decided
+  - [ ] Local/remote branch and worktree cleanup complete
+- delete when: after merge to `main`, live installation verification, push verification, and audit worktree cleanup
+- retain reason: n/a
+- cleanup command: `git worktree remove /Users/gillettes/Coding Projects/mission-control-worktrees/full-repo-audit-20260712 && git branch -d codex/full-repo-audit-20260712 && git push origin --delete codex/full-repo-audit-20260712`
+- linked PR/audit/completion record: `records/2026-07-12-full-repo-convergence-audit.md`
 
 Keep one entry per non-trivial active branch so any chat can see why it exists, which chat opened or resumed it, what work is active, what must happen before merge or closeout, and whether the branch should be deleted or intentionally retained.
 Legacy branches opened before this workflow may still need manual backfill; use `TODO: verify` instead of guessing until those entries are added.

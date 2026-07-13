@@ -53,6 +53,7 @@ run "ER-134 usability" /bin/bash scripts/er134-usability.test.sh
 run "loose-end runner" /bin/bash scripts/loose-end-runner.test.sh
 run "shared Mission Control policy" /bin/bash scripts/mission-control-common.test.sh
 run "Morning Brief" /bin/bash scripts/morning-brief.test.sh
+run "Morning Brief proof harvester" scripts/harvest-morning-brief-proof --self-test
 run "Morning Brief delivery" /bin/bash scripts/morning-brief-delivery.test.sh
 run "Morning Brief deadman" /bin/bash scripts/morning-brief-deadman.test.sh
 run "Morning Brief sender" python3 scripts/morning-brief-deadman-sender.test.py
@@ -62,7 +63,7 @@ run "usage snapshot" /bin/bash scripts/usage-snapshot.test.sh
 run "dashboard browser" node scripts/dashboard-browser.test.js
 run "unfinished-work scanner" scripts/scan-unfinished-work --self-test
 run "OpenSpec strict" openspec validate --all --strict
-run "Python syntax" python3 -c 'import pathlib; files=["scripts/chat-graph","scripts/decision-alert","scripts/mission_control_common.py","scripts/outcome_extractor.py","scripts/compose-decision-prompt.py"]; [compile(pathlib.Path(p).read_text(),p,"exec") for p in files]'
+run "Python syntax" python3 -c 'import pathlib; files=["scripts/chat-graph","scripts/decision-alert","scripts/mission_control_common.py","scripts/outcome_extractor.py","scripts/compose-decision-prompt.py","scripts/harvest-morning-brief-proof"]; [compile(pathlib.Path(p).read_text(),p,"exec") for p in files]'
 run "shell syntax" /bin/bash -n scripts/dashboard scripts/*.test.sh scripts/verify.sh
 
 printf '\n====\nSUITES PASS=%s FAIL=%s\n' "$PASS" "$FAIL"

@@ -1800,9 +1800,9 @@ c47() { # concurrent answers publish one internally consistent choice
     did="$(python3 -c 'import json,sys;print(json.loads(sys.argv[1])["decision"]["id"])' "$created")"
     env -u DASHBOARD_CMD_DECISIONS REPO_ROOT="$REPO" MISSION_CONTROL_HOME="$mch" \
       bash "$DASH" collect --force decisions >/dev/null 2>&1
-    ( env -u DASHBOARD_CMD_DECISIONS REPO_ROOT="$REPO" MISSION_CONTROL_HOME="$mch" \
+    ( env -u DASHBOARD_CMD_DECISIONS MC_DECISION_ANSWER_LOCK_HELD=1 REPO_ROOT="$REPO" MISSION_CONTROL_HOME="$mch" \
         bash "$DASH" decide answer "$did" 1 >"$mch/one-$i.out" 2>&1; echo $? >"$mch/one-$i.rc" ) & p1=$!
-    ( env -u DASHBOARD_CMD_DECISIONS REPO_ROOT="$REPO" MISSION_CONTROL_HOME="$mch" \
+    ( env -u DASHBOARD_CMD_DECISIONS MC_DECISION_ANSWER_LOCK_HELD=1 REPO_ROOT="$REPO" MISSION_CONTROL_HOME="$mch" \
         bash "$DASH" decide answer "$did" 2 >"$mch/two-$i.out" 2>&1; echo $? >"$mch/two-$i.rc" ) & p2=$!
     wait "$p1" || true; wait "$p2" || true
     MISSION_CONTROL_HOME="$mch" "$REPO/scripts/decision-alert" history "$did" --json >"$mch/history-$i.json" || miss=1
@@ -1820,7 +1820,7 @@ assert history["decision"]["resolution"]["evidence_ref"] == "mc-answer:%s" % cho
 PY
   done
   if [ "$miss" -eq 0 ]; then
-    ok "decide-answer: concurrent writers publish one consistent choice"
+    ok "decide-answer: concurrent writers ignore ambient lock markers and publish one consistent choice"
   else
     no "decide-answer: concurrent writers split prompt, answer, or decision state"
   fi

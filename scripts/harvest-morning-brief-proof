@@ -10,53 +10,106 @@ def load_json(path):
 def brief_day(brief_id, receipt):
     m=re.match(r"^(\d{4})(\d{2})(\d{2})-", brief_id or "")
     return "%s-%s-%s"%m.groups() if m else local_iso(receipt.get("delivered_at") or receipt.get("created_at"))[:10]
-def markdown_summary(path):
-    try: text=pathlib.Path(path).read_text(encoding="utf-8")
-    except FileNotFoundError: return ""
-    for line in text.splitlines():
-        if line.startswith("- **"): return line.strip("- ").strip()[:140]
-    return ""
 def row_from_receipt(receipt_path, home):
     receipt=load_json(receipt_path)
     if not isinstance(receipt,dict): raise ValueError("receipt is not a JSON object: %s"%receipt_path)
     brief_id=receipt.get("brief_id") or pathlib.Path(receipt_path).stem
+    if not isinstance(brief_id,str) or not re.fullmatch(r"\d{8}-[0-9a-f]{12}",brief_id):
+        raise ValueError("receipt has an invalid brief_id")
     latest=load_json(os.path.join(home,"morning-brief","latest.json")) or {}
-    proof="%s; %s/%s chunks confirmed%s"%(receipt.get("state","unknown"),receipt.get("confirmed_chunks",0),receipt.get("total_chunks",0),(" at %s"%local_iso(receipt.get("delivered_at"))) if receipt.get("delivered_at") else "")
+    if not isinstance(latest,dict): latest={}
+    state=receipt.get("state") if receipt.get("state") in {"delivered","partial","failed","pending"} else "unknown"
+    def count(name):
+        value=receipt.get(name,0)
+        return value if type(value) is int and value>=0 else 0
+    delivered_at=receipt.get("delivered_at")
+    if type(delivered_at) is not int or delivered_at<=0: delivered_at=None
+    proof="%s; %s/%s chunks confirmed%s"%(state,count("confirmed_chunks"),count("total_chunks"),(" at %s"%local_iso(delivered_at)) if delivered_at else "")
     metadata="not latest retained sidecar"
     if latest.get("brief_id")==brief_id:
-        metadata="latest.json match; generated %s; sections %s; markdown_sha256 %s"%(local_iso(latest.get("generated_epoch")),len(latest.get("sections") or []),latest.get("markdown_sha256","missing"))
-        first=markdown_summary(os.path.join(home,"morning-brief","latest.md"))
-        if first: metadata += "; first item: %s"%first
+        sections=latest.get("sections") if isinstance(latest.get("sections"),list) else []
+        digest=latest.get("markdown_sha256")
+        if not isinstance(digest,str) or not re.fullmatch(r"[0-9a-f]{64}",digest): digest="missing"
+        metadata="latest.json match; generated %s; sections %s; markdown_sha256 %s"%(local_iso(latest.get("generated_epoch")),len(sections),digest)
     return [brief_day(brief_id,receipt),"`%s`"%brief_id,proof,metadata,"","",""]
+def split_table_row(line):
+    body=line.strip()
+    if not (body.startswith("|") and body.endswith("|")): return []
+    body=body[1:-1]; cells=[]; buf=[]; i=0
+    while i<len(body):
+        ch=body[i]
+        if ch=="\\" and i+1<len(body) and body[i+1] in ("\\","|"):
+            buf.append(body[i+1]); i+=2; continue
+        if ch=="|": cells.append("".join(buf).strip()); buf=[]
+        else: buf.append(ch)
+        i+=1
+    cells.append("".join(buf).strip())
+    return cells
 def parse_table(lines):
     rows={}
     for line in lines:
         if not line.startswith("|"): continue
-        cells=[c.strip() for c in line.strip().strip("|").split("|")]
+        cells=split_table_row(line)
         if len(cells)!=len(HEADERS) or cells==HEADERS or set(cells[0])<= {"-"}: continue
         rows[cells[1].strip("`")]=cells
     return rows
+def escape_cell(value):
+    return str(value).replace("\\","\\\\").replace("|","\\|").replace("\n"," ").replace("\r"," ")
 def table_lines(rows):
     out=["| "+" | ".join(HEADERS)+" |","| "+" | ".join(["---"]*len(HEADERS))+" |"]
-    for row in sorted(rows.values(), key=lambda r:(r[0],r[1])): out.append("| "+" | ".join(row)+" |")
+    for row in sorted(rows.values(), key=lambda r:(r[0],r[1])):
+        out.append("| "+" | ".join(escape_cell(cell) for cell in row)+" |")
     return out
+def atomic_write(path, text):
+    if path.is_symlink(): raise ValueError("proof log must not be a symlink")
+    mode=path.stat().st_mode & 0o777 if path.exists() else 0o644
+    path.parent.mkdir(parents=True,exist_ok=True)
+    fd,tmp=tempfile.mkstemp(prefix=".proof-log.",dir=str(path.parent))
+    try:
+        os.fchmod(fd,mode)
+        with os.fdopen(fd,"w",encoding="utf-8") as f:
+            f.write(text); f.flush(); os.fsync(f.fileno())
+        os.replace(tmp,path)
+    except BaseException:
+        try: os.unlink(tmp)
+        except OSError: pass
+        raise
 def update_log(log_path,row):
     path=pathlib.Path(log_path); existing=path.read_text(encoding="utf-8").splitlines() if path.exists() else []
-    marker="<!-- proof-table -->"; end="<!-- /proof-table -->"; rows=parse_table(existing); rows[row[1].strip("`")]=row
+    marker="<!-- proof-table -->"; end="<!-- /proof-table -->"; rows=parse_table(existing)
+    key=row[1].strip("`")
+    if key in rows:
+        # Machine evidence refreshes columns 1-4 only. Trevor's comprehension
+        # columns are human-owned and must survive every idempotent harvest.
+        row=row[:4]+rows[key][4:]
+    rows[key]=row
     block=[marker]+table_lines(rows)+[end]
     if marker in existing and end in existing:
         lines=existing[:existing.index(marker)]+block+existing[existing.index(end)+1:]
     else: lines=(existing+[""] if existing else [])+block
-    path.write_text("\n".join(lines).rstrip()+"\n",encoding="utf-8")
+    atomic_write(path,"\n".join(lines).rstrip()+"\n")
 def self_test():
     with tempfile.TemporaryDirectory() as tmp:
         home=os.path.join(tmp,"home"); delivery=os.path.join(home,"morning-brief","delivery"); os.makedirs(delivery)
-        rp=os.path.join(delivery,"20260711-test.json")
-        pathlib.Path(rp).write_text(json.dumps({"brief_id":"20260711-test","state":"delivered","confirmed_chunks":2,"total_chunks":2,"delivered_at":1783778016}),encoding="utf-8")
-        pathlib.Path(os.path.join(home,"morning-brief","latest.json")).write_text(json.dumps({"brief_id":"20260711-test","generated_epoch":1783778016,"sections":[{}],"markdown_sha256":"abc"}),encoding="utf-8")
-        pathlib.Path(os.path.join(home,"morning-brief","latest.md")).write_text("# x\n- **Confirmed:** hello\n",encoding="utf-8")
-        log=os.path.join(tmp,"proof.md"); row=row_from_receipt(rp,home); update_log(log,row); update_log(log,row); text=pathlib.Path(log).read_text(encoding="utf-8")
-        assert text.count("20260711-test")==1 and "latest.json match" in text, text
+        brief_id="20260711-abcdef123456"; rp=os.path.join(delivery,brief_id+".json")
+        pathlib.Path(rp).write_text(json.dumps({"brief_id":brief_id,"state":"delivered","confirmed_chunks":2,"total_chunks":2,"delivered_at":1783778016}),encoding="utf-8")
+        pathlib.Path(os.path.join(home,"morning-brief","latest.json")).write_text(json.dumps({"brief_id":brief_id,"generated_epoch":1783778016,"sections":[{}],"markdown_sha256":"a"*64}),encoding="utf-8")
+        private_sentinel="PASSWORD=hunter2 private.person@example.test left | right"
+        pathlib.Path(os.path.join(home,"morning-brief","latest.md")).write_text(
+            "# private brief\n- **Confirmed:** %s\n"%private_sentinel,encoding="utf-8")
+        log=os.path.join(tmp,"proof.md"); row=row_from_receipt(rp,home)
+        seeded=row[:4]+["yes","yes","operator | note"]
+        update_log(log,seeded); update_log(log,row); text=pathlib.Path(log).read_text(encoding="utf-8")
+        parsed=parse_table(text.splitlines())[brief_id]
+        assert text.count(brief_id)==1 and "latest.json match" in text, text
+        assert parsed[4:]==["yes","yes","operator | note"], parsed
+        assert "operator \\| note" in text, text
+        assert private_sentinel not in text and "hunter2" not in text and "example.test" not in text, text
+        bad=os.path.join(delivery,"20260711-badbadbadbad.json")
+        pathlib.Path(bad).write_text(json.dumps({"brief_id":"../../private","state":private_sentinel}),encoding="utf-8")
+        try: row_from_receipt(bad,home)
+        except ValueError: pass
+        else: raise AssertionError("invalid receipt fields were accepted")
         print("SELF-TEST PASS")
 def main(argv):
     ap=argparse.ArgumentParser(); ap.add_argument("--home",default=os.path.expanduser("~/.mission-control")); ap.add_argument("--log",default="records/morning-brief-live-proof-log.md"); ap.add_argument("--brief-id"); ap.add_argument("--self-test",action="store_true"); args=ap.parse_args(argv)

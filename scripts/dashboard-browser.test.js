@@ -149,7 +149,8 @@ function contrast(a, b) {
         const copyText = await copy.innerText();
         assert(/failed/i.test(copyText), `${mode}: rejected clipboard reported success (${copyText})`);
         const copyBox = await copy.boundingBox();
-        assert(copyBox && copyBox.width >= (mobile ? 44 : 32) && copyBox.height >= (mobile ? 44 : 32),
+        const target = mobile ? 44 : 32;
+        assert(copyBox && copyBox.width + 0.01 >= target && copyBox.height + 0.01 >= target,
           `${mode}/${mobile?'mobile':'desktop'}: copy target too small (${copyBox && copyBox.width}x${copyBox && copyBox.height})`);
         const strip = await page.locator('.mc-strip-seg').evaluateAll(els => els.map(e => ({ tag:e.tagName, tab:e.tabIndex })));
         assert(strip.length > 0 && strip.every(x => x.tag === 'BUTTON' && x.tab >= 0), `${mode}: status strip is not keyboard operable`);

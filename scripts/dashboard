@@ -911,13 +911,54 @@ PYEOF
 }
 
 do_panel() {
+  # Create the panel state roots without following a pre-seeded directory link.
+  # The collector and compiler both write below these paths.
+  if ! python3 - "$MISSION_CONTROL_HOME" <<'PYEOF'
+import os, stat, sys
+home=sys.argv[1]
+for path in (home, os.path.join(home,"data"), os.path.join(home,"bin")):
+    if os.path.lexists(path):
+        st=os.lstat(path)
+        if stat.S_ISLNK(st.st_mode) or not stat.S_ISDIR(st.st_mode):
+            raise SystemExit("panel: unsafe runtime directory: %s"%path)
+    else:
+        os.mkdir(path,0o700)
+    os.chmod(path,0o700)
+PYEOF
+  then
+    return 1
+  fi
   engine collect --due decisions automation >/dev/null 2>&1 || engine collect --force decisions automation >/dev/null || true
-  mkdir -p "$MISSION_CONTROL_HOME/data" "$MISSION_CONTROL_HOME/bin" || return 1
-  chmod 700 "$MISSION_CONTROL_HOME" "$MISSION_CONTROL_HOME/data" "$MISSION_CONTROL_HOME/bin" 2>/dev/null || true
   local src_panel="$MISSION_CONTROL_HOME/panel.html"
+  if [ -L "$src_panel" ] || { [ -e "$src_panel" ] && [ ! -f "$src_panel" ]; }; then
+    echo "panel: unsafe installed panel destination" >&2
+    return 1
+  fi
   if [ ! -f "$src_panel" ] && [ "${DASHBOARD_INSTALL_ALLOW_WORKTREE:-0}" = "1" ]; then
-    cp "$REPO_ROOT/dashboard/panel.html" "$src_panel" || return 1
-    cp "$REPO_ROOT/scripts/mc-panel.swift" "$MISSION_CONTROL_HOME/bin/mc-panel.swift" || return 1
+    if ! python3 - "$REPO_ROOT/dashboard/panel.html" "$src_panel" \
+        "$REPO_ROOT/scripts/mc-panel.swift" "$MISSION_CONTROL_HOME/bin/mc-panel.swift" <<'PYEOF'
+import os, stat, sys, tempfile
+for source, dest in zip(sys.argv[1::2], sys.argv[2::2]):
+    if not os.path.isfile(source) or os.path.islink(source):
+        raise SystemExit("panel: unsafe worktree source")
+    if os.path.lexists(dest):
+        st=os.lstat(dest)
+        if stat.S_ISLNK(st.st_mode) or not stat.S_ISREG(st.st_mode):
+            raise SystemExit("panel: unsafe installed destination")
+    fd,tmp=tempfile.mkstemp(prefix=".panel-install.",dir=os.path.dirname(dest))
+    try:
+        os.fchmod(fd,0o600)
+        with open(source,"rb") as src, os.fdopen(fd,"wb") as out:
+            out.write(src.read());out.flush();os.fsync(out.fileno())
+        os.replace(tmp,dest)
+    except BaseException:
+        try:os.unlink(tmp)
+        except OSError:pass
+        raise
+PYEOF
+    then
+      return 1
+    fi
     chmod 600 "$src_panel" "$MISSION_CONTROL_HOME/bin/mc-panel.swift" || return 1
   fi
   if [ ! -f "$src_panel" ]; then
@@ -932,6 +973,11 @@ do_panel() {
   if _mc_panel_build_valid; then
     bin="$MISSION_CONTROL_HOME/bin/mc-panel"
   elif [ -f "$MISSION_CONTROL_HOME/bin/mc-panel.swift" ] && command -v swiftc >/dev/null 2>&1; then
+    if [ -L "$MISSION_CONTROL_HOME/bin/mc-panel" ] || \
+       { [ -e "$MISSION_CONTROL_HOME/bin/mc-panel" ] && [ ! -f "$MISSION_CONTROL_HOME/bin/mc-panel" ]; }; then
+      echo "panel: unsafe compiled binary destination" >&2
+      return 1
+    fi
     echo "panel: compiling mc-panel…"
     rm -f "$MISSION_CONTROL_HOME/bin/mc-panel-build.json"
     if swiftc -O -o "$MISSION_CONTROL_HOME/bin/mc-panel" "$MISSION_CONTROL_HOME/bin/mc-panel.swift" \
@@ -953,37 +999,80 @@ do_panel() {
   local app_dir="$MISSION_CONTROL_HOME/Mission Control Panel.app"
   local app_macos="$app_dir/Contents/MacOS"
   local app_bin="$app_macos/mc-panel"
-  mkdir -p "$app_macos" || true
-  cp "$bin" "$app_bin" || true
-  chmod 700 "$app_bin" || true
-  cat >"$app_dir/Contents/Info.plist" <<'PLIST'
-<?xml version="1.0" encoding="UTF-8"?>
+  # Treat the entire app staging tree as a deployment boundary. Refuse links
+  # and non-directories at every ancestor, then replace both files atomically.
+  # This prevents a pre-seeded app bundle from redirecting writes elsewhere.
+  if ! python3 - "$app_dir" "$bin" <<'PYEOF'
+import hashlib, os, stat, sys, tempfile
+
+app, source = sys.argv[1:]
+contents = os.path.join(app, "Contents")
+macos = os.path.join(contents, "MacOS")
+binary = os.path.join(macos, "mc-panel")
+plist = os.path.join(contents, "Info.plist")
+
+def safe_dir(path, mode=0o700):
+    if os.path.lexists(path):
+        st = os.lstat(path)
+        if stat.S_ISLNK(st.st_mode) or not stat.S_ISDIR(st.st_mode):
+            raise SystemExit("panel: unsafe app directory: %s" % path)
+    else:
+        os.mkdir(path, mode)
+    os.chmod(path, mode)
+
+def atomic_bytes(dest, payload, mode):
+    if os.path.lexists(dest):
+        st = os.lstat(dest)
+        if stat.S_ISLNK(st.st_mode) or not stat.S_ISREG(st.st_mode):
+            raise SystemExit("panel: unsafe app file: %s" % dest)
+    fd, tmp = tempfile.mkstemp(prefix=".mc-panel-stage.", dir=os.path.dirname(dest))
+    try:
+        os.fchmod(fd, mode)
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp, dest)
+    except BaseException:
+        try: os.unlink(tmp)
+        except OSError: pass
+        raise
+
+if os.path.islink(source) or not os.path.isfile(source):
+    raise SystemExit("panel: compiled binary is not a regular file")
+parent = os.path.dirname(app)
+if not os.path.isdir(parent) or os.path.islink(parent):
+    raise SystemExit("panel: unsafe runtime home")
+for directory in (app, contents, macos):
+    safe_dir(directory)
+with open(source, "rb") as handle:
+    source_bytes = handle.read()
+plist_bytes = b'''<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>CFBundleExecutable</key>
-  <string>mc-panel</string>
-  <key>CFBundleIdentifier</key>
-  <string>com.gillettes.mission-control.panel</string>
-  <key>CFBundleName</key>
-  <string>Mission Control Panel</string>
-  <key>CFBundlePackageType</key>
-  <string>APPL</string>
-  <key>CFBundleVersion</key>
-  <string>1</string>
-  <key>LSMinimumSystemVersion</key>
-  <string>13.0</string>
-  <key>LSUIElement</key>
-  <true/>
-  <key>NSHighResolutionCapable</key>
-  <true/>
-  <key>NSSupportsAutomaticTermination</key>
-  <false/>
-  <key>NSSupportsSuddenTermination</key>
-  <false/>
-</dict>
-</plist>
-PLIST
+<plist version="1.0"><dict>
+<key>CFBundleExecutable</key><string>mc-panel</string>
+<key>CFBundleIdentifier</key><string>com.gillettes.mission-control.panel</string>
+<key>CFBundleName</key><string>Mission Control Panel</string>
+<key>CFBundlePackageType</key><string>APPL</string>
+<key>CFBundleVersion</key><string>1</string>
+<key>LSMinimumSystemVersion</key><string>13.0</string>
+<key>LSUIElement</key><true/>
+<key>NSHighResolutionCapable</key><true/>
+<key>NSSupportsAutomaticTermination</key><false/>
+<key>NSSupportsSuddenTermination</key><false/>
+</dict></plist>
+'''
+atomic_bytes(binary, source_bytes, 0o700)
+atomic_bytes(plist, plist_bytes, 0o600)
+with open(binary, "rb") as handle:
+    deployed = handle.read()
+if hashlib.sha256(deployed).digest() != hashlib.sha256(source_bytes).digest():
+    raise SystemExit("panel: deployed binary hash mismatch")
+PYEOF
+  then
+    echo "panel: app staging failed closed" >&2
+    return 1
+  fi
   pkill -f '[m]c-panel' 2>/dev/null || true
   pkill -f 'Mission Control Panel' 2>/dev/null || true
   if [ "${DASHBOARD_NO_OPEN:-}" != "1" ]; then
@@ -1374,24 +1463,29 @@ case "$cmd" in
         engine collect --force --strict decisions >/dev/null || exit $?
         printf '%s\n' "$decision_result"
         ;;
-      answer)
-        [ $# -eq 3 ] || { usage; exit 2; }
+      answer|__answer-locked)
+        answer_mode="$1"
+        if [ "$answer_mode" = "answer" ]; then
+          [ $# -eq 3 ] || { usage; exit 2; }
+        else
+          [ $# -eq 4 ] || { echo "decide answer: invalid internal lock invocation" >&2; exit 2; }
+        fi
         did="$2"; choice="$3"
         case "$choice" in *[!0-9]*|"") echo "decide answer: choice must be a positive integer" >&2; exit 2 ;; esac
         [ "$choice" -ge 1 ] || { echo "decide answer: choice must be >= 1" >&2; exit 2; }
-        # Validate both the identifier shape and current decision existence
-        # through the owning tool before constructing any filesystem path.
-        history_json="$("$SCRIPT_DIR/decision-alert" history "$did" --json)" || exit $?
+        printf '%s\n' "$did" | grep -Eq '^decision:[0-9a-f]{24}$' || {
+          echo "decide answer: invalid decision id" >&2; exit 2;
+        }
         mkdir -p "$MISSION_CONTROL_HOME/answers" "$MISSION_CONTROL_HOME/prompts" || exit 1
         chmod 700 "$MISSION_CONTROL_HOME/answers" "$MISSION_CONTROL_HOME/prompts" 2>/dev/null || true
-        if [ "${MC_DECISION_ANSWER_LOCK_HELD:-0}" != "1" ]; then
+        lock_path="$MISSION_CONTROL_HOME/answers/.${did}.lock"
+        if [ "$answer_mode" = "answer" ]; then
           # Hold a kernel-released advisory lock across the complete cross-store
-          # answer transaction. A killed parent releases it automatically; a
-          # validated ID makes the per-decision filename non-traversable.
-          DASHBOARD_SELF="$0" LOCK_PATH="$MISSION_CONTROL_HOME/answers/.${did}.lock" \
-            DID="$did" CHOICE="$choice" python3 - <<'PY'
-import fcntl, os, stat, subprocess
-path = os.environ["LOCK_PATH"]
+          # transaction. Lock ownership is carried by an inherited descriptor,
+          # never by a caller-controlled environment marker.
+          python3 - "$0" "$lock_path" "$did" "$choice" <<'PY'
+import fcntl, os, stat, subprocess, sys
+script, path, did, choice = sys.argv[1:]
 flags = os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0)
 fd = os.open(path, flags, 0o600)
 try:
@@ -1399,18 +1493,36 @@ try:
     if not stat.S_ISREG(os.fstat(fd).st_mode):
         raise SystemExit("decision answer lock must be a regular file")
     fcntl.flock(fd, fcntl.LOCK_EX)
-    env = dict(os.environ)
-    env["MC_DECISION_ANSWER_LOCK_HELD"] = "1"
     result = subprocess.run([
-        "/bin/bash", os.path.abspath(env["DASHBOARD_SELF"]), "decide", "answer",
-        env["DID"], env["CHOICE"],
-    ], env=env)
+        "/bin/bash", os.path.abspath(script), "decide", "__answer-locked",
+        did, choice, str(fd),
+    ], pass_fds=(fd,))
     raise SystemExit(result.returncode)
 finally:
     os.close(fd)
 PY
           exit $?
         fi
+        # The internal path is usable only with an inherited descriptor for the
+        # exact lock inode. Acquiring flock here also makes direct internal calls
+        # safe: they either serialize correctly or fail closed.
+        python3 - "$4" "$lock_path" <<'PY' || exit $?
+import fcntl, os, stat, sys
+try:
+    fd = int(sys.argv[1])
+    held = os.fstat(fd)
+    path = os.lstat(sys.argv[2])
+except (OSError, ValueError) as exc:
+    raise SystemExit("decide answer: invalid inherited lock descriptor: %s" % exc)
+if not stat.S_ISREG(held.st_mode) or stat.S_ISLNK(path.st_mode):
+    raise SystemExit("decide answer: unsafe inherited lock")
+if (held.st_dev, held.st_ino) != (path.st_dev, path.st_ino):
+    raise SystemExit("decide answer: inherited lock inode mismatch")
+fcntl.flock(fd, fcntl.LOCK_EX)
+PY
+        # Validate current decision existence and state only after the lock is
+        # held, so a losing writer cannot build or publish partial artifacts.
+        history_json="$("$SCRIPT_DIR/decision-alert" history "$did" --json)" || exit $?
         HISTORY_JSON="$history_json" python3 - <<'PY' || exit $?
 import json, os
 decision = json.loads(os.environ["HISTORY_JSON"]).get("decision") or {}

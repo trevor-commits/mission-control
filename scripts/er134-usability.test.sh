@@ -159,6 +159,47 @@ else
   fail "panel build attestation missing"
 fi
 
+# The app bundle is an executable deployment surface. A pre-seeded symlink at
+# any staged file or directory must fail without changing its external target.
+APP="$MISSION_CONTROL_HOME/Mission Control Panel.app"
+APP_BIN="$APP/Contents/MacOS/mc-panel"
+APP_PLIST="$APP/Contents/Info.plist"
+if DASHBOARD_NO_OPEN=1 "$ROOT/scripts/dashboard" panel >/dev/null 2>&1 && [ -x "$APP_BIN" ]; then
+  pass "panel stages an attested app bundle"
+else
+  fail "panel app bundle staging"
+fi
+victim_bin="$tmp/panel-binary-victim"; printf 'binary-victim\n' > "$victim_bin"
+rm -f "$APP_BIN"; ln -s "$victim_bin" "$APP_BIN"
+if DASHBOARD_NO_OPEN=1 "$ROOT/scripts/dashboard" panel >/dev/null 2>&1; then
+  fail "panel followed a symlinked app binary"
+elif [ "$(cat "$victim_bin")" = binary-victim ] && [ -L "$APP_BIN" ]; then
+  pass "panel rejects symlinked app binary without target mutation"
+else
+  fail "panel binary symlink target changed"
+fi
+rm -rf "$APP"
+DASHBOARD_NO_OPEN=1 "$ROOT/scripts/dashboard" panel >/dev/null 2>&1 || true
+victim_plist="$tmp/panel-plist-victim"; printf 'plist-victim\n' > "$victim_plist"
+rm -f "$APP_PLIST"; ln -s "$victim_plist" "$APP_PLIST"
+if DASHBOARD_NO_OPEN=1 "$ROOT/scripts/dashboard" panel >/dev/null 2>&1; then
+  fail "panel followed a symlinked Info.plist"
+elif [ "$(cat "$victim_plist")" = plist-victim ] && [ -L "$APP_PLIST" ]; then
+  pass "panel rejects symlinked Info.plist without target mutation"
+else
+  fail "panel plist symlink target changed"
+fi
+rm -rf "$APP"
+outside_app="$tmp/outside-panel-app"; mkdir -p "$outside_app"; printf 'directory-victim\n' > "$outside_app/sentinel"
+ln -s "$outside_app" "$APP"
+if DASHBOARD_NO_OPEN=1 "$ROOT/scripts/dashboard" panel >/dev/null 2>&1; then
+  fail "panel followed a symlinked app directory"
+elif [ "$(cat "$outside_app/sentinel")" = directory-victim ] && [ -L "$APP" ]; then
+  pass "panel rejects symlinked app directory without target mutation"
+else
+  fail "panel directory symlink target changed"
+fi
+
 
 TEXT="$(python3 -c 'import json,os;print(json.load(open(os.environ["REPO_ROOT"]+"/dashboard/fixtures/decisions.json"))["data"]["pinned"][0]["text"])')"
 "$MISSION_CONTROL_HOME/bin/decision-alert" ingest \
