@@ -1425,6 +1425,15 @@ body {
             "Confirmed · " + (decision.provenance || decision.source_kind || "structured source")));
           if (id) item.appendChild(copyable("dashboard decide dismiss " + id, "Copy dismiss command"));
         }
+        var receipt = decision.alert_receipt;
+        var attempt = decision.alert_attempt;
+        if (receipt && receipt.succeeded_at) {
+          item.appendChild(h("div", { class: "mc-row-meta" }, "Alert receipt on file"));
+        } else if (attempt && attempt.state === "failed") {
+          item.appendChild(h("div", { class: "mc-row-meta" }, "Alert attempt failed — will retry"));
+        } else {
+          item.appendChild(h("div", { class: "mc-row-meta" }, "Alert pending"));
+        }
         section.appendChild(item);
       } else {
         var row2 = h("div", { class: "mc-row" }, glyphSpan("red"),
@@ -1452,8 +1461,19 @@ body {
         glyphSpan("green"), " Nothing waiting on you right now."));
     }
     var health = healthLine();
+    var alertNote = "";
+    try {
+      var dg = guard("decisions");
+      var alert = dg && dg.data && dg.data.alert;
+      if (alert && alert.eligible_count > 0 && !(alert.sent_count > 0)) {
+        alertNote = " · " + alert.eligible_count + " alert(s) waiting";
+        if (alert.error) alertNote += " (" + String(alert.error).slice(0, 48) + ")";
+      } else if (alert && alert.sent_count > 0) {
+        alertNote = " · alerted " + alert.sent_count + " this cycle";
+      }
+    } catch (e) {}
     glance.appendChild(h("div", { class: "mc-glance-health" },
-      glyphSpan(health.tone), health.text));
+      glyphSpan(health.tone), health.text + alertNote));
     var expand = h("button", { class: "mc-expand-btn", type: "button" },
       HOME_EXPANDED ? "Hide details" : "Show more details");
     expand.addEventListener("click", function () {

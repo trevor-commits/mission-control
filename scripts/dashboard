@@ -357,9 +357,86 @@ def _run_builtin_decisions(timeout_s):
     if p.returncode != 0:
         return None, "decision queue exit %d" % p.returncode
     try:
-        return json.loads(p.stdout), None
+        payload = json.loads(p.stdout)
     except Exception:
         return None, "decision queue output not JSON"
+    # Best-effort loud channel: after sync, alert a small newest batch through
+    # the existing mobile-connect sender. Failures never poison the decisions
+    # feed; they surface under data.alert for glance trust.
+    auto = os.environ.get("DECISION_ALERT_AUTO", "1").strip().lower()
+    if auto not in ("0", "false", "no", "off") and isinstance(payload, dict):
+        alert_timeout = min(30, max(5, int(timeout_s) // 2 or 5))
+        try:
+            max_send = int(os.environ.get("DECISION_ALERT_MAX", "3"))
+        except ValueError:
+            max_send = 3
+        try:
+            fresh_within = int(os.environ.get("DECISION_ALERT_FRESH_WITHIN_S",
+                                              str(48 * 60 * 60)))
+        except ValueError:
+            fresh_within = 48 * 60 * 60
+        argv = [tool, "alert", "--send", "--newest-first",
+                "--max", str(max(0, max_send)),
+                "--fresh-within", str(max(0, fresh_within)), "--json"]
+        ap, aerr = _run_argv(argv, alert_timeout)
+        alert_meta = {
+            "ok": False,
+            "error": aerr or "alert runner failed",
+            "sent_count": 0,
+            "failed_count": 0,
+            "eligible_count": 0,
+        }
+        if not aerr and ap is not None:
+            try:
+                aobj = json.loads(ap.stdout or "{}")
+                if isinstance(aobj, dict):
+                    alert_meta = {
+                        "ok": bool(aobj.get("ok")) and ap.returncode == 0,
+                        "error": None if ap.returncode == 0 else (
+                            (ap.stderr or "").strip()[:200] or "alert exit %d" % ap.returncode),
+                        "sent_count": int(aobj.get("sent_count") or 0),
+                        "failed_count": int(aobj.get("failed_count") or 0),
+                        "eligible_count": int(aobj.get("eligible_count") or 0),
+                        "sent": aobj.get("sent") or [],
+                        "mode": aobj.get("mode"),
+                    }
+                    if ap.returncode != 0 and not alert_meta["error"]:
+                        # Prefer structured stderr from decision-alert.
+                        try:
+                            err_obj = json.loads(ap.stderr or "")
+                            if isinstance(err_obj, dict) and err_obj.get("error"):
+                                alert_meta["error"] = str(err_obj["error"])[:200]
+                        except Exception:
+                            pass
+                else:
+                    alert_meta["error"] = "alert output not object"
+            except Exception:
+                # Non-zero send can still print JSON on stdout; try stderr too.
+                try:
+                    err_obj = json.loads((ap.stderr or ap.stdout or "").strip() or "{}")
+                    if isinstance(err_obj, dict) and err_obj.get("error"):
+                        alert_meta["error"] = str(err_obj["error"])[:200]
+                except Exception:
+                    alert_meta["error"] = "alert output not JSON"
+        data = payload.get("data")
+        if not isinstance(data, dict):
+            data = {}
+            payload["data"] = data
+        data["alert"] = alert_meta
+        # Refresh status so receipts stamped by this tick appear in the feed.
+        if alert_meta.get("sent_count"):
+            sp, serr = _run_argv([tool, "status", "--json"], min(15, alert_timeout))
+            if not serr and sp is not None and sp.returncode == 0:
+                try:
+                    refreshed = json.loads(sp.stdout)
+                    if isinstance(refreshed, dict) and isinstance(refreshed.get("data"), dict):
+                        refreshed["data"]["alert"] = alert_meta
+                        if isinstance(data.get("sync"), dict):
+                            refreshed["data"]["sync"] = data["sync"]
+                        payload = refreshed
+                except Exception:
+                    pass
+    return payload, None
 
 
 def _run_feeder(name, defcmd, envvar, timeout_s):

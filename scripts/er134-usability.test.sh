@@ -163,5 +163,49 @@ else
   head -c 500 "$tmp/ingest.json" || true
 fi
 
+
+# Decisions collect best-effort auto-alerts (capped, newest-first, fresh window).
+ALERT_TMP="$(mktemp -d)"
+mkdir -p "$ALERT_TMP/state/data" "$ALERT_TMP/repo/scripts"
+cp "$ROOT/scripts/decision-alert" "$ALERT_TMP/repo/scripts/decision-alert"
+cp "$ROOT/scripts/mission_control_common.py" "$ALERT_TMP/repo/scripts/mission_control_common.py"
+cat > "$ALERT_TMP/sender" <<'SEND'
+#!/usr/bin/env python3
+import json,os,sys
+p=os.environ["ALERT_CAPTURE"]
+rows=[]
+if os.path.exists(p):
+  try: rows=json.load(open(p))
+  except Exception: rows=[]
+rows.append(sys.argv[1:])
+json.dump(rows, open(p,"w"))
+SEND
+chmod +x "$ALERT_TMP/sender"
+export ALERT_CAPTURE="$ALERT_TMP/capture.json"
+export DECISION_ALERT_SEND_BIN="$ALERT_TMP/sender"
+export DECISION_ALERT_CHAT_ID=4242
+export DECISION_ALERT_MAX=1
+export DECISION_ALERT_FRESH_WITHIN_S=100000000
+MISSION_CONTROL_HOME="$ALERT_TMP/state" "$ALERT_TMP/repo/scripts/decision-alert" ingest \
+  --source-kind git --source-key auto-wire --text 'Choose auto-wire path' \
+  --trust structured --provenance git-facts --json >/dev/null
+MISSION_CONTROL_HOME="$ALERT_TMP/state" REPO_ROOT="$ALERT_TMP/repo" \
+  "$ROOT/scripts/dashboard" collect --force decisions >/dev/null
+if python3 - "$ALERT_TMP/state/data/decisions.json" "$ALERT_CAPTURE" <<'CHECK'
+import json,sys
+feed=json.load(open(sys.argv[1]))
+calls=json.load(open(sys.argv[2]))
+alert=(feed.get("data") or {}).get("alert") or {}
+assert alert.get("sent_count") == 1, alert
+assert len(calls) == 1 and calls[0][0] == "send"
+pinned=feed["data"]["pinned"]
+assert any(d.get("alert_receipt") for d in pinned), pinned[0] if pinned else None
+CHECK
+then pass "decisions collect auto-alerts and stamps receipts"
+else fail "decisions collect auto-alerts and stamps receipts"; fi
+unset ALERT_CAPTURE DECISION_ALERT_SEND_BIN DECISION_ALERT_CHAT_ID DECISION_ALERT_MAX DECISION_ALERT_FRESH_WITHIN_S
+rm -rf "$ALERT_TMP"
+
+
 echo "er134-usability: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

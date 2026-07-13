@@ -561,6 +561,65 @@ PY
 then pass "status feed, WAL, privacy, integrity, and private modes are valid"
 else fail "status feed, WAL, privacy, integrity, and private modes are valid"; fi
 
+
+# Cap + newest-first + fresh-within keep ticker alerts bounded.
+export DECISION_ALERT_NOW_EPOCH=1784019604
+CAP_OLD="$(run_json ingest --source-kind git --source-key cap-old \
+  --text 'Choose old capped decision' --evidence 'old' \
+  --trust structured --provenance git-facts)" || CAP_OLD=""
+export DECISION_ALERT_NOW_EPOCH=1784106005
+CAP_NEW="$(run_json ingest --source-kind git --source-key cap-new \
+  --text 'Choose new capped decision' --evidence 'new' \
+  --trust structured --provenance git-facts)" || CAP_NEW=""
+OLD_ID="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["decision"]["id"])' "$CAP_OLD")"
+NEW_ID="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["decision"]["id"])' "$CAP_NEW")"
+# Reset capture for a clean count.
+: > "$CAPTURE"
+CAP_SENT="$(run_json alert --send --newest-first --max 1)" || CAP_SENT=""
+if python3 - "$CAP_SENT" "$NEW_ID" "$OLD_ID" "$CAPTURE" <<'PY'
+import json,sys
+x=json.loads(sys.argv[1]); calls=json.load(open(sys.argv[4]))
+assert x["sent_count"] == 1 and sys.argv[2] in x["sent"] and sys.argv[3] not in x["sent"]
+assert x.get("attempted_count") == 1
+assert any(sys.argv[2] in row[2] for row in calls)
+PY
+then pass "alert --max --newest-first sends only the newest eligible"
+else fail "alert --max --newest-first sends only the newest eligible"; fi
+FRESH="$(run_json alert --fresh-within 1)" || FRESH=""
+if python3 - "$FRESH" "$OLD_ID" <<'PY'
+import json,sys
+x=json.loads(sys.argv[1])
+ids=[d["id"] for d in x.get("decisions") or []]
+assert sys.argv[2] not in ids
+assert x["eligible_count"] == len(ids)
+PY
+then pass "alert --fresh-within excludes older first_seen decisions"
+else fail "alert --fresh-within excludes older first_seen decisions"; fi
+
+# Mobile-connect config supplies chat id when env is unset.
+unset DECISION_ALERT_CHAT_ID
+cat > "$T/mc-config" <<'CFG'
+ALLOWED_USER_ID=999888777
+CFG
+export MOBILE_CONNECT_CONFIG="$T/mc-config"
+CFG_DEC="$(run_json ingest --source-kind git --source-key cfg-chat \
+  --text 'Choose config-backed alert' --evidence 'cfg' \
+  --trust structured --provenance git-facts)" || CFG_DEC=""
+CFG_ID="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["decision"]["id"])' "$CFG_DEC")"
+: > "$CAPTURE"
+CFG_SENT="$(run_json alert --send --max 1 --newest-first)" || CFG_SENT=""
+if python3 - "$CFG_SENT" "$CAPTURE" <<'PY'
+import json,sys
+x=json.loads(sys.argv[1]); calls=json.load(open(sys.argv[2]))
+assert x["sent_count"] == 1
+assert any(args[1]=="999888777" for args in calls)
+PY
+then pass "alert chat id falls back to mobile-connect ALLOWED_USER_ID"
+else fail "alert chat id falls back to mobile-connect ALLOWED_USER_ID"; fi
+export DECISION_ALERT_CHAT_ID=12345
+unset MOBILE_CONNECT_CONFIG
+
+
 printf '%s\n' '----'
 if [ "$FAIL" -eq 0 ]; then echo 'ALL PASS'; exit 0; fi
 echo "$FAIL FAILED"; exit 1
