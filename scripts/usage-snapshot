@@ -25,7 +25,10 @@ NOW_ISO=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 # offline; upgrade only as an explicit, verified repository change.
 CCUSAGE_PACKAGE="ccusage@20.0.17"
 CCUSAGE_TIMEOUT_SECONDS="${CCUSAGE_TIMEOUT_SECONDS:-120}"
+GLM_TIMEOUT_SECONDS="${GLM_TIMEOUT_SECONDS:-15}"
+NOTIFY_TIMEOUT_SECONDS="${NOTIFY_TIMEOUT_SECONDS:-15}"
 NPX_BIN="${NPX_BIN:-npx}"
+CCUSAGE_BIN="${CCUSAGE_BIN:-}"
 SNAPSHOT_RC=0
 
 DO_HISTORY=0; DO_HTML=0; NO_CCUSAGE="${SKIP_CCUSAGE:-0}"
@@ -39,9 +42,65 @@ for a in "$@"; do
   esac
 done
 
-mkdir -p "$STATE_DIR"
+if ! mkdir -p "$STATE_DIR" 2>/dev/null; then
+  echo "usage-snapshot: cannot create state directory" >&2
+  exit 73
+fi
 ROWS_TMP=$(mktemp "${TMPDIR:-/tmp}/usage-snapshot.XXXXXX") || exit 1
-trap 'rm -f "$ROWS_TMP"' EXIT
+HISTORY_LOCK=""
+HISTORY_LOCK_HELD=0
+
+process_start_identity() {
+  ps -o lstart= -p "$1" 2>/dev/null | sed 's/^[[:space:]]*//;s/[[:space:]]*$//'
+}
+
+release_history_lock() {
+  [ "$HISTORY_LOCK_HELD" -eq 1 ] || return 0
+  [ -d "$HISTORY_LOCK" ] && [ ! -L "$HISTORY_LOCK" ] || return 0
+  [ "$(cat "$HISTORY_LOCK/pid" 2>/dev/null)" = "$$" ] || return 0
+  [ "$(cat "$HISTORY_LOCK/start" 2>/dev/null)" = "$(process_start_identity $$)" ] || return 0
+  rm -f "$HISTORY_LOCK/pid" "$HISTORY_LOCK/start" 2>/dev/null || return 0
+  rmdir "$HISTORY_LOCK" 2>/dev/null || return 0
+  HISTORY_LOCK_HELD=0
+}
+
+cleanup() {
+  rm -f "$ROWS_TMP"
+  release_history_lock
+}
+trap cleanup EXIT
+
+acquire_history_lock() {
+  local lock="$1" owner_pid="" owner_start="" live_start="" unexpected=""
+  if ! mkdir "$lock" 2>/dev/null; then
+    [ -d "$lock" ] && [ ! -L "$lock" ] || return 73
+    [ ! -L "$lock/pid" ] && [ ! -L "$lock/start" ] || return 73
+    owner_pid=$(cat "$lock/pid" 2>/dev/null || true)
+    owner_start=$(cat "$lock/start" 2>/dev/null || true)
+    case "$owner_pid" in
+      ''|*[!0-9]*) ;;
+      *)
+        live_start=$(process_start_identity "$owner_pid")
+        if [ -n "$owner_start" ] && [ "$live_start" = "$owner_start" ] && kill -0 "$owner_pid" 2>/dev/null; then
+          return 75
+        fi
+        ;;
+    esac
+    unexpected=$(find "$lock" -mindepth 1 -maxdepth 1 ! -name pid ! -name start -print -quit 2>/dev/null)
+    [ -z "$unexpected" ] || return 73
+    rm -f "$lock/pid" "$lock/start" 2>/dev/null || return 73
+    rmdir "$lock" 2>/dev/null || return 73
+    mkdir "$lock" 2>/dev/null || return 73
+  fi
+  owner_start=$(process_start_identity $$)
+  [ -n "$owner_start" ] || { rmdir "$lock" 2>/dev/null; return 73; }
+  printf '%s\n' "$$" > "$lock/pid" 2>/dev/null \
+    && printf '%s\n' "$owner_start" > "$lock/start" 2>/dev/null \
+    || { rm -f "$lock/pid" "$lock/start" 2>/dev/null; rmdir "$lock" 2>/dev/null; return 73; }
+  HISTORY_LOCK="$lock"
+  HISTORY_LOCK_HELD=1
+  return 0
+}
 
 emit() { printf '%s\n' "$1" >> "$ROWS_TMP"; }
 
@@ -97,6 +156,14 @@ sys.exit(proc.returncode if proc.returncode >= 0 else 128 - proc.returncode)
 ' "$timeout_s" "$@"
 }
 
+run_ccusage() {
+  if [ -n "$CCUSAGE_BIN" ]; then
+    run_bounded "$CCUSAGE_TIMEOUT_SECONDS" "$CCUSAGE_BIN" "$@"
+  else
+    run_bounded "$CCUSAGE_TIMEOUT_SECONDS" "$NPX_BIN" -y "$CCUSAGE_PACKAGE" "$@"
+  fi
+}
+
 # ---------- codex: newest rollout carries real rate_limits (both windows) ----------
 codex_rows() {
   local newest="" mtime=0 age_h line
@@ -115,6 +182,18 @@ codex_rows() {
   if [ -z "$line" ]; then
     emit "$(row codex 5h null null unknown unknown "$newest" 'rollout has no valid rate_limits window')"
     emit "$(row codex weekly null null unknown unknown "$newest" 'rollout has no valid rate_limits window')"
+    return
+  fi
+  local slots_valid
+  slots_valid=$(printf '%s' "$line" | jq -r '
+    [.primary, .secondary]
+    | all(. == null or (type=="object"
+        and (.window_minutes|type)=="number"
+        and (.window_minutes==300 or .window_minutes==10080)))')
+  if [ "$slots_valid" != "true" ]; then
+    SNAPSHOT_RC=1
+    emit "$(row codex 5h null null unknown down rollout-rate_limits 'current event contains invalid rate window metadata')"
+    emit "$(row codex weekly null null unknown down rollout-rate_limits 'current event contains invalid rate window metadata')"
     return
   fi
   local base_conf=live; [ "$age_h" -ge 6 ] && base_conf=stale
@@ -182,59 +261,80 @@ claude_rows() {
   if [ -n "${CCUSAGE_BLOCKS_JSON:-}" ]; then
     bj=$(cat "$CCUSAGE_BLOCKS_JSON" 2>/dev/null) || blocks_ok=0
   else
-    bj=$(run_bounded "$CCUSAGE_TIMEOUT_SECONDS" "$NPX_BIN" -y "$CCUSAGE_PACKAGE" blocks --json --active --offline) || blocks_ok=0
+    bj=$(run_ccusage blocks --json --active --offline) || blocks_ok=0
   fi
   if [ -n "${CCUSAGE_WEEKLY_JSON:-}" ]; then
     wj=$(cat "$CCUSAGE_WEEKLY_JSON" 2>/dev/null) || weekly_ok=0
   else
-    wj=$(run_bounded "$CCUSAGE_TIMEOUT_SECONDS" "$NPX_BIN" -y "$CCUSAGE_PACKAGE" weekly --json --offline) || weekly_ok=0
+    wj=$(run_ccusage weekly --json --offline) || weekly_ok=0
   fi
 
   if [ "$blocks_ok" -ne 1 ] || ! printf '%s' "$bj" | jq -e '.blocks | type=="array"' >/dev/null 2>&1; then
     SNAPSHOT_RC=1
     emit "$(row claude session-5h null null unknown down ccusage-blocks 'ccusage blocks failed or returned invalid JSON')"
-  elif printf '%s' "$bj" | jq -e '.blocks[0].isActive==true' >/dev/null 2>&1; then
-    local tokens end_iso end_epoch burn cost models
-    tokens=$(printf '%s' "$bj" | jq '.blocks[0].totalTokens')
-    end_iso=$(printf '%s' "$bj" | jq -r '.blocks[0].endTime')
-    end_epoch=$(date -j -u -f '%Y-%m-%dT%H:%M:%S' "$(printf '%s' "$end_iso" | cut -c1-19)" +%s 2>/dev/null || echo null)
-    burn=$(printf '%s' "$bj" | jq '.blocks[0].burnRate.tokensPerMinuteForIndicator // 0 | floor')
-    cost=$(printf '%s' "$bj" | jq '.blocks[0].costUSD // 0 | floor')
-    models=$(printf '%s' "$bj" | jq -r '[.blocks[0].models[]] | join(",")' 2>/dev/null || echo '?')
-    # extra JSON built by jq, not string-interpolation: bash 3.2 mangles \" inside $()
-    local extra_s
-    extra_s=$(jq -cn --argjson t "$tokens" --argjson b "$burn" --argjson c "$cost" --arg m "$models" \
-      '{tokens_used:$t,burn_tpm:$b,est_cost_usd:$c,models:$m}')
-    emit "$(row claude session-5h null "$end_epoch" estimated ok ccusage-blocks \
-      'limits undisclosed; burn+reset only' "$extra_s")"
-  else
+  elif printf '%s' "$bj" | jq -e '.blocks|length==0 or (.blocks[0].isActive==false)' >/dev/null 2>&1; then
     emit "$(row claude session-5h null null estimated ok ccusage-blocks 'no active block (idle)')"
+  else
+    local block_norm end_epoch extra_s
+    block_norm=$(printf '%s' "$bj" | jq -ce '
+      .blocks[0] as $b
+      | select($b.isActive==true
+          and ($b.totalTokens|type)=="number" and $b.totalTokens>=0 and $b.totalTokens<=1e18
+          and ($b.endTime|type)=="string"
+          and ($b.burnRate|type)=="object"
+          and ($b.burnRate.tokensPerMinuteForIndicator|type)=="number"
+          and $b.burnRate.tokensPerMinuteForIndicator>=0 and $b.burnRate.tokensPerMinuteForIndicator<=1e12
+          and ($b.costUSD|type)=="number" and $b.costUSD>=0 and $b.costUSD<=1e12
+          and ($b.models|type)=="array" and all($b.models[]; type=="string"))
+      | {tokens:($b.totalTokens|floor),end:$b.endTime,burn:($b.burnRate.tokensPerMinuteForIndicator|floor),cost:($b.costUSD|floor),models:($b.models|join(","))}' \
+      2>/dev/null) || block_norm=""
+    end_epoch=null
+    if [ -n "$block_norm" ]; then
+      end_epoch=$(date -j -u -f '%Y-%m-%dT%H:%M:%S' "$(printf '%s' "$block_norm" | jq -r '.end' | cut -c1-19)" +%s 2>/dev/null || echo null)
+    fi
+    if [ -z "$block_norm" ] || [ "$end_epoch" = "null" ]; then
+      SNAPSHOT_RC=1
+      emit "$(row claude session-5h null null unknown down ccusage-blocks 'ccusage active block failed schema or timestamp validation')"
+    else
+      extra_s=$(printf '%s' "$block_norm" | jq -c '{tokens_used:.tokens,burn_tpm:.burn,est_cost_usd:.cost,models:.models}')
+      emit "$(row claude session-5h null "$end_epoch" estimated ok ccusage-blocks \
+        'limits undisclosed; burn+reset only' "$extra_s")"
+    fi
   fi
   if [ "$weekly_ok" -ne 1 ] || ! printf '%s' "$wj" | jq -e '.weekly | type=="array"' >/dev/null 2>&1; then
     SNAPSHOT_RC=1
     emit "$(row claude weekly null null unknown down ccusage-weekly 'ccusage weekly failed or returned invalid JSON')"
-  elif printf '%s' "$wj" | jq -e '.weekly | length > 0' >/dev/null 2>&1; then
-    local wt wc
-    wt=$(printf '%s' "$wj" | jq '.weekly[-1].totalTokens // (.weekly[-1] | (.inputTokens+.outputTokens+.cacheCreationTokens+.cacheReadTokens)) // 0')
-    wc=$(printf '%s' "$wj" | jq '.weekly[-1].totalCost // 0 | floor' 2>/dev/null || echo 0)
-    local extra_w wd add now_hm wr
-    extra_w=$(jq -cn --argjson t "$wt" --argjson c "$wc" '{tokens_used:$t,est_cost_usd:$c}')
+  elif printf '%s' "$wj" | jq -e '.weekly | length==0' >/dev/null 2>&1; then
+    emit "$(row claude weekly null null unknown ok ccusage-weekly 'no weekly data')"
+  else
+    local weekly_norm extra_w wd add now_hm wr
+    weekly_norm=$(printf '%s' "$wj" | jq -ce '
+      .weekly[-1] as $w
+      | select(($w|type)=="object"
+          and ($w.totalTokens|type)=="number" and $w.totalTokens>=0 and $w.totalTokens<=1e18
+          and ($w.totalCost|type)=="number" and $w.totalCost>=0 and $w.totalCost<=1e12)
+      | {tokens:($w.totalTokens|floor),cost:($w.totalCost|floor)}' 2>/dev/null) || weekly_norm=""
+    if [ -z "$weekly_norm" ]; then
+      SNAPSHOT_RC=1
+      emit "$(row claude weekly null null unknown down ccusage-weekly 'ccusage weekly record failed schema validation')"
+      return
+    fi
+    extra_w=$(printf '%s' "$weekly_norm" | jq -c '{tokens_used:.tokens,est_cost_usd:.cost}')
     # weekly window resets Wednesdays 5:00 PM local time (from Trevor's plan screen)
     wd=$(date +%u); add=$(( (3 - wd + 7) % 7 )); now_hm=$(date +%H%M)
     [ "$add" -eq 0 ] && [ "$now_hm" -ge 1700 ] && add=7
     wr=$(date -j -v+"${add}"d -v17H -v0M -v0S +%s 2>/dev/null || echo null)
     emit "$(row claude weekly null "$wr" estimated ok ccusage-weekly 'resets Wed 5:00 PM PT (known schedule); limits undisclosed' "$extra_w")"
-  else
-    emit "$(row claude weekly null null unknown ok ccusage-weekly 'no weekly data')"
   fi
 }
 
 # ---------- glm / copilot / hermes / cursor ----------
 glm_row() {
   if command -v "$GLM_BIN" >/dev/null 2>&1; then
-    if "$GLM_BIN" --doctor >/dev/null 2>&1; then
+    if run_bounded "$GLM_TIMEOUT_SECONDS" "$GLM_BIN" --doctor >/dev/null 2>&1; then
       emit "$(row glm plan null null unknown ok claude-glm-doctor 'quota API not wired; treat abundant while healthy')"
     else
+      SNAPSHOT_RC=1
       emit "$(row glm plan null null unknown down claude-glm-doctor 'doctor failed — do not route')"
     fi
   else
@@ -265,7 +365,7 @@ CREDITS_FILE="${USAGE_CREDITS_FILE:-$STATE_DIR/credits.json}"
 notify_credit_advice() {
   local advice="$1"
   if [ -n "${USAGE_NOTIFY_BIN:-}" ]; then
-    "$USAGE_NOTIFY_BIN" notify --session usage-snapshot --name usage-snapshot --text "AI credits: $advice"
+    run_bounded "$NOTIFY_TIMEOUT_SECONDS" "$USAGE_NOTIFY_BIN" notify --session usage-snapshot --name usage-snapshot --text "AI credits: $advice"
     return $?
   fi
   local -a notify_argv
@@ -277,17 +377,31 @@ notify_credit_advice() {
   esac
   IFS=' ' read -r -a notify_argv <<< "$USAGE_NOTIFY_CMD"
   [ "${#notify_argv[@]}" -gt 0 ] || return 1
-  "${notify_argv[@]}" "AI credits: $advice"
+  run_bounded "$NOTIFY_TIMEOUT_SECONDS" "${notify_argv[@]}" "AI credits: $advice"
 }
 
 credit_rows() {
   [ -f "$CREDITS_FILE" ] || return 0
-  local wk
+  local wk credits_json
+  credits_json=$(jq -ce '
+    select(type=="object" and (.credits|type)=="array"
+      and all(.credits[];
+        type=="object"
+        and ((has("provider")|not) or (.provider|type)=="string")
+        and ((has("kind")|not) or (.kind|type)=="string")
+        and ((has("count")|not) or ((.count|type)=="number" and .count>=0 and .count<=1000000 and (.count|floor)==.count))
+        and ((has("expires")|not) or (.expires|type)=="string")))
+    | .credits' "$CREDITS_FILE" 2>/dev/null) || credits_json=""
+  if [ -z "$credits_json" ]; then
+    SNAPSHOT_RC=1
+    emit "$(row credits config null null unknown down credits.json 'credits file failed schema or JSON validation')"
+    return
+  fi
   # numbers only — a string used_pct from a corrupt rollout must never reach advice text.
   # `first` on empty → bare `null` (NOT the quoted string "null", which jq ranks > any number).
   wk=$(jq -s '[.[] | select(.provider=="codex" and .window=="weekly") | .used_pct] | map(select(type=="number")) | first' "$ROWS_TMP" 2>/dev/null)
   [ -z "$wk" ] && wk=null
-  jq -c '.credits[]?' "$CREDITS_FILE" 2>/dev/null | while IFS= read -r c; do
+  while IFS= read -r c; do
     local prov kind cnt exp exp_epoch days advice note stamp
     prov=$(printf '%s' "$c" | jq -r '.provider // "codex"')
     kind=$(printf '%s' "$c" | jq -r '.kind // "credit"')
@@ -296,6 +410,11 @@ credit_rows() {
     exp_epoch=null
     # local end-of-day: a credit is good through its stated day (UTC-midnight parse was a day early in PT)
     [ -n "$exp" ] && exp_epoch=$(date -j -f '%Y-%m-%d %H:%M' "$exp 23:59" +%s 2>/dev/null || echo null)
+    if [ -n "$exp" ] && [ "$exp_epoch" = "null" ]; then
+      SNAPSHOT_RC=1
+      emit "$(row "$prov" "credit:$kind" null null unknown down credits.json 'credit expiry failed date validation')"
+      continue
+    fi
     advice=""
     if [ "$exp_epoch" != "null" ]; then
       days=$(( (exp_epoch - NOW_EPOCH) / 86400 ))
@@ -315,10 +434,10 @@ credit_rows() {
       if ( set -C; : > "$stamp" ) 2>/dev/null; then
         # argv exec only — no sh -c; USAGE_NOTIFY_CMD = executable + fixed args
         notify_credit_advice "$advice" >/dev/null 2>&1 \
-          || { rm -f "$stamp"; echo "usage-snapshot: notify failed — stamp released, retry next run" >&2; }
+          || { SNAPSHOT_RC=1; rm -f "$stamp"; echo "usage-snapshot: notify failed — stamp released, retry next run" >&2; }
       fi
     fi
-  done
+  done < <(printf '%s' "$credits_json" | jq -c '.[]')
   return 0
 }
 
@@ -328,13 +447,16 @@ SNAPSHOT=$(jq -s --arg ts "$NOW_ISO" '{fetched_at:$ts, providers:.}' "$ROWS_TMP"
 
 # ---------- history + wasted-at-reset ----------
 if [ "$DO_HISTORY" = "1" ]; then
-  # mkdir lock: concurrent --history runs would double-append waste rows (check-then-act)
+  # Owner-fenced mkdir lock: recover proven-dead residue, refuse live/unsafe locks.
   LOCK="$STATE_DIR/.history.lock"
-  if ! mkdir "$LOCK" 2>/dev/null; then
-    echo "usage-snapshot: another --history writer is active — skipping history this run (next run heals)" >&2
-    DO_HISTORY=0
-  else
-    trap 'rm -f "$ROWS_TMP"; rmdir "$LOCK" 2>/dev/null' EXIT
+  acquire_history_lock "$LOCK"
+  LOCK_RC=$?
+  if [ "$LOCK_RC" -eq 75 ]; then
+    SNAPSHOT_RC=1; DO_HISTORY=0
+    echo "usage-snapshot: live --history writer owns the lock — history not updated" >&2
+  elif [ "$LOCK_RC" -ne 0 ]; then
+    SNAPSHOT_RC=1; DO_HISTORY=0
+    echo "usage-snapshot: cannot safely acquire the history lock" >&2
   fi
 fi
 if [ "$DO_HISTORY" = "1" ]; then
@@ -342,23 +464,41 @@ if [ "$DO_HISTORY" = "1" ]; then
   if [ -s "$HIST" ]; then
     # window closed since last run → record final observed used_pct as the waste sample
     prev=$(tail -n 1 "$HIST")
-    printf '%s' "$prev" | jq -c --argjson now "$NOW_EPOCH" '
+    waste_rows=$(printf '%s' "$prev" | jq -c --argjson now "$NOW_EPOCH" '
         .providers[] | select(.used_pct != null and .resets_at != null)
         | select((.resets_at | fromdate) <= $now)
-        | {provider, window, closed:.resets_at, final_used_pct:.used_pct, waste_pct:(100-.used_pct)}' 2>/dev/null \
-    | while IFS= read -r w; do
+        | {provider, window, closed:.resets_at, final_used_pct:.used_pct, waste_pct:(100-.used_pct)}' 2>/dev/null)
+    if [ $? -ne 0 ]; then
+      SNAPSHOT_RC=1
+      echo "usage-snapshot: prior history row is invalid" >&2
+      waste_rows=""
+    fi
+    while IFS= read -r w; do
+        [ -n "$w" ] || continue
         key=$(printf '%s' "$w" | jq -r '"\(.provider)\t\(.window)\t\(.closed)"')
         grep -qF "$key" "$WASTE" 2>/dev/null && continue
-        printf '%s\t%s\n' "$key" "$(printf '%s' "$w" | jq -r '"\(.final_used_pct)\t\(.waste_pct)"')" >> "$WASTE"
-      done
+        if ! printf '%s\t%s\n' "$key" "$(printf '%s' "$w" | jq -r '"\(.final_used_pct)\t\(.waste_pct)"')" >> "$WASTE"; then
+          SNAPSHOT_RC=1
+          echo "usage-snapshot: cannot append waste history" >&2
+          break
+        fi
+      done <<< "$waste_rows"
   fi
-  printf '%s\n' "$SNAPSHOT" | jq -c . >> "$HIST"
+  compact_snapshot=$(printf '%s\n' "$SNAPSHOT" | jq -c . 2>/dev/null) || compact_snapshot=""
+  if [ -z "$compact_snapshot" ] || ! printf '%s\n' "$compact_snapshot" >> "$HIST"; then
+    SNAPSHOT_RC=1
+    echo "usage-snapshot: cannot append snapshot history" >&2
+  fi
 fi
 
 # ---------- dashboard ----------
 if [ "$DO_HTML" = "1" ]; then
   OUT="$STATE_DIR/dashboard.html"
-  {
+  OUT_TMP=$(mktemp "$STATE_DIR/.dashboard.XXXXXX" 2>/dev/null) || OUT_TMP=""
+  if [ -z "$OUT_TMP" ]; then
+    SNAPSHOT_RC=1
+    echo "usage-snapshot: cannot create dashboard temporary file" >&2
+  elif {
     printf '<!doctype html><meta charset="utf-8"><title>AI usage</title>\n'
     printf '<style>body{font:14px -apple-system,sans-serif;margin:2em;max-width:820px}h1{font-size:20px}.bar{background:#eee;border-radius:4px;height:18px;width:320px;display:inline-block;vertical-align:middle}.fill{background:#e8a33d;height:18px;border-radius:4px}.ok{color:#2a7}.bad{color:#c33}.dim{color:#888}td,th{padding:4px 10px;text-align:left;border-bottom:1px solid #eee}</style>\n'
     printf '<h1>AI usage — %s</h1><table><tr><th>provider</th><th>window</th><th>used</th><th>resets in</th><th>health</th><th>confidence</th><th>notes</th></tr>\n' "$NOW_ISO"
@@ -371,7 +511,13 @@ if [ "$DO_HTML" = "1" ]; then
       printf '<tr><td colspan=5 class=dim>no closed windows observed yet</td></tr>\n'
     fi
     printf '</table>\n'
-  } > "$OUT"
+  } > "$OUT_TMP" && mv -f "$OUT_TMP" "$OUT"; then
+    :
+  else
+    SNAPSHOT_RC=1
+    rm -f "$OUT_TMP" 2>/dev/null
+    echo "usage-snapshot: cannot render dashboard" >&2
+  fi
 fi
 
 printf '%s\n' "$SNAPSHOT"
