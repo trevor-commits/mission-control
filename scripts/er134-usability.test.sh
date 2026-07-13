@@ -55,7 +55,8 @@ grep -q 'Goal:' "$out" && pass "compose writes Goal prompt" || fail "compose Goa
 grep -q 'Ship today' "$out" && pass "compose includes chosen label" || fail "compose label"
 python3 -c 'import json,sys; json.load(open(sys.argv[1]))' "$tmp/compose.json" && pass "compose json" || fail "compose json"
 
-if DASHBOARD_NO_OPEN=1 "$ROOT/scripts/dashboard" panel --install-only | grep -q 'installed panel'; then
+if DASHBOARD_NO_OPEN=1 DASHBOARD_INSTALL_ALLOW_WORKTREE=1 \
+    "$ROOT/scripts/dashboard" panel --install-only | grep -q 'installed panel'; then
   pass "panel --install-only"
 else
   fail "panel --install-only"
@@ -65,14 +66,19 @@ if grep -q 'innerHTML' "$MISSION_CONTROL_HOME/panel.html"; then fail "panel uses
 grep -q '#f4f5f7' "$MISSION_CONTROL_HOME/panel.html" && pass "panel light default" || fail "panel light default"
 grep -q -- '--mc-bg:        #f4f5f7' "$ROOT/dashboard/index.html" && pass "index light default" || fail "index light default"
 grep -q 'data-theme="dark"' "$ROOT/dashboard/index.html" && pass "dark theme tokens present" || fail "dark theme tokens"
-if [ ! -x "$ROOT/scripts/mc-panel" ] && [ -f "$ROOT/scripts/mc-panel.swift" ] && command -v swiftc >/dev/null 2>&1; then
-  swiftc -O -o "$ROOT/scripts/mc-panel" "$ROOT/scripts/mc-panel.swift"     -framework AppKit -framework WebKit >/dev/null 2>&1 || true
+PANEL_TEST_BIN="$tmp/mc-panel"
+if [ -f "$ROOT/scripts/mc-panel.swift" ] && command -v swiftc >/dev/null 2>&1; then
+  swiftc -O -o "$PANEL_TEST_BIN" "$ROOT/scripts/mc-panel.swift" \
+    -framework AppKit -framework WebKit >/dev/null 2>&1 || true
 fi
-test -x "$ROOT/scripts/mc-panel" && pass "mc-panel binary built" || fail "mc-panel binary"
+test -x "$PANEL_TEST_BIN" && pass "mc-panel binary built in isolated test state" || fail "mc-panel binary"
 grep -q 'disableAutomaticTermination' "$ROOT/scripts/mc-panel.swift" && pass "panel disables TAL" || fail "panel disables TAL"
 grep -q 'beginActivity' "$ROOT/scripts/mc-panel.swift" && pass "panel RunningBoard activity" || fail "panel RunningBoard activity"
 grep -q 'mcDecide' "$ROOT/dashboard/panel.html" && pass "panel one-click bridge" || fail "panel one-click bridge"
 grep -q 'mcDecide' "$ROOT/scripts/mc-panel.swift" && pass "swift mcDecide handler" || fail "swift mcDecide handler"
+grep -q '\^decision:\[0-9a-f\].*24' "$ROOT/scripts/mc-panel.swift" && pass "swift exact decision id contract" || fail "swift exact decision id contract"
+grep -q 'terminationHandler' "$ROOT/scripts/mc-panel.swift" && pass "swift decision bridge is asynchronous" || fail "swift decision bridge async"
+if grep -q 'waitUntilExit' "$ROOT/scripts/mc-panel.swift"; then fail "swift blocks main thread"; else pass "swift does not block main thread"; fi
 grep -q 'mcOpenFull' "$ROOT/dashboard/panel.html" && pass "panel open-full bridge" || fail "panel open-full bridge"
 grep -q 'mcOpenFull' "$ROOT/scripts/mc-panel.swift" && pass "swift mcOpenFull handler" || fail "swift mcOpenFull handler"
 grep -q 'openFullMissionControl' "$ROOT/scripts/mc-panel.swift" && pass "swift openFullMissionControl" || fail "swift openFullMissionControl"
@@ -83,6 +89,16 @@ if grep -E 'id="open-full"[^>]*href="index\.html"' "$ROOT/dashboard/panel.html" 
 else
   pass "open-full not relative href"
 fi
+if node - "$ROOT/dashboard/panel.html" <<'JS'
+const fs=require('fs'),vm=require('vm');
+const src=fs.readFileSync(process.argv[2],'utf8');
+const m=src.match(/function parseOptions\(text\) \{[\s\S]*?\n  \}\n\n  function feeds/);
+if(!m)throw new Error('parseOptions not found');
+const code=m[0].replace(/\n\n  function feeds[\s\S]*$/,'');
+const box={};vm.runInNewContext(code+';result=parseOptions('+JSON.stringify('**DECISION NEEDED:** Choose the rollout window. **`Ship today`** — merge now. **`Wait`** — hold. I recommend the first option.')+');',box);
+if(box.result.q!=='Choose the rollout window.')throw new Error(JSON.stringify(box.result));
+JS
+then pass "panel question omits duplicated option prose"; else fail "panel question duplicates option prose"; fi
 
 # Login KeepAlive template (no real launchctl bootstrap in hermetic/tmp).
 TMPL="$ROOT/launchd/com.gillettes.mc-panel.plist.template"
@@ -136,6 +152,12 @@ if [ -f "$fake_home/Library/LaunchAgents/com.gillettes.mc-panel.plist" ]; then
 else
   pass "no LaunchAgent under DASHBOARD_NO_OPEN"
 fi
+if [ -x "$MISSION_CONTROL_HOME/bin/mc-panel" ] && \
+   [ -f "$MISSION_CONTROL_HOME/bin/mc-panel-build.json" ]; then
+  pass "panel build carries source/binary attestation"
+else
+  fail "panel build attestation missing"
+fi
 
 
 TEXT="$(python3 -c 'import json,os;print(json.load(open(os.environ["REPO_ROOT"]+"/dashboard/fixtures/decisions.json"))["data"]["pinned"][0]["text"])')"
@@ -170,6 +192,18 @@ PY
     fail "decide answer"
     head -40 "$tmp/answer.err" || true
     head -40 "$tmp/answer.out" || true
+  fi
+  outside="$tmp/symlink-target.md"
+  printf 'unchanged\n' > "$outside"
+  rm -f "$MISSION_CONTROL_HOME/prompts/${INGEST_ID}.md"
+  ln -s "$outside" "$MISSION_CONTROL_HOME/prompts/${INGEST_ID}.md"
+  if DASHBOARD_NO_OPEN=1 MISSION_CONTROL_HOME="$MISSION_CONTROL_HOME" REPO_ROOT="$ROOT" \
+      "$MISSION_CONTROL_HOME/bin/dashboard" decide answer "$INGEST_ID" 1 >/dev/null 2>&1; then
+    fail "decide answer followed a symlink prompt destination"
+  elif [ "$(cat "$outside")" = unchanged ]; then
+    pass "decide answer rejects symlink prompt destinations without target mutation"
+  else
+    fail "decide answer mutated symlink target"
   fi
 else
   fail "could not ingest decision id"

@@ -6,7 +6,8 @@
 <title>Mission Control</title>
 
 <!-- feed transport: window.MC.feeds.* set by external scripts (file:// safe, no fetch).
-     Missing files fail silently; renderers guard for undefined. -->
+     Every declared path is materialized by collect/demo/install; renderers still
+     guard malformed or unavailable payloads. -->
 <script src="data/usage.js"></script>
 <script src="data/git.js"></script>
 <script src="data/chats.js"></script>
@@ -35,17 +36,17 @@
 
   --mc-fg:        #1a1d24;
   --mc-fg-muted:  #5b6472;
-  --mc-fg-dim:    #7a8494;
+  --mc-fg-dim:    #5f6978;
 
   --mc-accent:    #3b5bdb;
   --mc-accent-bg: #e8ecfb;
   --mc-accent-bd: #a8b6f0;
 
-  --mc-green:  #0f8a5f;
-  --mc-amber:  #b86e0a;
+  --mc-green:  #08734d;
+  --mc-amber:  #8a5000;
   --mc-red:    #c43c45;
-  --mc-blue:   #2b7bb9;
-  --mc-grey:   #7a8494;
+  --mc-blue:   #17689d;
+  --mc-grey:   #5f6978;
   --mc-green-bg: #e6f6ef;
   --mc-amber-bg: #fbf3e0;
   --mc-red-bg:   #fcebec;
@@ -87,7 +88,7 @@ html[data-theme="dark"] {
   --mc-border-2:  #313640;
   --mc-fg:        #edeef1;
   --mc-fg-muted:  #a7adba;
-  --mc-fg-dim:    #737a88;
+  --mc-fg-dim:    #858d9c;
   --mc-accent:    #7c8cff;
   --mc-accent-bg: #191d33;
   --mc-accent-bd: #3a4270;
@@ -95,7 +96,7 @@ html[data-theme="dark"] {
   --mc-amber:  #e0a534;
   --mc-red:    #e5646a;
   --mc-blue:   #5aa9d6;
-  --mc-grey:   #737a88;
+  --mc-grey:   #858d9c;
   --mc-green-bg: #0f2a22;
   --mc-amber-bg: #2c2410;
   --mc-red-bg:   #2e1618;
@@ -207,6 +208,7 @@ body {
 /* --- nav tabs (underline-active, accent) --- */
 .mc-nav {
   display: flex; gap: var(--mc-sp-1);
+  max-width: 100%; overflow-x: auto; overscroll-behavior-inline: contain;
   padding: 0 var(--mc-sp-5);
   border-bottom: 1px solid var(--mc-border);
   background: color-mix(in srgb, var(--mc-bg) 88%, transparent);
@@ -214,7 +216,7 @@ body {
   position: sticky; top: 49px; z-index: 9;
 }
 .mc-tab {
-  position: relative;
+  position: relative; flex: 0 0 auto;
   padding: var(--mc-sp-3) var(--mc-sp-3);
   color: var(--mc-fg-muted); cursor: pointer;
   text-decoration: none; font-size: var(--mc-fs-3); font-weight: 500;
@@ -330,7 +332,10 @@ body {
 .mc-badge-stale  { background: var(--mc-surface-3); color: var(--mc-fg-dim); border-color: transparent; }
 
 /* --- tables --- */
-.mc-table { width: 100%; border-collapse: collapse; font-size: var(--mc-fs-2); }
+.mc-table {
+  display: block; width: 100%; max-width: 100%; overflow-x: auto;
+  border-collapse: collapse; font-size: var(--mc-fs-2);
+}
 .mc-table th {
   text-align: left; color: var(--mc-fg-dim); font-weight: 500;
   border-bottom: 1px solid var(--mc-border); padding: var(--mc-sp-2) var(--mc-sp-3);
@@ -371,7 +376,11 @@ body {
   border-radius: var(--mc-r-1); padding: 2px var(--mc-sp-2);
   color: var(--mc-fg-muted); max-width: 320px;
 }
-.mc-copy { cursor: pointer; color: var(--mc-accent); border: none; background: none; font-size: var(--mc-fs-1); padding: 0; font-weight: 500; }
+.mc-copy {
+  cursor: pointer; color: var(--mc-accent); border: none; background: none;
+  font-size: var(--mc-fs-1); padding: 4px 6px; font-weight: 500;
+  min-width: 32px; min-height: 32px;
+}
 .mc-edge-label {
   color: var(--mc-fg-dim); font-size: var(--mc-fs-1); font-weight: 500;
   border: 1px solid var(--mc-border); border-radius: var(--mc-r-pill);
@@ -452,6 +461,9 @@ body {
 .mc-legend-line { width: 20px; height: 0; border-top: 3px solid var(--mc-fg-dim); flex: none; }
 .mc-map-wrap { display: grid; grid-template-columns: 1fr 300px; gap: var(--mc-sp-3); }
 @media (max-width: 860px) { .mc-map-wrap { grid-template-columns: 1fr; } }
+@media (max-width: 600px) {
+  .mc-copy { min-width: 44px; min-height: 44px; }
+}
 .mc-graph {
   height: 68vh; min-height: 460px;
   background:
@@ -525,8 +537,15 @@ body {
     "|xox[baprs]-[A-Za-z0-9-]{10,}" +
     "|AKIA[0-9A-Z]{16}" +
     "|eyJ[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]{10,}" +
-    "|(?:[Bb][Ee][Aa][Rr][Ee][Rr])\\s+[A-Za-z0-9._-]{16,})", "g");
-  function redact(s) { return String(s).replace(SECRET_RE, "«REDACTED-SECRET»"); }
+    "|(?:[Bb][Ee][Aa][Rr][Ee][Rr])\\s+[A-Za-z0-9._-]{16,}" +
+    "|-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----)", "g");
+  var EMAIL_RE = /(^|[^A-Za-z0-9._%+-])[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}(?![A-Za-z0-9.-])/g;
+  var PHONE_RE = /(^|[^A-Za-z0-9])(?:\+?1[\s.-]?)?(?:\(\d{3}\)|\d{3})[\s.-]\d{3}[\s.-]\d{4}(?![A-Za-z0-9])/g;
+  function redact(s) {
+    return String(s).replace(SECRET_RE, "«REDACTED-SECRET»")
+      .replace(EMAIL_RE, "$1«REDACTED-PII»")
+      .replace(PHONE_RE, "$1«REDACTED-PII»");
+  }
   function redactDeep(x) {
     if (typeof x === "string") return redact(x);
     if (Array.isArray(x)) return x.map(redactDeep);
@@ -689,16 +708,33 @@ body {
   }
 
   // --- clipboard affordance (file:// tolerant) -------------------------------
+  function clipboardWrite(text) {
+    try {
+      if (typeof window.MC_CLIPBOARD_WRITE === "function") {
+        return Promise.resolve().then(function () { return window.MC_CLIPBOARD_WRITE(text); });
+      }
+      if (!navigator.clipboard || typeof navigator.clipboard.writeText !== "function") {
+        return Promise.reject(new Error("clipboard unavailable"));
+      }
+      return Promise.resolve(navigator.clipboard.writeText(text));
+    } catch (error) {
+      return Promise.reject(error);
+    }
+  }
   function copyable(cmd, label) {
     var code = label
       ? h("span", { class: "mc-ellipsis" }, label)
       : h("code", { class: "mc-ellipsis" }, cmd);
-    var btn = h("button", { class: "mc-copy", title: "copy", onclick: function () {
-      try {
-        if (navigator.clipboard) navigator.clipboard.writeText(cmd);
+    var btn = h("button", { class: "mc-copy", type: "button",
+      "aria-label": label || "Copy command", title: "Copy command", onclick: function () {
+      btn.disabled = true;
+      clipboardWrite(cmd).then(function () {
         btn.textContent = "copied";
-        setTimeout(function () { btn.textContent = "copy"; }, 1200);
-      } catch (e) { btn.textContent = "select"; }
+      }, function () {
+        btn.textContent = "copy failed";
+      }).then(function () {
+        setTimeout(function () { btn.textContent = "copy"; btn.disabled = false; }, 1200);
+      });
     } }, "copy");
     return h("span", { class: "mc-cmd", title: cmd }, code, btn);
   }
@@ -1234,9 +1270,13 @@ body {
     var raw = String(text || "");
     var opts = [];
     var suggested = null;
+    var firstChoice = -1;
     // Prefer backtick-wrapped option labels: **`Approve merge`**
     var tick = /\*\*`([^`]+)`\*\*/g, m;
-    while ((m = tick.exec(raw)) && opts.length < 6) opts.push(m[1].trim());
+    while ((m = tick.exec(raw)) && opts.length < 6) {
+      if (firstChoice < 0) firstChoice = m.index;
+      opts.push(m[1].trim());
+    }
     if (!opts.length) {
       // Bold segments that look like choices after em dash / colon patterns
       var bold = /\*\*([^*]{2,80})\*\*/g;
@@ -1244,6 +1284,7 @@ body {
         var label = m[1].replace(/^`|`$/g, "").trim();
         if (/recommended|DECISION NEEDED|Confirmed/i.test(label)) continue;
         if (label.length < 2) continue;
+        if (firstChoice < 0) firstChoice = m.index;
         opts.push(label);
       }
     }
@@ -1263,7 +1304,9 @@ body {
       }
     }
     // Shorten long prose into a question line
-    var question = raw.replace(/\*\*|`/g, " ").replace(/\s+/g, " ").trim();
+    var questionRaw = firstChoice >= 0 ? raw.slice(0, firstChoice) : raw;
+    var question = questionRaw.replace(/^\s*\*\*DECISION NEEDED:\*\*\s*/i, "")
+      .replace(/\*\*|`/g, " ").replace(/\s+/g, " ").trim();
     if (question.length > 160) question = question.slice(0, 157) + "…";
     return { question: question || "Decision needs your answer", options: opts.slice(0, 3), suggested: suggested };
   }
@@ -1292,7 +1335,8 @@ body {
     var segs = [["chats", "Open work"], ["git", "Git"], ["usage", "Usage"], ["automation", "Jobs"]];
     segs.forEach(function (pair) {
       var k = pair[0], label = pair[1], d = sum[k];
-      strip.appendChild(h("span", { class: "mc-strip-seg", title: "jump to " + label,
+      strip.appendChild(h("button", { class: "mc-strip-seg", type: "button",
+        "aria-label": "Jump to " + label, title: "jump to " + label,
         onclick: function () { location.hash = "#" + k; } },
         glyphSpan(d.state),
         h("span", { class: "mc-strip-seg-label" }, label),
@@ -1393,7 +1437,11 @@ body {
     var shown = pinned.slice(0, limit);
     shown.forEach(function (decision, idx) {
       var id = decision.id || "";
-      var parsed = parseDecisionOptions(decision.text || "");
+      var parsed = (Array.isArray(decision.options) && decision.question) ? {
+        question: decision.question,
+        options: decision.options.slice(0, 3),
+        suggested: decision.recommended == null ? null : +decision.recommended
+      } : parseDecisionOptions(decision.text || "");
       if (opts.glance) {
         var item = h("div", { class: "mc-glance-item" });
         item.appendChild(h("div", { class: "mc-glance-q" },
@@ -1407,10 +1455,15 @@ body {
               title: answerCommand(id, n) },
               n + " — " + label);
             btn.addEventListener("click", function () {
-              try {
-                if (navigator.clipboard) navigator.clipboard.writeText(answerCommand(id, n));
-              } catch (e) {}
-              btn.textContent = "Copied: " + answerCommand(id, n);
+              var old = btn.textContent;
+              btn.disabled = true;
+              clipboardWrite(answerCommand(id, n)).then(function () {
+                btn.textContent = "Copied: " + answerCommand(id, n);
+              }, function () {
+                btn.textContent = "Copy failed — select the command";
+              }).then(function () {
+                setTimeout(function () { btn.textContent = old; btn.disabled = false; }, 1600);
+              });
             });
             row.appendChild(btn);
           });
@@ -2003,9 +2056,14 @@ body {
   function cmdBtn(label, cmd, primary) {
     return h("button", { class: "mc-btn" + (primary ? " mc-btn-primary" : ""),
       title: cmd, onclick: function (ev) {
-        try { if (navigator.clipboard) navigator.clipboard.writeText(cmd); } catch (e) {}
-        var b = ev.target; var old = b.textContent; b.textContent = "copied — paste in a terminal";
-        setTimeout(function () { b.textContent = old; }, 1400);
+        var b = ev.target; var old = b.textContent; b.disabled = true;
+        clipboardWrite(cmd).then(function () {
+          b.textContent = "copied — paste in a terminal";
+        }, function () {
+          b.textContent = "copy failed — select the command";
+        }).then(function () {
+          setTimeout(function () { b.textContent = old; b.disabled = false; }, 1400);
+        });
       } }, label);
   }
   function shortLabel(s) { s = String(s || ""); return s.length > 26 ? s.slice(0, 24) + "…" : s; }
@@ -2420,10 +2478,17 @@ body {
     var nav = document.getElementById("mc-nav");
     nav.textContent = "";
     var cur = currentTab();
+    var active = null;
     TABS.forEach(function (t) {
-      nav.appendChild(h("a", { class: "mc-tab" + (t[0] === cur ? " mc-tab-active" : ""),
-        href: "#" + t[0] }, t[1]));
+      var tab = h("a", { class: "mc-tab" + (t[0] === cur ? " mc-tab-active" : ""),
+        href: "#" + t[0] }, t[1]);
+      if (t[0] === cur) active = tab;
+      nav.appendChild(tab);
     });
+    if (active && typeof active.offsetLeft === "number" && nav.clientWidth) {
+      nav.scrollLeft = Math.max(0,
+        active.offsetLeft - (nav.clientWidth - active.offsetWidth) / 2);
+    }
   }
   function rerender() {
     renderStrip();

@@ -306,6 +306,50 @@ def _latest_attempt(con, decision_id, fingerprint):
     return dict(row) if row else None
 
 
+def _presentation_from_text(text):
+    """Derive one compatibility presentation packet at the domain boundary."""
+    raw = str(text or "")
+    choices = []
+    first_choice = None
+    for match in re.finditer(r"\*\*`([^`]+)`\*\*", raw):
+        if first_choice is None:
+            first_choice = match.start()
+        choices.append(match.group(1).strip())
+        if len(choices) == 3:
+            break
+    if not choices:
+        for match in re.finditer(r"\*\*([^*]{2,80})\*\*", raw):
+            label = match.group(1).strip("` ")
+            if re.search(r"DECISION NEEDED|Confirmed|recommend", label, re.I):
+                continue
+            if first_choice is None:
+                first_choice = match.start()
+            choices.append(label)
+            if len(choices) == 3:
+                break
+    question_raw = raw[:first_choice] if first_choice is not None else raw
+    question = re.sub(r"^\s*\*\*DECISION NEEDED:\*\*\s*", "", question_raw,
+                      flags=re.I)
+    question = re.sub(r"\*\*|`", " ", question)
+    question = re.sub(r"\s+", " ", question).strip()
+    recommended = None
+    if choices and re.search(
+            r"recommend(?:ed)?(?:\s+the)?\s+(?:first|1st|option\s*1)", raw, re.I):
+        recommended = 1
+    elif choices:
+        for index, label in enumerate(choices):
+            start = raw.find(label)
+            if start >= 0 and re.search(
+                    r"Recommended", raw[max(0, start - 40):start + len(label) + 40], re.I):
+                recommended = index + 1
+                break
+    return {
+        "question": question or "Decision needs your answer",
+        "options": choices,
+        "recommended": recommended,
+    }
+
+
 def _decision_dict(con, row):
     if row is None:
         return None
@@ -329,6 +373,9 @@ def _decision_dict(con, row):
         con, data["id"], data["evidence_fingerprint"])
     data["alert_attempt"] = _latest_attempt(
         con, data["id"], data["evidence_fingerprint"])
+    # Consumers receive a structured packet and only need their prose parser for
+    # old fixture/cache compatibility.
+    data.update(_presentation_from_text(data.get("text")))
     return data
 
 

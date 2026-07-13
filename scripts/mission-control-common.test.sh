@@ -8,6 +8,7 @@ FAIL=0
 pass() { PASS=$((PASS + 1)); printf 'PASS: %s\n' "$1"; }
 fail() { FAIL=$((FAIL + 1)); printf 'FAIL: %s\n' "$1"; }
 
+MC_PRIVACY_FIXTURE="$ROOT/tests/fixtures/privacy-boundaries.json" \
 PYTHONPATH="$ROOT/scripts" python3 - <<'PY'
 import json
 import os
@@ -30,6 +31,10 @@ counters = EgressCounters()
 
 def safe(value, field=NARRATIVE, **kwargs):
     return sanitize_text(value, field, counters=counters, **kwargs)
+
+for case in json.load(open(os.environ["MC_PRIVACY_FIXTURE"])):
+    out = safe(case["value"])
+    assert out.dropped and out.value == case["placeholder"], (case, out)
 
 # Secrets/PII/denylist fail closed for every field class.
 for field in (NARRATIVE, ACTION, IDENTIFIER, ERROR, MODEL_INPUT, NOTIFICATION):
@@ -110,6 +115,7 @@ if [ "$RC" -eq 0 ]; then pass "field-aware privacy matrix"; else fail "field-awa
 PYTHONPATH="$ROOT/scripts" python3 - <<'PY'
 import json, os, tempfile, time
 from mission_control_common import (
+    REQUIRED_INSTALL_ASSETS, REQUIRED_INSTALL_RUNTIMES,
     feed_health, full_ingest_sla_s, nested_ingest_stale, nested_ingest_state,
     same_local_day, write_install_stamp, verify_install_stamp,
     next_local_midnight,
@@ -278,19 +284,18 @@ for malformed in (
 # --- install stamp covers deployment assets (index.html, vendor/*) -----------
 home = tempfile.mkdtemp()
 bin_dir = os.path.join(home, "bin"); os.makedirs(bin_dir)
-for runtime in ["dashboard", "morning-brief", "morning-brief-deadman",
-                "decision-alert", "mission_control_common.py"]:
+for runtime in REQUIRED_INSTALL_RUNTIMES:
     open(os.path.join(bin_dir, runtime), "w").write("runtime %s\n" % runtime)
-    if runtime != "mission_control_common.py":
+    if runtime not in ("mission_control_common.py", "mc-panel.swift"):
         os.chmod(os.path.join(bin_dir, runtime), 0o700)
-open(os.path.join(home, "index.html"), "w").write("<html>shell</html>\n")
-os.makedirs(os.path.join(home, "vendor"))
-open(os.path.join(home, "vendor", "cytoscape.min.js"), "w").write("//vendor\n")
-assets = {"index.html": os.path.join(home, "index.html"),
-          "vendor/cytoscape.min.js": os.path.join(home, "vendor", "cytoscape.min.js")}
+assets = {}
+for rel in REQUIRED_INSTALL_ASSETS:
+    path = os.path.join(home, rel)
+    os.makedirs(os.path.dirname(path) or home, exist_ok=True)
+    open(path, "w").write("asset %s\n" % rel)
+    assets[rel] = path
 write_install_stamp(bin_dir, OID, "head",
-                    ["dashboard", "morning-brief", "morning-brief-deadman",
-                     "decision-alert", "mission_control_common.py"],
+                    list(REQUIRED_INSTALL_RUNTIMES),
                     NOW, assets=assets)
 v = verify_install_stamp(bin_dir)
 assert v["present"] and v["ok"], v
@@ -303,8 +308,7 @@ with open(stamp_path, "w") as handle:
 v = verify_install_stamp(bin_dir)
 assert not v["ok"] and "decision-alert" in v["missing"] and "vendor/cytoscape.min.js" in v["missing"], v
 write_install_stamp(bin_dir, OID, "head",
-                    ["dashboard", "morning-brief", "morning-brief-deadman",
-                     "decision-alert", "mission_control_common.py"],
+                    list(REQUIRED_INSTALL_RUNTIMES),
                     NOW, assets=assets)
 # drift in the render shell must be caught (it carries the render JS)
 open(os.path.join(home, "index.html"), "a").write("<!-- drift -->\n")
@@ -325,8 +329,7 @@ for malformed in ([], {"files": [], "assets": {}},
     assert all(k in v for k in ("mismatches", "missing", "unexpected")), v
 for field, value in (("head_sha", []), ("provenance", {})):
     write_install_stamp(bin_dir, OID, "head",
-                        ["dashboard", "morning-brief", "morning-brief-deadman",
-                         "decision-alert", "mission_control_common.py"],
+                        list(REQUIRED_INSTALL_RUNTIMES),
                         NOW, assets=assets)
     stamp = json.load(open(stamp_path)); stamp[field] = value
     json.dump(stamp, open(stamp_path, "w"))
@@ -338,8 +341,7 @@ for field, value in (("schema", True), ("installed_at", True),
                      ("installed_at", 0), ("head_sha", "abc123"),
                      ("provenance", "other")):
     write_install_stamp(bin_dir, OID, "head",
-                        ["dashboard", "morning-brief", "morning-brief-deadman",
-                         "decision-alert", "mission_control_common.py"],
+                        list(REQUIRED_INSTALL_RUNTIMES),
                         NOW, assets=assets)
     stamp = json.load(open(stamp_path)); stamp[field] = value
     json.dump(stamp, open(stamp_path, "w"))
@@ -348,15 +350,13 @@ for field, value in (("schema", True), ("installed_at", True),
 # Malformed attacker-controlled metadata and unexpected map keys never echo into
 # status/deadman verdicts; only fixed reason/category labels leave the verifier.
 write_install_stamp(bin_dir, OID, "head",
-                    ["dashboard", "morning-brief", "morning-brief-deadman",
-                     "decision-alert", "mission_control_common.py"],
+                    list(REQUIRED_INSTALL_RUNTIMES),
                     NOW, assets=assets)
 stamp = json.load(open(stamp_path)); stamp["head_sha"] = "secret-head-label"
 json.dump(stamp, open(stamp_path, "w")); v = verify_install_stamp(bin_dir)
 assert v["head_sha"] is None and "secret-head-label" not in repr(v), v
 write_install_stamp(bin_dir, OID, "head",
-                    ["dashboard", "morning-brief", "morning-brief-deadman",
-                     "decision-alert", "mission_control_common.py"],
+                    list(REQUIRED_INSTALL_RUNTIMES),
                     NOW, assets=assets)
 stamp = json.load(open(stamp_path)); stamp["files"]["sk-secret-key-name"] = "0" * 64
 json.dump(stamp, open(stamp_path, "w")); v = verify_install_stamp(bin_dir)

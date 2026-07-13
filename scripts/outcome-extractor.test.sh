@@ -245,6 +245,29 @@ wait "$LOCK_OWNER_PID" 2>/dev/null
 rm -f "$CHAT_GRAPH_HOME/outcome-extract.lock/owner.json"
 rmdir "$CHAT_GRAPH_HOME/outcome-extract.lock"
 
+# A reused live PID with a mismatched process-start identity belongs to the
+# crashed former owner and is reclaimable after the stale horizon.
+new_env
+SID0E="10000000-0000-4000-8000-000000000004"
+write_claude_source "$SID0E" unstructured
+seed_high_value "$SID0E"
+mkdir "$CHAT_GRAPH_HOME/outcome-extract.lock"
+python3 - "$CHAT_GRAPH_HOME/outcome-extract.lock" "$$" <<'PY'
+import json,os,sys,time
+path,pid=sys.argv[1],int(sys.argv[2])
+with open(os.path.join(path,"owner.json"),"w") as handle:
+    json.dump({"pid":pid,"token":"crashed-owner","start":"definitely-not-this-process"},handle)
+old=time.time()-7200
+os.utime(path,(old,old))
+PY
+if run_extract > "$TIER2_TMP/reused-pid-lock.json" 2> "$TIER2_TMP/reused-pid-lock.err" \
+   && [ ! -d "$CHAT_GRAPH_HOME/outcome-extract.lock" ] \
+   && [ -e "$STUB_CAPTURE" ]; then
+  pass "stale extractor lock with reused PID identity is reclaimed"
+else
+  fail "reused PID extractor lock reclaim"
+fi
+
 for STALE_KIND in ownerless corrupt; do
   new_env
   case "$STALE_KIND" in

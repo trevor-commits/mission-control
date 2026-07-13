@@ -1,0 +1,22 @@
+[
+  {
+    "name": "openai-token",
+    "value": "sk-abcdefghijklmnopqrstuvwxyz123456",
+    "placeholder": "«REDACTED-SECRET»"
+  },
+  {
+    "name": "private-key-header",
+    "value": "-----BEGIN PRIVATE KEY-----",
+    "placeholder": "«REDACTED-SECRET»"
+  },
+  {
+    "name": "email",
+    "value": "private.person@example.invalid",
+    "placeholder": "«REDACTED-PII»"
+  },
+  {
+    "name": "phone",
+    "value": "+1 916-555-0123",
+    "placeholder": "«REDACTED-PII»"
+  }
+]

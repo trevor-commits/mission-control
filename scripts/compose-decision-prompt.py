@@ -7,6 +7,7 @@ import json
 import os
 import re
 import sys
+import tempfile
 from datetime import datetime, timezone
 
 
@@ -23,6 +24,28 @@ def parse_options(text: str) -> list[str]:
         if len(opts) >= 6:
             break
     return opts
+
+
+def write_private_atomic(path: str, text: str) -> None:
+    parent = os.path.dirname(path) or "."
+    os.makedirs(parent, mode=0o700, exist_ok=True)
+    os.chmod(parent, 0o700)
+    if os.path.lexists(path) and (os.path.islink(path) or not os.path.isfile(path)):
+        raise ValueError("output destination must be a regular non-symlink file")
+    fd, tmp = tempfile.mkstemp(prefix=".decision-prompt.", dir=parent)
+    try:
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(text)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
 
 
 def main() -> int:
@@ -71,9 +94,11 @@ def main() -> int:
     if args.resume_provider:
         lines.append("Resume provider: `%s`" % args.resume_provider)
     out = os.path.expanduser(args.out)
-    os.makedirs(os.path.dirname(out) or ".", exist_ok=True)
-    with open(out, "w", encoding="utf-8") as fh:
-        fh.write("\n".join(lines) + "\n")
+    try:
+        write_private_atomic(out, "\n".join(lines) + "\n")
+    except (OSError, ValueError) as exc:
+        print("cannot write prompt safely: %s" % exc, file=sys.stderr)
+        return 2
     print(json.dumps({"ok": True, "prompt_path": out, "choice": args.choice, "label": label}))
     return 0
 
