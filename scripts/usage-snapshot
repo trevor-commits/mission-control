@@ -95,7 +95,8 @@ acquire_history_lock() {
     [ ! -d "$lock/.recovery" ] || [ -z "$(find "$lock/.recovery" -mindepth 1 -print -quit 2>/dev/null)" ] || return 73
     lock_mtime=$(stat -f %m "$lock" 2>/dev/null || echo 0)
     lock_age=$(( $(date +%s) - lock_mtime ))
-    [ "$lock_mtime" -gt 0 ] && [ "$lock_age" -ge 5 ] || return 75
+    [ "$lock_mtime" -gt 0 ] || return 73
+    [ "$lock_age" -ge 5 ] || [ "$lock_mtime" -gt $(( $(date +%s) + 300 )) ] || return 75
     rm -f "$lock/pid" "$lock/start" 2>/dev/null || return 73
     rmdir "$lock/.recovery" 2>/dev/null || true
     rmdir "$lock" 2>/dev/null || true

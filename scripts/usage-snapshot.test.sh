@@ -494,6 +494,19 @@ EOF
   else no "default snapshot invoked a model-backed provider probe"; fi
 }
 
+c22() {
+  new_env
+  mkdir -p "$T/state/.history.lock"
+  touch -t 209901010000 "$T/state/.history.lock"
+  USAGE_SNAPSHOT_DIR="$T/state" USAGE_CREDITS_FILE="$T/missing-credits.json" \
+  CODEX_SESSIONS_DIR="$T/codex" CLAUDE_GLM_BIN="$T/bin/claude-glm" \
+  COPILOT_DB="$T/missing-copilot.db" HERMES_BIN="$T/bin/hermes" \
+    /bin/bash "$USAGE" --no-ccusage --history >"$T/out" 2>"$T/err"
+  if [ $? -eq 0 ] && [ -s "$T/state/history.jsonl" ] && [ -f "$T/state/.history.lock" ]; then
+    ok "future-dated ownerless legacy lock migrates without permanent stranding"
+  else no "future legacy lock was misclassified as a permanent live owner"; fi
+}
+
 c1
 c2
 c3
@@ -515,6 +528,7 @@ c18
 c19
 c20
 c21
+c22
 
 echo "----"
 echo "PASS=$PASS FAIL=$FAIL"
