@@ -1,7 +1,7 @@
 # Full-repo convergence audit
 
 Date: 2026-07-12
-Status: immutable candidate `b79d91d` is full-suite green and independently `REVIEW-CLEAN`; merge/install closeout pending
+Status: GitHub-review follow-up `86cfff8` is full-suite green and independently `REVIEW-CLEAN`; merge/install closeout pending
 Audit branch: `codex/full-repo-audit-20260712`
 Audit worktree: `/Users/gillettes/Coding Projects/mission-control-worktrees/full-repo-audit-20260712`
 Merge target/base inspected: `origin/main` at `659b8d218cb57044506f949d0a3fd47de921eb42`
@@ -96,6 +96,8 @@ Fresh topology proof found only two branches with commits not ancestrally reacha
 | P2 | Mobile tables/nav, active-tab visibility, copy feedback, strip target size, and light/dark contrast were incomplete | Source and real-browser assertions cover desktop/mobile overflow, active nav, clipboard failure truth, named controls, target tolerance, and WCAG color ratios. |
 | P2 | Decision UI inferred question/options only from prose | Producer carries structured `question`, `options`, and `recommended`; UI prefers those fields and retains bounded fallback parsing. |
 | P2 | Authoritative verifier omitted the proof harvester | `verify.sh` runs the self-test and compiles the script in memory. |
+| P2 | The unfinished-work scanner passed its potentially large aggregate JSON document through one command-line argument | Final-count extraction now reads JSON from stdin, removing the `ARG_MAX` failure boundary. Scanner self-test passes. |
+| P2 | Feed lock setup/acquisition filesystem errors were classified as ordinary lock contention, hiding a broken/unsafe lock path from operators | Lock files use `O_NOFOLLOW`, descriptor chmod, and a regular-file check. Only real nonblocking contention returns `locked`; setup/acquisition faults write sanitized error sidecars. A broken-lock-path regression requires strict failure and observable error state. |
 | P2 | Audit branch itself lacked lifecycle metadata | Full Active Branch Ledger entry added with owner, purpose, exit conditions, evidence record, and cleanup command. |
 | P3 | Strict browser target comparison flaked at `43.999969px` for a CSS `44px` minimum | A `0.01px` rendering tolerance preserves the 44px contract; repeated browser gate passes. |
 | P3 | `NSUserNotification` is deprecated | Accepted compatibility debt with an explicit SDK/removal/live-failure/permission-redesign revisit trigger in `todo.md`; migration now would introduce a new notification-permission flow without fixing current behavior. |
@@ -106,14 +108,14 @@ Focused repaired-candidate evidence before the immutable full run:
 
 - `scripts/harvest-morning-brief-proof --self-test` — PASS, including human-field preservation, escaped operator note, private-prose exclusion, and invalid receipt rejection.
 - `scripts/scan-unfinished-work --self-test` — PASS, including clean no-remote default and lifecycle-only nonzero exit.
-- `scripts/dashboard.test.sh` — `PASS=65 FAIL=0`, including 12 concurrent answer races with the forged legacy marker, blocked-sidecar no-resolution proof, successful retry, exact-choice post-resolution recovery, linked-parent refusal, and live rename/replacement of both artifact roots after staging.
+- `scripts/dashboard.test.sh` — `PASS=66 FAIL=0`, including 12 concurrent answer races with the forged legacy marker, blocked-sidecar no-resolution proof, successful retry, exact-choice post-resolution recovery, linked-parent refusal, live rename/replacement of both artifact roots after staging, and observable feed-lock setup failure.
 - `scripts/er134-usability.test.sh` — `50 passed, 0 failed`, including three app-bundle symlink counterexamples.
 - `node scripts/dashboard-browser.test.js` — `253 assertions passed` across installed/demo desktop and mobile surfaces.
 - `git diff --check` and Bash syntax — PASS.
 
 The superseded `df7ab2c`, `f67e079`, and `051bfe1` candidates each completed the authoritative matrix with `SUITES PASS=21 FAIL=0`, but independent review then found, respectively, the blocked-sidecar, linked-parent, and directory rename/swap P1s above. Those green runs are retained as suite evidence, not accepted as final verdicts.
 
-Final immutable pre-merge evidence at `b79d91d`:
+Immutable pre-PR evidence at `b79d91d`:
 
 - `/bin/bash scripts/verify.sh` — `SUITES PASS=21 FAIL=0`; full log `/tmp/mission-control-b79d91d-verify.log`.
 - Dashboard shell/integration suite — `PASS=65 FAIL=0`.
@@ -121,6 +123,10 @@ Final immutable pre-merge evidence at `b79d91d`:
 - Installed/demo Playwright browser gate — `253 assertions passed`.
 - OpenSpec strict validation, Python syntax, shell syntax, scanner self-test, privacy, graph, delivery, deadman, extractor, usage, and all remaining authoritative suites — PASS.
 - Independent UX/test challenger `/root/worker_019f59f8_tests_ux` reviewed the exact immutable source after four finding/repair cycles and returned `REVIEW-CLEAN` on `b79d91d`.
+
+GitHub review then examined all 32 changed files. Two actionable P2 comments were accepted and fixed in `86cfff8`: unbounded scanner JSON through argv, and feed-lock filesystem errors hidden as contention. Its directory-`fsync` portability suggestion was not accepted because this is a macOS-targeted local product and both complete macOS verification runs exercised those calls successfully; directory durability remains intentional. `/bin/bash scripts/verify.sh` then passed `SUITES PASS=21 FAIL=0` again on exact `86cfff8`, with dashboard `PASS=66 FAIL=0`, ER-134 `50/0`, and browser `253`.
+
+The independent UX/test challenger then re-reviewed exact `86cfff8`, including both GitHub-review repairs and their interaction with the prior transaction fixes, and returned `REVIEW-CLEAN`.
 
 Merge/install/push proof and final live state are appended in the closeout commit after those state moves occur.
 
