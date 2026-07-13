@@ -848,7 +848,8 @@ print(json.dumps({"generated": datetime.datetime.now(datetime.timezone.utc).strf
                   "stale_days": int(sys.argv[2]), "findings_total": total,
                   "repos": repos}))
 ' "$JSONL_FILE" "$STALE_DAYS" "$findings_total")"
-findings_total="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["findings_total"])' "$final_json")"
+findings_total="$(printf '%s\n' "$final_json" | \
+  python3 -c 'import json,sys; print(json.load(sys.stdin)["findings_total"])')"
 
 if [ "$JSON" = 1 ]; then
   printf '%s\n' "$final_json"
