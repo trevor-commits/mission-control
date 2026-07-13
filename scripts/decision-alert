@@ -29,6 +29,8 @@ from mission_control_common import (ACTION, IDENTIFIER, NARRATIVE,
 SCHEMA = 1
 ALERT_WINDOW_S = 24 * 60 * 60
 ALERT_RESERVATION_LEASE_S = 60
+ALERT_BACKFILL_DEFAULT_MAX = 10
+ALERT_BACKFILL_HARD_CEILING = 25
 STATUS_CADENCE_S = 300
 TRUST_STATES = ("structured", "inferred")
 RESOLUTION_TYPES = (
@@ -1063,6 +1065,43 @@ def alert(args):
     }
 
 
+
+def alert_backfill(args):
+    """Explicit operator backfill: send remaining eligible with a capped max.
+
+    Distinct from collect's tiny auto-send. Always sends (no preview), newest-first,
+    no fresh-within filter, mobile-connect sender defaults, stamps receipts.
+    """
+    raw = getattr(args, "max", None)
+    if raw is None:
+        max_send = ALERT_BACKFILL_DEFAULT_MAX
+    else:
+        try:
+            max_send = int(raw)
+        except (TypeError, ValueError):
+            raise DecisionError("alert-backfill --max must be a positive integer")
+    if max_send < 1:
+        raise DecisionError("alert-backfill --max must be a positive integer")
+    if max_send > ALERT_BACKFILL_HARD_CEILING:
+        raise DecisionError(
+            "alert-backfill --max exceeds hard ceiling of %d"
+            % ALERT_BACKFILL_HARD_CEILING)
+    packet = argparse.Namespace(
+        send=True,
+        sender=getattr(args, "sender", None),
+        chat_id=getattr(args, "chat_id", None),
+        timeout=getattr(args, "timeout", 30),
+        max=max_send,
+        fresh_within=None,
+        newest_first=True,
+    )
+    result = alert(packet)
+    result["mode"] = "backfill"
+    result["backfill_ceiling"] = ALERT_BACKFILL_HARD_CEILING
+    result["backfill_default_max"] = ALERT_BACKFILL_DEFAULT_MAX
+    return result
+
+
 def _parser():
     parser = PrivateArgumentParser(description="transactional operator decision queue")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -1110,6 +1149,17 @@ def _parser():
                    help="only alert decisions first_seen within N seconds")
     p.add_argument("--newest-first", action="store_true",
                    help="prefer newest open decisions when capping")
+
+    p = sub.add_parser(
+        "alert-backfill",
+        help="explicit capped backfill of remaining eligible alerts")
+    p.add_argument("--sender")
+    p.add_argument("--chat-id")
+    p.add_argument("--timeout", type=int, default=30)
+    p.add_argument(
+        "--max", type=int, default=ALERT_BACKFILL_DEFAULT_MAX,
+        help="cap sends this backfill (default %d, hard ceiling %d)"
+        % (ALERT_BACKFILL_DEFAULT_MAX, ALERT_BACKFILL_HARD_CEILING))
     return parser
 
 
@@ -1126,6 +1176,7 @@ def main(argv=None):
             "dismiss": dismiss, "resolve": resolve,
             "history": history, "list": list_decisions, "status": status,
             "sync-snapshot": sync_snapshot, "alert": alert,
+            "alert-backfill": alert_backfill,
         }
         result = handlers[args.command](args)
         exit_code = int(result.pop("_exit", 0))
