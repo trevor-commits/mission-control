@@ -4,9 +4,9 @@
     "counts": {
       "dismissed": 0,
       "inferred": 1,
-      "open": 1,
+      "open": 4,
       "resolved": 0,
-      "structured_open": 1
+      "structured_open": 4
     },
     "inferred": [
       {
@@ -22,6 +22,33 @@
       {
         "action_argv": null,
         "id": "decision:111111111111111111111111",
+        "provenance": "chat-graph tier1",
+        "source_kind": "chat",
+        "state": "open",
+        "text": "**DECISION NEEDED:** Choose the rollout window. **`Ship today`** \u2014 merge now. **`Wait for Monday`** \u2014 hold until after the weekend. **`Cancel`** \u2014 drop the change. I recommend the first option.",
+        "trust": "structured"
+      },
+      {
+        "action_argv": null,
+        "id": "decision:111111111111111111111112",
+        "provenance": "chat-graph tier1",
+        "source_kind": "chat",
+        "state": "open",
+        "text": "**DECISION NEEDED:** Pick the sandbox mode. **`Full harden`** (Recommended). **`Guard only`**. **`Research only`**.",
+        "trust": "structured"
+      },
+      {
+        "action_argv": null,
+        "id": "decision:111111111111111111111113",
+        "provenance": "chat-graph tier1",
+        "source_kind": "chat",
+        "state": "open",
+        "text": "**DECISION NEEDED:** Next skill lane. **`Build pilot`**. **`Roadmap only`**. **`Keep research`**.",
+        "trust": "structured"
+      },
+      {
+        "action_argv": null,
+        "id": "decision:111111111111111111111114",
         "provenance": "chat-graph tier1",
         "source_kind": "chat",
         "state": "open",

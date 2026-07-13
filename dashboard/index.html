@@ -25,25 +25,72 @@
 <style>
 /* === TOKENS === */
 :root {
-  /* base + surface steps — cool near-black, gentle elevation (Linear/Raycast feel) */
+  /* light default (ER-134) — glanceable paper surface */
+  --mc-bg:        #f4f5f7;
+  --mc-surface-1: #ffffff;
+  --mc-surface-2: #eef0f4;
+  --mc-surface-3: #e4e7ee;
+  --mc-border:    #d5d9e2;
+  --mc-border-2:  #b8bfcc;
+
+  --mc-fg:        #1a1d24;
+  --mc-fg-muted:  #5b6472;
+  --mc-fg-dim:    #7a8494;
+
+  --mc-accent:    #3b5bdb;
+  --mc-accent-bg: #e8ecfb;
+  --mc-accent-bd: #a8b6f0;
+
+  --mc-green:  #0f8a5f;
+  --mc-amber:  #b86e0a;
+  --mc-red:    #c43c45;
+  --mc-blue:   #2b7bb9;
+  --mc-grey:   #7a8494;
+  --mc-green-bg: #e6f6ef;
+  --mc-amber-bg: #fbf3e0;
+  --mc-red-bg:   #fcebec;
+  --mc-blue-bg:  #e7f3fb;
+
+  --mc-font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --mc-mono: ui-monospace, "SF Mono", Menlo, Monaco, "Cascadia Code", Consolas, monospace;
+  --mc-fs-1: 11.5px;
+  --mc-fs-2: 13px;
+  --mc-fs-3: 14px;
+  --mc-fs-4: 16px;
+  --mc-fs-5: 20px;
+  --mc-fs-6: 26px;
+
+  --mc-r-1: 6px;
+  --mc-r-2: 9px;
+  --mc-r-3: 13px;
+  --mc-r-pill: 999px;
+
+  --mc-sp-1: 4px;
+  --mc-sp-2: 8px;
+  --mc-sp-3: 12px;
+  --mc-sp-4: 16px;
+  --mc-sp-5: 24px;
+  --mc-sp-6: 32px;
+  --mc-sp-7: 48px;
+
+  --mc-shadow: 0 1px 2px rgba(26,29,36,.06), 0 4px 16px -6px rgba(26,29,36,.10);
+  --mc-shadow-lift: 0 2px 4px rgba(26,29,36,.08), 0 10px 28px -8px rgba(26,29,36,.14);
+  --mc-ease: cubic-bezier(.22,.61,.36,1);
+  --mc-dur: 160ms;
+}
+html[data-theme="dark"] {
   --mc-bg:        #0e1013;
   --mc-surface-1: #16181d;
   --mc-surface-2: #1d2027;
   --mc-surface-3: #262a33;
-  --mc-border:    #23262e;   /* quiet hairline — barely there */
-  --mc-border-2:  #313640;   /* hover/emphasis edge */
-
-  /* text ramp — body sits high on the ramp for contrast (>=4.5:1 on surfaces) */
+  --mc-border:    #23262e;
+  --mc-border-2:  #313640;
   --mc-fg:        #edeef1;
   --mc-fg-muted:  #a7adba;
   --mc-fg-dim:    #737a88;
-
-  /* one calm accent (indigo) — selection, links, focus, "fresh". Never decoration. */
   --mc-accent:    #7c8cff;
   --mc-accent-bg: #191d33;
   --mc-accent-bd: #3a4270;
-
-  /* status — colorblind-safe, cleaner than raw Okabe-Ito, glyph always paired */
   --mc-green:  #35b98a;
   --mc-amber:  #e0a534;
   --mc-red:    #e5646a;
@@ -53,49 +100,52 @@
   --mc-amber-bg: #2c2410;
   --mc-red-bg:   #2e1618;
   --mc-blue-bg:  #10222e;
-
-  /* typography — one system sans, fixed scale ~1.2 ratio, tabular numbers */
-  --mc-font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-  --mc-mono: ui-monospace, "SF Mono", Menlo, Monaco, "Cascadia Code", Consolas, monospace;
-  --mc-fs-1: 11.5px;   /* meta / captions */
-  --mc-fs-2: 13px;     /* body */
-  --mc-fs-3: 14px;     /* emphasis / row title */
-  --mc-fs-4: 16px;     /* section heading */
-  --mc-fs-5: 20px;     /* card headline */
-  --mc-fs-6: 26px;     /* rare hero count */
-
-  /* radii — softer */
-  --mc-r-1: 6px;
-  --mc-r-2: 9px;
-  --mc-r-3: 13px;
-  --mc-r-pill: 999px;
-
-  /* spacing — roomier, more rhythm */
-  --mc-sp-1: 4px;
-  --mc-sp-2: 8px;
-  --mc-sp-3: 12px;
-  --mc-sp-4: 16px;
-  --mc-sp-5: 24px;
-  --mc-sp-6: 32px;
-  --mc-sp-7: 48px;
-
-  /* depth + motion */
   --mc-shadow: 0 1px 2px rgba(0,0,0,.30), 0 4px 16px -6px rgba(0,0,0,.45);
   --mc-shadow-lift: 0 2px 4px rgba(0,0,0,.35), 0 10px 28px -8px rgba(0,0,0,.55);
-  --mc-ease: cubic-bezier(.22,.61,.36,1);   /* ease-out-quart */
-  --mc-dur: 160ms;
 }
 </style>
 
 <style>
 /* === LAYOUT CSS === */
 /* selectors bind ONLY the mc-* class vocabulary. */
+/* --- ER-134 glance Home --- */
+.mc-theme-toggle {
+  border: 1px solid var(--mc-border); background: var(--mc-surface-1); color: var(--mc-fg);
+  border-radius: var(--mc-r-pill); padding: 4px 10px; font-size: var(--mc-fs-1); cursor: pointer;
+}
+.mc-theme-toggle:hover { border-color: var(--mc-border-2); background: var(--mc-surface-2); }
+.mc-glance { max-width: 720px; margin: 0 auto; padding: var(--mc-sp-5) var(--mc-sp-5) var(--mc-sp-4); }
+.mc-glance-title { font-size: var(--mc-fs-5); font-weight: 650; margin: 0 0 var(--mc-sp-3); color: var(--mc-fg); }
+.mc-glance-card {
+  background: var(--mc-surface-1); border: 1px solid var(--mc-border); border-radius: var(--mc-r-3);
+  box-shadow: var(--mc-shadow); padding: var(--mc-sp-4); margin-bottom: var(--mc-sp-3);
+}
+.mc-glance-item { padding: var(--mc-sp-3) 0; border-top: 1px solid var(--mc-border); }
+.mc-glance-item:first-child { border-top: 0; padding-top: 0; }
+.mc-glance-q { font-size: var(--mc-fs-3); font-weight: 600; margin-bottom: var(--mc-sp-2); }
+.mc-glance-opts { display: flex; flex-wrap: wrap; gap: var(--mc-sp-2); margin: var(--mc-sp-2) 0; }
+.mc-opt {
+  border: 1px solid var(--mc-border); background: var(--mc-surface-2); color: var(--mc-fg);
+  border-radius: var(--mc-r-2); padding: 6px 10px; font-size: var(--mc-fs-2); cursor: pointer; text-align: left;
+}
+.mc-opt:hover { border-color: var(--mc-accent-bd); background: var(--mc-accent-bg); }
+.mc-opt-suggested { border-color: var(--mc-accent); background: var(--mc-accent-bg); font-weight: 600; }
+.mc-glance-suggested { color: var(--mc-fg-muted); font-size: var(--mc-fs-1); margin-top: var(--mc-sp-1); }
+.mc-glance-health {
+  display: flex; align-items: center; gap: var(--mc-sp-2); color: var(--mc-fg-muted);
+  font-size: var(--mc-fs-2); margin: var(--mc-sp-3) 0;
+}
+.mc-expand-btn {
+  border: 1px solid var(--mc-border); background: transparent; color: var(--mc-accent);
+  border-radius: var(--mc-r-2); padding: 8px 12px; cursor: pointer; font-size: var(--mc-fs-2);
+}
+.mc-expand-btn:hover { background: var(--mc-accent-bg); }
+.mc-home-depth { margin-top: var(--mc-sp-5); }
+
 * { box-sizing: border-box; }
 html, body { margin: 0; padding: 0; }
 body {
-  background:
-    radial-gradient(1200px 600px at 80% -10%, #14171e 0%, transparent 60%),
-    var(--mc-bg);
+  background: var(--mc-bg);
   color: var(--mc-fg);
   font-family: var(--mc-font);
   font-size: var(--mc-fs-2);
@@ -1164,6 +1214,77 @@ body {
     return s;
   }
 
+  var HOME_EXPANDED = false;
+  try { HOME_EXPANDED = sessionStorage.getItem("mc-home-expanded") === "1"; } catch (e) {}
+
+  function currentTheme() {
+    try { return localStorage.getItem("mc-theme") || "light"; } catch (e) { return "light"; }
+  }
+  function applyTheme(theme) {
+    var t = theme === "dark" ? "dark" : "light";
+    document.documentElement.setAttribute("data-theme", t);
+    try { localStorage.setItem("mc-theme", t); } catch (e) {}
+  }
+  function toggleTheme() {
+    applyTheme(currentTheme() === "dark" ? "light" : "dark");
+  }
+  applyTheme(currentTheme());
+
+  function parseDecisionOptions(text) {
+    var raw = String(text || "");
+    var opts = [];
+    var suggested = null;
+    // Prefer backtick-wrapped option labels: **`Approve merge`**
+    var tick = /\*\*`([^`]+)`\*\*/g, m;
+    while ((m = tick.exec(raw)) && opts.length < 6) opts.push(m[1].trim());
+    if (!opts.length) {
+      // Bold segments that look like choices after em dash / colon patterns
+      var bold = /\*\*([^*]{2,80})\*\*/g;
+      while ((m = bold.exec(raw)) && opts.length < 6) {
+        var label = m[1].replace(/^`|`$/g, "").trim();
+        if (/recommended|DECISION NEEDED|Confirmed/i.test(label)) continue;
+        if (label.length < 2) continue;
+        opts.push(label);
+      }
+    }
+    var rec = raw.match(/recommend(?:ed)?(?:\s+the)?\s+(?:first|1st|option\s*1)/i);
+    if (rec && opts.length) suggested = 1;
+    else {
+      var sug = raw.match(/\(Recommended\)|\*\*Recommended\*\*|— Recommended/i);
+      if (sug && opts.length) {
+        // pick option whose nearby text mentions Recommended
+        for (var i = 0; i < opts.length; i++) {
+          var idx = raw.indexOf(opts[i]);
+          if (idx >= 0 && /Recommended/i.test(raw.slice(Math.max(0, idx - 40), idx + opts[i].length + 40))) {
+            suggested = i + 1; break;
+          }
+        }
+        if (suggested == null) suggested = 1;
+      }
+    }
+    // Shorten long prose into a question line
+    var question = raw.replace(/\*\*|`/g, " ").replace(/\s+/g, " ").trim();
+    if (question.length > 160) question = question.slice(0, 157) + "…";
+    return { question: question || "Decision needs your answer", options: opts.slice(0, 3), suggested: suggested };
+  }
+
+  function healthLine() {
+    var ga = guard("automation");
+    if (ga.ok && ga.data && Array.isArray(ga.data.jobs)) {
+      var red = ga.data.jobs.filter(function (j) { return j.state === "red"; }).length;
+      var yellow = ga.data.jobs.filter(function (j) {
+        return j.state === "yellow" || j.state === "degraded"; }).length;
+      if (red) return { tone: "red", text: "Automation: " + red + " red job" + (red === 1 ? "" : "s") + (yellow ? ", " + yellow + " warning" : "") };
+      if (yellow) return { tone: "amber", text: "Automation: " + yellow + " warning" + (yellow === 1 ? "" : "s") };
+      return { tone: "green", text: "Machinery healthy" };
+    }
+    return { tone: "grey", text: "Health unknown" };
+  }
+
+  function answerCommand(decisionId, n) {
+    return "dashboard decide answer " + decisionId + " " + n;
+  }
+
   function renderStrip() {
     var strip = document.getElementById("mc-strip");
     strip.textContent = "";
@@ -1178,6 +1299,9 @@ body {
         h("span", { class: "mc-num" }, String(d.count))));
     });
     strip.appendChild(h("span", { class: "mc-strip-spacer" }));
+    strip.appendChild(h("button", { class: "mc-theme-toggle", type: "button",
+      title: "Toggle light/dark", onclick: toggleTheme },
+      currentTheme() === "dark" ? "Light mode" : "Dark mode"));
 
     // right end: page-loaded time · freshness dots · collector self-health
     var meta = h("span", { class: "mc-strip-meta" });
@@ -1252,39 +1376,103 @@ body {
     p.body.appendChild(list);
     p.body.appendChild(h("a", { class: "mc-jump", href: "#brief" }, "Read the full brief →"));
   }
-  function renderPinnedDecisions(main) {
+  function renderPinnedDecisions(main, limit, opts) {
     var g = guard("decisions");
-    if (!g.ok || !g.data) return;
+    if (!g.ok || !g.data) return 0;
     var pinned = Array.isArray(g.data.pinned) ? g.data.pinned : [];
-    if (!pinned.length) return;
-    var section = h("section", { class: "mc-attention" });
+    if (!pinned.length) return 0;
+    limit = limit == null ? 3 : limit;
+    opts = opts || {};
+    var section = h("section", { class: opts.glance ? "mc-glance-card" : "mc-attention" });
     section.appendChild(h("div", { class: "mc-section-head" },
-      h("h2", { text: "Decisions waiting for you" }), ageSpan(g.epoch)));
-    appendPanelProvenance(section, "decisions", g,
-      pinned.length + " confirmed open decision(s)");
-    pinned.slice(0, 7).forEach(function (decision) {
+      h("h2", { text: opts.glance ? "Needs you" : "Decisions waiting for you" }), ageSpan(g.epoch)));
+    if (!opts.glance) {
+      appendPanelProvenance(section, "decisions", g,
+        pinned.length + " confirmed open decision(s)");
+    }
+    var shown = pinned.slice(0, limit);
+    shown.forEach(function (decision, idx) {
       var id = decision.id || "";
-      var row = h("div", { class: "mc-row" }, glyphSpan("red"),
-        h("div", { class: "mc-row-body" },
-          h("div", { class: "mc-row-problem" }, decision.text || "Decision needs review"),
-          h("div", { class: "mc-row-meta" }, "Confirmed · " +
-            (decision.provenance || decision.source_kind || "structured source"))));
-      if (id) row.appendChild(copyable("dashboard decide dismiss " + id, "Copy dismiss command"));
-      section.appendChild(row);
+      var parsed = parseDecisionOptions(decision.text || "");
+      if (opts.glance) {
+        var item = h("div", { class: "mc-glance-item" });
+        item.appendChild(h("div", { class: "mc-glance-q" },
+          (idx + 1) + ". " + parsed.question));
+        if (parsed.options.length) {
+          var row = h("div", { class: "mc-glance-opts" });
+          parsed.options.forEach(function (label, oi) {
+            var n = oi + 1;
+            var cls = "mc-opt" + (parsed.suggested === n ? " mc-opt-suggested" : "");
+            var btn = h("button", { class: cls, type: "button",
+              title: answerCommand(id, n) },
+              n + " — " + label);
+            btn.addEventListener("click", function () {
+              try {
+                if (navigator.clipboard) navigator.clipboard.writeText(answerCommand(id, n));
+              } catch (e) {}
+              btn.textContent = "Copied: " + answerCommand(id, n);
+            });
+            row.appendChild(btn);
+          });
+          item.appendChild(row);
+          if (parsed.suggested) {
+            item.appendChild(h("div", { class: "mc-glance-suggested" },
+              "Suggested: " + parsed.suggested + " — " +
+              (parsed.options[parsed.suggested - 1] || "")));
+          }
+        } else {
+          item.appendChild(h("div", { class: "mc-row-meta" },
+            "Confirmed · " + (decision.provenance || decision.source_kind || "structured source")));
+          if (id) item.appendChild(copyable("dashboard decide dismiss " + id, "Copy dismiss command"));
+        }
+        section.appendChild(item);
+      } else {
+        var row2 = h("div", { class: "mc-row" }, glyphSpan("red"),
+          h("div", { class: "mc-row-body" },
+            h("div", { class: "mc-row-problem" }, decision.text || "Decision needs review"),
+            h("div", { class: "mc-row-meta" }, "Confirmed · " +
+              (decision.provenance || decision.source_kind || "structured source"))));
+        if (id) row2.appendChild(copyable("dashboard decide dismiss " + id, "Copy dismiss command"));
+        section.appendChild(row2);
+      }
     });
-    if (pinned.length > 7) section.appendChild(h("div", { class: "mc-card-foot" },
-      "+" + (pinned.length - 7) + " more confirmed decision(s)"));
+    if (pinned.length > limit) section.appendChild(h("div", { class: "mc-card-foot" },
+      "+" + (pinned.length - limit) + " more confirmed decision(s)"));
     main.appendChild(section);
+    return pinned.length;
   }
+
   function renderHome(main) {
     var home = combinedHomeState();
-    var homeHead = h("div", { class: "mc-section-head" }, h("h2", { text: "Home" }));
+    var glance = h("div", { class: "mc-glance" });
+    glance.appendChild(h("h1", { class: "mc-glance-title" }, "Needs you"));
+    var count = renderPinnedDecisions(glance, 3, { glance: true });
+    if (!count) {
+      glance.appendChild(h("div", { class: "mc-glance-card mc-allgreen" },
+        glyphSpan("green"), " Nothing waiting on you right now."));
+    }
+    var health = healthLine();
+    glance.appendChild(h("div", { class: "mc-glance-health" },
+      glyphSpan(health.tone), health.text));
+    var expand = h("button", { class: "mc-expand-btn", type: "button" },
+      HOME_EXPANDED ? "Hide details" : "Show more details");
+    expand.addEventListener("click", function () {
+      HOME_EXPANDED = !HOME_EXPANDED;
+      try { sessionStorage.setItem("mc-home-expanded", HOME_EXPANDED ? "1" : "0"); } catch (e) {}
+      rerender();
+    });
+    glance.appendChild(expand);
+    main.appendChild(glance);
+
+    if (!HOME_EXPANDED) return;
+
+    var depth = h("div", { class: "mc-home-depth" });
+    var homeHead = h("div", { class: "mc-section-head" }, h("h2", { text: "Home details" }));
     if (home.epoch) homeHead.appendChild(ageSpan(home.epoch));
-    main.appendChild(homeHead);
-    appendPanelProvenance(main, "home", { ok: true, epoch: home.epoch }, home.status);
-    renderMorningBriefSummary(main);
-    renderPinnedDecisions(main);
-    // needs-attention (merged, max 7, stable-sorted)
+    depth.appendChild(homeHead);
+    appendPanelProvenance(depth, "home", { ok: true, epoch: home.epoch }, home.status);
+    renderMorningBriefSummary(depth);
+    renderPinnedDecisions(depth, 7, { glance: false });
     var exc = harvestExceptions();
     var attn = h("section", { class: "mc-attention" });
     attn.appendChild(h("div", { class: "mc-section-head" }, h("h2", { text: "Needs attention" })));
@@ -1312,17 +1500,16 @@ body {
       });
       if (exc.length > 7) attn.appendChild(h("div", { class: "mc-card-foot" }, "+" + (exc.length - 7) + " more across the tabs"));
     }
-    main.appendChild(attn);
-
-    // four fixed-anatomy summary cards
+    depth.appendChild(attn);
     var cards = h("section", { class: "mc-cards" });
     cards.appendChild(cardChats());
     cards.appendChild(cardGit());
     cards.appendChild(cardUsage());
     cards.appendChild(cardAutomation());
-    main.appendChild(cards);
-    renderSessionMonitor(main);
-    renderActivityHeatmap(main);
+    depth.appendChild(cards);
+    renderSessionMonitor(depth);
+    renderActivityHeatmap(depth);
+    main.appendChild(depth);
   }
 
   function combinedHomeState() {

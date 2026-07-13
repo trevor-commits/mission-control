@@ -52,12 +52,38 @@ function makeTextNode(s) { return { nodeType: 3, textContent: String(s == null ?
 let byId = {};
 function resetDom() { byId = { 'mc-main': makeEl('div'), 'mc-nav': makeEl('div'), 'mc-strip': makeEl('div') }; }
 
+const storageShim = () => {
+  const map = Object.create(null);
+  return {
+    getItem(k) { return Object.prototype.hasOwnProperty.call(map, k) ? map[k] : null; },
+    setItem(k, v) { map[k] = String(v); },
+    removeItem(k) { delete map[k]; },
+    clear() { for (const k of Object.keys(map)) delete map[k]; },
+  };
+};
+const documentElementShim = makeEl('html');
+
+function attachThemeShims(sandbox, expandHome) {
+  const localStorage = storageShim();
+  const sessionStorage = storageShim();
+  if (expandHome) sessionStorage.setItem('mc-home-expanded', '1');
+  sandbox.localStorage = localStorage;
+  sandbox.sessionStorage = sessionStorage;
+  sandbox.navigator = sandbox.navigator || { clipboard: { writeText() { return Promise.resolve(); } } };
+  if (sandbox.window) {
+    sandbox.window.localStorage = localStorage;
+    sandbox.window.sessionStorage = sessionStorage;
+    sandbox.window.navigator = sandbox.navigator;
+  }
+  return sandbox;
+}
 const documentShim = {
   createElement: makeEl,
   createTextNode: makeTextNode,
   getElementById(id) { if (!byId[id]) byId[id] = makeEl('div'); return byId[id]; },
   addEventListener() {}, removeEventListener() {},
   hidden: false, body: makeEl('body'),
+  documentElement: documentElementShim,
 };
 const locationShim = { hash: '', reload() {}, href: 'file:///mc' };
 const ACTIVATION_EPOCH = Date.UTC(2099, 11, 31, 23, 59, 0) / 1000;
@@ -163,9 +189,15 @@ for (const tab of TABS) {
       $(selector) { return { selector, select() { return this; } }; },
     };
   }
+  const localStorage = storageShim();
+  const sessionStorage = storageShim();
+  // Expanded Home keeps depth-section coverage; glance checks run in a dedicated case below.
+  if (tab === 'home') sessionStorage.setItem('mc-home-expanded', '1');
   const sandbox = {
-    window: { MC: { feeds: JSON.parse(JSON.stringify(feeds)) }, addEventListener() {}, removeEventListener() {} },
+    window: { MC: { feeds: JSON.parse(JSON.stringify(feeds)) }, addEventListener() {}, removeEventListener() {}, localStorage, sessionStorage },
     document: documentShim, location: locationShim,
+    localStorage, sessionStorage,
+    navigator: { clipboard: { writeText() { return Promise.resolve(); } } },
     setInterval() { return 0; }, clearInterval() {}, setTimeout(fn) { if (typeof fn === 'function') fn(); return 0; }, clearTimeout() {},
     Math: Math, Date: Date, JSON: JSON, console: { log() {}, warn() {}, error() {} },
     Array: Array, Object: Object, String: String, Number: Number, isFinite: isFinite, parseInt: parseInt, parseFloat: parseFloat,
@@ -174,6 +206,7 @@ for (const tab of TABS) {
   sandbox.window.window = sandbox.window;
   sandbox.globalThis = sandbox;
   try {
+    attachThemeShims(sandbox, (locationShim.hash || '') === '#home');
     vm.runInNewContext(scriptBody, sandbox, { timeout: 5000 });
   } catch (e) {
     console.error('FAIL: renderer for #' + tab + ' THREW: ' + (e && e.message));
@@ -222,10 +255,18 @@ for (const tab of TABS) {
       console.error('FAIL: #home is missing the Morning Brief summary');
       fails++; continue;
     }
+    if (txt.indexOf('Needs you') === -1 ||
+        txt.indexOf('Choose the rollout window') === -1) {
+      console.error('FAIL: #home is missing the glance Needs-you queue');
+      fails++; continue;
+    }
     if (txt.indexOf('Decisions waiting for you') === -1 ||
-        txt.indexOf('Choose the rollout window') === -1 ||
         txt.indexOf('Copy dismiss command') === -1) {
-      console.error('FAIL: #home is missing the pinned transactional decision queue');
+      console.error('FAIL: #home expanded depth is missing the pinned transactional decision queue');
+      fails++; continue;
+    }
+    if ((documentElementShim.getAttribute('data-theme') || 'light') !== 'light') {
+      console.error('FAIL: #home default theme is not light');
       fails++; continue;
     }
     if (txt.indexOf('Session monitor') === -1 || txt.indexOf('Recent activity') === -1) {
@@ -307,6 +348,7 @@ for (const tab of TABS) {
   sandbox.window.window = sandbox.window;
   sandbox.globalThis = sandbox;
   try {
+    attachThemeShims(sandbox, (locationShim.hash || '') === '#home');
     vm.runInNewContext(scriptBody, sandbox, { timeout: 5000 });
   } catch (e) {
     console.error('FAIL: negative far-future brief render THREW: ' + (e && e.message));
@@ -343,6 +385,7 @@ for (const tab of TABS) {
   sandbox.window.window = sandbox.window;
   sandbox.globalThis = sandbox;
   try {
+    attachThemeShims(sandbox, (locationShim.hash || '') === '#home');
     vm.runInNewContext(scriptBody, sandbox, { timeout: 5000 });
   } catch (e) {
     console.error('FAIL: negative 47h-validity brief render THREW: ' + (e && e.message));
@@ -376,6 +419,7 @@ for (const tab of TABS) {
       cytoscape() { return { on() {}, destroy() {}, $() { return { select() { return this; } }; } }; },
     };
     sandbox.window.window = sandbox.window; sandbox.globalThis = sandbox;
+    attachThemeShims(sandbox, (locationShim.hash || '') === '#home');
     try { vm.runInNewContext(scriptBody, sandbox, { timeout: 5000 }); }
     catch (e) { console.error('FAIL: malformed ' + c.field + ' render THREW: ' + e.message); fails++; continue; }
     const txt = (byId['mc-main'] && byId['mc-main'].textContent) || '';
@@ -407,6 +451,7 @@ for (const tab of TABS) {
       cytoscape() { return { on() {}, destroy() {}, $() { return { select() { return this; } }; } }; },
     };
     sandbox.window.window = sandbox.window; sandbox.globalThis = sandbox;
+    attachThemeShims(sandbox, (locationShim.hash || '') === '#home');
     try { vm.runInNewContext(scriptBody, sandbox, { timeout: 5000 }); }
     catch (e) { console.error('FAIL: malformed envelope ' + c.label + ' THREW: ' + e.message); fails++; continue; }
     const txt = (byId['mc-main'] && byId['mc-main'].textContent) || '';
@@ -452,6 +497,7 @@ for (const tab of TABS) {
     sandbox.window.window = sandbox.window;
     sandbox.globalThis = sandbox;
     try {
+      attachThemeShims(sandbox, (locationShim.hash || '') === '#home');
       vm.runInNewContext(scriptBody, sandbox, { timeout: 5000 });
     } catch (e) {
       console.error('FAIL: hard-expiry ' + c.label + ' render THREW: ' + (e && e.message));
@@ -488,6 +534,7 @@ for (const tab of TABS) {
       cytoscape() { return { on() {}, destroy() {}, $() { return { select() { return this; } }; } }; },
     };
     sandbox.window.window = sandbox.window; sandbox.globalThis = sandbox;
+    attachThemeShims(sandbox, (locationShim.hash || '') === '#home');
     vm.runInNewContext(scriptBody, sandbox, { timeout: 5000 });
   }
   const NOW = 1783674000;
@@ -594,6 +641,7 @@ for (const tab of TABS) {
   sandbox.window.window = sandbox.window;
   sandbox.globalThis = sandbox;
   try {
+    attachThemeShims(sandbox, (locationShim.hash || '') === '#home');
     vm.runInNewContext(scriptBody, sandbox, { timeout: 5000 });
   } catch (e) {
     console.error('FAIL: skew Home render THREW: ' + (e && e.message));
@@ -639,6 +687,7 @@ function renderHomeWithChatsCounts(overrides) {
   };
   sandbox.window.window = sandbox.window;
   sandbox.globalThis = sandbox;
+  attachThemeShims(sandbox, (locationShim.hash || '') === '#home');
   vm.runInNewContext(scriptBody, sandbox, { timeout: 5000 });
   return (byId['mc-main'] && byId['mc-main'].textContent) || '';
 }

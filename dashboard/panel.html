@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mission Control Panel</title>
+<script src="data/decisions.js"></script>
+<script src="data/automation.js"></script>
+<script src="data/decisions.error.js"></script>
+<script src="data/automation.error.js"></script>
+<style>
+:root {
+  --bg: #f4f5f7; --card: #fff; --fg: #1a1d24; --muted: #5b6472;
+  --border: #d5d9e2; --accent: #3b5bdb; --accent-bg: #e8ecfb;
+  --green: #0f8a5f; --red: #c43c45; --amber: #b86e0a;
+  --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+html[data-theme="dark"] {
+  --bg: #0e1013; --card: #16181d; --fg: #edeef1; --muted: #a7adba;
+  --border: #23262e; --accent: #7c8cff; --accent-bg: #191d33;
+  --green: #35b98a; --red: #e5646a; --amber: #e0a534;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; padding: 14px 16px 18px; background: var(--bg); color: var(--fg);
+  font: 13px/1.45 var(--font); -webkit-font-smoothing: antialiased;
+}
+h1 { font-size: 18px; margin: 0 0 10px; font-weight: 650; }
+.card {
+  background: var(--card); border: 1px solid var(--border); border-radius: 12px;
+  padding: 12px 14px; margin-bottom: 10px;
+}
+.item { padding: 10px 0; border-top: 1px solid var(--border); }
+.item:first-child { border-top: 0; padding-top: 0; }
+.q { font-weight: 600; margin-bottom: 8px; }
+.opts { display: flex; flex-wrap: wrap; gap: 6px; }
+.opt {
+  border: 1px solid var(--border); background: var(--bg); color: var(--fg);
+  border-radius: 8px; padding: 6px 9px; cursor: pointer; font: inherit; text-align: left;
+}
+.opt:hover, .opt.suggested { border-color: var(--accent); background: var(--accent-bg); }
+.meta { color: var(--muted); font-size: 11.5px; margin-top: 6px; }
+.health { display: flex; gap: 8px; align-items: center; color: var(--muted); margin: 8px 0 12px; }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); display: inline-block; }
+.dot.green { background: var(--green); } .dot.red { background: var(--red); } .dot.amber { background: var(--amber); }
+.row { display: flex; gap: 8px; flex-wrap: wrap; }
+button.linkish, a.linkish {
+  border: 1px solid var(--border); background: transparent; color: var(--accent);
+  border-radius: 8px; padding: 7px 10px; cursor: pointer; font: inherit; text-decoration: none;
+}
+</style>
+</head>
+<body>
+<h1>Needs you</h1>
+<div id="health" class="health"></div>
+<div id="list" class="card"></div>
+<div class="row">
+  <button class="linkish" type="button" id="refresh">Refresh</button>
+  <button class="linkish" type="button" id="theme">Dark mode</button>
+  <a class="linkish" id="open-full" href="index.html">Open full Mission Control</a>
+</div>
+<script>
+(function () {
+  function theme() {
+    try { return localStorage.getItem("mc-theme") || "light"; } catch (e) { return "light"; }
+  }
+  function applyTheme(t) {
+    t = t === "dark" ? "dark" : "light";
+    document.documentElement.setAttribute("data-theme", t);
+    try { localStorage.setItem("mc-theme", t); } catch (e) {}
+    document.getElementById("theme").textContent = t === "dark" ? "Light mode" : "Dark mode";
+  }
+  applyTheme(theme());
+  document.getElementById("theme").onclick = function () {
+    applyTheme(theme() === "dark" ? "light" : "dark");
+  };
+  document.getElementById("refresh").onclick = function () { location.reload(); };
+
+  function parseOptions(text) {
+    var raw = String(text || ""), opts = [], suggested = null, m;
+    var tick = /\*\*`([^`]+)`\*\*/g;
+    while ((m = tick.exec(raw)) && opts.length < 3) opts.push(m[1].trim());
+    if (!opts.length) {
+      var bold = /\*\*([^*]{2,80})\*\*/g;
+      while ((m = bold.exec(raw)) && opts.length < 3) {
+        var label = m[1].replace(/^`|`$/g, "").trim();
+        if (/DECISION NEEDED|Confirmed|recommend/i.test(label)) continue;
+        opts.push(label);
+      }
+    }
+    if (/recommend(?:ed)?(?:\s+the)?\s+(?:first|1st|option\s*1)/i.test(raw) && opts.length) suggested = 1;
+    else if (/Recommended/i.test(raw) && opts.length) suggested = 1;
+    var q = raw.replace(/\*\*|`/g, " ").replace(/\s+/g, " ").trim();
+    if (q.length > 140) q = q.slice(0, 137) + "…";
+    return { q: q || "Decision needs your answer", opts: opts, suggested: suggested };
+  }
+
+  function feeds() {
+    return (window.MC && window.MC.feeds) || {};
+  }
+  function render() {
+    var f = feeds();
+    var dec = f.decisions || {};
+    var pinned = ((dec.data || {}).pinned) || [];
+    var list = document.getElementById("list");
+    list.textContent = "";
+    if (!pinned.length) {
+      list.appendChild(document.createTextNode("Nothing waiting on you right now."));
+    } else {
+      pinned.slice(0, 3).forEach(function (d, i) {
+        var parsed = parseOptions(d.text);
+        var item = document.createElement("div");
+        item.className = "item";
+        var q = document.createElement("div");
+        q.className = "q";
+        q.textContent = (i + 1) + ". " + parsed.q;
+        item.appendChild(q);
+        if (parsed.opts.length) {
+          var row = document.createElement("div");
+          row.className = "opts";
+          parsed.opts.forEach(function (label, oi) {
+            var n = oi + 1;
+            var btn = document.createElement("button");
+            btn.type = "button";
+            btn.className = "opt" + (parsed.suggested === n ? " suggested" : "");
+            btn.textContent = n + " — " + label;
+            btn.title = "dashboard decide answer " + d.id + " " + n;
+            btn.onclick = function () {
+              var cmd = "dashboard decide answer " + d.id + " " + n;
+              try { navigator.clipboard.writeText(cmd); } catch (e) {}
+              btn.textContent = "Copied command";
+            };
+            row.appendChild(btn);
+          });
+          item.appendChild(row);
+          if (parsed.suggested) {
+            var sug = document.createElement("div");
+            sug.className = "meta";
+            sug.textContent = "Suggested: " + parsed.suggested + " — " +
+              (parsed.opts[parsed.suggested - 1] || "");
+            item.appendChild(sug);
+          }
+        }
+        list.appendChild(item);
+      });
+      if (pinned.length > 3) {
+        var more = document.createElement("div");
+        more.className = "meta";
+        more.textContent = "+" + (pinned.length - 3) + " more in full Mission Control";
+        list.appendChild(more);
+      }
+    }
+    var jobs = ((f.automation || {}).data || {}).jobs || [];
+    var red = jobs.filter(function (j) { return j.state === "red"; }).length;
+    var yellow = jobs.filter(function (j) {
+      return j.state === "yellow" || j.state === "degraded"; }).length;
+    var h = document.getElementById("health");
+    h.textContent = "";
+    var dot = document.createElement("span");
+    dot.className = "dot " + (red ? "red" : yellow ? "amber" : "green");
+    h.appendChild(dot);
+    h.appendChild(document.createTextNode(
+      red ? ("Automation: " + red + " red") :
+      yellow ? ("Automation: " + yellow + " warning") : "Machinery healthy"));
+  }
+  render();
+})();
+</script>
+</body>
+</html>
