@@ -57,13 +57,13 @@
   --mc-fs-1: 11.5px;
   --mc-fs-2: 13px;
   --mc-fs-3: 14px;
-  --mc-fs-4: 16px;
-  --mc-fs-5: 20px;
-  --mc-fs-6: 26px;
+  --mc-fs-4: 17px;
+  --mc-fs-5: 21px;
+  --mc-fs-6: 30px;
 
   --mc-r-1: 6px;
-  --mc-r-2: 9px;
-  --mc-r-3: 13px;
+  --mc-r-2: 10px;
+  --mc-r-3: 16px;
   --mc-r-pill: 999px;
 
   --mc-sp-1: 4px;
@@ -88,7 +88,7 @@
   --mc-heat-4: #08734d;
 }
 html[data-theme="dark"] {
-  --mc-bg:        #0e1013;
+  --mc-bg:        #0a0c0f;
   --mc-surface-1: #16181d;
   --mc-surface-2: #1d2027;
   --mc-surface-3: #262a33;
@@ -122,37 +122,66 @@ html[data-theme="dark"] {
 <style>
 /* === LAYOUT CSS === */
 /* selectors bind ONLY the mc-* class vocabulary. */
-/* --- ER-134 glance Home --- */
+/* --- ER-134 glance Home (v2 command-center layout) --- */
 .mc-theme-toggle {
   border: 1px solid var(--mc-border); background: var(--mc-surface-1); color: var(--mc-fg);
   border-radius: var(--mc-r-pill); padding: 4px 10px; font-size: var(--mc-fs-1); cursor: pointer;
 }
 .mc-theme-toggle:hover { border-color: var(--mc-border-2); background: var(--mc-surface-2); }
-.mc-glance { max-width: 720px; margin: 0 auto; padding: var(--mc-sp-5) var(--mc-sp-5) var(--mc-sp-4); }
-.mc-glance-title { font-size: var(--mc-fs-5); font-weight: 650; margin: 0 0 var(--mc-sp-3); color: var(--mc-fg); }
+.mc-glance { max-width: 1160px; margin: 0 auto; padding: var(--mc-sp-6) var(--mc-sp-5) var(--mc-sp-4); }
+.mc-glance-title {
+  font-size: 28px; font-weight: 700; letter-spacing: -0.03em;
+  margin: 0 0 var(--mc-sp-2); color: var(--mc-fg);
+}
+.mc-glance-sub { color: var(--mc-fg-muted); font-size: var(--mc-fs-2); margin: 0 0 var(--mc-sp-4); }
+.mc-glance-grid {
+  display: grid; grid-template-columns: minmax(0, 1fr) 320px;
+  gap: var(--mc-sp-4); align-items: start;
+}
+@media (max-width: 900px) { .mc-glance-grid { grid-template-columns: 1fr; } }
 .mc-glance-card {
   background: var(--mc-surface-1); border: 1px solid var(--mc-border); border-radius: var(--mc-r-3);
   box-shadow: var(--mc-shadow); padding: var(--mc-sp-4); margin-bottom: var(--mc-sp-3);
 }
+/* each waiting decision is its own card; the accent spine says "act here" */
+.mc-decision-card { border-left: 3px solid var(--mc-accent); }
 .mc-glance-item { padding: var(--mc-sp-3) 0; border-top: 1px solid var(--mc-border); }
 .mc-glance-item:first-child { border-top: 0; padding-top: 0; }
-.mc-glance-q { font-size: var(--mc-fs-3); font-weight: 600; margin-bottom: var(--mc-sp-2); }
-.mc-glance-opts { display: flex; flex-wrap: wrap; gap: var(--mc-sp-2); margin: var(--mc-sp-2) 0; }
+.mc-glance-q { font-size: var(--mc-fs-4); font-weight: 600; line-height: 1.4; margin-bottom: var(--mc-sp-3); }
+.mc-glance-opts { display: flex; flex-direction: column; align-items: stretch; gap: var(--mc-sp-2); margin: var(--mc-sp-2) 0; }
+/* status rail: everything else at a glance, each row jumps to its tab */
+.mc-rail { position: sticky; top: 120px; }
+.mc-rail-title { font-size: var(--mc-fs-1); font-weight: 600; color: var(--mc-fg-dim); text-transform: uppercase; letter-spacing: .06em; margin-bottom: var(--mc-sp-2); }
+.mc-rail-row {
+  display: flex; align-items: center; gap: var(--mc-sp-2); width: 100%; text-align: left;
+  background: none; border: none; border-top: 1px solid var(--mc-border); cursor: pointer;
+  padding: var(--mc-sp-2) 0; font-size: var(--mc-fs-2); color: var(--mc-fg); font-family: var(--mc-font);
+}
+.mc-rail-row:first-of-type { border-top: 0; }
+.mc-rail-row:hover .mc-rail-label { color: var(--mc-accent); }
+.mc-rail-label { font-weight: 500; flex: none; }
+.mc-rail-detail { color: var(--mc-fg-muted); flex: 1 1 auto; min-width: 0; }
+.mc-rail-num { font-weight: 650; font-variant-numeric: tabular-nums; flex: none; }
+.mc-rail-bar { flex: 1 1 auto; min-width: 60px; }
 .mc-opt {
-  display: inline-flex; align-items: center; gap: var(--mc-sp-2);
+  display: flex; align-items: center; gap: var(--mc-sp-3);
   border: 1px solid var(--mc-border-2); background: var(--mc-surface-1); color: var(--mc-fg);
-  border-radius: var(--mc-r-2); padding: 5px 12px 5px 5px; font-size: var(--mc-fs-2);
+  border-radius: var(--mc-r-2); padding: 8px 14px 8px 8px; font-size: var(--mc-fs-3);
   cursor: pointer; text-align: left; font-family: var(--mc-font); box-shadow: var(--mc-shadow);
   transition: border-color var(--mc-dur) var(--mc-ease), background var(--mc-dur) var(--mc-ease), transform var(--mc-dur) var(--mc-ease);
 }
 .mc-opt:hover { border-color: var(--mc-accent); background: var(--mc-accent-bg); transform: translateY(-1px); }
 .mc-opt-num {
   display: inline-flex; align-items: center; justify-content: center; flex: none;
-  width: 22px; height: 22px; border-radius: var(--mc-r-1);
+  width: 26px; height: 26px; border-radius: 8px;
   background: var(--mc-accent-bg); color: var(--mc-accent); border: 1px solid var(--mc-accent-bd);
-  font-weight: 650; font-size: var(--mc-fs-1); font-variant-numeric: tabular-nums;
+  font-weight: 650; font-size: var(--mc-fs-2); font-variant-numeric: tabular-nums;
 }
 .mc-opt-suggested { border-color: var(--mc-accent); background: var(--mc-accent-bg); font-weight: 600; }
+.mc-opt-tag {
+  margin-left: auto; flex: none; font-size: var(--mc-fs-1); font-weight: 600;
+  color: var(--mc-accent); text-transform: uppercase; letter-spacing: .05em;
+}
 .mc-glance-suggested { color: var(--mc-fg-muted); font-size: var(--mc-fs-1); margin-top: var(--mc-sp-1); }
 .mc-glance-health {
   display: flex; align-items: center; gap: var(--mc-sp-2); color: var(--mc-fg-muted);
@@ -184,26 +213,38 @@ body {
 .mc-card, .mc-table, .mc-strip, .mc-bar-track, .mc-svc { font-variant-numeric: tabular-nums; }
 :focus-visible { outline: 2px solid var(--mc-accent); outline-offset: 2px; border-radius: var(--mc-r-1); }
 
-/* --- global status strip --- */
+/* --- global status strip (command-center header) --- */
 .mc-strip {
   display: flex; align-items: center; gap: var(--mc-sp-2);
-  flex-wrap: wrap;
+  flex-wrap: wrap; min-height: 56px;
   background: color-mix(in srgb, var(--mc-surface-1) 85%, transparent);
-  backdrop-filter: blur(8px);
+  backdrop-filter: blur(10px);
   border-bottom: 1px solid var(--mc-border);
-  padding: var(--mc-sp-3) var(--mc-sp-5);
+  padding: var(--mc-sp-2) var(--mc-sp-5);
   position: sticky; top: 0; z-index: 10;
+}
+.mc-wordmark {
+  display: inline-flex; align-items: center; gap: var(--mc-sp-2);
+  font-weight: 700; font-size: var(--mc-fs-3); letter-spacing: -0.01em;
+  margin-right: var(--mc-sp-4); flex: none;
+}
+.mc-wordmark::before {
+  content: ""; width: 10px; height: 10px; border-radius: 3px;
+  background: var(--mc-accent);
+  box-shadow: 0 0 12px color-mix(in srgb, var(--mc-accent) 55%, transparent);
 }
 .mc-strip-seg {
   display: inline-flex; align-items: center; gap: var(--mc-sp-2);
-  background: transparent; border: 1px solid transparent;
+  background: var(--mc-surface-1); border: 1px solid var(--mc-border);
   border-radius: var(--mc-r-pill);
-  padding: var(--mc-sp-1) var(--mc-sp-3);
+  padding: 5px var(--mc-sp-3);
   cursor: pointer; color: var(--mc-fg);
   font-size: var(--mc-fs-2); font-weight: 500;
+  box-shadow: var(--mc-shadow);
   transition: background var(--mc-dur) var(--mc-ease), border-color var(--mc-dur) var(--mc-ease);
 }
-.mc-strip-seg:hover { background: var(--mc-surface-2); border-color: var(--mc-border-2); }
+.mc-strip-seg:hover { background: var(--mc-surface-2); border-color: var(--mc-accent-bd); }
+.mc-strip-seg .mc-num { font-weight: 650; font-size: var(--mc-fs-3); }
 .mc-strip-seg-label { color: var(--mc-fg-muted); font-weight: 400; }
 .mc-strip-spacer { flex: 1 1 auto; }
 .mc-strip-meta {
@@ -230,31 +271,29 @@ body {
 .mc-dot.mc-state-blue  { background: var(--mc-blue); color: var(--mc-blue); }
 .mc-dot.mc-state-grey  { background: var(--mc-grey); color: var(--mc-grey); }
 
-/* --- nav tabs (underline-active, accent) --- */
+/* --- nav tabs (filled pills, accent-active) --- */
 .mc-nav {
-  display: flex; gap: var(--mc-sp-1);
+  display: flex; gap: var(--mc-sp-1); align-items: center;
   max-width: 100%; overflow-x: auto; overscroll-behavior-inline: contain;
-  padding: 0 var(--mc-sp-5);
+  padding: var(--mc-sp-2) var(--mc-sp-5);
   border-bottom: 1px solid var(--mc-border);
   background: color-mix(in srgb, var(--mc-bg) 88%, transparent);
   backdrop-filter: blur(8px);
-  position: sticky; top: 49px; z-index: 9;
+  position: sticky; top: 57px; z-index: 9;
 }
 .mc-tab {
   position: relative; flex: 0 0 auto;
-  padding: var(--mc-sp-3) var(--mc-sp-3);
+  padding: 6px 14px; border-radius: var(--mc-r-pill);
   color: var(--mc-fg-muted); cursor: pointer;
   text-decoration: none; font-size: var(--mc-fs-3); font-weight: 500;
-  transition: color var(--mc-dur) var(--mc-ease);
+  border: 1px solid transparent;
+  transition: color var(--mc-dur) var(--mc-ease), background var(--mc-dur) var(--mc-ease);
 }
-.mc-tab::after {
-  content: ""; position: absolute; left: var(--mc-sp-3); right: var(--mc-sp-3); bottom: -1px;
-  height: 2px; border-radius: 2px 2px 0 0; background: transparent;
-  transition: background var(--mc-dur) var(--mc-ease);
+.mc-tab:hover { color: var(--mc-fg); background: var(--mc-surface-2); }
+.mc-tab.mc-tab-active {
+  color: var(--mc-accent); background: var(--mc-accent-bg);
+  border-color: var(--mc-accent-bd); font-weight: 600;
 }
-.mc-tab:hover { color: var(--mc-fg); }
-.mc-tab.mc-tab-active { color: var(--mc-fg); }
-.mc-tab.mc-tab-active::after { background: var(--mc-accent); }
 
 /* --- main --- */
 .mc-main { padding: var(--mc-sp-6) var(--mc-sp-5) var(--mc-sp-7); max-width: 1160px; margin: 0 auto; }
@@ -1452,6 +1491,7 @@ body {
   function renderStrip() {
     var strip = document.getElementById("mc-strip");
     strip.textContent = "";
+    strip.appendChild(h("span", { class: "mc-wordmark" }, "Mission Control"));
     var sum = feedSummary();
     var segs = [["chats", "Open work"], ["git", "Git"], ["usage", "Usage"], ["automation", "Jobs"]];
     segs.forEach(function (pair) {
@@ -1549,8 +1589,8 @@ body {
     if (!pinned.length) return 0;
     limit = limit == null ? 3 : limit;
     opts = opts || {};
-    var section = h("section", { class: opts.glance ? "mc-glance-card" : "mc-attention" });
-    // glance sits under the page's own "Needs you" h1 — repeat the count, not the title
+    // glance mode: a plain wrapper — every decision gets its own accent-spined card
+    var section = h("section", { class: opts.glance ? "" : "mc-attention" });
     section.appendChild(h("div", { class: "mc-section-head" },
       h("h2", { text: opts.glance
         ? (pinned.length === 1 ? "1 decision waiting" : pinned.length + " decisions waiting")
@@ -1570,18 +1610,19 @@ body {
         suggested: decision.recommended == null ? null : +decision.recommended
       } : parseDecisionOptions(decision.text || "");
       if (opts.glance) {
-        var item = h("div", { class: "mc-glance-item" });
+        var item = h("div", { class: "mc-glance-card mc-decision-card" });
         item.appendChild(h("div", { class: "mc-glance-q" },
           (idx + 1) + ". " + parsed.question));
         if (parsed.options.length) {
           var row = h("div", { class: "mc-glance-opts" });
           parsed.options.forEach(function (label, oi) {
             var n = oi + 1;
-            var cls = "mc-opt" + (parsed.suggested === n ? " mc-opt-suggested" : "");
-            var num = h("span", { class: "mc-opt-num" }, String(n));
+            var suggested = parsed.suggested === n;
+            var cls = "mc-opt" + (suggested ? " mc-opt-suggested" : "");
+            var kids = [h("span", { class: "mc-opt-num" }, String(n)), nodeOf(label)];
+            if (suggested) kids.push(h("span", { class: "mc-opt-tag" }, "Suggested"));
             var btn = h("button", { class: cls, type: "button",
-              title: answerCommand(id, n) },
-              num, label);
+              title: answerCommand(id, n) }, kids);
             btn.addEventListener("click", function () {
               btn.disabled = true;
               clipboardWrite(answerCommand(id, n)).then(function () {
@@ -1591,7 +1632,7 @@ body {
               }).then(function () {
                 setTimeout(function () {
                   btn.textContent = "";
-                  btn.appendChild(num); btn.appendChild(nodeOf(label));
+                  kids.forEach(function (k) { btn.appendChild(k); });
                   btn.disabled = false;
                 }, 1600);
               });
@@ -1599,11 +1640,6 @@ body {
             row.appendChild(btn);
           });
           item.appendChild(row);
-          if (parsed.suggested) {
-            item.appendChild(h("div", { class: "mc-glance-suggested" },
-              "Suggested: " + parsed.suggested + " — " +
-              (parsed.options[parsed.suggested - 1] || "")));
-          }
         } else {
           item.appendChild(h("div", { class: "mc-row-meta" },
             "Confirmed · " + (decision.provenance || decision.source_kind || "structured source")));
@@ -1636,31 +1672,82 @@ body {
     return pinned.length;
   }
 
-  function renderHome(main) {
-    var home = combinedHomeState();
-    var glance = h("div", { class: "mc-glance" });
-    glance.appendChild(h("h1", { class: "mc-glance-title" }, "Needs you"));
-    var count = renderPinnedDecisions(glance, 3, { glance: true });
-    if (!count) {
-      glance.appendChild(h("div", { class: "mc-glance-card mc-allgreen" },
-        glyphSpan("green"), " Nothing waiting on you right now.",
-        h("div", { class: "mc-card-foot" },
-          "Glance: menu-bar MC (dashboard panel) or light Home (dashboard open).")));
-    }
-    var health = healthLine();
-    var alertNote = "";
+  function alertNoteText() {
     try {
       var dg = guard("decisions");
       var alert = dg && dg.data && dg.data.alert;
       if (alert && alert.eligible_count > 0 && !(alert.sent_count > 0)) {
-        alertNote = " · " + alert.eligible_count + " alert(s) waiting";
-        if (alert.error) alertNote += " (" + String(alert.error).slice(0, 48) + ")";
-      } else if (alert && alert.sent_count > 0) {
-        alertNote = " · alerted " + alert.sent_count + " this cycle";
+        var note = " · " + alert.eligible_count + " alert(s) waiting";
+        if (alert.error) note += " (" + String(alert.error).slice(0, 48) + ")";
+        return note;
       }
+      if (alert && alert.sent_count > 0) return " · alerted " + alert.sent_count + " this cycle";
     } catch (e) {}
-    glance.appendChild(h("div", { class: "mc-glance-health" },
-      glyphSpan(health.tone), health.text + alertNote));
+    return "";
+  }
+
+  // right-hand rail: everything that is NOT waiting on Trevor, one glance, one
+  // click to the owning tab — replaces the old hidden-behind-"details" summary
+  function renderStatusRail() {
+    var rail = h("div", { class: "mc-glance-card mc-rail" });
+    rail.appendChild(h("div", { class: "mc-rail-title" }, "Status now"));
+    function railRow(tab, label, tone, detailNode, num) {
+      return h("button", { class: "mc-rail-row", type: "button",
+        "aria-label": "Open the " + label + " tab",
+        onclick: function () { location.hash = "#" + tab; } },
+        dot(tone),
+        h("span", { class: "mc-rail-label" }, label),
+        detailNode,
+        num != null ? h("span", { class: "mc-rail-num" }, String(num)) : null);
+    }
+    var sum = feedSummary();
+    rail.appendChild(railRow("chats", "Open work", sum.chats.state,
+      h("span", { class: "mc-rail-detail" }, "unfinished items"),
+      sum.chats.count > 999 ? "999+" : sum.chats.count));
+    rail.appendChild(railRow("git", "Git", sum.git.state,
+      h("span", { class: "mc-rail-detail" }, "repos need a hand"), sum.git.count));
+    var health = healthLine();
+    rail.appendChild(railRow("automation", "Jobs", health.tone,
+      h("span", { class: "mc-rail-detail" },
+        health.text.replace(/^Automation: /, "") + alertNoteText()), null));
+    var gu = guard("usage");
+    if (gu.ok && gu.data) {
+      var rows = normUsageProviders(gu.data).rows
+        .map(function (p) { return { p: p, pct: numericPct(p.pct) }; })
+        .filter(function (x) { return isFinite(x.pct); })
+        .sort(function (a, b) { return b.pct - a.pct; }).slice(0, 3);
+      rows.forEach(function (x) {
+        var st = usageState(x.p);
+        rail.appendChild(railRow("usage", x.p.name || "Usage", st,
+          h("div", { class: "mc-bar-track mc-rail-bar" },
+            h("div", { class: "mc-bar-fill " + (STATE_CLASS[st] || ""),
+              style: "--mc-w:" + Math.max(0, Math.min(100, x.pct)) + "%" })),
+          x.pct + "%"));
+      });
+      if (!rows.length) rail.appendChild(railRow("usage", "Usage", sum.usage.state,
+        h("span", { class: "mc-rail-detail" }, "no numeric readings"), null));
+    }
+    return rail;
+  }
+
+  function renderHome(main) {
+    var home = combinedHomeState();
+    var glance = h("div", { class: "mc-glance" });
+    glance.appendChild(h("h1", { class: "mc-glance-title" }, "Needs you"));
+    glance.appendChild(h("div", { class: "mc-glance-sub" },
+      "Answer a numbered option to move work forward — everything else is in the rail."));
+    var grid = h("div", { class: "mc-glance-grid" });
+    var colMain = h("div", { class: "mc-glance-main" });
+    var count = renderPinnedDecisions(colMain, 3, { glance: true });
+    if (!count) {
+      colMain.appendChild(h("div", { class: "mc-glance-card mc-allgreen" },
+        glyphSpan("green"), " Nothing waiting on you right now.",
+        h("div", { class: "mc-card-foot" },
+          "Glance: menu-bar MC (dashboard panel) or light Home (dashboard open).")));
+    }
+    grid.appendChild(colMain);
+    grid.appendChild(renderStatusRail());
+    glance.appendChild(grid);
     var expand = h("button", { class: "mc-expand-btn", type: "button" },
       HOME_EXPANDED ? "Hide details" : "Show more details");
     expand.addEventListener("click", function () {
