@@ -1,10 +1,16 @@
 {
-  "generated_at": "2030-01-01T00:00:00Z",
+  "fetched_at": "2030-01-01T00:00:00Z",
   "providers": [
     {
-      "name": "synthetic-provider",
-      "pct": 37,
-      "status": "ok"
+      "provider": "synthetic-provider",
+      "window": "5h",
+      "used_pct": 37,
+      "resets_at": "2030-01-01T05:00:00Z",
+      "resets_in_min": 300,
+      "confidence": "live",
+      "health": "ok",
+      "source": "synthetic-rate-limit",
+      "notes": "Synthetic fixture row."
     }
   ]
 }

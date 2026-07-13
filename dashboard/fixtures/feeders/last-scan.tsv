@@ -1,2 +1,1 @@
-repo	branch	dirty_files	ahead	behind	detached
-synthetic-repo	main	1	0	0	false
+synthetic-repo	unmerged-stale	P2	deadbee	1 commit ahead of origin/main, idle over 3d, unmerged

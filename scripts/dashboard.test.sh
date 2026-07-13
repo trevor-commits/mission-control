@@ -1995,16 +1995,17 @@ c51() { # committed upstream specimens run through the real dashboard wrapper
      DASHBOARD_CMD_GIT="cat '$fixtures/scan-unfinished-work.json'" \
      MISSION_CONTROL_HOME="$mch" bash "$DASH" collect --force usage git >/dev/null 2>&1 \
      && python3 - "$mch/data" "$fixtures" <<'PYEOF'
-import csv, json, os, sys
+import json, os, sys
 data, fixtures = sys.argv[1:]
 usage = json.load(open(os.path.join(data, "usage.json")))
 git = json.load(open(os.path.join(data, "git.json")))
-assert usage["ok"] is True and usage["data"]["providers"][0]["name"] == "synthetic-provider"
+provider = usage["data"]["providers"][0]
+assert usage["ok"] is True and provider["provider"] == "synthetic-provider"
+assert {"window", "used_pct", "resets_at", "resets_in_min", "confidence", "health", "source", "notes"} <= set(provider)
 assert git["ok"] is True and git["data"]["repos"][0]["repo"] == "synthetic-repo"
-with open(os.path.join(fixtures, "last-scan.tsv"), newline="") as f:
-    rows = list(csv.DictReader(f, delimiter="\t"))
-assert len(rows) == 1
-assert set(rows[0]) == {"repo", "branch", "dirty_files", "ahead", "behind", "detached"}
+watcher = [line.rstrip("\n").split("\t") for line in open(os.path.join(fixtures, "last-scan.tsv"))]
+assert len(watcher) == 1 and len(watcher[0]) == 5, watcher
+assert watcher[0][:4] == ["synthetic-repo", "unmerged-stale", "P2", "deadbee"]
 for name in ("delegation-state.json", "mailbox-msg.json", "scan-unfinished-work.json", "usage-snapshot.json"):
     assert isinstance(json.load(open(os.path.join(fixtures, name))), dict), name
 for name in ("session-index.jsonl", "claude-line.jsonl", "codex-line.jsonl"):
@@ -2012,9 +2013,9 @@ for name in ("session-index.jsonl", "claude-line.jsonl", "codex-line.jsonl"):
     assert lines, name
 PYEOF
   then
-    ok "feeder specimens survive dashboard collectors and shape-contract validation"
+    ok "feeder outputs survive the real dashboard wrapper and shape validation"
   else
-    no "committed feeder specimens drifted from dashboard collector contracts"
+    no "committed feeder outputs drifted from the dashboard consumer contract"
   fi
 }
 

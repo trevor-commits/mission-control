@@ -209,7 +209,7 @@ coordination cost without solving an observed defect.
 | Correctness and testability | 25/25 | Hermetic source seams, negative controls, transaction races, browser execution, and full verifier all pass. |
 | Privacy and security | 20/20 | Field-aware egress, secret/PII regressions, fixed-argv transports, link refusal, pinned descriptors, and synthetic fixtures. |
 | Operability | 15/20 | Install stamp/panel/launchd proof is live; elapsed-morning and provider-authorization gates remain honestly open. |
-| Documentation and governance | 15/15 | Intent, OpenSpec, Continuity, Coherence, Linear-Core, todo, and the expanded audit/session record agree. |
+| Documentation and governance | 15/15 | Intent, OpenSpec, Continuity, Coherence, Linear-Core, todo, and the expanded audit/session record agree after challenger-led claim narrowing. |
 | **Architecture health** | **95/100** | The five withheld points are external/elapsed product proof, not a code or architecture defect; no critical architecture issue remains. |
 
 ### Session-feedback reconciliation
@@ -233,7 +233,8 @@ paths remain the source of truth; titles below are only navigation labels.
 
 | Severity | Symptom | Source | Consequence | Remedy and proof |
 |---|---|---|---|---|
-| P2 | The locked plan promised durable feeder specimens, but `dashboard/fixtures/feeders/` did not exist and tests built all upstream shapes inline. | Original ER-087 reviewer `019f2865`; `docs/MISSION_CONTROL_PLAN.md` feeder-drift guard. | A coordinated upstream format drift could make inline mocks remain green while real collectors silently lose evidence. | Added privacy-safe synthetic specimens derived from observed shapes. `chat-graph.test.sh` runs delegation, mailbox, title, transcript, topic, and outcome collectors against them; `dashboard.test.sh` runs usage/Git wrapping and validates all stored shapes. Focused post-fix results: graph ALL PASS; dashboard `67/0`. |
+| P2 | The locked plan promised durable feeder specimens, but `dashboard/fixtures/feeders/` did not exist and tests built all upstream shapes inline. | Original ER-087 reviewer `019f2865`; `docs/MISSION_CONTROL_PLAN.md` feeder-drift guard. | A coordinated upstream output/provider-record drift could make inline mocks remain green while consumers silently lose evidence. | Added privacy-safe synthetic specimens derived from observed shapes. `chat-graph.test.sh` runs delegation, mailbox, title, transcript, topic, and outcome collectors against them; `dashboard.test.sh` runs its real command-output wrapper against authentic usage/Git output shapes and validates the stored watcher shape. Focused post-fix results: graph ALL PASS; dashboard `67/0`. |
+| P2 | First repair commit `192d243` used a simplified top-level Codex message and said both suites ran “real collectors,” although the dashboard case correctly consumed stored command outputs through the wrapper rather than executing the upstream generators. | Independent challenger `/root/worker_019f59f8_tests_ux`. | The payload parser could regress while the simplified specimen stayed green, and the durable record overstated the tested boundary. | Replaced the Codex line with the real `response_item` → `payload.message` → `content[output_text]` structure, replaced usage/watcher specimens with authentic synthetic field layouts, and narrowed every plan/todo/audit/README claim to the exact consumer boundary. |
 
 No other P0-P3 implementation defect was reproduced. ShellCheck reported no
 error-severity finding; lower-severity warnings are intentional test-shell idioms
@@ -242,8 +243,8 @@ or pre-existing unused test locals and do not change runtime behavior.
 ### Fresh verification and live-state truth
 
 - Pre-edit authoritative `/bin/bash scripts/verify.sh`: `SUITES PASS=21 FAIL=0`; dashboard `66/0`, ER-134 `50/0`, browser `253`.
-- Post-repair focused graph suite: ALL PASS, including the committed-specimen real-collector case.
-- Post-repair focused dashboard suite: `PASS=67 FAIL=0`.
+- Post-repair focused graph suite: ALL PASS, including committed provider records through real graph collectors.
+- Post-repair focused dashboard suite: `PASS=67 FAIL=0`, including committed feeder outputs through the real dashboard wrapper.
 - Fixture parse, `git diff --check`, shell syntax, Python syntax, and ShellCheck error-severity: PASS.
 - Forced installed collection succeeded. Install verification returned exact head `a7e4eda`, `ok:true`, and no missing, mismatched, or unexpected member. The menu panel was running; the interval job had last exit `0`.
 - Overall live status remained honestly non-green because a separate global Automation job was red and the prior daily Brief was expired before the next 07:00 run. This is operational input truth, not a repo test failure.
