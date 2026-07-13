@@ -25,7 +25,7 @@ from outcome_sources import PROVIDERS, read_messages, recent_sources
 EXTRACTOR_VERSION = 1
 PROMPT_VERSION = 3
 EGRESS_POLICY_VERSION = 3
-DEFAULT_MODEL = "claude-haiku-4.5"
+DEFAULT_MODEL = "claude-haiku-4-5-20251001"
 DEFAULT_ESCALATION_MODEL = "claude-sonnet-4-6"
 DEFAULT_CLAUDE = os.path.expanduser("~/.local/bin/claude")
 DEFAULT_MAX_OUTPUT_TOKENS = 512

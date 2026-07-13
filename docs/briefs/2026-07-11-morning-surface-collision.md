@@ -37,3 +37,13 @@ brief; deadman stays conditional; `morning-health-brief` remains non-live until
 it has a non-overlapping purpose; Screenpipe remains loaded and separate at
 08:00. Revisit after the five-morning proof log shows whether Trevor actually
 reads and understands the 05:00 brief.
+
+## Decision (2026-07-11)
+
+Trevor chose folds:
+
+1. Retire `morning-health-brief` as a separate morning ping; keep useful checks visible through Mission Control.
+2. Retire `com.screenpipe.morning-brief` as a separate 08:00 narrative; keep Screenpipe capture and its watchdog running.
+3. Turn on Outcome Extractor only after its privacy-screened calibration and caps are complete.
+
+The first two LaunchAgents were unloaded and renamed `*.folded-*` that night. The Outcome Extractor label was later loaded prematurely without a calibration/config receipt; that state is not activation proof and must remain fail-closed until the calibration gate is satisfied.

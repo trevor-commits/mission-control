@@ -61,7 +61,7 @@ SH
   export MORNING_BRIEF_LLM_COPILOT=1
   export MORNING_BRIEF_LLM_DAILY_CALL_CAP=20
   export MORNING_BRIEF_LLM_DAILY_TOKEN_CAP=100000
-  export MORNING_BRIEF_LLM_MODEL="claude-haiku-4.5"
+  export MORNING_BRIEF_LLM_MODEL="claude-haiku-4-5-20251001"
   export MORNING_BRIEF_LLM_TIMEOUT=8
   export MORNING_BRIEF_LLM_TESTING=1
   unset MORNING_BRIEF_LLM_TEST_PROMPT_VERSION MORNING_BRIEF_LLM_MAX_OUTPUT_TOKENS
@@ -453,7 +453,7 @@ capture, prompt_path, db, sid, marker_path = sys.argv[1:]
 call = json.loads(open(capture).readline())
 argv = call["argv"]
 assert 1 <= call["oauth_timeout"] < 8, call["oauth_timeout"]
-assert "--model" in argv and argv[argv.index("--model") + 1] == "claude-haiku-4.5"
+assert "--model" in argv and argv[argv.index("--model") + 1] == "claude-haiku-4-5-20251001"
 assert "--output-format" in argv and argv[argv.index("--output-format") + 1] == "json"
 schema=json.loads(argv[argv.index("--json-schema")+1])
 assert schema["properties"]["did"]["maxItems"] == 4
@@ -510,7 +510,7 @@ fi
 
 KILL_CAL="$TIER2_TMP/kill-calibration.json"
 cat > "$KILL_CAL" <<'JSON'
-{"schema":"mission-control/outcome-calibration/v1","model_calls":1,"observations":[{"provider":"claude","model":"claude-haiku-4.5","input_tokens":120,"output_tokens":44,"latency_ms":1,"status":"success"}],"recommended_caps":{"daily_call_cap":5,"daily_token_cap":50000}}
+{"schema":"mission-control/outcome-calibration/v1","model_calls":1,"observations":[{"provider":"claude","model":"claude-haiku-4-5-20251001","input_tokens":120,"output_tokens":44,"latency_ms":1,"status":"success"}],"recommended_caps":{"daily_call_cap":5,"daily_token_cap":50000}}
 JSON
 "$CG" extract-outcomes --apply-calibration "$KILL_CAL" --json >/dev/null
 export MORNING_BRIEF_LLM=1
@@ -696,7 +696,7 @@ if run_extract > "$TIER2_TMP/variant-2.json" 2> "$TIER2_TMP/variant-2.err" \
 import json,sys
 rows=[json.loads(line) for line in open(sys.argv[1])]
 models=[row["argv"][row["argv"].index("--model")+1] for row in rows]
-assert models == ["claude-haiku-4.5","claude-haiku-4.5"], models
+assert models == ["claude-haiku-4-5-20251001","claude-haiku-4-5-20251001"], models
 PY
 then
   pass "pinned prompt variant changes preserve a new Tier-2 version"
@@ -715,7 +715,7 @@ if run_extract > "$TIER2_TMP/ambiguous.json" 2> "$TIER2_TMP/ambiguous.err" \
 import json,sqlite3,sys
 calls=[json.loads(line)["argv"] for line in open(sys.argv[1])]
 models=[argv[argv.index("--model")+1] for argv in calls]
-assert models == ["claude-haiku-4.5", "claude-sonnet-4-6"], models
+assert models == ["claude-haiku-4-5-20251001", "claude-sonnet-4-6"], models
 con=sqlite3.connect(sys.argv[2])
 card=json.loads(con.execute("SELECT outcome_json FROM session_outcomes WHERE session_id=? AND method='tier2'",(sys.argv[3],)).fetchone()[0])
 assert card["did"] == ["The work was verified."]

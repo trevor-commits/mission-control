@@ -62,7 +62,9 @@
       "kind": "calendar",
       "label": "Morning Health Brief",
       "name": "com.gillettes.morning-health-brief",
-      "schedule": "07:00 daily"
+      "schedule": "07:00 daily",
+      "status_note": "Folded into Mission Control 2026-07-11; LaunchAgent unloaded",
+      "retired": true
     },
     {
       "evidence": [
