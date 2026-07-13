@@ -24,7 +24,8 @@ import urllib.parse
 import urllib.request
 from contextlib import contextmanager
 
-from mission_control_common import (NOTIFICATION, sanitize_text, same_local_day,
+from mission_control_common import (
+    DESKTOP_GLANCE_CTA, NOTIFICATION, sanitize_text, same_local_day,
                                     verify_install_stamp)
 
 
@@ -346,7 +347,7 @@ def _direct_send(chat_id, token, message):
 def _send(category):
     if category not in _CATEGORIES:
         return False
-    raw = "Morning Brief deadman: %s. Check Mission Control delivery." % category
+    raw = "Morning Brief deadman: %s. %s" % (category, DESKTOP_GLANCE_CTA)
     sanitized = sanitize_text(raw, NOTIFICATION)
     if sanitized.dropped:
         return False

@@ -1458,7 +1458,9 @@ body {
     var count = renderPinnedDecisions(glance, 3, { glance: true });
     if (!count) {
       glance.appendChild(h("div", { class: "mc-glance-card mc-allgreen" },
-        glyphSpan("green"), " Nothing waiting on you right now."));
+        glyphSpan("green"), " Nothing waiting on you right now.",
+        h("div", { class: "mc-card-foot" },
+          "Glance: menu-bar MC (dashboard panel) or light Home (dashboard open).")));
     }
     var health = healthLine();
     var alertNote = "";

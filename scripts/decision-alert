@@ -21,7 +21,8 @@ import subprocess
 import sys
 import time
 
-from mission_control_common import (ACTION, IDENTIFIER, NARRATIVE,
+from mission_control_common import (
+    DESKTOP_GLANCE_CTA, ACTION, IDENTIFIER, NARRATIVE,
                                     NOTIFICATION, EgressCounters,
                                     sanitize_text)
 
@@ -848,8 +849,8 @@ def _alert_eligible(con, now, fresh_within_s=None, newest_first=False):
 
 
 def _alert_message(decision, counters):
-    raw = ("Morning Brief NEEDS YOU: %s\nDismiss: dashboard decide dismiss %s" %
-           (decision["text"], decision["decision_id"]))
+    raw = ("Morning Brief NEEDS YOU: %s\nDismiss: dashboard decide dismiss %s\n%s" %
+           (decision["text"], decision["decision_id"], DESKTOP_GLANCE_CTA))
     result = sanitize_text(raw, NOTIFICATION, counters=counters)
     if result.dropped or not result.value:
         raise DecisionError("notification rejected by privacy boundary")

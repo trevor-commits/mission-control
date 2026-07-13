@@ -28,6 +28,12 @@ ERROR = "error"
 MODEL_INPUT = "model_input"
 NOTIFICATION = "notification"
 
+# Desktop-first where-to-look CTA for briefs / deadman / operator alerts (ER-134).
+# Telegram remains optional transport only; do not point operators at Slack.
+DESKTOP_GLANCE_CTA = (
+    "Glance: menu-bar MC (dashboard panel) or light Home (dashboard open)."
+)
+
 FIELD_CLASSES = frozenset((
     NARRATIVE, ACTION, IDENTIFIER, ERROR, MODEL_INPUT, NOTIFICATION,
 ))
