@@ -15,10 +15,10 @@ import fcntl
 import json
 import os
 import re
+import secrets
 import stat
 import subprocess
 import sys
-import tempfile
 
 HOME = os.path.abspath(os.path.expanduser(os.environ["MISSION_CONTROL_HOME"]))
 TEMPLATES = os.path.abspath(os.path.expanduser(os.environ["DISPATCH_TEMPLATES_DIR"]))
@@ -81,51 +81,84 @@ def route_dispatch(decision_text, source_chat, usage, preferred_platform):
             "reason": "no platform has headroom at the required tier"}
 
 
-def private_dir(path):
-    if os.path.lexists(path):
-        current = os.lstat(path)
-        if stat.S_ISLNK(current.st_mode) or not stat.S_ISDIR(current.st_mode):
-            raise RuntimeError("unsafe dispatch directory")
-    else:
-        os.mkdir(path, 0o700)
-    os.chmod(path, 0o700)
+DIR_FLAGS = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+
+
+def open_private_dir(parent_fd, name):
+    try:
+        os.mkdir(name, 0o700, dir_fd=parent_fd)
+    except FileExistsError:
+        pass
+    fd = os.open(name, DIR_FLAGS, dir_fd=parent_fd)
+    if not stat.S_ISDIR(os.fstat(fd).st_mode):
+        os.close(fd)
+        raise RuntimeError("unsafe dispatch directory")
+    os.fchmod(fd, 0o700)
+    return fd
 
 
 def prepare_dirs():
-    if (not os.path.isdir(HOME) or os.path.islink(HOME)):
-        raise RuntimeError("state home is missing or unsafe")
-    for path in (DISPATCH, QUEUE, PROMPTS, RECEIPTS):
-        private_dir(path)
-
-
-def atomic_write(path, text):
-    parent = os.path.dirname(path)
-    if os.path.lexists(path):
-        current = os.lstat(path)
-        if stat.S_ISLNK(current.st_mode) or not stat.S_ISREG(current.st_mode):
-            raise RuntimeError("unsafe dispatch destination")
-    fd, tmp = tempfile.mkstemp(prefix=".dispatch-stage.", dir=parent)
+    fds = []
     try:
-        os.fchmod(fd, 0o600)
+        fds.append(os.open(HOME, DIR_FLAGS))
+        fds.append(open_private_dir(fds[-1], "dispatch"))
+        fds.append(open_private_dir(fds[-1], "queue"))
+        fds.append(open_private_dir(fds[1], "prompts"))
+        fds.append(open_private_dir(fds[1], "receipts"))
+        return fds
+    except BaseException:
+        for fd in reversed(fds):
+            os.close(fd)
+        raise
+
+
+def safe_destination(dir_fd, name):
+    try:
+        current = os.stat(name, dir_fd=dir_fd, follow_symlinks=False)
+    except FileNotFoundError:
+        return
+    if not stat.S_ISREG(current.st_mode):
+        raise RuntimeError("unsafe dispatch destination")
+
+
+def atomic_write(dir_fd, name, text):
+    safe_destination(dir_fd, name)
+    stage = ".dispatch-stage.%d.%s" % (os.getpid(), secrets.token_hex(8))
+    fd = os.open(stage, os.O_CREAT | os.O_EXCL | os.O_WRONLY |
+                 getattr(os, "O_NOFOLLOW", 0), 0o600, dir_fd=dir_fd)
+    try:
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             handle.write(text)
             handle.flush()
             os.fsync(handle.fileno())
-        os.replace(tmp, path)
+        safe_destination(dir_fd, name)
+        os.replace(stage, name, src_dir_fd=dir_fd, dst_dir_fd=dir_fd)
+        stage = None
+        os.fsync(dir_fd)
     except BaseException:
-        try:
-            os.unlink(tmp)
-        except OSError:
-            pass
+        if stage is not None:
+            try:
+                os.unlink(stage, dir_fd=dir_fd)
+            except OSError:
+                pass
         raise
 
 
-def atomic_json(path, value):
-    atomic_write(path, json.dumps(value, ensure_ascii=True, sort_keys=True) + "\n")
+def atomic_json(dir_fd, name, value):
+    atomic_write(dir_fd, name, json.dumps(value, ensure_ascii=True, sort_keys=True) + "\n")
 
 
 def load_json(path):
     with open(path, encoding="utf-8") as handle:
+        return json.load(handle)
+
+
+def load_json_at(dir_fd, name):
+    fd = os.open(name, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0), dir_fd=dir_fd)
+    if not stat.S_ISREG(os.fstat(fd).st_mode):
+        os.close(fd)
+        raise ValueError("queue entry is not a regular file")
+    with os.fdopen(fd, encoding="utf-8") as handle:
         return json.load(handle)
 
 
@@ -233,25 +266,26 @@ def receipt(entry, state, routing, prompt_path, lint_state, lint_detail):
     }
 
 
-def run_one(path, entry):
+def run_one(queue_fd, prompts_fd, receipts_fd, queue_name, entry):
     source = source_context(entry)
     preferred = source.get("provider") or "codex"
     routing = route_dispatch(
         "%s %s" % (entry["decision_text"], entry["option_text"]),
         source, usage_decisions(), preferred)
-    receipt_path = os.path.join(RECEIPTS, "%s.json" % entry["decision_id"])
+    receipt_name = "%s.json" % entry["decision_id"]
     if routing["route"] == "hold":
-        atomic_json(receipt_path, receipt(entry, "held-route", routing, None,
-                                          "not-run", "route held"))
+        atomic_json(receipts_fd, receipt_name, receipt(entry, "held-route", routing, None,
+                                                       "not-run", "route held"))
         return "held-route"
-    prompt_path = os.path.join(PROMPTS, "%s.md" % entry["decision_id"])
+    prompt_name = "%s.md" % entry["decision_id"]
+    prompt_path = os.path.join(PROMPTS, prompt_name)
     try:
         prompt = compose(entry, routing)
     except (OSError, ValueError) as exc:
-        atomic_json(receipt_path, receipt(entry, "held-compose", routing, None,
-                                          "not-run", str(exc)))
+        atomic_json(receipts_fd, receipt_name, receipt(entry, "held-compose", routing, None,
+                                                       "not-run", str(exc)))
         return "held-compose"
-    atomic_write(prompt_path, prompt)
+    atomic_write(prompts_fd, prompt_name, prompt)
     try:
         proc = subprocess.run([LINT, "--response", prompt_path], text=True,
                               stdout=subprocess.PIPE, stderr=subprocess.PIPE,
@@ -261,12 +295,12 @@ def run_one(path, entry):
         proc = None
         detail = "prompt lint unavailable"
     if proc is None or proc.returncode != 0:
-        atomic_json(receipt_path, receipt(entry, "held-lint", routing, prompt_path,
-                                          "failed", detail))
+        atomic_json(receipts_fd, receipt_name, receipt(entry, "held-lint", routing, prompt_path,
+                                                       "failed", detail))
         return "held-lint"
-    atomic_json(receipt_path, receipt(entry, "stubbed", routing, prompt_path,
-                                      "passed", detail))
-    os.unlink(path)
+    atomic_json(receipts_fd, receipt_name, receipt(entry, "stubbed", routing, prompt_path,
+                                                   "passed", detail))
+    os.unlink(queue_name, dir_fd=queue_fd)
     return "stubbed"
 
 
@@ -280,10 +314,11 @@ def main():
     if len(sys.argv) != 1:
         print("usage: dispatch-runner [--route-json JSON]", file=sys.stderr)
         return 2
-    prepare_dirs()
-    lock_path = os.path.join(DISPATCH, ".dispatch-runner.lock")
-    lock_fd = os.open(lock_path, os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0), 0o600)
+    home_fd, dispatch_fd, queue_fd, prompts_fd, receipts_fd = prepare_dirs()
+    lock_fd = -1
     try:
+        lock_fd = os.open(".dispatch-runner.lock", os.O_CREAT | os.O_RDWR |
+                          getattr(os, "O_NOFOLLOW", 0), 0o600, dir_fd=dispatch_fd)
         if not stat.S_ISREG(os.fstat(lock_fd).st_mode):
             raise RuntimeError("unsafe dispatch lock")
         try:
@@ -295,7 +330,7 @@ def main():
         held = []
         malformed = []
         skipped_receipt = []
-        for name in sorted(os.listdir(QUEUE)):
+        for name in sorted(os.listdir(queue_fd)):
             if name.startswith("."):
                 continue
             match = re.match(r"^(decision:[0-9a-f]{24})\.json$", name)
@@ -303,17 +338,17 @@ def main():
                 malformed.append(name)
                 continue
             decision_id = match.group(1)
-            path = os.path.join(QUEUE, name)
-            receipt_path = os.path.join(RECEIPTS, name)
-            if os.path.isfile(receipt_path) and not os.path.islink(receipt_path):
+            try:
+                existing_receipt = os.stat(name, dir_fd=receipts_fd, follow_symlinks=False)
+            except FileNotFoundError:
+                existing_receipt = None
+            if existing_receipt is not None and stat.S_ISREG(existing_receipt.st_mode):
                 skipped_receipt.append(name)
                 continue
             try:
-                if os.path.islink(path) or not os.path.isfile(path):
-                    raise ValueError("queue entry is not a regular file")
-                entry = load_json(path)
+                entry = load_json_at(queue_fd, name)
                 validate_entry(entry, decision_id)
-                state = run_one(path, entry)
+                state = run_one(queue_fd, prompts_fd, receipts_fd, name, entry)
                 processed += state == "stubbed"
                 if state != "stubbed":
                     held.append({"file": name, "state": state})
@@ -324,7 +359,10 @@ def main():
                          sort_keys=True))
         return 0
     finally:
-        os.close(lock_fd)
+        if lock_fd >= 0:
+            os.close(lock_fd)
+        for fd in (receipts_fd, prompts_fd, queue_fd, dispatch_fd, home_fd):
+            os.close(fd)
 
 
 if __name__ == "__main__":

@@ -349,8 +349,25 @@ def _run_builtin_brief(timeout_s):
         return None, "cannot read Morning Brief sidecar: %s" % e
 
 
+def _dispatch_summary(receipt):
+    target = receipt.get("target") if isinstance(receipt.get("target"), dict) else {}
+    receipt_state = receipt.get("state")
+    if receipt_state not in ("stubbed", "held-lint", "held-route", "held-compose"):
+        receipt_state = "malformed"
+    return {
+        "state": receipt_state,
+        "route": receipt.get("route") if receipt.get("route") in
+                 ("same-chat", "new-chat", "new-platform", "hold") else None,
+        "target_platform": target.get("platform") if target.get("platform") in
+                           ("codex", "claude", "glm", "cursor") else None,
+        "target_model": str(target.get("model") or "")[:80] or None,
+        "prompt_path": str(receipt.get("prompt_path") or "")[:1000] or None,
+        "stubbed": receipt.get("stubbed") is True,
+    }
+
+
 def _attach_dispatch_receipts(payload):
-    """Attach bounded dispatch state to pinned feed rows; never mutate the renderer."""
+    """Attach bounded dispatch state to feed rows; never mutate the renderer."""
     if not isinstance(payload, dict):
         return payload
     data = payload.get("data")
@@ -360,23 +377,37 @@ def _attach_dispatch_receipts(payload):
     receipts = os.path.join(dispatch, "receipts")
     queue = os.path.join(dispatch, "queue")
     id_re = re.compile(r"^decision:[0-9a-f]{24}$")
+    receipt_by_id = {}
+    try:
+        if os.path.islink(receipts) or not os.path.isdir(receipts):
+            raise OSError("receipts unavailable")
+        for name in sorted(os.listdir(receipts)):
+            match = re.match(r"^(decision:[0-9a-f]{24})\.json$", name)
+            if not match:
+                continue
+            receipt_path = os.path.join(receipts, name)
+            if os.path.islink(receipt_path) or not os.path.isfile(receipt_path):
+                continue
+            with open(receipt_path) as handle:
+                candidate = json.load(handle)
+            decision_id = match.group(1)
+            if isinstance(candidate, dict) and candidate.get("decision_id") == decision_id:
+                receipt_by_id[decision_id] = candidate
+    except (OSError, ValueError):
+        receipt_by_id = {}
+
+    data["dispatch"] = []
+    for decision_id in sorted(receipt_by_id):
+        item = _dispatch_summary(receipt_by_id[decision_id])
+        item["decision_id"] = decision_id
+        data["dispatch"].append(item)
+
     for row in data.get("pinned") or []:
         if not isinstance(row, dict) or not id_re.match(str(row.get("id") or "")):
             continue
         name = "%s.json" % row["id"]
-        receipt_path = os.path.join(receipts, name)
         queue_path = os.path.join(queue, name)
-        receipt = None
-        try:
-            if os.path.islink(receipt_path) or not os.path.isfile(receipt_path):
-                raise OSError("receipt unavailable")
-            with open(receipt_path) as handle:
-                candidate = json.load(handle)
-            if (isinstance(candidate, dict) and
-                    candidate.get("decision_id") == row["id"]):
-                receipt = candidate
-        except (OSError, ValueError):
-            receipt = None
+        receipt = receipt_by_id.get(row["id"])
         if receipt is None:
             row["dispatch"] = {
                 "state": "queued" if os.path.isfile(queue_path) and not os.path.islink(queue_path)
@@ -385,20 +416,7 @@ def _attach_dispatch_receipts(payload):
                 "prompt_path": None, "stubbed": None,
             }
             continue
-        target = receipt.get("target") if isinstance(receipt.get("target"), dict) else {}
-        receipt_state = receipt.get("state")
-        if receipt_state not in ("stubbed", "held-lint", "held-route", "held-compose"):
-            receipt_state = "malformed"
-        row["dispatch"] = {
-            "state": receipt_state,
-            "route": receipt.get("route") if receipt.get("route") in
-                     ("same-chat", "new-chat", "new-platform", "hold") else None,
-            "target_platform": target.get("platform") if target.get("platform") in
-                               ("codex", "claude", "glm", "cursor") else None,
-            "target_model": str(target.get("model") or "")[:80] or None,
-            "prompt_path": str(receipt.get("prompt_path") or "")[:1000] or None,
-            "stubbed": receipt.get("stubbed") is True,
-        }
+        row["dispatch"] = _dispatch_summary(receipt)
     return payload
 
 

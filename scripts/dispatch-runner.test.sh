@@ -163,6 +163,25 @@ PY
   fi
   [ ! -e "$queue" ] && pass "successful stub receipt drains queue" || fail "successful stub receipt drains queue"
 
+  # A resolved decision leaves pinned immediately, so its receipt needs a
+  # durable feed row of its own instead of disappearing with the open item.
+  if MISSION_CONTROL_HOME="$home" REPO_ROOT="$ROOT" DECISION_ALERT_AUTO=0 \
+      "$DASHBOARD" collect --force decisions >/dev/null && \
+      python3 - "$home/data/decisions.json" "$decision_id" <<'PY'
+import json, sys
+d=json.load(open(sys.argv[1],encoding="utf-8")); did=sys.argv[2]
+assert all(item["id"] != did for item in d["data"]["pinned"])
+row=next(item for item in d["data"]["dispatch"] if item["decision_id"] == did)
+assert row["state"] == "stubbed"
+assert row["target_platform"] == "codex"
+assert row["target_model"] == "gpt-5.6-sol"
+PY
+  then
+    pass "resolved decision receipt remains in decisions feed"
+  else
+    fail "resolved decision receipt remains in decisions feed"
+  fi
+
   # A receipt is the idempotency key even if a duplicate queue file reappears.
   cp "$TMP/queue-copy.json" "$queue"
   receipt_hash="$(shasum -a 256 "$receipt" | awk '{print $1}')"
@@ -199,6 +218,42 @@ PY
     pass "lint failure holds receipt and queue"
   else
     fail "lint failure holds receipt and queue"
+  fi
+
+  # Keep writes pinned to the validated receipts directory if another process
+  # swaps the public path while the prompt linter is running.
+  boundary_home="$TMP/home-boundary"
+  boundary_outside="$TMP/outside-receipts"
+  boundary_id="decision:dddddddddddddddddddddddd"
+  write_feeds "$boundary_home" "44444444-5555-4666-8777-888888888888" false "$ROOT"
+  mkdir -p "$boundary_outside"
+  MISSION_CONTROL_HOME="$boundary_home" DISPATCH_TEMPLATES_DIR="$ROOT/dispatch/templates" \
+    "$RUNNER" >/dev/null
+  python3 - "$boundary_home/dispatch/queue/$boundary_id.json" "$boundary_id" "$ROOT" <<'PY'
+import json, sys
+path, did, repo = sys.argv[1:]
+json.dump({"decision_id":did,"decision_text":"Continue work","option_number":1,
+  "option_text":"Continue","source_chat":None,"repo":repo,"severity":"normal",
+  "answered_at":"2026-07-13T16:00:00Z"}, open(path,"w",encoding="utf-8"))
+PY
+  swap_lint="$TMP/swap-receipts-lint"
+  cat >"$swap_lint" <<'EOF'
+#!/bin/bash
+set -eu
+mv "$BOUNDARY_HOME/dispatch/receipts" "$BOUNDARY_HOME/dispatch/receipts-original"
+ln -s "$BOUNDARY_OUTSIDE" "$BOUNDARY_HOME/dispatch/receipts"
+printf '%s\n' 'PASS synthetic lint'
+EOF
+  chmod 700 "$swap_lint"
+  if BOUNDARY_HOME="$boundary_home" BOUNDARY_OUTSIDE="$boundary_outside" \
+      MISSION_CONTROL_HOME="$boundary_home" DISPATCH_TEMPLATES_DIR="$ROOT/dispatch/templates" \
+      DISPATCH_LINT="$swap_lint" "$RUNNER" >"$TMP/boundary-run.json" && \
+      json_assert "$TMP/boundary-run.json" 'd["processed"] == 1' && \
+      [ -f "$boundary_home/dispatch/receipts-original/$boundary_id.json" ] && \
+      [ ! -e "$boundary_outside/$boundary_id.json" ]; then
+    pass "receipt write stays in validated dispatch directory"
+  else
+    fail "receipt write stays in validated dispatch directory"
   fi
 
   # Queue publication is best-effort after the answer transaction commits.
