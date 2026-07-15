@@ -609,6 +609,25 @@ Keep materially new suggestions here so they survive beyond the current chat.
 - 2026-07-05 | recommendation: do not adopt the GitHub Copilot enterprise-observability stack (OpenTelemetry Collector, Prometheus, Grafana, OpenObserve, Superset, Metabase, Airbyte, Meltano, dbt-core, Great Expectations, TensorZero, Helicone, OpenLIT, traceAI, TraceRoot, Pull Request Analytics Action); treat `records/2026-07-04-dashboard-coding-tracker-search-audit.md` as the real same-niche repo map; if a chart is ever justified, prefer vendorable zero-dependency `leeoniya/uPlot` over Chart.js/ECharts/CDN — but not for V1. | why: Copilot recommended from the repo description alone (it said so); every headline pick runs as a background service, framework, or separate warehouse and collides with the explicit non-goals of offline single-file, single-user, no-server. Full evaluation in Feedback Decision Log 2026-07-05. | by: Claude Code (Opus 4.8) session `a9724039-6595-4205-a25b-bf361020250a`. | linear: self-contained until Linear is configured.
 
 ## Active Branch Ledger
+### `codex/er156-telegram-flow-routing`
+- status: branch-only and paused before producer edits at ER-156's Telegram destination-binding gate
+- created: 2026-07-15
+- base: `origin/main@f355b5e`
+- worktree: `/Users/gillettes/Coding Projects/mission-control-worktrees/er156-telegram-flow-routing`
+- source chat: Codex `019f674e-a794-71f0-a6dc-ca861fec4864`, spawned by `019f62d4-a994-7dd3-8993-0734f727df9f`
+- last refreshed by chat: 2026-07-15, same
+- purpose: route decisions to Control, normal Morning Briefs to Briefs, and the independent deadman to Incidents without destination fallback.
+- linked issue: self-contained ER-156; Linear repo-only mode
+- plugin mirror: none
+- merge expectation: merge to `main`
+- merge target: `main`
+- review surface: focused delivery/deadman/decision tests, installed proof, path canaries, and coordinator audit
+- exit checklist: RED/GREEN; Work/Test records; commit/push; origin/main containment; install; canaries; cleanup
+- delete when: after origin/main containment and installed canaries
+- retain reason: n/a
+- cleanup command: `git worktree remove "/Users/gillettes/Coding Projects/mission-control-worktrees/er156-telegram-flow-routing" && git branch -d codex/er156-telegram-flow-routing`
+- linked PR/audit/completion record: coordinator ER-156 verification record
+
 ### `codex/er103-git-state-and-morning-proof`
 - status: preserved-superseded dirty checkout
 - created: 2026-07-11
