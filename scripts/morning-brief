@@ -496,8 +496,84 @@ def _open_changes(snapshot, top_n, cursor):
     return lines[:top_n], collapsed, high_water
 
 
+def _memory_health(now):
+    """Read the memory layer's verdict, coverage, and freshness from what the
+    nightly doctor already writes to disk. No new producer, no shell: the whole
+    point of this — every memory failure this week was detected by something and
+    read by nothing — is defeated if the reader itself is a moving part.
+
+    Fail-open in every branch: any missing/garbled file yields None, and the
+    brief renders without the line. Never raises, never blocks the brief."""
+    root = os.path.expanduser(os.environ.get(
+        "MORNING_BRIEF_MEMORY_HEALTH_DIR",
+        os.path.join("~", ".codex", "chat-context-index", "nightly-doctor")))
+    health = _load_json(os.path.join(root, "health.json"))
+    if not health:
+        return None
+    details = health.get("details") if isinstance(health.get("details"), dict) else {}
+
+    # Coverage lives in the doctor REPORT, not health.json, and a failed run
+    # writes a 0-byte report -- so take the newest report that actually parsed
+    # and carries a semantic block. Labelled with its own age below, because a
+    # day-old coverage number in a daily brief is honest only if dated.
+    coverage = coverage_age = None
+    try:
+        reports = sorted(
+            (p for p in os.listdir(root) if p.endswith("-doctor.json")),
+            reverse=True)
+    except OSError:
+        reports = []
+    for name in reports[:10]:
+        report = _load_json(os.path.join(root, name))
+        semantic = (((report or {}).get("after") or {}).get("metrics") or {}).get("semantic")
+        if isinstance(semantic, dict) and semantic.get("coverage_pct") is not None:
+            coverage = semantic.get("coverage_pct")
+            try:
+                coverage_age = max(0, now - int(os.stat(os.path.join(root, name)).st_mtime))
+            except OSError:
+                coverage_age = None
+            break
+
+    return {
+        "verdict": str(health.get("status") or "unknown"),
+        "receipt_status": str(details.get("receipt_status") or "unknown"),
+        "receipt_age_s": details.get("receipt_age_seconds"),
+        "running": bool(details.get("running")),
+        "coverage_pct": coverage,
+        "coverage_age_s": coverage_age,
+    }
+
+
+def _fmt_age(seconds):
+    if not isinstance(seconds, (int, float)) or seconds < 0:
+        return "unknown age"
+    seconds = int(seconds)
+    if seconds < 3600:
+        return "%sm old" % (seconds // 60)
+    if seconds < 86400:
+        return "%sh old" % (seconds // 3600)
+    return "%sd old" % (seconds // 86400)
+
+
 def _machinery(snapshot, health, top_n):
     lines = []
+    memory = snapshot.get("memory")
+    if isinstance(memory, dict):
+        cov = memory.get("coverage_pct")
+        cov_text = ("embedding coverage unknown" if cov is None
+                    else "embedding coverage %.1f%% (%s)"
+                    % (cov, _fmt_age(memory.get("coverage_age_s"))))
+        # Prepended, so it survives the top_n cap -- the one line this whole
+        # change exists to surface must never be the row that gets collapsed.
+        lines.append(_sanitize_line(
+            "Memory layer: last nightly check %s, %s, newest verdict %s (%s)."
+            % (memory.get("receipt_status", "unknown"), cov_text,
+               memory.get("verdict", "unknown"),
+               _fmt_age(memory.get("receipt_age_s"))),
+            source="cci nightly-doctor health"))
+    elif memory == "unavailable":
+        lines.append(_sanitize_line(
+            "Memory layer: health unavailable.", source="cci nightly-doctor health"))
     for name in sorted(INPUTS):
         item = health[name]
         age = "unknown age" if item["age_s"] is None else "%ss old" % item["age_s"]
@@ -882,6 +958,14 @@ def _compose_locked(preview=False):
     if hook and os.path.isfile(hook) and os.access(hook, os.X_OK):
         subprocess.run([hook], check=False, timeout=5)
 
+    # Collect memory-layer health alongside the input snapshot. A try/except in
+    # addition to _memory_health's own fail-open branches, so nothing about the
+    # memory layer can ever delay or break the brief: worst case is the one-word
+    # "unavailable" note, never a missing brief.
+    try:
+        snapshot["memory"] = _memory_health(now)
+    except Exception:
+        snapshot["memory"] = "unavailable"
     health = {name: _input_health(name, snapshot[name], now) for name in INPUTS}
     top_n = _bounded_int("MORNING_BRIEF_TOP_N", 8)
     needs_cap = _bounded_int("MORNING_BRIEF_NEEDS_YOU_MAX", 3, maximum=10)

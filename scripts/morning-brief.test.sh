@@ -474,6 +474,61 @@ PY
 then pass "open-change resolution wording keys off evidence type (Resolved reserved for evidence-backed)"
 else fail "open-change resolution wording keys off evidence type (Resolved reserved for evidence-backed)"; fi
 
+# Memory-layer health line: reads what the nightly doctor already writes to disk,
+# dates its coverage number, and never breaks the brief. The whole reason this
+# line exists is that every memory failure this week was detected by something and
+# read by nothing -- so the reader itself must fail open, not add a failure mode.
+MEMDIR="$TMP/nightly-doctor"
+mkdir -p "$MEMDIR"
+python3 - "$MEMDIR" <<'PY'
+import json, os, sys
+d = sys.argv[1]; now = 1783674000
+json.dump({"status": "error", "checked_at": "2026-07-16T00:00:00Z",
+           "details": {"receipt_status": "doctor-failed", "receipt_age_seconds": 7612,
+                       "running": False}},
+          open(os.path.join(d, "health.json"), "w"))
+# A parsed report carrying semantic coverage, plus an empty (failed-run) report
+# that must be skipped in favour of it.
+json.dump({"after": {"metrics": {"semantic": {"coverage_pct": 63.7,
+                                              "eligible_sources": 9018,
+                                              "embedded_sources": 5744}}}},
+          open(os.path.join(d, "20260716T000000Z-1-doctor.json"), "w"))
+open(os.path.join(d, "20260716T010000Z-2-doctor.json"), "w").close()  # 0-byte, newer
+# Age the coverage source deterministically (17h before the fixed clock).
+os.utime(os.path.join(d, "20260716T000000Z-1-doctor.json"), (now - 61200, now - 61200))
+PY
+if MORNING_BRIEF_MEMORY_HEALTH_DIR="$MEMDIR" PYTHONPATH="$ROOT/scripts" python3 - "$BRIEF" <<'PY'
+import importlib.machinery, sys
+m = importlib.machinery.SourceFileLoader("mb", sys.argv[1]).load_module()
+health = m._memory_health(1783674000)
+assert health is not None, "health.json present must yield a reading"
+assert health["coverage_pct"] == 63.7, health          # skipped the 0-byte newer report
+assert health["receipt_status"] == "doctor-failed", health
+m._reset_egress_counters()
+lines, _ = m._machinery({"memory": health, "automation": {}, "chats": {}},
+                        {n: {"state": "fresh", "age_s": 5} for n in m.INPUTS}, 8)
+top = lines[0]["text"]                                   # prepended, survives the cap
+assert top.startswith("Memory layer:"), top
+assert "63.7%" in top and "17h old" in top, top         # coverage present AND dated
+assert "doctor-failed" in top, top
+PY
+then pass "memory-layer health line reads on-disk doctor state, dates coverage, survives the top_n cap"
+else fail "memory-layer health line reads on-disk doctor state, dates coverage, survives the top_n cap"; fi
+
+# Fail-open: a missing health dir must drop the line silently, never crash the brief.
+if MORNING_BRIEF_MEMORY_HEALTH_DIR="$TMP/does-not-exist" PYTHONPATH="$ROOT/scripts" python3 - "$BRIEF" <<'PY'
+import importlib.machinery, sys
+m = importlib.machinery.SourceFileLoader("mb", sys.argv[1]).load_module()
+assert m._memory_health(1783674000) is None, "missing dir must read as None"
+m._reset_egress_counters()
+lines, _ = m._machinery({"memory": None, "automation": {}, "chats": {}},
+                        {n: {"state": "fresh", "age_s": 5} for n in m.INPUTS}, 8)
+assert not any("Memory layer:" in (l or {}).get("text", "") for l in lines if l), \
+    "no memory data must render no memory line, not a broken one"
+PY
+then pass "memory-layer health fails open on a missing dir (no line, no crash)"
+else fail "memory-layer health fails open on a missing dir (no line, no crash)"; fi
+
 printf '%s\n' "----"
 if [ "$FAIL" -eq 0 ]; then echo "ALL PASS"; exit 0; fi
 echo "$FAIL FAILED"; exit 1
