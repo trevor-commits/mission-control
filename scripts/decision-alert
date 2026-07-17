@@ -25,9 +25,19 @@ from mission_control_common import (
     DESKTOP_GLANCE_CTA, ACTION, IDENTIFIER, NARRATIVE,
                                     NOTIFICATION, EgressCounters,
                                     sanitize_text)
+import queue_admission
 
 
 SCHEMA = 1
+# Admission-schema columns (domain/severity/required_action/deadline/
+# snoozed_until/admission_class/admission_rule) are additive and OFF by
+# default — Phase 0 item 0.3 ships the capability here but the conductor
+# opts a home directory in explicitly. This keeps the write path fully built
+# and tested (see queue_admission.test.py + this session's DB-copy proof)
+# without this file mutating live schema just by being imported/run for
+# unrelated read operations like `alert --decision-id ... ` (no --send).
+ADMISSION_SCHEMA_ENABLED = (
+    os.environ.get("MISSION_CONTROL_ADMISSION_SCHEMA", "").strip() == "1")
 ALERT_WINDOW_S = 24 * 60 * 60
 ALERT_RESERVATION_LEASE_S = 60
 ALERT_BACKFILL_DEFAULT_MAX = 10
@@ -170,6 +180,12 @@ def _migrate(con):
         "PRAGMA table_info(decision_evidence)").fetchall()}
     if "anchor_ref" not in evidence_cols:
         con.execute("ALTER TABLE decision_evidence ADD COLUMN anchor_ref TEXT")
+    if ADMISSION_SCHEMA_ENABLED:
+        # Phase 0 item 0.3 write path. Additive only (mirrors the anchor_ref
+        # pattern above); gated behind ADMISSION_SCHEMA_ENABLED so importing
+        # or running this file for unrelated reads never mutates a home
+        # directory's schema unless the conductor explicitly opts it in.
+        queue_admission.add_admission_columns(con)
     con.execute("PRAGMA user_version=%d" % SCHEMA)
     con.commit()
 
@@ -500,6 +516,23 @@ def ingest(args):
             _event(con, decision_id, event_type, fingerprint, now,
                    detail={"prior_state": prior_state})
             event_created = True
+        if ADMISSION_SCHEMA_ENABLED:
+            # Same classify_row() used by the read-only `derive` staging
+            # tool, so a staging proof against live text predicts exactly
+            # what gets stamped here once this is deployed. Recomputed on
+            # every ingest (idempotent) so text edits keep the fields
+            # current; snoozed_until is deliberately NOT touched here — it
+            # is set by a separate human/system action, never by
+            # classification.
+            fields = queue_admission.classify_row(text)
+            con.execute("""UPDATE decisions SET
+                admission_class=?, admission_rule=?, domain=?, severity=?,
+                required_action=?, deadline=? WHERE decision_id=?""", (
+                    fields["admission_class"], fields["admission_rule"],
+                    fields["domain"], fields["severity"],
+                    fields["required_action"], fields["deadline"],
+                    decision_id,
+                ))
         con.commit()
         row = _get(con, decision_id)
         return {
@@ -646,6 +679,53 @@ def list_decisions(args):
         sql += " ORDER BY CASE state WHEN 'open' THEN 0 WHEN 'dismissed' THEN 1 ELSE 2 END, last_seen DESC, decision_id"
         rows = con.execute(sql, params).fetchall()
         return {"ok": True, "decisions": [_decision_dict(con, row) for row in rows]}
+    finally:
+        con.close()
+
+
+def rollup_cards(_args):
+    """Phase 0 item 0.3(b): read-only rollup view over open decisions.
+
+    Recomputes admission/domain/severity fresh via
+    queue_admission.classify_row() for every open row (the SAME function
+    ingest() uses to stamp the persisted columns), so this command is safe
+    and correct to run against a store whether or not the admission schema
+    columns exist yet — it never depends on ADMISSION_SCHEMA_ENABLED.
+    """
+    con = _connect()
+    try:
+        rows = con.execute("""SELECT decision_id, source_kind, source_key,
+            state, text, first_seen, last_seen FROM decisions
+            WHERE state='open'""").fetchall()
+        enriched = []
+        for row in rows:
+            d = dict(row)
+            d.update(queue_admission.classify_row(d.get("text")))
+            enriched.append(d)
+        cards = queue_admission.rollup(enriched)
+        admission_counts = {}
+        for d in enriched:
+            admission_counts[d["admission_class"]] = admission_counts.get(
+                d["admission_class"], 0) + 1
+        return {"ok": True, "row_count": len(enriched), "card_count": len(cards),
+                "admission_counts": admission_counts, "cards": cards}
+    finally:
+        con.close()
+
+
+def lanes(_args):
+    """Phase 0 item 0.3(c): lane VIEW counts derived from the domain field —
+    one queue, not four physical queues. Read-only, same recompute-fresh
+    approach as rollup_cards()."""
+    con = _connect()
+    try:
+        rows = con.execute(
+            "SELECT text FROM decisions WHERE state='open'").fetchall()
+        counts = {}
+        for row in rows:
+            domain, _rule = queue_admission.classify_domain(row["text"])
+            counts[domain] = counts.get(domain, 0) + 1
+        return {"ok": True, "row_count": len(rows), "lane_counts": counts}
     finally:
         con.close()
 
@@ -859,14 +939,34 @@ def sync_snapshot(args):
     return result
 
 
+def _recently_sent_or_reserved(con, row, now):
+    """Shared dedup check: is this row already successfully alerted within
+    the trailing window, or does it have a live reservation in flight? Used
+    by BOTH the normal eligibility scan and the targeted --decision-id
+    bypass, so a manual/urgent send still can't double-fire against an
+    attempt that is already in progress."""
+    success_cutoff = now - ALERT_WINDOW_S
+    lease_cutoff = now - ALERT_RESERVATION_LEASE_S
+    succeeded = con.execute("""SELECT 1 FROM alert_receipts
+        WHERE decision_id=? AND evidence_fingerprint=? AND succeeded_at>?
+        LIMIT 1""", (
+            row["decision_id"], row["evidence_fingerprint"], success_cutoff,
+        )).fetchone()
+    reserved = con.execute("""SELECT 1 FROM alert_attempts
+        WHERE decision_id=? AND evidence_fingerprint=? AND state='reserved'
+          AND attempted_at>?
+        LIMIT 1""", (
+            row["decision_id"], row["evidence_fingerprint"], lease_cutoff,
+        )).fetchone()
+    return bool(succeeded or reserved)
+
+
 def _alert_eligible(con, now, fresh_within_s=None, newest_first=False):
     order = "first_seen DESC, decision_id DESC" if newest_first else "first_seen, decision_id"
     rows = con.execute("""SELECT * FROM decisions
         WHERE state='open' AND trust_state='structured'
         ORDER BY %s""" % order).fetchall()
     out = []
-    success_cutoff = now - ALERT_WINDOW_S
-    lease_cutoff = now - ALERT_RESERVATION_LEASE_S
     fresh_cutoff = None
     if fresh_within_s is not None:
         try:
@@ -879,20 +979,43 @@ def _alert_eligible(con, now, fresh_within_s=None, newest_first=False):
     for row in rows:
         if fresh_cutoff is not None and int(row["first_seen"]) < fresh_cutoff:
             continue
-        succeeded = con.execute("""SELECT 1 FROM alert_receipts
-            WHERE decision_id=? AND evidence_fingerprint=? AND succeeded_at>?
-            LIMIT 1""", (
-                row["decision_id"], row["evidence_fingerprint"], success_cutoff,
-            )).fetchone()
-        reserved = con.execute("""SELECT 1 FROM alert_attempts
-            WHERE decision_id=? AND evidence_fingerprint=? AND state='reserved'
-              AND attempted_at>?
-            LIMIT 1""", (
-                row["decision_id"], row["evidence_fingerprint"], lease_cutoff,
-            )).fetchone()
-        if not succeeded and not reserved:
+        if not _recently_sent_or_reserved(con, row, now):
             out.append(row)
     return out
+
+
+def _alert_eligible_by_ids(con, decision_ids, now):
+    """Targeted bypass path for the severity=security queue bypass (Phase 0
+    item 0.3(d)). Deliberately does NOT apply fresh_within_s — a bypass that
+    still honored the freshness window would silently exclude exactly the
+    old, buried, still-unresolved security items it exists to surface (the
+    live key-rotation item was first flagged 2026-06-30, long outside any
+    48h freshness window). State=open and trust_state=structured are still
+    required (safety-preserving: never alert on a dismissed/resolved row or
+    an unverified inferred one), and the same dedup check as the normal
+    path applies (never double-fire an in-flight or recently-succeeded
+    send). Returns (eligible_rows, skipped) where skipped explains why any
+    requested id was excluded, for a transparent would-send report.
+    """
+    eligible = []
+    skipped = []
+    for decision_id in decision_ids:
+        if not _ID_RE.match(str(decision_id or "")):
+            skipped.append({"id": decision_id, "reason": "invalid_decision_id"})
+            continue
+        row = con.execute("SELECT * FROM decisions WHERE decision_id=?",
+                          (decision_id,)).fetchone()
+        if row is None:
+            skipped.append({"id": decision_id, "reason": "not_found"})
+            continue
+        if row["state"] != "open" or row["trust_state"] != "structured":
+            skipped.append({"id": decision_id, "reason": "not_open_structured"})
+            continue
+        if _recently_sent_or_reserved(con, row, now):
+            skipped.append({"id": decision_id, "reason": "already_sent_or_reserved"})
+            continue
+        eligible.append(row)
+    return eligible, skipped
 
 
 def _alert_message(decision, counters):
@@ -1047,18 +1170,44 @@ def alert(args):
         raise DecisionError("max must be a non-negative integer")
     fresh_within = getattr(args, "fresh_within", None)
     newest_first = bool(getattr(args, "newest_first", False))
+    decision_ids = getattr(args, "decision_ids", None)
+    id_skips = []
     con = _connect()
     try:
-        eligible = _alert_eligible(
-            con, now, fresh_within_s=fresh_within, newest_first=newest_first)
+        if decision_ids:
+            # Targeted bypass (Phase 0 item 0.3(d) severity=security path):
+            # ignores fresh_within by design — see _alert_eligible_by_ids.
+            eligible, id_skips = _alert_eligible_by_ids(con, decision_ids, now)
+        else:
+            eligible = _alert_eligible(
+                con, now, fresh_within_s=fresh_within, newest_first=newest_first)
         preview = [_decision_dict(con, row) for row in eligible]
     finally:
         con.close()
     if not args.send:
+        # Show the LITERAL would-send text via the same _alert_message()
+        # formatter the real --send path uses (never invoked, never
+        # dispatched — a pure string build) so a preview is an honest
+        # preview of what would go out, not just "this row is eligible".
+        preview_counters = EgressCounters()
+        for item in preview:
+            # _alert_message() reads decision["decision_id"]/["text"]; the
+            # preview item has already gone through _decision_dict(), which
+            # renames decision_id -> id, so pass a minimal shim rather than
+            # duplicating _alert_message's field contract here.
+            try:
+                item["would_send_message"] = _alert_message(
+                    {"decision_id": item["id"], "text": item["text"]},
+                    preview_counters)
+            except DecisionError as exc:
+                item["would_send_message"] = None
+                item["would_send_error"] = str(exc)
         return {"ok": True, "mode": "preview", "eligible_count": len(preview),
                 "sent_count": 0, "failed_count": 0, "decisions": preview,
                 "max": max_send or None,
-                "fresh_within_s": fresh_within}
+                "fresh_within_s": None if decision_ids else fresh_within,
+                "bypass": "decision_id" if decision_ids else None,
+                "skipped_ids": id_skips}
 
     sender = os.path.expanduser(args.sender or _default_sender_bin())
     if not sender or not os.path.isfile(sender) or not os.access(sender, os.X_OK):
@@ -1185,6 +1334,8 @@ def _parser():
 
     sub.add_parser("status")
     sub.add_parser("sync-snapshot")
+    sub.add_parser("rollup")
+    sub.add_parser("lanes")
 
     p = sub.add_parser("alert")
     p.add_argument("--send", action="store_true")
@@ -1197,6 +1348,10 @@ def _parser():
                    help="only alert decisions first_seen within N seconds")
     p.add_argument("--newest-first", action="store_true",
                    help="prefer newest open decisions when capping")
+    p.add_argument("--decision-id", action="append", dest="decision_ids",
+                   help="target specific decision id(s) directly, bypassing "
+                        "eligibility ordering and fresh-within (severity="
+                        "security queue bypass, ER-0.3d); repeatable")
 
     p = sub.add_parser(
         "alert-backfill",
@@ -1225,6 +1380,7 @@ def main(argv=None):
             "history": history, "list": list_decisions, "status": status,
             "sync-snapshot": sync_snapshot, "alert": alert,
             "alert-backfill": alert_backfill,
+            "rollup": rollup_cards, "lanes": lanes,
         }
         result = handlers[args.command](args)
         exit_code = int(result.pop("_exit", 0))

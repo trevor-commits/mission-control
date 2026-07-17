@@ -34,6 +34,7 @@ PY
 
 cp "$ROOT/scripts/decision-alert" "$MISSION_CONTROL_HOME/bin/decision-alert"
 cp "$ROOT/scripts/mission_control_common.py" "$MISSION_CONTROL_HOME/bin/mission_control_common.py"
+cp "$ROOT/scripts/queue_admission.py" "$MISSION_CONTROL_HOME/bin/queue_admission.py"
 cp "$ROOT/scripts/dashboard" "$MISSION_CONTROL_HOME/bin/dashboard"
 cp "$COMPOSE" "$MISSION_CONTROL_HOME/bin/compose-decision-prompt.py"
 chmod +x "$MISSION_CONTROL_HOME/bin/"*
@@ -257,6 +258,7 @@ ALERT_TMP="$(mktemp -d)"
 mkdir -p "$ALERT_TMP/state/data" "$ALERT_TMP/repo/scripts"
 cp "$ROOT/scripts/decision-alert" "$ALERT_TMP/repo/scripts/decision-alert"
 cp "$ROOT/scripts/mission_control_common.py" "$ALERT_TMP/repo/scripts/mission_control_common.py"
+cp "$ROOT/scripts/queue_admission.py" "$ALERT_TMP/repo/scripts/queue_admission.py"
 cat > "$ALERT_TMP/sender" <<'SEND'
 #!/usr/bin/env python3
 import json,os,sys
