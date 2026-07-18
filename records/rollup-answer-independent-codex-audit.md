@@ -16,9 +16,25 @@
 
 Evidence: `records/evidence/rollup-answer-audit-repair-red-green.txt` and `records/evidence/rollup-answer-audit-repair-full-green.txt`.
 
+## Attempt 2 — rejected replay/runtime/presentation boundaries
+
+- Audit task: Codex `019f7680-90ce-7392-a991-5a76a3bae61b`.
+- Model/reasoning: `gpt-5.6-sol` / max.
+- Reviewed range: `53e91392dcef3d2deeedf748c14159320a8572e0..708031f603e2c53ba9a8a8375e9f23a42ed123f4`.
+- Verdict: `NOT MERGE-READY` despite rollup 14/14 and `SUITES PASS=23 FAIL=0`.
+- Findings: two P1 and one P2, all accepted.
+
+### Finding disposition
+
+1. **Existing-batch replay corruption remained canonical — accepted and repaired in `8613d25`.** Cleanup now quarantines `artifact_name`, the authoritative name bound to the held artifact fd, independent of whether this invocation created or published the batch. Hermetic replay-time mutation and parent-replacement regressions prove canonical removal, pinned-parent quarantine, exact recovery, and one immutable event per target.
+2. **Strict refresh could read through a stale installed runtime — accepted and repaired in `8613d25`.** The embedded decisions collector now uses `MISSION_CONTROL_RUNTIME_DIR/decision-alert`, the same `SCRIPT_DIR` runtime used by the public transaction. A temporary executable stale reader is planted and proved uninvoked while the refreshed feed exposes pending state.
+3. **Pending prefixes could hide actionable work — accepted and repaired in `8613d25`.** Home and panel now stably partition actionable rows before pending rows, with browser/panel regressions where three pending rows precede a later actionable row.
+
+Evidence: `records/evidence/rollup-answer-final-audit-red-green.txt`.
+
 ## Final attempt
 
-- Status: pending a new same-model/max task against the repaired frozen head.
+- Status: pending exact-head re-audit by task `019f7680-90ce-7392-a991-5a76a3bae61b` after the records-complete authoritative gate.
 - Did not verify: final review-clean verdict, remote/PR state, merged-main behavior, install/deploy, provider delivery, or live-store behavior.
 
 ## Audited Chat

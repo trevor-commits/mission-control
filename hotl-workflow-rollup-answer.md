@@ -67,7 +67,7 @@ verify: /bin/bash scripts/verify.sh
 gate: auto
 
 - [ ] **Step 9: Run independent same-model audit**
-action: The first gpt-5.6-sol/max audit rejected the candidate on post-commit publication divergence and stale public-feed success. Freeze the repaired candidate, create a new same-model/max audit task, require diff/spec/test inspection and reruns, fix every accepted finding, and repeat verification.
+action: The first gpt-5.6-sol/max audit rejected publication/feed boundaries; fresh auditor `019f7680-90ce-7392-a991-5a76a3bae61b` then rejected frozen `708031f` on existing-batch replay quarantine, stale installed-reader skew, and bounded actionable ordering. All findings are repaired in focused tests; freeze the records-complete head, rerun the full gate, return it to that same fresh auditor, and require review-clean before closeout.
 loop: until no material novel finding remains
 max_iterations: 2
 verify: test -s records/rollup-answer-independent-codex-audit.md

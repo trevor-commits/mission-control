@@ -8,9 +8,10 @@
 4. **One current choice.** A deterministic scope key covers card, primary, ordered target IDs, and current fingerprints. The batch key additionally covers the choice. Exact replay is a no-op; any current mismatch fails closed.
 5. **All database members move together.** `BEGIN IMMEDIATE` re-plans, checks the expected scope, validates every target, and inserts all `answered_pending` events before one commit. Any exception rolls back all inserts.
 6. **Artifacts stay bound to their receipt.** The composer pins the Mission Control home, batch parent, and staged/published batch by file descriptor; verifies the exact manifest/member bytes before and after the database transition; and stores the canonical manifest SHA-256 in every pending event.
-7. **Publication is recoverable.** Rollup prompts and manifests contain no wall-clock identity, so an exact replay reproduces the persisted digest. A post-commit mutation, parent replacement, or invalid published destination is preserved under a private quarantine name and exact replay rebuilds the current deterministic batch without duplicating events.
+7. **Publication and replay are recoverable.** Rollup prompts and manifests contain no wall-clock identity, so an exact replay reproduces the persisted digest. The artifact name bound to the held fd is authoritative independent of invocation lifecycle; a post-commit mutation, parent replacement, or invalid existing/published destination is preserved under a private quarantine name and exact replay rebuilds the current deterministic batch without duplicating events.
 8. **Only owner evidence completes.** Current pending rows reject manual resolution. Existing graph verification must prove the exact member resolution key and answering/downstream evidence reference.
-9. **Public success includes feed coherence.** The dashboard answer command runs the strict decisions collector with alert egress disabled. It returns nonzero, while preserving the committed JSON receipt for exact replay, if Home and Morning Brief cannot be refreshed.
+9. **Public success includes same-runtime feed coherence.** The dashboard answer command writes and reads through the same `SCRIPT_DIR` decision-alert runtime, runs the strict decisions collector with alert egress disabled, and returns nonzero while preserving the committed JSON receipt for exact replay if Home and Morning Brief cannot be refreshed.
+10. **Needs-you bounds preserve actionability.** Home and panel stably order actionable rows before answered-pending receipts before applying their display limits, so an actionable count cannot produce a `Needs you` heading with no visible actionable control.
 
 ## Data interpretation
 
@@ -29,8 +30,8 @@
 2. Acquire an fd-pinned lock derived from card plus primary.
 3. Call read-only `plan-rollup-answer`; build deterministic prompt/answer/manifest bytes in a private stage directory and retain its fd.
 4. Verify the stage name-to-fd binding plus every digest, then call `answer-rollup --expected-scope-key --artifact-manifest-sha256`; the writer persists that digest and exact replay metadata with every member event.
-5. Revalidate the parent, name-to-fd binding, and held bytes after commit; quarantine any invalid destination; atomically rename the verified stage to the batch key and verify that final name against the same held fd.
-6. Run `engine collect --force --strict decisions` with `DECISION_ALERT_AUTO=0`; return target, independent, replay, and artifact details only after the public feed is current.
+5. Revalidate the parent, name-to-fd binding, and held bytes after commit; quarantine the exact name bound to the held artifact fd on any receipt-backed failure, including existing-batch replay; atomically rename a verified stage to the batch key and verify that final name against the same held fd.
+6. Run `engine collect --force --strict decisions` with `DECISION_ALERT_AUTO=0` through the same runtime directory as the transaction writer; return target, independent, replay, and artifact details only after the public feed is current.
 
 ## Failure behavior
 
@@ -45,7 +46,11 @@
 | Stage bytes change after commit | Public command fails; suspect stage is quarantined; exact digest replay rebuilds once |
 | Batch parent changes after commit | Old-parent artifact is quarantined; reported path never succeeds missing; replay publishes below the current parent |
 | Published batch conflicts with persisted digest | Invalid destination is quarantined; deterministic replay rebuilds the exact receipt |
+| Existing batch mutates during replay | Public command fails; the held canonical batch is quarantined; exact replay rebuilds once without duplicate events |
+| Batch parent changes during existing-batch replay | The exact held batch is quarantined in the descriptor-pinned old parent; replay publishes below the current parent |
+| Stale executable reader exists in the state home | It is not selected by a source-runtime transaction; writer and strict collector remain one runtime identity |
 | Strict decisions-feed refresh fails | Command returns nonzero with committed JSON on stdout; no provider send occurs; exact replay can retry refresh |
+| Pending rows fill a bounded Needs-you view | Later actionable rows are stably promoted into the visible prefix before pending receipts |
 | Exact same scope and choice | No duplicate events; existing or recovered batch returned |
 | Different choice/current pending mismatch | Fail closed; no overwrite |
 | Changed evidence fingerprint | Old event remains history; row is answerable again |

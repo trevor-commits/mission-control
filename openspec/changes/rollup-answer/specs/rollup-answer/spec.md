@@ -51,6 +51,10 @@ The system MUST stage every private member artifact before the database transiti
 - **WHEN** the path-visible batch parent stops naming the descriptor-pinned parent after the database receipt commits
 - **THEN** the command does not report a missing or redirected batch path, preserves the old-parent artifact, and exact replay publishes below the current parent
 
+#### Scenario: Existing published batch changes during replay
+- **WHEN** an exact replay has opened a receipt-backed published batch and its held bytes or path-visible parent changes before replay completes
+- **THEN** the command fails, quarantines the exact directory still bound to the held descriptor under its pinned parent, removes invalid canonical visibility, and a later exact replay rebuilds without duplicate events
+
 ### Requirement: Replay and changed-evidence semantics
 Exact current scope plus choice MUST be idempotent; a conflicting choice or partial current pending set MUST fail closed; a new evidence fingerprint MUST make the member answerable again.
 
@@ -69,6 +73,17 @@ The public dashboard answer and rollup-answer commands MUST run the strict decis
 - **WHEN** a rollup answer commits and the local decisions collector succeeds
 - **THEN** the feed exposes every target as answered-pending, Morning Brief omits those exact targets from `NEEDS YOU`, and no provider sender is invoked
 
+#### Scenario: A stale installed decision reader exists
+- **WHEN** the source dashboard command writes a rollup answer while an older executable decision reader exists under the temporary Mission Control state home
+- **THEN** the strict collector uses the same runtime implementation as the writer, exposes `answer_pending`, and does not invoke the stale installed reader
+
 #### Scenario: Feed refresh fails after commit
 - **WHEN** the database and private artifacts commit but the strict decisions collector fails
 - **THEN** the command returns nonzero, prints the committed structured receipt, identifies the degraded refresh on stderr, and permits an exact idempotent replay
+
+### Requirement: Bounded decision views preserve actionable work
+Home and panel MUST stably order actionable decisions before answered-pending receipts before applying display limits, while preserving relative order within both groups.
+
+#### Scenario: Pending rows precede the only actionable row
+- **WHEN** more pending rows than the visible limit precede a later actionable decision
+- **THEN** a `Needs you` view displays the actionable decision and its control before pending receipt rows

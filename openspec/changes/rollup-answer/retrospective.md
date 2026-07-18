@@ -11,7 +11,10 @@ The first full verifier was necessary but insufficient. Independent review found
 3. Post-commit invalid material should be preserved under a private quarantine name; deletion destroys forensic and replay evidence.
 4. A public state-changing CLI must bind success to the consumer surface it promises. A helper returning zero is not proof that the feed file changed.
 5. Hermetic no-send tests should install an executable trap sender and assert it remains untouched, not rely only on a configuration flag.
+6. Artifact identity cannot be inferred from whether the current invocation staged or published it. Receipt-backed failure cleanup must use the exact name still bound to the held descriptor, including replay of an existing final batch.
+7. A public transaction cannot select independently versioned writer and reader implementations. Runtime identity is part of feed-coherence proof.
+8. A bounded view must order by domain actionability before slicing; counting actionables across the full list is not enough if the visible prefix contains only receipts.
 
 ## Remaining boundary
 
-One new same-model/max frozen-head audit and hosted PR checks remain. Merge, installation, live-store use, provider delivery, plist, and launchd actions are outside this branch-only change.
+One exact-head re-audit by the fresh same-model/max task and hosted PR checks remain. Merge, installation, live-store use, provider delivery, plist, and launchd actions are outside this branch-only change.
