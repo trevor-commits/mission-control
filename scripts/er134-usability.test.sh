@@ -82,6 +82,47 @@ if grep -q 'd\.answer_pending' "$ROOT/dashboard/panel.html" && \
 else
   fail "panel answered-pending read-only state"
 fi
+if node - "$ROOT/dashboard/panel.html" <<'JS'
+const fs = require('fs'), vm = require('vm');
+const html = fs.readFileSync(process.argv[2], 'utf8');
+const match = html.match(/<script>\s*([\s\S]*?)<\/script>/);
+if (!match) throw new Error('panel script not found');
+function makeEl() {
+  const el = { children: [], _text: '', className: '', style: {}, attrs: {},
+    appendChild(child) { this.children.push(child); return child; },
+    setAttribute(key, value) { this.attrs[key] = value; }
+  };
+  Object.defineProperty(el, 'textContent', {
+    get() { return this._text + this.children.map(c => c.textContent || '').join(''); },
+    set(value) { this._text = String(value == null ? '' : value); this.children = []; }
+  });
+  return el;
+}
+const nodes = {};
+for (const id of ['title', 'health', 'list', 'refresh', 'theme', 'open-full']) nodes[id] = makeEl();
+const pending = n => ({ id: 'decision:' + String(n).repeat(24), question: 'Pending ' + n,
+  options: ['A', 'B'], answer_pending: { choice: 1 } });
+const actionable = { id: 'decision:' + 'a'.repeat(24), question: 'ACTIONABLE-LATE',
+  options: ['Ship', 'Wait'], answer_pending: null };
+const sandbox = {
+  window: { MC: { feeds: { decisions: { data: { pinned: [pending(1), pending(2), pending(3), actionable] } },
+    automation: { data: { jobs: [] } } } } },
+  document: { documentElement: makeEl(), getElementById(id) { return nodes[id]; },
+    createElement() { return makeEl(); }, createTextNode(value) { const el = makeEl(); el.textContent = value; return el; } },
+  localStorage: { getItem() { return null; }, setItem() {} },
+  location: { reload() {}, href: '' }, navigator: { clipboard: { writeText() { return Promise.resolve(); } } },
+  setTimeout() { return 0; }, Promise, Math, JSON, Array, Object, String, Number,
+  isFinite, console
+};
+sandbox.window.window = sandbox.window;
+vm.runInNewContext(match[1], sandbox, { timeout: 2000 });
+const shown = nodes.list.textContent;
+if (nodes.title.textContent !== 'Needs you' || shown.indexOf('ACTIONABLE-LATE') === -1 ||
+    shown.indexOf('ACTIONABLE-LATE') > shown.indexOf('Pending 1')) {
+  throw new Error(JSON.stringify({ title: nodes.title.textContent, shown }));
+}
+JS
+then pass "panel shows actionable rows before answered-pending rows"; else fail "panel hides actionable rows behind answered-pending rows"; fi
 grep -q 'mcDecide' "$ROOT/scripts/mc-panel.swift" && pass "swift mcDecide handler" || fail "swift mcDecide handler"
 grep -q '\^decision:\[0-9a-f\].*24' "$ROOT/scripts/mc-panel.swift" && pass "swift exact decision id contract" || fail "swift exact decision id contract"
 grep -q 'terminationHandler' "$ROOT/scripts/mc-panel.swift" && pass "swift decision bridge is asynchronous" || fail "swift decision bridge async"

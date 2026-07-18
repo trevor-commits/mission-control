@@ -1478,7 +1478,11 @@ body {
       appendPanelProvenance(section, "decisions", g,
         actionableCount + " awaiting answer; " + pendingCount + " answer(s) recorded");
     }
-    var shown = pinned.slice(0, limit);
+    // A bounded "Needs you" surface must show actionable rows before durable
+    // answered-pending receipts while preserving order within both groups.
+    var shown = pinned.filter(function (decision) {
+      return !isAnswerPending(decision);
+    }).concat(pinned.filter(isAnswerPending)).slice(0, limit);
     shown.forEach(function (decision, idx) {
       var id = decision.id || "";
       var parsed = (Array.isArray(decision.options) && decision.question) ? {

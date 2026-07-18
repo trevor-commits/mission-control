@@ -48,6 +48,14 @@ function makeEl(tag) {
   return el;
 }
 function makeTextNode(s) { return { nodeType: 3, textContent: String(s == null ? '' : s) }; }
+function elementsWithClass(root, name, out) {
+  out = out || [];
+  if (!root || typeof root !== 'object') return out;
+  const classes = String(root.className || '').split(/\s+/);
+  if (classes.indexOf(name) !== -1) out.push(root);
+  for (const child of root.children || []) elementsWithClass(child, name, out);
+  return out;
+}
 
 let byId = {};
 function resetDom() { byId = { 'mc-main': makeEl('div'), 'mc-nav': makeEl('div'), 'mc-strip': makeEl('div') }; }
@@ -109,17 +117,19 @@ if (feeds.chats && feeds.chats.data && feeds.chats.data.counts) {
   feeds.chats.data.counts.ingest_skipped = true;
 }
 // answered_pending is durable receipt state, not a second request for input.
-// Keep one synthetic pending member at the front so both Home render passes
-// exercise it within their display limits without changing committed fixtures.
-feeds.decisions.data.pinned.unshift({
-  id: 'decision:' + '9'.repeat(24),
-  text: '**DECISION NEEDED:** Pending rollup choice. **`PENDING-UNIQUE-A`**. **`PENDING-UNIQUE-B`**.',
-  question: 'Pending rollup choice.',
-  options: ['PENDING-UNIQUE-A', 'PENDING-UNIQUE-B'],
-  trust: 'structured',
-  provenance: 'chat-graph tier1',
-  answer_pending: { choice: 2, batch_key: 'b'.repeat(64) }
-});
+// Put more pending members than the bounded Home limit ahead of actionable
+// fixture rows. The renderer must still surface the later actionable decision.
+for (let i = 3; i >= 1; i--) {
+  feeds.decisions.data.pinned.unshift({
+    id: 'decision:' + String(i).repeat(24),
+    text: '**DECISION NEEDED:** Pending rollup choice ' + i + '. **`PENDING-UNIQUE-A`**. **`PENDING-UNIQUE-B`**.',
+    question: 'Pending rollup choice ' + i + '.',
+    options: ['PENDING-UNIQUE-A', 'PENDING-UNIQUE-B'],
+    trust: 'structured',
+    provenance: 'chat-graph tier1',
+    answer_pending: { choice: 2, batch_key: 'b'.repeat(64) }
+  });
+}
 // Defect (b) JS-guard coverage: a daily brief older than 2x its cadence but still
 // inside a LEGIT (within-horizon) valid_until window must NOT show the stale
 // banner — the guard honors product validity over the poll cadence. Composed at
@@ -273,6 +283,12 @@ for (const tab of TABS) {
     if (txt.indexOf('Needs you') === -1 ||
         txt.indexOf('Choose the rollout window') === -1) {
       console.error('FAIL: #home is missing the glance Needs-you queue');
+      fails++; continue;
+    }
+    const needsGlance = elementsWithClass(main, 'mc-glance-card').find(el =>
+      el.textContent.indexOf('Needs you') !== -1);
+    if (!needsGlance || needsGlance.textContent.indexOf('Choose the rollout window') === -1) {
+      console.error('FAIL: #home Needs-you glance hides a later actionable decision behind pending rows');
       fails++; continue;
     }
     if (txt.indexOf('Decisions waiting for you') === -1 ||

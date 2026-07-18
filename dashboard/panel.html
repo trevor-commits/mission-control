@@ -138,7 +138,12 @@ button.linkish, a.linkish {
     if (!pinned.length) {
       list.appendChild(document.createTextNode("Nothing waiting on you right now."));
     } else {
-      pinned.slice(0, 3).forEach(function (d, i) {
+      var shown = pinned.filter(function (d) {
+        return d.answer_pending == null;
+      }).concat(pinned.filter(function (d) {
+        return d.answer_pending != null;
+      })).slice(0, 3);
+      shown.forEach(function (d, i) {
         var parsed = (Array.isArray(d.options) && d.question) ? {
           q: d.question,
           opts: d.options.slice(0, 3),

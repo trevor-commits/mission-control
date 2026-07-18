@@ -350,9 +350,10 @@ def _run_builtin_brief(timeout_s):
 
 
 def _run_builtin_decisions(timeout_s):
-    installed = os.path.join(HOME, "bin", "decision-alert")
-    tool = installed if os.path.isfile(installed) and os.access(installed, os.X_OK) \
-        else os.path.join(REPO, "scripts", "decision-alert")
+    # The public answer transaction writes through SCRIPT_DIR/decision-alert.
+    # Read through that same runtime so an unrelated stale installed home cannot
+    # turn a successful strict refresh into a version-skewed feed.
+    tool = os.path.join(RUNTIME_DIR, "decision-alert")
     p, run_error = _run_argv([tool, "sync-snapshot", "--json"], timeout_s)
     if run_error:
         return None, ("decision queue timed out after %ds" % timeout_s

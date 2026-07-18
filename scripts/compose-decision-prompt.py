@@ -728,7 +728,6 @@ def answer_rollup_transaction(
     home_fd = batches_fd = lock_fd = artifact_fd = -1
     stage_name = artifact_name = None
     artifact_is_stage = False
-    published_from_stage = False
     receipt_exists = False
     commit_recorded = False
     transaction_complete = False
@@ -894,7 +893,6 @@ def answer_rollup_transaction(
                 stage_name = None
                 artifact_name = plan["batch_key"]
                 artifact_is_stage = False
-                published_from_stage = True
                 os.fsync(batches_fd)
         _validate_rollup_dirs(home, home_fd, batches_fd)
         _validate_named_dir(
@@ -922,10 +920,12 @@ def answer_rollup_transaction(
     finally:
         if (not transaction_complete and batches_fd >= 0 and artifact_fd >= 0):
             if commit_recorded or receipt_exists:
-                suspect_name = (plan["batch_key"] if published_from_stage
-                                else stage_name if artifact_is_stage else None)
+                # artifact_name always names the directory currently bound to
+                # artifact_fd. Receipt-backed failures quarantine that held
+                # object whether this invocation staged it or replayed an
+                # already-published batch; lifecycle booleans are not identity.
                 _quarantine_rollup_dir(
-                    batches_fd, suspect_name, artifact_fd, "postcommit")
+                    batches_fd, artifact_name, artifact_fd, "postcommit")
             elif artifact_is_stage:
                 _cleanup_rollup_stage(
                     batches_fd, stage_name, artifact_fd, target_ids)
