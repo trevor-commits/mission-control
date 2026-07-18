@@ -51,6 +51,13 @@ decision-alert resolve() -> UPDATE decisions SET state='resolved'
 compose-decision-prompt.py answer_transaction() -> resolve manual_resolution
 decision schema CHECK(state IN ('open','dismissed','resolved'))
 canonical plan row 0.2 -> answered-pending-consumption until owning task receipt
+
+$ git push -u origin codex/rollup-answer-wiring
+mandatory pre-push verifier -> SUITES PASS=21 FAIL=0
+dashboard -> PASS=67 FAIL=0
+ER-134 usability -> 57 passed, 0 failed
+dashboard browser -> 253 assertions passed
+OpenSpec strict -> 1 passed, 0 failed
 ```
 
 The packet-author audit transcript (`6b78e170-f063-47e2-92f8-48e6f5ce0600`, `Audit prompt implementation work`) was resolved with `chat-source`; it repeats the packet requirement but does not define the missing durable representation, CLI shape, or batch atomicity.
@@ -68,7 +75,7 @@ The packet-author audit transcript (`6b78e170-f063-47e2-92f8-48e6f5ce0600`, `Aud
 - Implementing immediate `resolve()` fan-out would incorrectly close members before consumption.
 - No main branch, live decision store, Telegram/API, install, deploy, release, plist, or launchd surface was touched.
 - did not verify: rollup-answer behavior, because no unambiguous durable pending/consumption contract exists and no production code was changed.
-- did not verify: tests beyond static/source inspection and `git diff --check`, because the binding stop condition fired before implementation.
+- did not verify: any new answered-pending, fan-out, replay, or atomic-batch behavior, because those paths were deliberately not implemented. The existing full baseline verifier passed; that is not evidence for absent Lane D behavior.
 
 ## Done / next / exact resume
 
