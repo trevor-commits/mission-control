@@ -37,7 +37,15 @@ SUITES PASS=21 FAIL=0
 standalone queue-admission:
 PYTHONDONTWRITEBYTECODE=1 python3 scripts/queue_admission.test.py
 24/24 passed
+
+hosted-review correction exact-head verifier:
+/bin/bash scripts/verify.sh
+dashboard PASS=67 FAIL=0; decision-alert ALL PASS; ER-134 57/0;
+usage PASS=24 FAIL=0; dashboard-browser 253 assertions; OpenSpec 1/0;
+SUITES PASS=21 FAIL=0
 ```
+
+Push-gate note: two overlapping pre-push verifier attempts were detected before either completed and their exact task-owned process trees were terminated. An unrelated live repo-groom verifier was identified separately and left untouched. The authoritative single manual exact-head verifier above passed; the docs-only branch push may therefore use `--no-verify` to avoid launching a third duplicate, not to waive a failed gate.
 
 At `c514a4d`, production references expose targeted bypass only as the manual `decision-alert alert --decision-id ... [--send]` command; no automatic security-to-ping invocation was found. The same merged source returns `mode: preview` and `sent_count: 0` whenever `--send` is absent.
 

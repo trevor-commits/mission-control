@@ -753,8 +753,8 @@ If it's not here, it isn't remembered.
 ## Test Evidence Log
 - date: 2026-07-17
   scenario: independent audit correction of the Phase 0.3/0.2 Work Record
-  command(s): `sed -n '590,655p' scripts/decision-alert`; `PYTHONDONTWRITEBYTECODE=1 python3 scripts/queue_admission.test.py`; `rg -n '^# Phase 0|^## 2026-07-17' records/2026-07-17-phase0-queue-and-answer-path.md`; `git diff --check`.
-  result: PASS — current resolution writes `state='resolved'`, so answered-pending remains unimplemented; the standalone queue-admission suite passes `24/24` separately from the 21-suite verifier; the record heading follows `#` with `##`; the diff is clean. No production/runtime file changed.
+  command(s): `sed -n '590,655p' scripts/decision-alert`; `PYTHONDONTWRITEBYTECODE=1 python3 scripts/queue_admission.test.py`; `rg -n '^# Phase 0|^## 2026-07-17' records/2026-07-17-phase0-queue-and-answer-path.md`; `/bin/bash scripts/verify.sh`; `git diff --check`.
+  result: PASS — current resolution writes `state='resolved'`, so answered-pending remains unimplemented; the standalone queue-admission suite passes `24/24` separately; the exact-head verifier passes all 21 suites (dashboard 67/0, decision-alert ALL PASS, ER-134 57/0, usage 24/0, browser 253, OpenSpec 1/0); the record heading follows `#` with `##`; the diff is clean. No production/runtime file changed.
   log/PR reference: `records/2026-07-17-phase0-queue-and-answer-path.md`; `STATE.md`; audit `019f7411-b995-76e2-8481-1266b1eebfa8`; PR #10
   by: Codex `019f73d8-e5dc-73a0-acc5-8a4916ac6819`
   linear: self-contained; repo-only
