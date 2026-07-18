@@ -9,6 +9,7 @@ Capture the current goal plus the concrete dependency-ordered steps that are sti
 - Put audit-created actionable execution items at the top of this section so audit follow-through is the next queue to execute.
 - If the current chat creates or discovers more urgent execution-ready work than the existing queue reflects, persist and move that fresher work to the top of this section before handoff so the chat is not the only durable record.
 - When a step is verified complete, move or summarize it in `## Completed` instead of deleting the history.
+- Phase 0 rollup-answer CLI (blocked on state contract): decide whether a fan-out answer remains `open` with a durable `answered_pending` event until each owning task reports consumption, or supply another representation that does not resolve work prematurely. The exact seven-point recommended contract and resume commands are in `STATE.md`; production code remains unchanged. | owner: Codex thread `019f73d8-e5dc-73a0-acc5-8a4916ac6819` | linear: repo-only; no Mission Control Linear team is configured.
 - Full-repo audit continuation (paused at Trevor's 2026-07-13 stop boundary): preserve the explicit provenance/completion supersession and resume only on a new Trevor direction. On resume, rerun the browser gate and complete the authoritative verifier, collect the first natural Delegation Audit schedule result, reconcile the fifth natural Morning Brief/operator evidence when it exists, and run a new independent closeout audit. The goal remains active; the stop-boundary verifier is interrupted/incomplete, not green or failed. | owner: Codex thread `019f59f8-bb9e-70c0-9497-a9686ea24154` | linear: repo-only.
 - Cross-repo Delegation Audit natural-run proof (time-gated): source, tests, protected runtime, empty-state status, plist, and notification-free dry-run are repaired through global `27aa2e3`; the loaded job still reports `runs=0`, `last exit=(never exited)` because the first 08:45 schedule has not occurred. Keep the separate Nightly Review defer truthful. | owner: next bounded status pass after the natural schedule | linear: repo-only.
 - ER-107 Morning Brief (highest, deterministic safety complete; elapsed/authorization proof open): the implementation is independently review-clean, contained by canonical `main`, and install/stamp/launchd verified without provider calibration. Four natural briefs (July 10–13) are durably recorded; the July 13 05:00 brief and 05:20 deadman both completed naturally with exit `0`. Remaining gates are the fifth natural morning, Trevor comprehension check-ins, a separately authorized privacy-screened provider calibration, and an explicit Outcome Extractor activation or deferral decision. | owner: Codex thread `019f59f8-bb9e-70c0-9497-a9686ea24154` | linear: repo-only; no Mission Control Linear team is configured.
@@ -67,6 +68,18 @@ Preserve a durable completion trail for verified work instead of deleting it fro
 - 2026-07-04 | ER-087 follow-up audit gaps — governance scaffold, product intent, tab wording, stale-ingest honesty, and Map smoke coverage landed in this change; full record below.
 
 ## Work Record Log
+
+### 2026-07-17 — Rollup-answer state-contract investigation
+- Problem: Lane D asks one CLI action to fan an answer across equivalent rollup members while keeping every member pending until its owning task consumes that answer. The current helper guidance says to call `resolve()` for superseded members, but `resolve()` immediately closes them and the schema has no answered-pending representation.
+- Reasoning: action, originating owner/session, and backtick-target equivalence are mechanically defined; the ambiguity is limited to durable state, visibility/deduplication, consumption receipt, replay, and batch atomicity. Guessing any of those would change Mission Control's queue contract.
+- Diagnosis: the binding overnight packet and canonical plan require answered-pending-consumption; `scripts/queue_admission.py` contains stale immediate-resolve guidance; `scripts/decision-alert` and `scripts/compose-decision-prompt.py` prove current resolution is terminal; the packet-author audit transcript does not supply the missing contract.
+- Fix: stopped before production edits and committed a seven-point recommended contract plus exact resume pointer in `STATE.md`. No live store, install, deployment, provider send, plist, launchd, or main-branch surface was touched.
+- Self-audit: source/schema/plan/transcript inspection is complete and the branch diff is documentation-only. Runtime behavior and tests were deliberately not claimed because the packet's ambiguity stop condition fired before implementation.
+- Ripple Check: added the blocker to Active Next Steps, this Work Record, the Active Branch Ledger, and Test Evidence Log together; existing queue behavior and other branches remain unchanged.
+- by: Codex `019f73d8-e5dc-73a0-acc5-8a4916ac6819`.
+- triggered by: Phase 0 Lane D binding stop condition.
+- led to: an explicit product decision rather than premature queue resolution.
+- linear: repo-only; no Mission Control Linear team is configured.
 
 ### 2026-07-13 — Stop-boundary provenance and completion supersession
 - Problem: the 08:53:58Z closeout in source chat `019f59f8-bb9e-70c0-9497-a9686ea24154` mislabeled the executor as `gpt-5` although every turn context records `gpt-5.6-sol`/high, and it claimed complete/no-defects before later feeder, usage, schedule/runtime, session-locator, and Delegation Audit defects were found.
@@ -610,6 +623,25 @@ Keep materially new suggestions here so they survive beyond the current chat.
 - 2026-07-05 | recommendation: do not adopt the GitHub Copilot enterprise-observability stack (OpenTelemetry Collector, Prometheus, Grafana, OpenObserve, Superset, Metabase, Airbyte, Meltano, dbt-core, Great Expectations, TensorZero, Helicone, OpenLIT, traceAI, TraceRoot, Pull Request Analytics Action); treat `records/2026-07-04-dashboard-coding-tracker-search-audit.md` as the real same-niche repo map; if a chart is ever justified, prefer vendorable zero-dependency `leeoniya/uPlot` over Chart.js/ECharts/CDN — but not for V1. | why: Copilot recommended from the repo description alone (it said so); every headline pick runs as a background service, framework, or separate warehouse and collides with the explicit non-goals of offline single-file, single-user, no-server. Full evaluation in Feedback Decision Log 2026-07-05. | by: Claude Code (Opus 4.8) session `a9724039-6595-4205-a25b-bf361020250a`. | linear: self-contained until Linear is configured.
 
 ## Active Branch Ledger
+### `codex/rollup-answer-wiring`
+- status: blocked; documentation-only branch awaiting a product state-contract decision
+- created: 2026-07-17
+- base: `origin/main@8582e182d5db3b8964ec21738a82806d94c78a55`
+- worktree: `/Users/gillettes/Coding Projects/mission-control-worktrees/rollup-answer-wiring`
+- source chat: Codex `019f73d8-e5dc-73a0-acc5-8a4916ac6819`
+- purpose: wire the Phase 0 rollup-answer CLI only if pending-consumption semantics are unambiguous
+- linked issue: self-contained; Linear repo-only mode in `LINEAR.md`
+- merge expectation: none while blocked; no PR until the state contract is confirmed
+- merge target: `main`
+- review surface: `STATE.md` plus this durable disposition
+- exit checklist:
+  - [x] Existing grouping/equivalence/read paths inspected
+  - [x] Existing answer, resolve, schema, and transaction paths inspected
+  - [x] Canonical plan and packet-author transcript reconciled
+  - [x] Exact ambiguity and recommended contract recorded
+  - [ ] Product contract confirmed or replaced
+  - [ ] Production implementation and hermetic tests completed
+
 ### `codex/er103-git-state-and-morning-proof`
 - status: preserved-superseded dirty checkout
 - created: 2026-07-11
@@ -730,6 +762,7 @@ If it's not here, it isn't remembered.
 - When a verification run closes or updates an audit finding, cross-reference the matching audit record entry and the chat or commit that performed the work.
 
 ## Test Evidence Log
+- 2026-07-17 | commands: targeted `git grep`/`sed` inspection of `scripts/queue_admission.py`, `scripts/decision-alert`, `scripts/compose-decision-prompt.py`, decision schema/tests, the canonical minimal-input plan, and exact packet-author transcript via `chat-source`; `git diff --check` | result: BLOCKED before production edits — equivalence is defined, but immediate `resolve()` conflicts with binding answered-pending-consumption and no durable pending/receipt representation exists. Documentation-only evidence records the contradiction and exact resume pointer; runtime tests were not run or claimed. | log/PR reference: `STATE.md`; no PR while blocked | by: Codex `019f73d8-e5dc-73a0-acc5-8a4916ac6819` | linear: repo-only.
 - 2026-07-13 | commands: installed `/Users/gillettes/.codex/scripts/chat-source find mission control`; exact `chat-source describe/latest` for resolved sessions and audit chat; direct and mandatory pre-push `/bin/bash scripts/verify.sh` runs; process inspection at Trevor stop boundary; LaunchAgent/plist/runtime/worktree checks | result: session lookup returned five exact sources in 85.19 seconds; four were reconciled and one unrelated third-party product session excluded. Both verifier runs completed the first 16/21 top-level suites, including dashboard `67/0`, ER-134 `50/0`, usage `24/0`, and two sender `14/14` runs; each browser run slept with Chrome gone, so browser plus four subsequent suites are interrupted/incomplete, not pass/fail. The records-only push used the global hook's documented `--no-verify` escape hatch. Delegation Audit runtime is clean at `27aa2e3`, focused `66/0`, dry-run exit 0, plist loaded/linted, natural runs still 0. | log/PR reference: stop-boundary addendum in `records/2026-07-12-full-repo-convergence-audit.md` | by: Codex + audit chat `019f5bea` | linear: repo-only.
 - 2026-07-13 | commands: schedule/SLA RED-GREEN focused suites; Mission common, graph, brief, deadman, dashboard, render, full verifier; global nightly selftest/Bash/ShellCheck/full verifier; exact installs/stamps/hashes; real Nightly Review kickstart; graph export and installed dashboard Chats refresh | result: PASS — Mission full `21/21`, dashboard `67/0`, usage `24/0`, browser `253`; global full verifier pass; marker advanced before expected governor defer; graph/Chats SLA `100800` fresh; installed Mission `c66d7fb`, global runtime `6f21f4f`; Outcome Extractor inactive | logs: `/tmp/mission-control-c66d7fb-verify.log`, `/tmp/global-6f21f4f-verify.log`; convergence audit | by: Codex + `/root/worker_019f59f8_final_challenger` | linear: repo-only.
 - 2026-07-13 | commands: exact Mission/global focused and full verifiers; repeated independent counterexample/ShellCheck/plist/hash review; origin landing; npm Darwin ARM64 tarball/file/codesign/otool/version inspection; detached-runtime/hash/status checks; loaded plist/launchctl inspection; RunAtLoad and natural-recurrence state/history/dashboard/stdout/stderr/process/lock/temp checks; deployed router against latest snapshot | result: PASS — Mission `c8a1e75` usage `24/0`, full `21/21`, browser `253`; global `8b1ee91` usage `64/0` and complete verifier; three terminal clean challenger verdicts; loaded usage job reached `runs=3`, exit `0`; exact collector/native hashes; history/stdout advanced at 06:35 while historical stderr remained unchanged; no scoped process/lock/temp residue | log/PR reference: `/tmp/mission-control-c8a1e75-verify.log`; `/tmp/global-8b1ee91-verify.log`; `records/2026-07-12-full-repo-convergence-audit.md` | by: Codex `019f59f8-bb9e-70c0-9497-a9686ea24154` + `/root/worker_019f59f8_final_challenger` | linear: repo-only.
