@@ -1,11 +1,11 @@
 # Lane C2 state — Mission Control Phase 0 work record
 
-- Status: GREEN after independent audit corrections; replacement-head re-audit pending
+- Status: GREEN after independent audit corrections and hosted receipt-reproducibility correction; replacement-head re-audit pending
 - Branch: `codex/phase0-work-record`
 - Base: `origin/main@8582e182d5db3b8964ec21738a82806d94c78a55`
 - Worktree: `/Users/gillettes/Coding Projects/mission-control-worktrees/phase0-work-record`
 - Scope: documentation-only corrective work record
-- Evidence commits: `595230a`, `952df08`
+- Evidence commits: `595230a`, `952df08`, `ebbdd47`; hosted-review correction: this commit
 - Independent audit: Codex `019f7411-b995-76e2-8481-1266b1eebfa8` (`gpt-5.6-sol`/max)
 - Pull request: https://github.com/trevor-commits/mission-control/pull/10
 - Live/deploy actions: none
@@ -45,6 +45,7 @@ At `c514a4d`, production references expose targeted bypass only as the manual `d
 
 - `records/2026-07-17-phase0-queue-and-answer-path.md`: canonical dated Work Record from the packet-named sources.
 - `todo.md`: correction/link, branch ledger, and test-evidence entry.
+- `todo.md`: exact rerunnable containment, current-answer, queue-suite, receipt, call-site, preview, verifier, heading, and diff commands requested by hosted review.
 - `STATE.md`: source transcript, claims, explicit limits, and resume command.
 - Production/runtime files changed: none.
 
@@ -63,5 +64,5 @@ At `c514a4d`, production references expose targeted bypass only as the manual `d
 ## Done / next / resume
 
 - Done: source containment, commit/receipt synthesis, correction boundaries, dated record, and repo ledger updates.
-- Next: push these audit corrections and re-run the same-model auditor against the replacement head before final handoff.
+- Next: commit/push the hosted-review correction and re-run the same-model auditor against the replacement head before final handoff.
 - Exact resume: `cd '/Users/gillettes/Coding Projects/mission-control-worktrees/phase0-work-record' && git status -sb && git diff --check && sed -n '1,240p' records/2026-07-17-phase0-queue-and-answer-path.md`
