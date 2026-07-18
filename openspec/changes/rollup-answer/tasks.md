@@ -22,6 +22,8 @@
 
 - [x] 4.1 Run focused suites, mutation/negative controls, strict OpenSpec, HOTL lint, syntax, and `git diff --check`.
 - [x] 4.2 Run the authoritative full verifier and record the immutable candidate evidence.
-- [ ] 4.3 Run a fresh same-model/max-reasoning Codex audit against the frozen candidate; fix accepted findings and rerun affected/full gates.
-- [ ] 4.4 Update `verify.md`, retrospective, `STATE.md`, `todo.md`, branch ledger, and the audit coverage disposition.
-- [ ] 4.5 Commit, push the topic branch, open a review-ready PR, and stop without merging or deploying.
+- [x] 4.3 Run the first fresh same-model/max-reasoning Codex audit against the frozen candidate and reproduce its two P1 findings.
+- [x] 4.4 Bind post-commit publication to a persisted deterministic manifest digest, add fd-bound quarantine/replay, make the public decisions-feed refresh strict/no-send, and rerun focused plus authoritative gates.
+- [ ] 4.5 Send the repaired frozen head to a new same-model/max-reasoning Codex audit and obtain a final review-clean verdict.
+- [ ] 4.6 Update `verify.md`, retrospective, `STATE.md`, `todo.md`, branch ledger, and the final audit coverage disposition.
+- [ ] 4.7 Commit, push the topic branch, open a review-ready PR, and stop without merging or deploying.

@@ -1,23 +1,25 @@
 # Lane D state — rollup-answer CLI wiring
 
-- Status: ACTIVE; committed candidate is authoritative-full-green; fresh independent audit remains
+- Status: ACTIVE; independent-audit repairs are focused/full-green; final fresh audit and PR remain
 - Branch: `codex/rollup-answer-wiring`
-- Base: `origin/main@8582e182d5db3b8964ec21738a82806d94c78a55`
-- Current committed implementation checkpoint: `754de932301113e81f51bbf4febe2d3fc28c01e0`
-- Current authoritative full-green candidate: `ed8ce3591b5fb3070b132b98a062be1125a5f991`
+- Review base: `53e91392dcef3d2deeedf748c14159320a8572e0`
+- Original implementation checkpoint: `754de932301113e81f51bbf4febe2d3fc28c01e0`
+- Verifier-hermeticity repair: `ed8ce3591b5fb3070b132b98a062be1125a5f991`
+- Independent-audit repair: `34687c9` (`fix(decisions): bind rollup publication to receipts`)
 - Worktree: `/Users/gillettes/Coding Projects/mission-control-worktrees/rollup-answer-wiring`
 - Source chat: Codex `019f73d8-e5dc-73a0-acc5-8a4916ac6819`
-- Trust Gate: on — this changes durable operator-decision interpretation and completion semantics
+- Trust Gate: on — durable operator direction and completion semantics
 - Canonical change: `openspec/changes/rollup-answer/`
 - Executable binding: `hotl-workflow-rollup-answer.md`
-- Linear disposition: repo-only; no Mission Control Linear team is configured
+- Linear disposition: self-contained / repo-only; no Mission Control Linear team is configured
+- Project-memory convention: this repo has no separate `PROJECT_MEMORY.md`; `todo.md` is the declared operational-memory surface
 - Live/deploy actions: none
 
-## Approved contract
+## Approved contract and citation
 
-Trevor approved the following seven points on 2026-07-18:
+Trevor approved the following seven points through `thread_goal_updated` at `2026-07-18T14:47:59.770Z` on this source thread (`019f73d8`), with goal text beginning “Yes thoroughly Approve the seven-point answered_pending contract and resume Lane D.”
 
-1. `dashboard decide answer-rollup <card-id> <primary-decision-id> <choice>` plus the existing source/resume flags.
+1. `dashboard decide answer-rollup <card-id> <primary-decision-id> <choice>` plus existing source/resume flags.
 2. Target the primary plus only strict action+owner+target equivalents; return independent members untouched and visible.
 3. Keep every target `open` with a current-fingerprint `answered_pending` event and private answer/prompt artifacts.
 4. Keep pending members locally visible while suppressing ordinary alerts, dismissal, single-answer, and Morning Brief owner-action duplication.
@@ -27,62 +29,67 @@ Trevor approved the following seven points on 2026-07-18:
 
 ## Current implementation
 
-- `scripts/decision-alert` derives current pending state from immutable events, plans current rollup scope, verifies a private staged/published batch receipt, inserts every pending event in one transaction, suppresses duplicate action paths, and preserves exact graph-consumption gates.
-- `scripts/compose-decision-prompt.py` validates identifiers before opening paths, pins private directories, stages mode-600 member artifacts under mode-700 directories, verifies manifest/member digests, commits through the receipt-required writer, atomically publishes, and recovers exact replay.
-- `scripts/dashboard` exposes `decide answer-rollup` without provider delivery and refreshes only the local feed best-effort.
-- Morning Brief omits current pending rows from `NEEDS YOU`; Home and the menu-bar panel show the recorded choice as read-only awaiting owner consumption.
-- `scripts/queue_admission.py` carries pending metadata in rollups and no longer documents immediate terminal resolution.
-- `scripts/rollup-answer.test.py` and the existing focused suites cover the contract in temporary state.
+- `scripts/decision-alert` derives pending from immutable events, replans current scope inside one immediate transaction, verifies private artifact proof, persists the canonical manifest SHA-256 plus exact member/metadata/artifact identity, inserts all target events atomically, and exact-compares every replay field.
+- `scripts/compose-decision-prompt.py` validates before paths, creates deterministic rollup bytes, retains a pinned batch fd, verifies name-to-fd and member bytes before/after commit and after publication, quarantines invalid post-commit material, and reconstructs the persisted digest on exact replay.
+- `scripts/dashboard` exposes public single/rollup answer commands and runs the strict decisions collector with `DECISION_ALERT_AUTO=0`; committed-but-refresh-failed is nonzero with structured stdout and explicit degraded stderr.
+- Morning Brief omits exactly current pending targets from `NEEDS YOU`; Home and panel show the recorded choice as read-only awaiting owner consumption.
+- `scripts/rollup-answer.test.py` covers the contract in temporary state, including post-commit mutation/parent replacement, tampered destination repair, deterministic digest replay, strict feed failure, Morning Brief coherence, and fake-sender no-egress proof.
+
+## Audit history and disposition
+
+### Initial ambiguity audit
+
+- Codex `019f7411-b995-76e2-8481-1266b1eebfa8` corroborated that the seven-point contract needed explicit approval before implementation. Disposition: resolved by the cited approval above.
+
+### First implementation audit
+
+- Codex `019f762c-c815-77b3-97c0-021c66fd3b7e`, `gpt-5.6-sol`/max, reviewed `53e91392..daa8c72` and returned `NOT MERGE-READY` with two P1 findings despite a fresh `23/23` verifier run.
+- Accepted P1: post-commit stage/parent mutation could diverge from the database receipt because the digest was not persisted and later checks reopened mutable names.
+- Accepted P1: the public `sync-snapshot || collect` path could succeed without updating `data/decisions.json`, leaving Home/Morning Brief stale.
+- Disposition: both reproduced RED and repaired in `34687c9`; evidence in `records/evidence/rollup-answer-audit-repair-red-green.txt` and `records/evidence/rollup-answer-audit-repair-full-green.txt`.
+- Final repaired-head audit: pending in a new same-model/max task.
 
 ## Evidence
 
-### Red
+### Historical red/green
 
-- Six initial rollup behavior tests failed because planning/writing/CLI did not exist.
-- Morning Brief, Home renderer, and panel tests then failed because pending rows were still presented as fresh owner actions.
-- First-green review added two failing negatives: the internal writer accepted no artifact proof, and newline-bearing resume metadata reached staged prompts.
-- Exact transcripts: `records/evidence/rollup-answer-red.txt` and `records/evidence/rollup-answer-render-red.txt`.
+- Initial behavior/render RED: `records/evidence/rollup-answer-red.txt`, `records/evidence/rollup-answer-render-red.txt`.
+- First focused green: `records/evidence/rollup-answer-focused-green.txt`.
+- Rejected verifier false green plus hermeticity repair: `records/evidence/rollup-answer-verifier-artifact-red-green.txt` and `records/2026-07-18-verifier-source-artifact-repair.md`.
+- First authoritative committed green: `records/evidence/rollup-answer-full-green.txt` (`ed8ce35`, 23/0).
 
-### Focused green
+### Independent-audit repair
 
 | Gate | Result |
 |---|---|
-| Rollup answer | 10 tests, OK |
-| Decision alert | ALL PASS |
-| Queue admission | 24 tests, OK |
-| Dashboard | PASS=67 FAIL=0 |
-| ER-134 usability | 58 passed, 0 failed |
-| Morning Brief | ALL PASS |
-| Dashboard renderer | all 7 tabs and adversarial cases pass |
-| Python / Node / macOS Bash 3.2 syntax | pass |
+| New/strengthened rollup contracts before repair | RED — 5 failures, 2 errors |
+| Rollup answer after repair | 14 tests, OK |
+| Authoritative verifier | `SUITES PASS=23 FAIL=0` |
+| Dashboard browser | 253 assertions |
 | Strict OpenSpec | 2 passed, 0 failed |
-| HOTL document lint | pass |
-| `git diff --check` | pass |
+| Python / macOS Bash 3.2 / source artifacts | pass |
+| Provider sender trap | not invoked |
 
-The rollup suite includes strict equivalence, independent output, no-write planning, open/pending visibility, alert/dismiss/single-answer suppression, exact graph consumption, changed evidence, partial/conflicting state, exact replay, transaction rollback, pre/post-commit failure and recovery, permissions, missing proof, malformed/secret metadata, tampered/orphaned batches, symlinked parents, and rename/swap safety.
+Receipts:
 
-Focused receipt: `records/evidence/rollup-answer-focused-green.txt`.
-
-### Verifier self-audit repair
-
-The first fresh full run at `754de93` reached `SUITES PASS=22 FAIL=0`, but an immediate post-run check found ignored source bytecode created by a later isolated Morning Brief sender subprocess. That run is rejected as authoritative full-green evidence. The producing environment now preserves the no-bytecode guard, a temporary-runtime regression fails before and passes after the repair, and the authoritative verifier has gained a final artifact suite. Receipt: `records/evidence/rollup-answer-verifier-artifact-red-green.txt`.
-
-### Authoritative full green
-
-The repaired committed candidate `ed8ce35` passed all 23 authoritative suites, including rollup `10/10`, dashboard `67/0`, ER-134 `58/0`, usage `24/0`, browser `253`, strict OpenSpec `2/0`, syntax, and the new final source-artifact gate. The immediate post-run Git/artifact snapshot was clean. Receipt: `records/evidence/rollup-answer-full-green.txt`.
+- `records/evidence/rollup-answer-audit-repair-red-green.txt`
+- `records/evidence/rollup-answer-audit-repair-full-green.txt`
+- `records/rollup-answer-independent-codex-audit.md`
+- `records/2026-07-18-rollup-answer-work-record.md`
 
 ## Claims and limits
 
-- Confirmed: the focused implementation matches every approved semantic in hermetic temporary state.
-- Confirmed: the authoritative full verifier passed `23/0` on committed candidate `ed8ce35` and left no repository bytecode artifact.
-- Confirmed: no schema migration or new dependency was added.
-- Confirmed: no main branch, live Mission Control store, provider send, Telegram, installation, deployment, release, plist, launchd, or external runtime was touched.
-- Did not verify: a fresh same-model/max-reasoning audit of that frozen implementation SHA.
-- Did not verify: PR state; no implementation PR exists yet.
-- Do not do yet: merge, install, deploy, send, or write any live store.
+- Confirmed: both first-audit P1 findings were independently reproduced and have behavior-level regressions.
+- Confirmed: the repair candidate passed the authoritative 23-suite matrix and left no source bytecode.
+- Confirmed: no schema migration, dependency, live-store write, provider send, main touch, install, deploy, release, plist, or launchd action occurred.
+- Did not verify: final repaired-head independent verdict.
+- Did not verify: hosted PR checks or merge state; no Lane D PR exists yet.
+- Did not verify: merged-main, installed runtime, provider delivery, or live-store behavior because those actions are prohibited here.
+- Do not do: merge, install, deploy, send, write a live store, change plist/launchd, or resolve live decision `decision:a6f185b53cbc1278499b062d` from this lane.
+- Merge-sitting note: the still-open/alerting live card `decision:a6f185b53cbc1278499b062d` should be resolved by the integrator at the merge sitting, not by this branch task.
 
 ## Exact resume
 
-1. Commit the immutable full-green receipt and Step 8 state.
-2. Create the required fresh `gpt-5.6-sol`/max Codex audit against the exact frozen candidate; verify findings against source/tests, repair accepted findings, and rerun affected plus full gates.
-3. Finish `verify.md`, retrospective, todo/STATE/audit records, push the topic branch, open a review-ready PR, and stop before merge or deploy.
+1. Commit the records/spec/state update and rerun strict OpenSpec plus the authoritative verifier on the exact committed head.
+2. Create a new `gpt-5.6-sol`/max audit task against that frozen SHA; repair any accepted finding under the two-attempt rule and rerun affected/full gates.
+3. Append the final audit receipt, push the topic branch, open a review-ready PR whose body carries the approval citation and live-card merge-sitting note, verify hosted checks, and stop before merge/deploy.

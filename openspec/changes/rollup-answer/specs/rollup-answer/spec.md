@@ -8,7 +8,7 @@ The system MUST accept a rollup answer only for a current open card and primary 
 - **THEN** answering one targets only the primary and returns the other as independent
 
 ### Requirement: Durable answered-pending interpretation
-Every targeted member MUST remain `open` and MUST expose one current `answered_pending` event containing the choice, source, card, primary, batch, and private artifact references.
+Every targeted member MUST remain `open` and MUST expose one current `answered_pending` event containing the choice, source/resume metadata, card, primary, batch, canonical manifest digest, member sets, and private artifact references.
 
 #### Scenario: A rollup answer is recorded
 - **WHEN** the operator answers a valid card
@@ -33,7 +33,7 @@ Current pending members MUST resolve only through existing graph-verified answer
 - **THEN** only that member resolves and other batch members remain open pending
 
 ### Requirement: Atomic and recoverable batch publication
-The system MUST stage every private member artifact before the database transition, MUST record all target events in one transaction, and MUST publish the batch with one atomic directory rename.
+The system MUST stage every private member artifact before the database transition, MUST record all target events plus the canonical manifest digest in one transaction, MUST bind pre/post-commit verification to the same held batch directory, and MUST publish the batch with one atomic directory rename.
 
 #### Scenario: Failure before database commit
 - **WHEN** staging, directory validation, or scope revalidation fails
@@ -43,13 +43,32 @@ The system MUST stage every private member artifact before the database transiti
 - **WHEN** publication fails after all pending events commit
 - **THEN** no partial published batch appears and exact replay can publish the complete batch without duplicate events
 
+#### Scenario: Staged bytes change after commit
+- **WHEN** a staged prompt or manifest changes after the database receipt commits
+- **THEN** the public command fails, preserves the suspect directory under a private quarantine name, and exact replay reconstructs the persisted digest without a duplicate event
+
+#### Scenario: Batch parent is replaced after commit
+- **WHEN** the path-visible batch parent stops naming the descriptor-pinned parent after the database receipt commits
+- **THEN** the command does not report a missing or redirected batch path, preserves the old-parent artifact, and exact replay publishes below the current parent
+
 ### Requirement: Replay and changed-evidence semantics
 Exact current scope plus choice MUST be idempotent; a conflicting choice or partial current pending set MUST fail closed; a new evidence fingerprint MUST make the member answerable again.
 
 #### Scenario: Exact replay
 - **WHEN** the same card, primary, target fingerprints, and choice are submitted again
-- **THEN** the command succeeds without inserting another pending event or overwriting a different batch
+- **THEN** the command reproduces the persisted manifest digest and succeeds without inserting another pending event or overwriting a valid different batch
 
 #### Scenario: Evidence changes
 - **WHEN** an answered-pending member is re-ingested with a materially different evidence fingerprint
 - **THEN** the prior pending event remains in history but is no longer active and a new answer may be recorded
+
+### Requirement: Public decision-feed coherence without egress
+The public dashboard answer and rollup-answer commands MUST run the strict decisions collector with automatic alerts disabled, MUST update Home and Morning Brief before reporting full success, and MUST surface a committed-but-refresh-failed result without sending to any provider.
+
+#### Scenario: Feed refresh succeeds
+- **WHEN** a rollup answer commits and the local decisions collector succeeds
+- **THEN** the feed exposes every target as answered-pending, Morning Brief omits those exact targets from `NEEDS YOU`, and no provider sender is invoked
+
+#### Scenario: Feed refresh fails after commit
+- **WHEN** the database and private artifacts commit but the strict decisions collector fails
+- **THEN** the command returns nonzero, prints the committed structured receipt, identifies the degraded refresh on stderr, and permits an exact idempotent replay

@@ -67,7 +67,7 @@ verify: /bin/bash scripts/verify.sh
 gate: auto
 
 - [ ] **Step 9: Run independent same-model audit**
-action: Freeze the candidate SHA, create a fresh gpt-5.6-sol/max Codex audit task, require diff/spec/test inspection and reruns, fix every accepted finding, and repeat verification.
+action: The first gpt-5.6-sol/max audit rejected the candidate on post-commit publication divergence and stale public-feed success. Freeze the repaired candidate, create a new same-model/max audit task, require diff/spec/test inspection and reruns, fix every accepted finding, and repeat verification.
 loop: until no material novel finding remains
 max_iterations: 2
 verify: test -s records/rollup-answer-independent-codex-audit.md
