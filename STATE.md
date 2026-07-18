@@ -1,11 +1,11 @@
 # Lane C2 state — Mission Control Phase 0 work record
 
-- Status: GREEN after independent audit corrections and hosted receipt-reproducibility correction; replacement-head re-audit pending
+- Status: GREEN locally and hosted after independent-audit and receipt-reproducibility corrections; final replacement-head audit pending
 - Branch: `codex/phase0-work-record`
 - Base: `origin/main@8582e182d5db3b8964ec21738a82806d94c78a55`
 - Worktree: `/Users/gillettes/Coding Projects/mission-control-worktrees/phase0-work-record`
 - Scope: documentation-only corrective work record
-- Evidence commits: `595230a`, `952df08`, `ebbdd47`; hosted-review correction: this commit
+- Evidence commits: `595230a`, `952df08`, `ebbdd47`, `ee0a18a`, `48651cd`
 - Independent audit: Codex `019f7411-b995-76e2-8481-1266b1eebfa8` (`gpt-5.6-sol`/max)
 - Pull request: https://github.com/trevor-commits/mission-control/pull/10
 - Live/deploy actions: none
@@ -47,6 +47,8 @@ SUITES PASS=21 FAIL=0
 
 Push-gate note: two overlapping pre-push verifier attempts were detected before either completed and their exact task-owned process trees were terminated. An unrelated live repo-groom verifier was identified separately and left untouched. The authoritative single manual exact-head verifier above passed; the docs-only branch push may therefore use `--no-verify` to avoid launching a third duplicate, not to waive a failed gate.
 
+Hosted replacement head `48651cd`: PR #10 open/mergeable/approved; CodeRabbit SUCCESS; GitGuardian SUCCESS.
+
 At `c514a4d`, production references expose targeted bypass only as the manual `decision-alert alert --decision-id ... [--send]` command; no automatic security-to-ping invocation was found. The same merged source returns `mode: preview` and `sent_count: 0` whenever `--send` is absent.
 
 ## Diff summary
@@ -67,10 +69,11 @@ At `c514a4d`, production references expose targeted bypass only as the manual `d
 - The 21-suite verifier does not invoke `queue_admission.test.py`; that standalone suite passed 24/24 as a separate command.
 - Current answer transactions resolve decisions immediately; answered-pending-consumption remains an unimplemented design contract and is not claimed as current behavior.
 - No decision database, alert sender, Telegram/API, install, deploy, release, plist, launchd, or main branch was touched.
+- Hosted review is approved and every reported check on `48651cd` is green.
 - did not verify: historical exact-commit/live-store claims by replaying those historical environments; they remain explicitly attributed to their source commits and central receipt.
 
 ## Done / next / resume
 
 - Done: source containment, commit/receipt synthesis, correction boundaries, dated record, and repo ledger updates.
-- Next: commit/push the hosted-review correction and re-run the same-model auditor against the replacement head before final handoff.
+- Next: run the final same-model auditor against the frozen replacement head, then leave PR #10 open and unmerged.
 - Exact resume: `cd '/Users/gillettes/Coding Projects/mission-control-worktrees/phase0-work-record' && git status -sb && git diff --check && sed -n '1,240p' records/2026-07-17-phase0-queue-and-answer-path.md`
