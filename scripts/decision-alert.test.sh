@@ -231,12 +231,17 @@ else fail "alert defaults to no external send"; fi
 SENT="$(run_json alert --send)" || SENT=""
 AGAIN="$(run_json alert --send)" || AGAIN=""
 if python3 - "$SENT" "$AGAIN" "$CAPTURE" "$ID" <<'PY'
-import json,sys
+import json,sys,re
 a,b=map(json.loads,sys.argv[1:3]); calls=json.load(open(sys.argv[3]))
 assert a["sent_count"] >= 1 and b["sent_count"] == 0
-assert all(len(args)==3 and args[0]=="send" and args[1]=="12345" for args in calls)
-assert all("dismiss " in args[2] for args in calls)
-assert all("Maybe choose" not in args[2] for args in calls)
+# decision-send (Phase 0.2), not the generic send -- so mobile-connect can
+# attach Dismiss/Option-N buttons and remember "last decision" for the
+# reply-number path: argv = decision-send <chat> <decision-id> <message> <num-options>
+assert all(len(args)==5 and args[0]=="decision-send" and args[1]=="12345" for args in calls)
+assert all(re.fullmatch(r"decision:[0-9a-f]{24}", args[2]) for args in calls)
+assert all("dismiss " in args[3] for args in calls)
+assert all("Maybe choose" not in args[3] for args in calls)
+assert all(args[4].isdigit() for args in calls)
 PY
 then pass "successful alerts are fixed-argv, filtered, and deduplicated"
 else fail "successful alerts are fixed-argv, filtered, and deduplicated"; fi

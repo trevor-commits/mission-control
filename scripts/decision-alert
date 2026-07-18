@@ -557,6 +557,8 @@ def dismiss(args):
     now = _now()
     counters = EgressCounters()
     reason = _sanitize_optional(args.reason, NARRATIVE, "dismiss reason", counters)
+    source = _sanitize_optional(getattr(args, "source", None), IDENTIFIER,
+                                "dismiss source", counters)
     con = _connect()
     try:
         _tx(con)
@@ -568,9 +570,14 @@ def dismiss(args):
             con.execute("""UPDATE decisions SET state='dismissed',
                 dismissed_at=?,dismiss_reason=? WHERE decision_id=?""",
                 (now, reason, args.decision_id))
+            detail = {}
+            if reason:
+                detail["reason"] = reason
+            if source:
+                detail["source"] = source
             _event(con, args.decision_id, "dismissed",
                    row["evidence_fingerprint"], now,
-                   detail={"reason": reason} if reason else None)
+                   detail=detail or None)
         con.commit()
         return {"ok": True, "changed": changed,
                 "decision": _decision_dict(con, _get(con, args.decision_id)),
@@ -592,6 +599,8 @@ def resolve(args):
                                       "resolution evidence ref", counters)
     supplied_key = _sanitize_optional(args.resolution_key, IDENTIFIER,
                                       "resolution-key", counters)
+    source = _sanitize_optional(getattr(args, "source", None), IDENTIFIER,
+                                "resolve source", counters)
     con = _connect()
     try:
         _tx(con)
@@ -610,7 +619,8 @@ def resolve(args):
                     now, evidence_type, evidence_ref, args.decision_id,
                 ))
             _event(con, args.decision_id, "resolved",
-                   row["evidence_fingerprint"], now, evidence_type, evidence_ref)
+                   row["evidence_fingerprint"], now, evidence_type, evidence_ref,
+                   detail={"source": source} if source else None)
         else:
             if (row["resolution_evidence_type"] != evidence_type or
                     row["resolution_evidence_ref"] != evidence_ref):
@@ -1332,8 +1342,15 @@ def alert(args):
             failed.append({"id": current["decision_id"], "category": "privacy"})
             continue
         try:
+            # decision-send (not the generic send) so mobile-connect attaches the
+            # Dismiss/Option-N inline buttons AND remembers this as the "last
+            # decision" (the reply-number path's fallback when no id is typed).
+            # Phase 0.2: without this, the Telegram verb's button/reply paths are
+            # unreachable — only a hand-typed `dismiss decision:<full-id>` works.
+            num_options = len(_presentation_from_text(current.get("text")).get("options") or [])
             result = subprocess.run(
-                [sender, "send", chat_id, message],
+                [sender, "decision-send", chat_id, current["decision_id"], message,
+                 str(num_options)],
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                 timeout=max(1, int(args.timeout)), check=False)
             success = result.returncode == 0
@@ -1428,12 +1445,20 @@ def _parser():
     p = sub.add_parser("dismiss")
     p.add_argument("decision_id")
     p.add_argument("--reason")
+    p.add_argument("--source",
+                   help="who triggered this state change (e.g. telegram); "
+                        "recorded in the decision_events detail, never in "
+                        "resolution_evidence_ref (idempotent-replay key)")
 
     p = sub.add_parser("resolve")
     p.add_argument("decision_id")
     p.add_argument("--evidence-type", required=True)
     p.add_argument("--evidence-ref", required=True)
     p.add_argument("--resolution-key")
+    p.add_argument("--source",
+                   help="who triggered this state change (e.g. telegram); "
+                        "recorded in the decision_events detail, never in "
+                        "resolution_evidence_ref (idempotent-replay key)")
 
     p = sub.add_parser("history")
     p.add_argument("decision_id")

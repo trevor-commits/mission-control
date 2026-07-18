@@ -235,6 +235,76 @@ PY
     head -40 "$tmp/answer.err" || true
     head -40 "$tmp/answer.out" || true
   fi
+
+  # Phase 0.2 verb: --source/--resume-chat-id/--resume-provider must thread
+  # through decide answer -> compose-decision-prompt -> the composed prompt
+  # file and the decision_events row (provenance for a Telegram-driven answer).
+  "$MISSION_CONTROL_HOME/bin/decision-alert" ingest \
+    --source-kind chat --source-key "test:er134:telegram-answer" \
+    --text "$TEXT" --trust structured --provenance "chat-graph tier1" \
+    --json > "$tmp/ingest-tg.json"
+  TG_ANSWER_ID="$(python3 -c 'import json;d=json.load(open("'"$tmp"/ingest-tg.json'"));print((d.get("decision") or d).get("id") or "")')"
+  if [ -n "$TG_ANSWER_ID" ] && DASHBOARD_NO_OPEN=1 MISSION_CONTROL_HOME="$MISSION_CONTROL_HOME" REPO_ROOT="$ROOT" \
+      "$MISSION_CONTROL_HOME/bin/dashboard" decide answer "$TG_ANSWER_ID" 1 \
+        --source telegram --resume-chat-id 555 --resume-provider telegram \
+        > "$tmp/answer-tg.out" 2>"$tmp/answer-tg.err"; then
+    pass "decide answer accepts --source/--resume-chat-id/--resume-provider"
+    grep -q 'Resume chat: `555`' "$MISSION_CONTROL_HOME/prompts/${TG_ANSWER_ID}.md" && \
+      pass "prompt carries resume chat id" || fail "prompt missing resume chat id"
+    grep -q 'Resume provider: `telegram`' "$MISSION_CONTROL_HOME/prompts/${TG_ANSWER_ID}.md" && \
+      pass "prompt carries resume provider" || fail "prompt missing resume provider"
+    "$MISSION_CONTROL_HOME/bin/decision-alert" history "$TG_ANSWER_ID" --json > "$tmp/history-tg.json"
+    if python3 - "$tmp/history-tg.json" <<'PY'
+import json, sys
+h = json.load(open(sys.argv[1]))
+events = [e for e in h["events"] if e["event_type"] == "resolved"]
+assert len(events) == 1, events
+assert (events[0].get("detail") or {}).get("source") == "telegram", events[0]
+assert h["decision"]["resolution"]["evidence_ref"] == "mc-answer:1", h["decision"]["resolution"]
+PY
+    then pass "resolved event records source=telegram, replay key untouched"
+    else fail "resolved event does not record source=telegram cleanly"; fi
+  else
+    fail "decide answer with --source/--resume-chat-id/--resume-provider"
+    head -40 "$tmp/answer-tg.err" || true
+  fi
+
+  # Phase 0.2 verb: decide dismiss --source telegram is idempotent (a second
+  # identical dismiss is a no-op: changed:false, no duplicate event) and
+  # records provenance on the decisions_events row.
+  "$MISSION_CONTROL_HOME/bin/decision-alert" ingest \
+    --source-kind chat --source-key "test:er134:telegram-dismiss" \
+    --text "$TEXT" --trust structured --provenance "chat-graph tier1" \
+    --json > "$tmp/ingest-dsm.json"
+  TG_DISMISS_ID="$(python3 -c 'import json;d=json.load(open("'"$tmp"/ingest-dsm.json'"));print((d.get("decision") or d).get("id") or "")')"
+  if [ -n "$TG_DISMISS_ID" ] && \
+      "$MISSION_CONTROL_HOME/bin/dashboard" decide dismiss "$TG_DISMISS_ID" --source telegram \
+        > "$tmp/dismiss-tg-1.json" 2>"$tmp/dismiss-tg-1.err"; then
+    pass "decide dismiss accepts --source"
+    if "$MISSION_CONTROL_HOME/bin/dashboard" decide dismiss "$TG_DISMISS_ID" --source telegram \
+        > "$tmp/dismiss-tg-2.json" 2>"$tmp/dismiss-tg-2.err"; then
+      pass "second identical dismiss exits 0 (idempotent no-op)"
+    else
+      fail "second identical dismiss must exit 0, not error"
+    fi
+    "$MISSION_CONTROL_HOME/bin/decision-alert" history "$TG_DISMISS_ID" --json > "$tmp/history-dsm.json"
+    if python3 - "$tmp/dismiss-tg-1.json" "$tmp/dismiss-tg-2.json" "$tmp/history-dsm.json" <<'PY'
+import json, sys
+first = json.load(open(sys.argv[1]))
+second = json.load(open(sys.argv[2]))
+hist = json.load(open(sys.argv[3]))
+assert first["changed"] is True, first
+assert second["changed"] is False, second
+dismissed_events = [e for e in hist["events"] if e["event_type"] == "dismissed"]
+assert len(dismissed_events) == 1, dismissed_events
+assert dismissed_events[0]["detail"]["source"] == "telegram", dismissed_events[0]
+PY
+    then pass "double-dismiss is idempotent (one event, source=telegram)"
+    else fail "double-dismiss idempotency/provenance check failed"; fi
+  else
+    fail "decide dismiss with --source"
+    head -40 "$tmp/dismiss-tg-1.err" || true
+  fi
   outside="$tmp/symlink-target.md"
   printf 'unchanged\n' > "$outside"
   rm -f "$MISSION_CONTROL_HOME/prompts/${INGEST_ID}.md"
@@ -287,7 +357,9 @@ feed=json.load(open(sys.argv[1]))
 calls=json.load(open(sys.argv[2]))
 alert=(feed.get("data") or {}).get("alert") or {}
 assert alert.get("sent_count") == 1, alert
-assert len(calls) == 1 and calls[0][0] == "send"
+# decision-send (Phase 0.2), not the generic send -- carries the decision id
+# + option count so mobile-connect can attach Dismiss/Option-N buttons.
+assert len(calls) == 1 and calls[0][0] == "decision-send"
 pinned=feed["data"]["pinned"]
 assert any(d.get("alert_receipt") for d in pinned), pinned[0] if pinned else None
 CHECK
