@@ -33,6 +33,7 @@ Mirror every configured Linear issue here with the repo-side home that explains 
 If it's not here, it isn't remembered.
 Preserve a durable completion trail for verified work instead of deleting it from active planning.
 - 2026-07-17 | Corrective Phase 0 Work Record — the security bypass is a manual per-decision capability with no automatic security-to-ping caller; historical `sent_count: 0` was preview output; full revert was not tested. Canonical evidence and boundaries: `records/2026-07-17-phase0-queue-and-answer-path.md`. | linear: self-contained; repo-only
+- 2026-07-17 | Independent audit correction — the current answer transaction resolves immediately; answered-pending-consumption is an unimplemented Lane D design contract. The 21-suite verifier passed, while queue admission passed separately at 24/24 rather than inside that matrix. Heading MD001 repaired. | audit: Codex `019f7411-b995-76e2-8481-1266b1eebfa8` | linear: self-contained; repo-only
 - 2026-07-17 | Phase 0.3 queue repair + 0.2 answer return path LIVE — admission classification as advisory-only metadata (NoOp/WorkOrder/OperatorDecision; authority-envelope fields carried as data, AST-scan-enforced no-execution invariant), rollup presentation with the strict supersession contract (same action + owner + target, fails closed), lane views from the domain field, security-severity bypass with non-duplicating alerts, group-level re-ask suppression (7-day window, severity escalation recorded), one-shot `admission-backfill`, schema-presence steady-state stamping, `--source` provenance and resume-chat/provider return-path metadata on answers. Live-fire on the real store: 113/113 open rows exactly one class (noop 5 / operator 96 / workorder 12), rollup 91 cards for 113 rows, lanes business 12 / faith 2 / infra 82 / personal 17, backfill idempotent (second run stamped 0), deployed-stack dismiss with `dismissed|{"source":"telegram"}` event on a cloned store. Merges `f554f96` + backfill merge installed and stamped; five suites green throughout (decision-alert / dashboard 67 / er134 57 / queue_admission 24 / common). Foreign checkout dirt preserved verbatim on `preserve/primary-dirt-20260717` (`cd26fd7`). Deferred with reasons: rollup-answer CLI wiring (belongs to the answer flow), WorkOrder writes into the autonomous loop's ready-packets directory (Phase 1.1 — loop authority unproven per plan §9).
 - 2026-07-13 | Global session lookup repair — implemented the documented multi-word `chat-source find` route, removed executable help backticks, preserved empty metadata fields, bounded Cursor indexing, and loaded global `34a9f77`; fixture/docs/governance gates pass and installed `find mission control` returned five exact sources under its 120-second bound.
 - 2026-07-13 | Delegation Audit code/runtime repair — restored the protected runtime, replaced calendar-decaying fixtures, repaired empty-state status, passed `66/0` focused tests and a notification-free real dry-run, and landed `27aa2e3` on global main; first natural schedule proof remains active above.
@@ -612,7 +613,7 @@ Keep materially new suggestions here so they survive beyond the current chat.
 
 ## Active Branch Ledger
 ### `codex/phase0-work-record`
-- status: corrective dated work record green before independent audit; documentation-only branch
+- status: independent-audit corrections applied; documentation-only branch; replacement-head re-audit pending
 - created: 2026-07-17
 - base: `origin/main@8582e18`
 - worktree: `/Users/gillettes/Coding Projects/mission-control-worktrees/phase0-work-record`
@@ -628,7 +629,7 @@ Keep materially new suggestions here so they survive beyond the current chat.
 - delete when: after merge and closeout
 - retain reason: n/a after merge
 - cleanup command: `git worktree remove '/Users/gillettes/Coding Projects/mission-control-worktrees/phase0-work-record' && git branch -d codex/phase0-work-record`
-- linked PR/audit/completion record: `records/2026-07-17-phase0-queue-and-answer-path.md`; `STATE.md`; https://github.com/trevor-commits/mission-control/pull/10; independent audit pending
+- linked PR/audit/completion record: `records/2026-07-17-phase0-queue-and-answer-path.md`; `STATE.md`; https://github.com/trevor-commits/mission-control/pull/10; audit `019f7411-b995-76e2-8481-1266b1eebfa8`; replacement-head re-audit pending
 
 ### `codex/er103-git-state-and-morning-proof`
 - status: preserved-superseded dirty checkout
@@ -751,9 +752,16 @@ If it's not here, it isn't remembered.
 
 ## Test Evidence Log
 - date: 2026-07-17
+  scenario: independent audit correction of the Phase 0.3/0.2 Work Record
+  command(s): immutable branch/receipt audit; direct current answer-state source inspection; standalone `PYTHONDONTWRITEBYTECODE=1 python3 scripts/queue_admission.test.py`; Markdown heading check; `git diff --check`.
+  result: corrected three findings — current answers resolve immediately, answered-pending is unimplemented; queue admission is separate `24/24` evidence rather than part of the full 21-suite matrix; MD001 heading hierarchy repaired. No production/runtime file changed.
+  log/PR reference: `records/2026-07-17-phase0-queue-and-answer-path.md`; `STATE.md`; audit `019f7411-b995-76e2-8481-1266b1eebfa8`; PR #10
+  by: Codex `019f73d8-e5dc-73a0-acc5-8a4916ac6819`
+  linear: self-contained; repo-only
+- date: 2026-07-17
   scenario: Phase 0.3 queue and Phase 0.2 answer-path corrective Work Record
   command(s): commit-object and `origin/main` containment checks for the eight packet-named commits/merges; central receipt read from `global-implementations` `origin/main`; targeted-bypass production call-site search at `c514a4d`; preview return-path inspection; `git diff --check`.
-  result: pass before independent audit. All named commits are contained; security bypass is manual/per-ID; no automatic security-to-ping caller was found; no-`--send` returns preview with `sent_count: 0`; documentation diff is clean. Mandatory pre-push full verification passed `SUITES PASS=21 FAIL=0`, dashboard `67/0`, ER-134 `57/0`, browser `253`, OpenSpec, and syntax gates using hermetic fixtures.
+  result: pass before independent audit. All named commits are contained; security bypass is manual/per-ID; no automatic security-to-ping caller was found; no-`--send` returns preview with `sent_count: 0`; documentation diff is clean. Mandatory pre-push full verification passed `SUITES PASS=21 FAIL=0`, dashboard `67/0`, ER-134 `57/0`, browser `253`, OpenSpec, and syntax gates using hermetic fixtures. Queue admission was later corroborated separately at `24/24`; it is not invoked by the 21-suite aggregator.
   log/PR reference: `records/2026-07-17-phase0-queue-and-answer-path.md`; `STATE.md`; https://github.com/trevor-commits/mission-control/pull/10
   by: Codex `019f73d8-e5dc-73a0-acc5-8a4916ac6819`
   linear: self-contained; repo-only
