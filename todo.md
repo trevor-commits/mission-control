@@ -624,7 +624,7 @@ Keep materially new suggestions here so they survive beyond the current chat.
 
 ## Active Branch Ledger
 ### `codex/rollup-answer-wiring`
-- status: blocked; documentation-only branch awaiting a product state-contract decision
+- status: blocked; same-model audit review-clean; documentation-only branch awaiting a product state-contract decision
 - created: 2026-07-17
 - base: `origin/main@8582e182d5db3b8964ec21738a82806d94c78a55`
 - worktree: `/Users/gillettes/Coding Projects/mission-control-worktrees/rollup-answer-wiring`
@@ -634,6 +634,7 @@ Keep materially new suggestions here so they survive beyond the current chat.
 - merge expectation: none while blocked; no PR until the state contract is confirmed
 - merge target: `main`
 - review surface: `STATE.md` plus this durable disposition
+- independent audit: Codex `019f7411-b995-76e2-8481-1266b1eebfa8`; every material claim corroborated; BLOCKED/review-clean
 - exit checklist:
   - [x] Existing grouping/equivalence/read paths inspected
   - [x] Existing answer, resolve, schema, and transaction paths inspected
@@ -762,6 +763,7 @@ If it's not here, it isn't remembered.
 - When a verification run closes or updates an audit finding, cross-reference the matching audit record entry and the chat or commit that performed the work.
 
 ## Test Evidence Log
+- 2026-07-18 | commands: independent immutable-range/state-contract audit; exact source/schema/packet/plan comparison; fresh full Mission Control verifier | result: review-clean blocker — every material `STATE.md` claim corroborated; existing `resolve()` is terminal, schema lacks answered-pending, and the packet-author transcript supplies no missing contract. Fresh baseline remained `21/21`, dashboard `67/0`, ER-134 `57/0`, browser `253`, strict OpenSpec `1/0`; absent Lane D behavior remains deliberately unverified. | log/PR reference: `STATE.md`; audit `019f7411-b995-76e2-8481-1266b1eebfa8`; no PR while blocked | by: Codex `019f73d8-e5dc-73a0-acc5-8a4916ac6819` | linear: repo-only.
 - 2026-07-17 | commands: targeted `git grep`/`sed` inspection of `scripts/queue_admission.py`, `scripts/decision-alert`, `scripts/compose-decision-prompt.py`, decision schema/tests, the canonical minimal-input plan, and exact packet-author transcript via `chat-source`; `git diff --check`; mandatory push-time `/bin/bash scripts/verify.sh` | result: baseline PASS — all 21 suites, dashboard `67/0`, ER-134 `57/0`, browser `253`, and strict OpenSpec `1/0`; Lane D remains BLOCKED before production edits because immediate `resolve()` conflicts with binding answered-pending-consumption and no durable pending/receipt representation exists. The baseline suite does not verify absent rollup-answer behavior. | log/PR reference: `STATE.md`; no PR while blocked | by: Codex `019f73d8-e5dc-73a0-acc5-8a4916ac6819` | linear: repo-only.
 - 2026-07-13 | commands: installed `/Users/gillettes/.codex/scripts/chat-source find mission control`; exact `chat-source describe/latest` for resolved sessions and audit chat; direct and mandatory pre-push `/bin/bash scripts/verify.sh` runs; process inspection at Trevor stop boundary; LaunchAgent/plist/runtime/worktree checks | result: session lookup returned five exact sources in 85.19 seconds; four were reconciled and one unrelated third-party product session excluded. Both verifier runs completed the first 16/21 top-level suites, including dashboard `67/0`, ER-134 `50/0`, usage `24/0`, and two sender `14/14` runs; each browser run slept with Chrome gone, so browser plus four subsequent suites are interrupted/incomplete, not pass/fail. The records-only push used the global hook's documented `--no-verify` escape hatch. Delegation Audit runtime is clean at `27aa2e3`, focused `66/0`, dry-run exit 0, plist loaded/linted, natural runs still 0. | log/PR reference: stop-boundary addendum in `records/2026-07-12-full-repo-convergence-audit.md` | by: Codex + audit chat `019f5bea` | linear: repo-only.
 - 2026-07-13 | commands: schedule/SLA RED-GREEN focused suites; Mission common, graph, brief, deadman, dashboard, render, full verifier; global nightly selftest/Bash/ShellCheck/full verifier; exact installs/stamps/hashes; real Nightly Review kickstart; graph export and installed dashboard Chats refresh | result: PASS — Mission full `21/21`, dashboard `67/0`, usage `24/0`, browser `253`; global full verifier pass; marker advanced before expected governor defer; graph/Chats SLA `100800` fresh; installed Mission `c66d7fb`, global runtime `6f21f4f`; Outcome Extractor inactive | logs: `/tmp/mission-control-c66d7fb-verify.log`, `/tmp/global-6f21f4f-verify.log`; convergence audit | by: Codex + `/root/worker_019f59f8_final_challenger` | linear: repo-only.

@@ -1,10 +1,11 @@
 # Lane D state — rollup-answer CLI wiring
 
-- Status: BLOCKED by a binding state-contract ambiguity; no production code changed
+- Status: BLOCKED by a binding state-contract ambiguity; independent audit confirmed the stop review-clean; no production code changed
 - Branch: `codex/rollup-answer-wiring`
 - Base: `origin/main@8582e182d5db3b8964ec21738a82806d94c78a55`
 - Worktree: `/Users/gillettes/Coding Projects/mission-control-worktrees/rollup-answer-wiring`
 - Live/deploy actions: none
+- Independent audit: Codex `019f7411-b995-76e2-8481-1266b1eebfa8` (`gpt-5.6-sol`/max), BLOCKED / review-clean
 
 ## What is unambiguous
 
@@ -58,6 +59,9 @@ dashboard -> PASS=67 FAIL=0
 ER-134 usability -> 57 passed, 0 failed
 dashboard browser -> 253 assertions passed
 OpenSpec strict -> 1 passed, 0 failed
+
+independent same-model audit -> every material blocker claim corroborated
+verdict -> BLOCKED; stopping instead of inventing answered-pending semantics was correct
 ```
 
 The packet-author audit transcript (`6b78e170-f063-47e2-92f8-48e6f5ce0600`, `Audit prompt implementation work`) was resolved with `chat-source`; it repeats the packet requirement but does not define the missing durable representation, CLI shape, or batch atomicity.
@@ -74,6 +78,7 @@ The packet-author audit transcript (`6b78e170-f063-47e2-92f8-48e6f5ce0600`, `Aud
 - The current write-path guidance conflicts with the binding answered-pending requirement.
 - Implementing immediate `resolve()` fan-out would incorrectly close members before consumption.
 - No main branch, live decision store, Telegram/API, install, deploy, release, plist, or launchd surface was touched.
+- Independent audit found no P0-P3 defect in the stop receipt and confirmed that reusing terminal `resolve()` would violate the binding packet.
 - did not verify: rollup-answer behavior, because no unambiguous durable pending/consumption contract exists and no production code was changed.
 - did not verify: any new answered-pending, fan-out, replay, or atomic-batch behavior, because those paths were deliberately not implemented. The existing full baseline verifier passed; that is not evidence for absent Lane D behavior.
 
