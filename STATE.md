@@ -21,6 +21,15 @@ f554f96 contained
 
 global-implementations origin/main: 02802e2b4b00b05275895211beb1ba7618d63787
 last commit touching central receipt: a9f9f90
+
+mandatory pre-push verifier:
+dashboard PASS=67 FAIL=0
+decision-alert ALL PASS
+er134-usability: 57 passed, 0 failed
+usage PASS=24 FAIL=0
+dashboard-browser: 253 assertions passed
+OpenSpec: 1 passed, 0 failed
+SUITES PASS=21 FAIL=0
 ```
 
 At `c514a4d`, production references expose targeted bypass only as the manual `decision-alert alert --decision-id ... [--send]` command; no automatic security-to-ping invocation was found. The same merged source returns `mode: preview` and `sent_count: 0` whenever `--send` is absent.
@@ -38,8 +47,9 @@ At `c514a4d`, production references expose targeted bypass only as the manual `d
 - The security bypass is a manual per-decision capability; no automatic security-to-ping caller is claimed or present in the named merge.
 - `sent_count: 0` in the historical receipt was preview output and is not delivery proof.
 - Revert tested: no — additive schema and the install path were exercised twice; a full revert was not performed.
+- The current documentation branch passes the complete 21-suite repo verifier against hermetic fixtures.
 - No decision database, alert sender, Telegram/API, install, deploy, release, plist, launchd, or main branch was touched.
-- did not verify: historical runtime/test/live-store claims by rerunning them; they remain explicitly attributed to their source commits and central receipt.
+- did not verify: historical exact-commit/live-store claims by replaying those historical environments; they remain explicitly attributed to their source commits and central receipt.
 
 ## Done / next / resume
 
