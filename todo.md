@@ -32,6 +32,7 @@ Mirror every configured Linear issue here with the repo-side home that explains 
 ## Completed
 If it's not here, it isn't remembered.
 Preserve a durable completion trail for verified work instead of deleting it from active planning.
+- 2026-07-17 | Corrective Phase 0 Work Record — the security bypass is a manual per-decision capability with no automatic security-to-ping caller; historical `sent_count: 0` was preview output; full revert was not tested. Canonical evidence and boundaries: `records/2026-07-17-phase0-queue-and-answer-path.md`. | linear: self-contained; repo-only
 - 2026-07-17 | Phase 0.3 queue repair + 0.2 answer return path LIVE — admission classification as advisory-only metadata (NoOp/WorkOrder/OperatorDecision; authority-envelope fields carried as data, AST-scan-enforced no-execution invariant), rollup presentation with the strict supersession contract (same action + owner + target, fails closed), lane views from the domain field, security-severity bypass with non-duplicating alerts, group-level re-ask suppression (7-day window, severity escalation recorded), one-shot `admission-backfill`, schema-presence steady-state stamping, `--source` provenance and resume-chat/provider return-path metadata on answers. Live-fire on the real store: 113/113 open rows exactly one class (noop 5 / operator 96 / workorder 12), rollup 91 cards for 113 rows, lanes business 12 / faith 2 / infra 82 / personal 17, backfill idempotent (second run stamped 0), deployed-stack dismiss with `dismissed|{"source":"telegram"}` event on a cloned store. Merges `f554f96` + backfill merge installed and stamped; five suites green throughout (decision-alert / dashboard 67 / er134 57 / queue_admission 24 / common). Foreign checkout dirt preserved verbatim on `preserve/primary-dirt-20260717` (`cd26fd7`). Deferred with reasons: rollup-answer CLI wiring (belongs to the answer flow), WorkOrder writes into the autonomous loop's ready-packets directory (Phase 1.1 — loop authority unproven per plan §9).
 - 2026-07-13 | Global session lookup repair — implemented the documented multi-word `chat-source find` route, removed executable help backticks, preserved empty metadata fields, bounded Cursor indexing, and loaded global `34a9f77`; fixture/docs/governance gates pass and installed `find mission control` returned five exact sources under its 120-second bound.
 - 2026-07-13 | Delegation Audit code/runtime repair — restored the protected runtime, replaced calendar-decaying fixtures, repaired empty-state status, passed `66/0` focused tests and a notification-free real dry-run, and landed `27aa2e3` on global main; first natural schedule proof remains active above.
@@ -610,6 +611,25 @@ Keep materially new suggestions here so they survive beyond the current chat.
 - 2026-07-05 | recommendation: do not adopt the GitHub Copilot enterprise-observability stack (OpenTelemetry Collector, Prometheus, Grafana, OpenObserve, Superset, Metabase, Airbyte, Meltano, dbt-core, Great Expectations, TensorZero, Helicone, OpenLIT, traceAI, TraceRoot, Pull Request Analytics Action); treat `records/2026-07-04-dashboard-coding-tracker-search-audit.md` as the real same-niche repo map; if a chart is ever justified, prefer vendorable zero-dependency `leeoniya/uPlot` over Chart.js/ECharts/CDN — but not for V1. | why: Copilot recommended from the repo description alone (it said so); every headline pick runs as a background service, framework, or separate warehouse and collides with the explicit non-goals of offline single-file, single-user, no-server. Full evaluation in Feedback Decision Log 2026-07-05. | by: Claude Code (Opus 4.8) session `a9724039-6595-4205-a25b-bf361020250a`. | linear: self-contained until Linear is configured.
 
 ## Active Branch Ledger
+### `codex/phase0-work-record`
+- status: corrective dated work record green before independent audit; documentation-only branch
+- created: 2026-07-17
+- base: `origin/main@8582e18`
+- worktree: `/Users/gillettes/Coding Projects/mission-control-worktrees/phase0-work-record`
+- source chat: Codex `019f73d8-e5dc-73a0-acc5-8a4916ac6819`
+- last refreshed by chat: 2026-07-17, same
+- purpose: add the missing Phase 0.3/0.2 dated Work Record and correct receipt proof boundaries
+- linked issue: self-contained; repo-only; no Linear
+- plugin mirror: none
+- merge expectation: merge records to `main` after review
+- merge target: `main`
+- review surface: dated record, `STATE.md`, eight named commits, central `origin/main` receipt, and independent same-model audit
+- exit checklist: source-only synthesis; committed evidence; pushed branch; open PR; independent audit; no runtime/live-store action
+- delete when: after merge and closeout
+- retain reason: n/a after merge
+- cleanup command: `git worktree remove '/Users/gillettes/Coding Projects/mission-control-worktrees/phase0-work-record' && git branch -d codex/phase0-work-record`
+- linked PR/audit/completion record: `records/2026-07-17-phase0-queue-and-answer-path.md`; `STATE.md`; PR pending
+
 ### `codex/er103-git-state-and-morning-proof`
 - status: preserved-superseded dirty checkout
 - created: 2026-07-11
@@ -730,6 +750,13 @@ If it's not here, it isn't remembered.
 - When a verification run closes or updates an audit finding, cross-reference the matching audit record entry and the chat or commit that performed the work.
 
 ## Test Evidence Log
+- date: 2026-07-17
+  scenario: Phase 0.3 queue and Phase 0.2 answer-path corrective Work Record
+  command(s): commit-object and `origin/main` containment checks for the eight packet-named commits/merges; central receipt read from `global-implementations` `origin/main`; targeted-bypass production call-site search at `c514a4d`; preview return-path inspection; `git diff --check`.
+  result: pass before independent audit. All named commits are contained; security bypass is manual/per-ID; no automatic security-to-ping caller was found; no-`--send` returns preview with `sent_count: 0`; documentation diff is clean.
+  log/PR reference: `records/2026-07-17-phase0-queue-and-answer-path.md`; `STATE.md`; PR pending
+  by: Codex `019f73d8-e5dc-73a0-acc5-8a4916ac6819`
+  linear: self-contained; repo-only
 - 2026-07-13 | commands: installed `/Users/gillettes/.codex/scripts/chat-source find mission control`; exact `chat-source describe/latest` for resolved sessions and audit chat; direct and mandatory pre-push `/bin/bash scripts/verify.sh` runs; process inspection at Trevor stop boundary; LaunchAgent/plist/runtime/worktree checks | result: session lookup returned five exact sources in 85.19 seconds; four were reconciled and one unrelated third-party product session excluded. Both verifier runs completed the first 16/21 top-level suites, including dashboard `67/0`, ER-134 `50/0`, usage `24/0`, and two sender `14/14` runs; each browser run slept with Chrome gone, so browser plus four subsequent suites are interrupted/incomplete, not pass/fail. The records-only push used the global hook's documented `--no-verify` escape hatch. Delegation Audit runtime is clean at `27aa2e3`, focused `66/0`, dry-run exit 0, plist loaded/linted, natural runs still 0. | log/PR reference: stop-boundary addendum in `records/2026-07-12-full-repo-convergence-audit.md` | by: Codex + audit chat `019f5bea` | linear: repo-only.
 - 2026-07-13 | commands: schedule/SLA RED-GREEN focused suites; Mission common, graph, brief, deadman, dashboard, render, full verifier; global nightly selftest/Bash/ShellCheck/full verifier; exact installs/stamps/hashes; real Nightly Review kickstart; graph export and installed dashboard Chats refresh | result: PASS — Mission full `21/21`, dashboard `67/0`, usage `24/0`, browser `253`; global full verifier pass; marker advanced before expected governor defer; graph/Chats SLA `100800` fresh; installed Mission `c66d7fb`, global runtime `6f21f4f`; Outcome Extractor inactive | logs: `/tmp/mission-control-c66d7fb-verify.log`, `/tmp/global-6f21f4f-verify.log`; convergence audit | by: Codex + `/root/worker_019f59f8_final_challenger` | linear: repo-only.
 - 2026-07-13 | commands: exact Mission/global focused and full verifiers; repeated independent counterexample/ShellCheck/plist/hash review; origin landing; npm Darwin ARM64 tarball/file/codesign/otool/version inspection; detached-runtime/hash/status checks; loaded plist/launchctl inspection; RunAtLoad and natural-recurrence state/history/dashboard/stdout/stderr/process/lock/temp checks; deployed router against latest snapshot | result: PASS — Mission `c8a1e75` usage `24/0`, full `21/21`, browser `253`; global `8b1ee91` usage `64/0` and complete verifier; three terminal clean challenger verdicts; loaded usage job reached `runs=3`, exit `0`; exact collector/native hashes; history/stdout advanced at 06:35 while historical stderr remained unchanged; no scoped process/lock/temp residue | log/PR reference: `/tmp/mission-control-c8a1e75-verify.log`; `/tmp/global-8b1ee91-verify.log`; `records/2026-07-12-full-repo-convergence-audit.md` | by: Codex `019f59f8-bb9e-70c0-9497-a9686ea24154` + `/root/worker_019f59f8_final_challenger` | linear: repo-only.

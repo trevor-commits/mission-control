@@ -1,0 +1,48 @@
+# Lane C2 state — Mission Control Phase 0 work record
+
+- Status: GREEN before independent audit
+- Branch: `codex/phase0-work-record`
+- Base: `origin/main@8582e182d5db3b8964ec21738a82806d94c78a55`
+- Worktree: `/Users/gillettes/Coding Projects/mission-control-worktrees/phase0-work-record`
+- Scope: documentation-only corrective work record
+- Live/deploy actions: none
+
+## Evidence transcript
+
+```text
+dcbfb83 contained
+d4759ed contained
+8f2b7cc contained
+c109bd0 contained
+10d7451 contained
+c514a4d contained
+f554f96 contained
+56fa588 contained
+
+global-implementations origin/main: 02802e2b4b00b05275895211beb1ba7618d63787
+last commit touching central receipt: a9f9f90
+```
+
+At `c514a4d`, production references expose targeted bypass only as the manual `decision-alert alert --decision-id ... [--send]` command; no automatic security-to-ping invocation was found. The same merged source returns `mode: preview` and `sent_count: 0` whenever `--send` is absent.
+
+## Diff summary
+
+- `records/2026-07-17-phase0-queue-and-answer-path.md`: canonical dated Work Record from the packet-named sources.
+- `todo.md`: correction/link, branch ledger, and test-evidence entry.
+- `STATE.md`: source transcript, claims, explicit limits, and resume command.
+- Production/runtime files changed: none.
+
+## Claims
+
+- The Work Record uses only the eight named Mission Control commits/merges and the central `global-implementations` `origin/main` receipt.
+- The security bypass is a manual per-decision capability; no automatic security-to-ping caller is claimed or present in the named merge.
+- `sent_count: 0` in the historical receipt was preview output and is not delivery proof.
+- Revert tested: no — additive schema and the install path were exercised twice; a full revert was not performed.
+- No decision database, alert sender, Telegram/API, install, deploy, release, plist, launchd, or main branch was touched.
+- did not verify: historical runtime/test/live-store claims by rerunning them; they remain explicitly attributed to their source commits and central receipt.
+
+## Done / next / resume
+
+- Done: source containment, commit/receipt synthesis, correction boundaries, dated record, and repo ledger updates.
+- Next: commit, push, open the PR, then include this branch in the independent same-model audit.
+- Exact resume: `cd '/Users/gillettes/Coding Projects/mission-control-worktrees/phase0-work-record' && git status -sb && git diff --check && sed -n '1,240p' records/2026-07-17-phase0-queue-and-answer-path.md`
