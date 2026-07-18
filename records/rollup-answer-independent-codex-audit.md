@@ -32,9 +32,21 @@ Evidence: `records/evidence/rollup-answer-audit-repair-red-green.txt` and `recor
 
 Evidence: `records/evidence/rollup-answer-final-audit-red-green.txt`.
 
+## Attempt 3 — rejected occupied replacement-parent boundary
+
+- Audit task: Codex `019f7680-90ce-7392-a991-5a76a3bae61b`.
+- Model/reasoning: `gpt-5.6-sol` / max.
+- Reviewed range: `53e91392dcef3d2deeedf748c14159320a8572e0..16a3e516a9566ad5ce929cade29db334e7bfe08f`.
+- Verdict: `NOT MERGE-READY` with one P1 despite a clean authoritative `SUITES PASS=23 FAIL=0` rerun.
+- Accepted P1: replacing the path-visible `answer-batches` parent during exact replay with a private parent already containing an invalid directory at the deterministic canonical name left that unbound conflict visible after the command failed. The held old-parent artifact was correctly quarantined and later replay recovered, but the public canonical path was receipt-divergent during the failure window.
+- Repair: `bfaf10b` separately opens and revalidates the current parent through the pinned home descriptor, distinguishes it from the held old parent by inode, binds any same-name directory to an fd, and quarantines it only when it is not the persisted receipt-backed artifact. The regression proves old-object preservation, immediate removal of invalid canonical visibility, exact later rebuild, and one pending event per target.
+- Audit transparency: the auditor's first full verifier run was `22/1` only because its own direct test invocation created ignored bytecode; it removed only that audit-created cache, reran with bytecode disabled, and obtained a clean `23/0` at the unchanged frozen head. This was test-environment contamination, not a product finding.
+
+Evidence: `records/evidence/rollup-answer-occupied-parent-red-green.txt`.
+
 ## Final attempt
 
-- Status: pending exact-head re-audit by task `019f7680-90ce-7392-a991-5a76a3bae61b` after the records-complete authoritative gate.
+- Status: pending a new fresh same-model/max audit of the records-complete `bfaf10b`-descended head after the authoritative gate.
 - Did not verify: final review-clean verdict, remote/PR state, merged-main behavior, install/deploy, provider delivery, or live-store behavior.
 
 ## Audited Chat

@@ -48,6 +48,7 @@
 | Published batch conflicts with persisted digest | Invalid destination is quarantined; deterministic replay rebuilds the exact receipt |
 | Existing batch mutates during replay | Public command fails; the held canonical batch is quarantined; exact replay rebuilds once without duplicate events |
 | Batch parent changes during existing-batch replay | The exact held batch is quarantined in the descriptor-pinned old parent; replay publishes below the current parent |
+| Replacement parent already holds the canonical name | The held old-parent artifact is preserved; the current-parent name is fd-bound and an invalid conflict is quarantined before returning failure; exact replay rebuilds the receipt-backed bytes |
 | Stale executable reader exists in the state home | It is not selected by a source-runtime transaction; writer and strict collector remain one runtime identity |
 | Strict decisions-feed refresh fails | Command returns nonzero with committed JSON on stdout; no provider send occurs; exact replay can retry refresh |
 | Pending rows fill a bounded Needs-you view | Later actionable rows are stably promoted into the visible prefix before pending receipts |

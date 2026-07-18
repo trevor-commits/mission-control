@@ -14,7 +14,8 @@ The first full verifier was necessary but insufficient. Independent review found
 6. Artifact identity cannot be inferred from whether the current invocation staged or published it. Receipt-backed failure cleanup must use the exact name still bound to the held descriptor, including replay of an existing final batch.
 7. A public transaction cannot select independently versioned writer and reader implementations. Runtime identity is part of feed-coherence proof.
 8. A bounded view must order by domain actionability before slicing; counting actionables across the full list is not enough if the visible prefix contains only receipts.
+9. A path-visible parent replacement creates two identities to reconcile: preserve the exact held old-parent object, then independently fd-bind and invalidate any unverified canonical conflict in the current parent before returning.
 
 ## Remaining boundary
 
-One exact-head re-audit by the fresh same-model/max task and hosted PR checks remain. Merge, installation, live-store use, provider delivery, plist, and launchd actions are outside this branch-only change.
+One new exact-head audit by a fresh same-model/max task and hosted PR checks remain. Merge, installation, live-store use, provider delivery, plist, and launchd actions are outside this branch-only change.

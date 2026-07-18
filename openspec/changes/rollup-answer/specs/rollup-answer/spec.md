@@ -55,6 +55,10 @@ The system MUST stage every private member artifact before the database transiti
 - **WHEN** an exact replay has opened a receipt-backed published batch and its held bytes or path-visible parent changes before replay completes
 - **THEN** the command fails, quarantines the exact directory still bound to the held descriptor under its pinned parent, removes invalid canonical visibility, and a later exact replay rebuilds without duplicate events
 
+#### Scenario: Replacement parent already contains the canonical name
+- **WHEN** the path-visible batch parent is replaced during exact replay and the replacement already contains an unverified directory at the deterministic canonical batch name
+- **THEN** the command preserves the held old-parent artifact, removes the invalid current-parent canonical visibility under a private quarantine name, and later exact replay reconstructs the persisted digest without duplicate events
+
 ### Requirement: Replay and changed-evidence semantics
 Exact current scope plus choice MUST be idempotent; a conflicting choice or partial current pending set MUST fail closed; a new evidence fingerprint MUST make the member answerable again.
 

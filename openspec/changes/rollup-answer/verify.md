@@ -4,6 +4,7 @@
 
 - Code/test repair commit: `34687c9`.
 - Second-audit repair commit: `8613d25`.
+- Third-audit occupied-parent repair commit: `bfaf10b`.
 - Final branch head: pending records commit and exact-head re-audit.
 - Environment: hermetic temporary Mission Control homes/stores, synthetic feeds, fake senders, and loopback-only fixtures.
 
@@ -18,9 +19,10 @@
 | Source artifacts / syntax | pass | full-green receipt |
 | Final same-model/max audit | pending | `records/rollup-answer-independent-codex-audit.md` |
 | Second-audit red/green | RED 3 rollup + 1 Home + 1 panel; GREEN rollup 17/17, seven tabs, ER-134 59/0 | `records/evidence/rollup-answer-final-audit-red-green.txt` |
+| Third-audit occupied-parent red/green | RED invalid canonical remained visible; GREEN targeted + rollup 18/18 | `records/evidence/rollup-answer-occupied-parent-red-green.txt` |
 
 ## Claims and limits
 
-- Confirmed: strict targeting, pending suppression/visibility, actionable-first bounded views, exact consumption, deterministic digest replay, fd-bound publication/replay quarantine, same-runtime strict feed refresh, and no-send behavior are exercised in hermetic tests.
+- Confirmed: strict targeting, pending suppression/visibility, actionable-first bounded views, exact consumption, deterministic digest replay, fd-bound publication/replay quarantine, occupied replacement-parent conflict invalidation, same-runtime strict feed refresh, and no-send behavior are exercised in hermetic tests.
 - Confirmed: no dependency or schema migration was introduced.
 - Did not verify: records-complete authoritative full gate, final audit, hosted PR checks, merge, install, deploy, provider delivery, or live-store behavior.

@@ -26,6 +26,7 @@
 - [x] 4.4 Bind post-commit publication to a persisted deterministic manifest digest, add fd-bound quarantine/replay, make the public decisions-feed refresh strict/no-send, and rerun focused plus authoritative gates.
 - [x] 4.5 Send frozen `708031f` to a new same-model/max-reasoning Codex audit; reproduce its two P1 and one P2 findings.
 - [x] 4.6 Quarantine the exact receipt-bound held artifact during existing-batch replay failure, bind writer/collector to one runtime, prioritize actionable bounded rows, and add five hermetic counterexamples.
-- [ ] 4.7 Run the records-complete authoritative gate and return the exact repaired head to the same fresh auditor for a review-clean verdict.
-- [ ] 4.8 Update `verify.md`, retrospective, `STATE.md`, `todo.md`, branch ledger, and the final audit coverage disposition.
-- [ ] 4.9 Commit, push the topic branch, open a review-ready PR, and stop without merging or deploying.
+- [x] 4.7 Return frozen `16a3e51` to the fresh auditor; reproduce its occupied replacement-parent P1 and repair it in `bfaf10b` with a hermetic regression.
+- [ ] 4.8 Run the records-complete authoritative gate and send the exact repaired head to a new fresh same-model/max auditor for a review-clean verdict.
+- [ ] 4.9 Update `verify.md`, retrospective, `STATE.md`, `todo.md`, branch ledger, and the final audit coverage disposition.
+- [ ] 4.10 Commit, push the topic branch, open a review-ready PR, and stop without merging or deploying.
