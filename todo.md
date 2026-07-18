@@ -9,7 +9,7 @@ Capture the current goal plus the concrete dependency-ordered steps that are sti
 - Put audit-created actionable execution items at the top of this section so audit follow-through is the next queue to execute.
 - If the current chat creates or discovers more urgent execution-ready work than the existing queue reflects, persist and move that fresher work to the top of this section before handoff so the chat is not the only durable record.
 - When a step is verified complete, move or summarize it in `## Completed` instead of deleting the history.
-- Phase 0 rollup-answer CLI (blocked on state contract): decide whether a fan-out answer remains `open` with a durable `answered_pending` event until each owning task reports consumption, or supply another representation that does not resolve work prematurely. The exact seven-point recommended contract and resume commands are in `STATE.md`; production code remains unchanged. | owner: Codex thread `019f73d8-e5dc-73a0-acc5-8a4916ac6819` | linear: repo-only; no Mission Control Linear team is configured.
+- Phase 0 rollup-answer CLI (active; contract approved): implement the seven-point `answered_pending` contract test-first through strict targeting, one-transaction pending events, recoverable private batch publication, verified exact consumption, replay/conflict semantics, changed-evidence unlock, and truthful local rendering. Canonical plan: `openspec/changes/rollup-answer/`; executable binding: `hotl-workflow-rollup-answer.md`; untouched baseline: `SUITES PASS=21 FAIL=0`. | owner: Codex thread `019f73d8-e5dc-73a0-acc5-8a4916ac6819` | linear: repo-only; no Mission Control Linear team is configured.
 - Full-repo audit continuation (paused at Trevor's 2026-07-13 stop boundary): preserve the explicit provenance/completion supersession and resume only on a new Trevor direction. On resume, rerun the browser gate and complete the authoritative verifier, collect the first natural Delegation Audit schedule result, reconcile the fifth natural Morning Brief/operator evidence when it exists, and run a new independent closeout audit. The goal remains active; the stop-boundary verifier is interrupted/incomplete, not green or failed. | owner: Codex thread `019f59f8-bb9e-70c0-9497-a9686ea24154` | linear: repo-only.
 - Cross-repo Delegation Audit natural-run proof (time-gated): source, tests, protected runtime, empty-state status, plist, and notification-free dry-run are repaired through global `27aa2e3`; the loaded job still reports `runs=0`, `last exit=(never exited)` because the first 08:45 schedule has not occurred. Keep the separate Nightly Review defer truthful. | owner: next bounded status pass after the natural schedule | linear: repo-only.
 - ER-107 Morning Brief (highest, deterministic safety complete; elapsed/authorization proof open): the implementation is independently review-clean, contained by canonical `main`, and install/stamp/launchd verified without provider calibration. Four natural briefs (July 10–13) are durably recorded; the July 13 05:00 brief and 05:20 deadman both completed naturally with exit `0`. Remaining gates are the fifth natural morning, Trevor comprehension check-ins, a separately authorized privacy-screened provider calibration, and an explicit Outcome Extractor activation or deferral decision. | owner: Codex thread `019f59f8-bb9e-70c0-9497-a9686ea24154` | linear: repo-only; no Mission Control Linear team is configured.
@@ -624,24 +624,27 @@ Keep materially new suggestions here so they survive beyond the current chat.
 
 ## Active Branch Ledger
 ### `codex/rollup-answer-wiring`
-- status: blocked; same-model audit review-clean; documentation-only branch awaiting a product state-contract decision
+- status: active; seven-point answered-pending contract approved; governed TDD implementation in progress
 - created: 2026-07-17
 - base: `origin/main@8582e182d5db3b8964ec21738a82806d94c78a55`
 - worktree: `/Users/gillettes/Coding Projects/mission-control-worktrees/rollup-answer-wiring`
 - source chat: Codex `019f73d8-e5dc-73a0-acc5-8a4916ac6819`
-- purpose: wire the Phase 0 rollup-answer CLI only if pending-consumption semantics are unambiguous
+- purpose: wire the approved Phase 0 rollup-answer CLI with pending-consumption semantics and recoverable private batch publication
 - linked issue: self-contained; Linear repo-only mode in `LINEAR.md`
-- merge expectation: none while blocked; no PR until the state contract is confirmed
+- merge expectation: review-ready PR only after focused/full verification and a fresh same-model/max-reasoning audit; do not merge or deploy
 - merge target: `main`
-- review surface: `STATE.md` plus this durable disposition
+- review surface: `openspec/changes/rollup-answer/`, `hotl-workflow-rollup-answer.md`, implementation diff, hermetic evidence, and `STATE.md`
 - independent audit: Codex `019f7411-b995-76e2-8481-1266b1eebfa8`; every material claim corroborated; BLOCKED/review-clean
 - exit checklist:
   - [x] Existing grouping/equivalence/read paths inspected
   - [x] Existing answer, resolve, schema, and transaction paths inspected
   - [x] Canonical plan and packet-author transcript reconciled
   - [x] Exact ambiguity and recommended contract recorded
-  - [ ] Product contract confirmed or replaced
+  - [x] Product contract confirmed by Trevor on 2026-07-18
+  - [x] Untouched authoritative baseline green (`21/21` suites)
   - [ ] Production implementation and hermetic tests completed
+  - [ ] Fresh same-model/max-reasoning implementation audit completed
+  - [ ] Branch pushed and review-ready PR opened without merge/deploy
 
 ### `codex/er103-git-state-and-morning-proof`
 - status: preserved-superseded dirty checkout

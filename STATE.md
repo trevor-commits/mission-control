@@ -1,11 +1,29 @@
 # Lane D state — rollup-answer CLI wiring
 
-- Status: BLOCKED by a binding state-contract ambiguity; independent audit confirmed the stop review-clean; no production code changed
+- Status: ACTIVE; Trevor approved the seven-point `answered_pending` contract on 2026-07-18; implementation is proceeding test-first on this branch
 - Branch: `codex/rollup-answer-wiring`
 - Base: `origin/main@8582e182d5db3b8964ec21738a82806d94c78a55`
 - Worktree: `/Users/gillettes/Coding Projects/mission-control-worktrees/rollup-answer-wiring`
 - Live/deploy actions: none
-- Independent audit: Codex `019f7411-b995-76e2-8481-1266b1eebfa8` (`gpt-5.6-sol`/max), BLOCKED / review-clean
+- Prior blocker audit: Codex `019f7411-b995-76e2-8481-1266b1eebfa8` (`gpt-5.6-sol`/max), BLOCKED / review-clean at the pre-approval boundary
+- Current source chat: Codex `019f73d8-e5dc-73a0-acc5-8a4916ac6819`
+- Trust Gate: on — this feature changes durable operator-decision interpretation and completion semantics
+- Canonical change: `openspec/changes/rollup-answer/`; executable binding: `hotl-workflow-rollup-answer.md`
+- Untouched baseline: `/bin/bash scripts/verify.sh` -> `SUITES PASS=21 FAIL=0`
+
+## Approved contract and current execution state
+
+Trevor explicitly approved all seven recommended points on 2026-07-18 and directed implementation through green without permission asks. The binding implementation invariants are now:
+
+1. `dashboard decide answer-rollup <card-id> <primary-decision-id> <choice>` plus existing source/resume flags.
+2. Primary plus only strict `plan_rollup_supersession(...).supersede` targets; independent members stay untouched and visible.
+3. Every target remains `open` with a durable current-fingerprint `answered_pending` event and a private answer/prompt artifact.
+4. Pending remains visible but cannot be ordinarily re-alerted, dismissed, or re-answered until consumption or changed evidence.
+5. Only graph-verified per-member answering-turn/downstream evidence resolves a pending target.
+6. All artifacts stage first, all events commit in one transaction, and one private batch publishes atomically with exact recovery after a post-commit publication failure.
+7. Exact current scope plus choice is idempotent; a conflicting choice or partial pending set fails closed; changed evidence unlocks a new answer.
+
+Implementation has not yet changed production code. The next executable boundary is the red test checkpoint in `openspec/changes/rollup-answer/tasks.md`.
 
 ## What is unambiguous
 
@@ -15,7 +33,7 @@
 - The binding packet requires members to remain pending until each owning task consumes the answer.
 - Tests must use temporary Mission Control homes/stores only.
 
-## Blocking contradiction
+## Prior blocking contradiction — resolved by Trevor's approval
 
 | Source | Current contract |
 |---|---|
@@ -28,9 +46,9 @@
 
 Calling `resolve()` for rollup members would satisfy the stale helper docstring but directly violate the binding packet and canonical plan. Leaving rows `open` without a new durable pending marker would also be unsafe: the rows could be re-alerted/re-answered, the UI could not distinguish unanswered from answered-pending, and a multi-member failure could partially publish answers with no coherent recovery contract.
 
-## Design decision needed
+## Approved design
 
-Confirm or replace this recommended minimal contract before implementation:
+The recommended minimal contract was approved without changes:
 
 1. CLI: `dashboard decide answer-rollup <card-id> <primary-decision-id> <choice> [existing source/resume flags]`.
 2. Member set: primary plus only `plan_rollup_supersession(...).supersede`; `independent` members are untouched and returned visibly.
@@ -40,7 +58,7 @@ Confirm or replace this recommended minimal contract before implementation:
 6. Atomicity: preflight and stage every member artifact, then record all pending events and publish all artifacts as one recoverable batch; any pre-commit failure changes no member.
 7. Replay: same card/member set + choice is idempotent; a different choice fails closed until an explicit supersession rule is specified.
 
-This is the smallest design that appears to satisfy the binding semantics, but it adds a new durable event/state interpretation and batch transaction. The packet explicitly forbids guessing that contract into the production queue, so implementation stopped here.
+This is the smallest design that satisfies the binding semantics. Its event interpretation and recoverable batch transaction are now authorized and specified in OpenSpec.
 
 ## Evidence transcript
 
@@ -82,8 +100,8 @@ The packet-author audit transcript (`6b78e170-f063-47e2-92f8-48e6f5ce0600`, `Aud
 - did not verify: rollup-answer behavior, because no unambiguous durable pending/consumption contract exists and no production code was changed.
 - did not verify: any new answered-pending, fan-out, replay, or atomic-batch behavior, because those paths were deliberately not implemented. The existing full baseline verifier passed; that is not evidence for absent Lane D behavior.
 
-## Done / next / exact resume
+## Prior stop / current resume
 
 - Done: read the exact queue/answer paths, canonical plan, packet-author transcript, schema, and existing hermetic test seams; isolated the contradiction without mutating code.
-- Next: confirm the recommended seven-point contract above or provide the intended alternative.
-- Exact resume: `cd '/Users/gillettes/Coding Projects/mission-control-worktrees/rollup-answer-wiring' && git status -sb && sed -n '1,260p' STATE.md && sed -n '300,455p' scripts/queue_admission.py && sed -n '197,320p' scripts/compose-decision-prompt.py`
+- Current next: write and capture the red queue, batch, CLI, and renderer contracts; then implement the smallest root-cause change until focused and full verification pass.
+- Exact resume: `cd '/Users/gillettes/Coding Projects/mission-control-worktrees/rollup-answer-wiring' && git status -sb && sed -n '1,260p' STATE.md && sed -n '1,260p' openspec/changes/rollup-answer/tasks.md && sed -n '1,260p' hotl-workflow-rollup-answer.md`
