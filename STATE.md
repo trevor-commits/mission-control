@@ -1,6 +1,6 @@
 # Lane D state — rollup-answer CLI wiring
 
-- Status: ACTIVE; third-audit occupied-parent repair is focused-green; records-complete full gate, new exact-head audit, push, and PR remain
+- Status: AUTHORITATIVE FULL GREEN / FRESH EXACT-HEAD AUDIT PENDING at `bc9014d686c477fe674987072f1ef8a5f4a96718`; occupied-parent repair is 18/18 and the records-complete verifier is `SUITES PASS=23 FAIL=0`; audit, push, and PR remain
 - Branch: `codex/rollup-answer-wiring`
 - Review base: `53e91392dcef3d2deeedf748c14159320a8572e0`
 - Original implementation checkpoint: `754de932301113e81f51bbf4febe2d3fc28c01e0`
@@ -102,21 +102,34 @@ Trevor approved the following seven points through `thread_goal_updated` at `202
 | Rollup answer after repair | 18 tests, OK |
 | Pending-event cardinality and later exact rebuild | one per target; exact digest rebuilt |
 
+### Records-complete authoritative gate
+
+| Gate | Result |
+|---|---|
+| Exact committed head | `bc9014d686c477fe674987072f1ef8a5f4a96718` |
+| Rollup answer | 18 tests in 29.520s, OK |
+| Dashboard / ER-134 / usage | `67/0`; `59/0`; `24/0` |
+| Dashboard browser | 253 assertions |
+| Strict OpenSpec | 2 passed, 0 failed |
+| Python / shell / source artifacts | pass |
+| Authoritative verifier | `SUITES PASS=23 FAIL=0` |
+
 Receipts:
 
 - `records/evidence/rollup-answer-audit-repair-red-green.txt`
 - `records/evidence/rollup-answer-audit-repair-full-green.txt`
 - `records/evidence/rollup-answer-final-audit-red-green.txt`
 - `records/evidence/rollup-answer-occupied-parent-red-green.txt`
+- `records/evidence/rollup-answer-occupied-parent-full-green.txt`
 - `records/rollup-answer-independent-codex-audit.md`
 - `records/2026-07-18-rollup-answer-work-record.md`
 
 ## Claims and limits
 
 - Confirmed: both first-audit P1 findings, all three second-audit findings, and the third-audit occupied-parent P1 were independently reproduced and have behavior-level regressions.
-- Confirmed: repair `bfaf10b` passed the targeted occupied-parent contract and 18/18 rollup contracts; the prior `8613d25` renderer/runtime repairs remain covered by that suite and their focused receipts.
+- Confirmed: repair `bfaf10b` passed the targeted occupied-parent contract and 18/18 rollup contracts; exact records-complete `bc9014d` then passed the authoritative `23/0` verifier, and the prior `8613d25` renderer/runtime repairs remain covered.
 - Confirmed: no schema migration, dependency, live-store write, provider send, main touch, install, deploy, release, plist, or launchd action occurred.
-- Did not verify: records-complete authoritative full gate or final `bfaf10b`-descended independent verdict.
+- Did not verify: final `bfaf10b`-descended independent verdict.
 - Did not verify: hosted PR checks or merge state; no Lane D PR exists yet.
 - Did not verify: merged-main, installed runtime, provider delivery, or live-store behavior because those actions are prohibited here.
 - Do not do: merge, install, deploy, send, write a live store, change plist/launchd, or resolve live decision `decision:a6f185b53cbc1278499b062d` from this lane.
@@ -124,6 +137,6 @@ Receipts:
 
 ## Exact resume
 
-1. Commit this third-audit records/spec/state update and rerun strict OpenSpec plus the authoritative verifier on the exact committed head.
-2. Send that frozen SHA to a new fresh `gpt-5.6-sol`/max auditor; repair any accepted new finding under the two-attempt rule and rerun affected/full gates.
+1. Commit this records-complete full-gate receipt and send the exact successor SHA to a new fresh `gpt-5.6-sol`/max auditor.
+2. Repair any accepted new finding under the two-attempt rule and rerun affected/full gates.
 3. Append the final audit receipt, push the topic branch, open a review-ready PR whose body carries the approval citation and live-card merge-sitting note, verify hosted checks, and stop before merge/deploy.

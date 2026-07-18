@@ -46,7 +46,8 @@ Evidence: `records/evidence/rollup-answer-occupied-parent-red-green.txt`.
 
 ## Final attempt
 
-- Status: pending a new fresh same-model/max audit of the records-complete `bfaf10b`-descended head after the authoritative gate.
+- Status: records-complete `bc9014d686c477fe674987072f1ef8a5f4a96718` passed the authoritative `SUITES PASS=23 FAIL=0` gate; a new fresh same-model/max audit of the evidence successor remains pending.
+- Full-gate evidence: `records/evidence/rollup-answer-occupied-parent-full-green.txt`.
 - Did not verify: final review-clean verdict, remote/PR state, merged-main behavior, install/deploy, provider delivery, or live-store behavior.
 
 ## Audited Chat
