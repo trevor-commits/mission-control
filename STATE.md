@@ -1,9 +1,10 @@
 # Lane D state — rollup-answer CLI wiring
 
-- Status: ACTIVE; implementation and verifier-artifact repair are focused-green; post-repair full verification and fresh independent audit remain
+- Status: ACTIVE; committed candidate is authoritative-full-green; fresh independent audit remains
 - Branch: `codex/rollup-answer-wiring`
 - Base: `origin/main@8582e182d5db3b8964ec21738a82806d94c78a55`
 - Current committed implementation checkpoint: `754de932301113e81f51bbf4febe2d3fc28c01e0`
+- Current authoritative full-green candidate: `ed8ce3591b5fb3070b132b98a062be1125a5f991`
 - Worktree: `/Users/gillettes/Coding Projects/mission-control-worktrees/rollup-answer-wiring`
 - Source chat: Codex `019f73d8-e5dc-73a0-acc5-8a4916ac6819`
 - Trust Gate: on — this changes durable operator-decision interpretation and completion semantics
@@ -66,19 +67,22 @@ Focused receipt: `records/evidence/rollup-answer-focused-green.txt`.
 
 The first fresh full run at `754de93` reached `SUITES PASS=22 FAIL=0`, but an immediate post-run check found ignored source bytecode created by a later isolated Morning Brief sender subprocess. That run is rejected as authoritative full-green evidence. The producing environment now preserves the no-bytecode guard, a temporary-runtime regression fails before and passes after the repair, and the authoritative verifier has gained a final artifact suite. Receipt: `records/evidence/rollup-answer-verifier-artifact-red-green.txt`.
 
+### Authoritative full green
+
+The repaired committed candidate `ed8ce35` passed all 23 authoritative suites, including rollup `10/10`, dashboard `67/0`, ER-134 `58/0`, usage `24/0`, browser `253`, strict OpenSpec `2/0`, syntax, and the new final source-artifact gate. The immediate post-run Git/artifact snapshot was clean. Receipt: `records/evidence/rollup-answer-full-green.txt`.
+
 ## Claims and limits
 
 - Confirmed: the focused implementation matches every approved semantic in hermetic temporary state.
+- Confirmed: the authoritative full verifier passed `23/0` on committed candidate `ed8ce35` and left no repository bytecode artifact.
 - Confirmed: no schema migration or new dependency was added.
 - Confirmed: no main branch, live Mission Control store, provider send, Telegram, installation, deployment, release, plist, launchd, or external runtime was touched.
-- Did not verify: the authoritative full verifier after the source-artifact repair against its committed candidate SHA.
 - Did not verify: a fresh same-model/max-reasoning audit of that frozen implementation SHA.
 - Did not verify: PR state; no implementation PR exists yet.
 - Do not do yet: merge, install, deploy, send, or write any live store.
 
 ## Exact resume
 
-1. Commit the focused-green verifier-artifact repair and corrective receipt.
-2. Run `/bin/bash scripts/verify.sh` against that frozen post-repair SHA and save the full candidate receipt.
-3. Create the required fresh `gpt-5.6-sol`/max Codex audit against the exact SHA; verify findings against source/tests, repair accepted findings, and rerun affected plus full gates.
-4. Finish `verify.md`, retrospective, todo/STATE/audit records, push the topic branch, open a review-ready PR, and stop before merge or deploy.
+1. Commit the immutable full-green receipt and Step 8 state.
+2. Create the required fresh `gpt-5.6-sol`/max Codex audit against the exact frozen candidate; verify findings against source/tests, repair accepted findings, and rerun affected plus full gates.
+3. Finish `verify.md`, retrospective, todo/STATE/audit records, push the topic branch, open a review-ready PR, and stop before merge or deploy.

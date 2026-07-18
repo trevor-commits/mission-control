@@ -21,7 +21,7 @@
 ## 4. Verification and review
 
 - [x] 4.1 Run focused suites, mutation/negative controls, strict OpenSpec, HOTL lint, syntax, and `git diff --check`.
-- [ ] 4.2 Run the authoritative full verifier and record the immutable candidate evidence.
+- [x] 4.2 Run the authoritative full verifier and record the immutable candidate evidence.
 - [ ] 4.3 Run a fresh same-model/max-reasoning Codex audit against the frozen candidate; fix accepted findings and rerun affected/full gates.
 - [ ] 4.4 Update `verify.md`, retrospective, `STATE.md`, `todo.md`, branch ledger, and the audit coverage disposition.
 - [ ] 4.5 Commit, push the topic branch, open a review-ready PR, and stop without merging or deploying.

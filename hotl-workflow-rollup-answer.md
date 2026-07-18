@@ -59,7 +59,7 @@ max_iterations: 2
 verify: /bin/bash scripts/dashboard.test.sh --require-shell && /bin/bash scripts/er134-usability.test.sh && node scripts/dashboard-render-smoke.js . && /bin/bash -n scripts/dashboard
 gate: auto
 
-- [ ] **Step 8: Verify the complete branch candidate**
+- [x] **Step 8: Verify the complete branch candidate**
 action: Run focused negative/mutation checks, strict OpenSpec, HOTL lint, syntax, diff check, and the authoritative full verifier; write immutable evidence and claims.
 loop: until every in-scope gate is green
 max_iterations: 2
