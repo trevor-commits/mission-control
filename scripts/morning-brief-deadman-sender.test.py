@@ -8,6 +8,7 @@ import io
 import json
 import os
 import signal
+import shutil
 import stat
 import subprocess
 import sys
@@ -115,6 +116,7 @@ class DeadmanSenderTests(unittest.TestCase):
             "PATH": "/usr/bin:/bin",
             "MISSION_CONTROL_HOME": self.state,
             "MOBILE_CONNECT_CONFIG": self.config,
+            "PYTHONDONTWRITEBYTECODE": "1",
             "MORNING_BRIEF_CHAT_ID": CHAT_ID,
             "MORNING_BRIEF_TELEGRAM_BOT_TOKEN": TOKEN,
             "MORNING_BRIEF_TELEGRAM_API_BASE": server.base_url,
@@ -465,6 +467,24 @@ class DeadmanSenderTests(unittest.TestCase):
                     side_effect=AssertionError("unexpected subprocess")):
             self.assertFalse(DEADMAN._send("missing\nsecret source text"))
         self.assertEqual(server.requests, [])
+
+    def test_subprocess_environment_keeps_bytecode_out_of_runtime_tree(self):
+        runtime = os.path.join(self.tmp.name, "runtime")
+        os.makedirs(runtime)
+        runtime_deadman = os.path.join(runtime, "morning-brief-deadman")
+        shutil.copy2(DEADMAN_PATH, runtime_deadman)
+        shutil.copy2(os.path.join(ROOT, "scripts", "mission_control_common.py"),
+                     runtime)
+        with FakeTelegram() as server:
+            env = self.direct_env(server,
+                MORNING_BRIEF_DEADMAN_NOW_EPOCH="1783677000",
+                PYTHONPATH=runtime)
+            completed = subprocess.run(
+                [sys.executable, runtime_deadman], env=env,
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                text=True, timeout=10)
+        self.assertNotEqual(completed.returncode, 0)
+        self.assertFalse(os.path.exists(os.path.join(runtime, "__pycache__")))
 
     def run_process(self, server, now):
         env = self.direct_env(server,

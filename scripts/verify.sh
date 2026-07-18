@@ -19,6 +19,15 @@ run() {
   fi
 }
 
+source_tree_artifacts() {
+  local artifact
+  artifact="$(find "$ROOT/scripts" \( -type d -name '__pycache__' -o -type f \( -name '*.pyc' -o -name '*.pyo' \) \) -print -quit)"
+  if [ -n "$artifact" ]; then
+    printf 'unexpected source-tree artifact: %s\n' "$artifact" >&2
+    return 1
+  fi
+}
+
 self_test() {
   local t rc
   t="$(mktemp -d)"
@@ -66,6 +75,7 @@ run "unfinished-work scanner" scripts/scan-unfinished-work --self-test
 run "OpenSpec strict" openspec validate --all --strict
 run "Python syntax" python3 -c 'import pathlib; files=["scripts/chat-graph","scripts/decision-alert","scripts/mission_control_common.py","scripts/outcome_extractor.py","scripts/compose-decision-prompt.py","scripts/harvest-morning-brief-proof"]; [compile(pathlib.Path(p).read_text(),p,"exec") for p in files]'
 run "shell syntax" /bin/bash -n scripts/dashboard scripts/*.test.sh scripts/verify.sh
+run "source tree artifacts" source_tree_artifacts
 
 printf '\n====\nSUITES PASS=%s FAIL=%s\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
