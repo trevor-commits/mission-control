@@ -200,6 +200,16 @@ def _tx(con):
     con.execute("BEGIN IMMEDIATE")
 
 
+def _admission_columns_present(con):
+    """Schema-presence detection: once the admission columns EXIST, the DB
+    owner has already opted in (the migration itself remains gated behind
+    MISSION_CONTROL_ADMISSION_SCHEMA=1), so ongoing stamping is
+    unconditional — a flagless launchd job keeps stamping new entrants."""
+    cols = {row[1] for row in con.execute(
+        "PRAGMA table_info(decisions)").fetchall()}
+    return "admission_class" in cols
+
+
 def _sha(value):
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
@@ -522,14 +532,18 @@ def ingest(args):
             _event(con, decision_id, event_type, fingerprint, now,
                    detail={"prior_state": prior_state})
             event_created = True
-        if ADMISSION_SCHEMA_ENABLED:
+        if ADMISSION_SCHEMA_ENABLED or _admission_columns_present(con):
             # Same classify_row() used by the read-only `derive` staging
             # tool, so a staging proof against live text predicts exactly
             # what gets stamped here once this is deployed. Recomputed on
             # every ingest (idempotent) so text edits keep the fields
             # current; snoozed_until is deliberately NOT touched here — it
             # is set by a separate human/system action, never by
-            # classification.
+            # classification. Stamping is unconditional once the columns
+            # exist (schema presence = prior opt-in): the installed launchd
+            # job runs without the env flag, and new entrants must keep
+            # their class in steady state. The env flag still gates the
+            # MIGRATION only (see _migrate).
             fields = queue_admission.classify_row(text)
             con.execute("""UPDATE decisions SET
                 admission_class=?, admission_rule=?, domain=?, severity=?,
@@ -695,6 +709,57 @@ def list_decisions(args):
         sql += " ORDER BY CASE state WHEN 'open' THEN 0 WHEN 'dismissed' THEN 1 ELSE 2 END, last_seen DESC, decision_id"
         rows = con.execute(sql, params).fetchall()
         return {"ok": True, "decisions": [_decision_dict(con, row) for row in rows]}
+    finally:
+        con.close()
+
+
+def admission_backfill(_args):
+    """One-shot backfill (0.3 deploy gap): classify and stamp every OPEN row
+    whose admission_class is still NULL — rows whose sources never re-report
+    (stale chats) would otherwise stay unclassified forever, blocking the
+    "every open item carries exactly one admission class" gate.
+
+    Uses the same queue_admission.classify_row() rules as ingest-time
+    stamping, runs through the same transactional path (_tx/commit/rollback),
+    and is idempotent: a second run stamps zero rows. Rows that already
+    carry an admission_class are NEVER touched (guarded twice: the SELECT
+    filters on NULL and the UPDATE re-checks admission_class IS NULL, so a
+    concurrent stamp between read and write cannot be overwritten).
+    Requires the admission columns to exist; the migration itself stays
+    gated behind MISSION_CONTROL_ADMISSION_SCHEMA=1.
+    """
+    con = _connect()
+    try:
+        if not _admission_columns_present(con):
+            raise DecisionError(
+                "admission schema not migrated; run any command once with "
+                "MISSION_CONTROL_ADMISSION_SCHEMA=1 first")
+        _tx(con)
+        rows = con.execute("""SELECT decision_id, text FROM decisions
+            WHERE state='open' AND admission_class IS NULL""").fetchall()
+        stamped = 0
+        for row in rows:
+            fields = queue_admission.classify_row(row["text"])
+            cur = con.execute("""UPDATE decisions SET
+                admission_class=?, admission_rule=?, domain=?, severity=?,
+                required_action=?, deadline=?
+                WHERE decision_id=? AND admission_class IS NULL""", (
+                    fields["admission_class"], fields["admission_rule"],
+                    fields["domain"], fields["severity"],
+                    fields["required_action"], fields["deadline"],
+                    row["decision_id"],
+                ))
+            stamped += cur.rowcount
+        remaining_null = con.execute("""SELECT COUNT(*) FROM decisions
+            WHERE state='open' AND admission_class IS NULL""").fetchone()[0]
+        open_total = con.execute(
+            "SELECT COUNT(*) FROM decisions WHERE state='open'").fetchone()[0]
+        con.commit()
+        return {"ok": True, "stamped": stamped, "open_total": open_total,
+                "remaining_null": remaining_null}
+    except Exception:
+        con.rollback()
+        raise
     finally:
         con.close()
 
@@ -1471,6 +1536,7 @@ def _parser():
     sub.add_parser("sync-snapshot")
     sub.add_parser("rollup")
     sub.add_parser("lanes")
+    sub.add_parser("admission-backfill")
 
     p = sub.add_parser("alert")
     p.add_argument("--send", action="store_true")
@@ -1516,6 +1582,7 @@ def main(argv=None):
             "sync-snapshot": sync_snapshot, "alert": alert,
             "alert-backfill": alert_backfill,
             "rollup": rollup_cards, "lanes": lanes,
+            "admission-backfill": admission_backfill,
         }
         result = handlers[args.command](args)
         exit_code = int(result.pop("_exit", 0))
