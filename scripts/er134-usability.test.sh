@@ -355,7 +355,9 @@ feed=json.load(open(sys.argv[1]))
 calls=json.load(open(sys.argv[2]))
 alert=(feed.get("data") or {}).get("alert") or {}
 assert alert.get("sent_count") == 1, alert
-assert len(calls) == 1 and calls[0][0] == "send"
+# decision-send (Phase 0.2), not the generic send -- carries the decision id
+# + option count so mobile-connect can attach Dismiss/Option-N buttons.
+assert len(calls) == 1 and calls[0][0] == "decision-send"
 pinned=feed["data"]["pinned"]
 assert any(d.get("alert_receipt") for d in pinned), pinned[0] if pinned else None
 CHECK

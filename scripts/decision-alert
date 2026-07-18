@@ -1091,8 +1091,15 @@ def alert(args):
             failed.append({"id": current["decision_id"], "category": "privacy"})
             continue
         try:
+            # decision-send (not the generic send) so mobile-connect attaches the
+            # Dismiss/Option-N inline buttons AND remembers this as the "last
+            # decision" (the reply-number path's fallback when no id is typed).
+            # Phase 0.2: without this, the Telegram verb's button/reply paths are
+            # unreachable — only a hand-typed `dismiss decision:<full-id>` works.
+            num_options = len(_presentation_from_text(current.get("text")).get("options") or [])
             result = subprocess.run(
-                [sender, "send", chat_id, message],
+                [sender, "decision-send", chat_id, current["decision_id"], message,
+                 str(num_options)],
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                 timeout=max(1, int(args.timeout)), check=False)
             success = result.returncode == 0
