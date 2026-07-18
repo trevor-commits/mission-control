@@ -84,6 +84,14 @@ consumed by `scripts/decision-alert`:
 - **One queue, lane views** — `decision-alert lanes` derives
   business/personal/infra/faith-personal-projects counts from the `domain`
   field; there is no physical per-lane queue.
+- **Group re-ask suppression** — in the automatic alert path, a NEW decision
+  whose normalized text matches a different decision already alerted within
+  the last 7 days is not re-presented identically: it folds silently into
+  the group (reported under `suppressed_group` with the prior-alerted peer
+  id) unless its stored severity outranks the alerted peer, in which case
+  it is allowed through and a `group_escalation` event is recorded. The
+  same decision's own 24-hour re-alert cadence and the explicit
+  `--decision-id` targeted bypass are unchanged.
 - **Severity bypass** — `decision-alert alert --decision-id <id> [--decision-id <id> ...] [--send]`
   targets specific decisions directly, bypassing normal eligibility
   ordering AND `--fresh-within` (a queue-age filter would defeat the point

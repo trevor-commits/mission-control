@@ -39,6 +39,12 @@ SCHEMA = 1
 ADMISSION_SCHEMA_ENABLED = (
     os.environ.get("MISSION_CONTROL_ADMISSION_SCHEMA", "").strip() == "1")
 ALERT_WINDOW_S = 24 * 60 * 60
+# Phase 0 item 0.3(b) re-ask gate: no text-group re-presented identically
+# twice within 7 days. Applies across DIFFERENT decisions sharing the same
+# normalized text (a new row joining an existing group); the same decision's
+# own 24h rolling re-alert cadence (ALERT_WINDOW_S) is unchanged.
+GROUP_REPEAT_WINDOW_S = 7 * 24 * 60 * 60
+_SEVERITY_RANK = {"normal": 0, "security": 1}
 ALERT_RESERVATION_LEASE_S = 60
 ALERT_BACKFILL_DEFAULT_MAX = 10
 ALERT_BACKFILL_HARD_CEILING = 25
@@ -961,12 +967,71 @@ def _recently_sent_or_reserved(con, row, now):
     return bool(succeeded or reserved)
 
 
+def _row_severity(row):
+    """Effective severity for the re-ask escalation check: the stored
+    severity column when present and valid (a later channel/urgency writer
+    may raise it without changing text), else derived from text via the
+    same classifier the stamping path uses."""
+    try:
+        keys = row.keys()
+    except AttributeError:
+        keys = row
+    stored = row["severity"] if "severity" in keys else None
+    if stored in _SEVERITY_RANK:
+        return stored
+    severity, _rule = queue_admission.classify_severity(row["text"])
+    return severity
+
+
+def _group_alert_verdict(con, row, now):
+    """Text-GROUP re-ask suppression (Phase 0 item 0.3(b) verify-done gate:
+    "no text-group re-presented identically >=2x in 7 days").
+
+    A row whose normalized text matches a DIFFERENT decision that already
+    has a successful alert receipt within GROUP_REPEAT_WINDOW_S must not
+    produce a second identical presentation: it folds silently into the
+    group ("suppress") unless its severity outranks every in-window alerted
+    peer ("escalate" — allowed through, and recorded as a group_escalation
+    event when the send succeeds). Same-decision receipts are deliberately
+    excluded: the per-decision 24h rolling cadence (ALERT_WINDOW_S,
+    covered by _recently_sent_or_reserved and an existing test) is
+    unchanged — this gate governs NEW rows joining an existing group.
+
+    Returns None (no in-window peer), ("suppress", peer_id), or
+    ("escalate", peer_id).
+    """
+    norm = queue_admission.normalize_text(row["text"])
+    if not norm:
+        return None
+    cutoff = now - GROUP_REPEAT_WINDOW_S
+    peers = con.execute("""SELECT d.*, MAX(r.succeeded_at) AS group_alerted_at
+        FROM alert_receipts r JOIN decisions d ON d.decision_id=r.decision_id
+        WHERE r.succeeded_at>? AND d.decision_id!=?
+        GROUP BY d.decision_id""", (cutoff, row["decision_id"])).fetchall()
+    best_rank = None
+    best_id = None
+    for peer in peers:
+        if queue_admission.normalize_text(peer["text"]) != norm:
+            continue
+        rank = _SEVERITY_RANK.get(_row_severity(peer), 0)
+        if best_rank is None or rank > best_rank:
+            best_rank = rank
+            best_id = peer["decision_id"]
+    if best_rank is None:
+        return None
+    if _SEVERITY_RANK.get(_row_severity(row), 0) > best_rank:
+        return ("escalate", best_id)
+    return ("suppress", best_id)
+
+
 def _alert_eligible(con, now, fresh_within_s=None, newest_first=False):
     order = "first_seen DESC, decision_id DESC" if newest_first else "first_seen, decision_id"
     rows = con.execute("""SELECT * FROM decisions
         WHERE state='open' AND trust_state='structured'
         ORDER BY %s""" % order).fetchall()
     out = []
+    suppressed = []
+    escalations = {}
     fresh_cutoff = None
     if fresh_within_s is not None:
         try:
@@ -979,9 +1044,21 @@ def _alert_eligible(con, now, fresh_within_s=None, newest_first=False):
     for row in rows:
         if fresh_cutoff is not None and int(row["first_seen"]) < fresh_cutoff:
             continue
-        if not _recently_sent_or_reserved(con, row, now):
-            out.append(row)
-    return out
+        if _recently_sent_or_reserved(con, row, now):
+            continue
+        verdict = _group_alert_verdict(con, row, now)
+        if verdict is not None:
+            kind, peer_id = verdict
+            if kind == "suppress":
+                suppressed.append({
+                    "id": row["decision_id"],
+                    "reason": "group_repeat_within_7d",
+                    "prior_alerted": peer_id,
+                })
+                continue
+            escalations[row["decision_id"]] = peer_id
+        out.append(row)
+    return out, suppressed, escalations
 
 
 def _alert_eligible_by_ids(con, decision_ids, now):
@@ -1126,6 +1203,24 @@ def _finish_alert(attempt_id, decision, now, success, message,
         con.close()
 
 
+def _record_group_escalation(decision, prior_alerted_id, now):
+    """Durable event for an allowed re-ask: a new group member alerted only
+    because its severity outranked the in-window alerted peer."""
+    con = _connect()
+    try:
+        _tx(con)
+        _event(con, decision["decision_id"], "group_escalation",
+               decision["evidence_fingerprint"], now,
+               evidence_type="severity_increase",
+               evidence_ref=prior_alerted_id)
+        con.commit()
+    except Exception:
+        con.rollback()
+        raise
+    finally:
+        con.close()
+
+
 def _default_sender_bin():
     configured = os.environ.get("DECISION_ALERT_SEND_BIN", "").strip()
     if configured:
@@ -1172,14 +1267,19 @@ def alert(args):
     newest_first = bool(getattr(args, "newest_first", False))
     decision_ids = getattr(args, "decision_ids", None)
     id_skips = []
+    suppressed_group = []
+    escalations = {}
     con = _connect()
     try:
         if decision_ids:
             # Targeted bypass (Phase 0 item 0.3(d) severity=security path):
             # ignores fresh_within by design — see _alert_eligible_by_ids.
+            # Group re-ask suppression deliberately does NOT apply here:
+            # explicit per-id targeting IS the escalated channel, and its
+            # own per-decision receipt dedup still prevents double-fires.
             eligible, id_skips = _alert_eligible_by_ids(con, decision_ids, now)
         else:
-            eligible = _alert_eligible(
+            eligible, suppressed_group, escalations = _alert_eligible(
                 con, now, fresh_within_s=fresh_within, newest_first=newest_first)
         preview = [_decision_dict(con, row) for row in eligible]
     finally:
@@ -1207,7 +1307,9 @@ def alert(args):
                 "max": max_send or None,
                 "fresh_within_s": None if decision_ids else fresh_within,
                 "bypass": "decision_id" if decision_ids else None,
-                "skipped_ids": id_skips}
+                "skipped_ids": id_skips,
+                "suppressed_group": suppressed_group,
+                "escalated": sorted(escalations)}
 
     sender = os.path.expanduser(args.sender or _default_sender_bin())
     if not sender or not os.path.isfile(sender) or not os.access(sender, os.X_OK):
@@ -1243,6 +1345,12 @@ def alert(args):
         _finish_alert(attempt_id, current, now, success, message, category)
         if success:
             sent.append(current["decision_id"])
+            if current["decision_id"] in escalations:
+                # Re-ask escalation is recorded, never silent: this send was
+                # allowed through group suppression only because severity
+                # increased over the in-window alerted peer.
+                _record_group_escalation(
+                    current, escalations[current["decision_id"]], now)
         else:
             failed.append({"id": current["decision_id"], "category": category})
     return {
@@ -1255,6 +1363,8 @@ def alert(args):
         "sent": sent,
         "failed": failed,
         "skipped_race": skipped,
+        "suppressed_group": suppressed_group,
+        "escalated": sorted(escalations),
         "max": max_send or None,
         "fresh_within_s": fresh_within,
         "egress_counters": counters.snapshot(),
