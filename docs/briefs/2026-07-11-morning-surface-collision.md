@@ -37,3 +37,12 @@ brief; deadman stays conditional; `morning-health-brief` remains non-live until
 it has a non-overlapping purpose; Screenpipe remains loaded and separate at
 08:00. Revisit after the five-morning proof log shows whether Trevor actually
 reads and understands the 05:00 brief.
+
+## Decision (2026-07-11)
+
+Trevor chose folds:
+1. Retire `morning-health-brief` as a separate morning ping; keep any still-useful checks visible via Mission Control automation/brief feeds.
+2. Retire `com.screenpipe.morning-brief` as a separate 08:00 narrative; Screenpipe **capture** (pilot/watchdog) stays on.
+3. Outcome Extractor: **on** (activate after calibration).
+
+Live actions same night: LaunchAgents for (1) and (2) unloaded and renamed `*.folded-*`.
