@@ -681,6 +681,85 @@ PY
 then pass "alert-backfill defaults to max 10 and sends"
 else fail "alert-backfill defaults to max 10 and sends"; fi
 
+# Text-GROUP re-ask suppression (0.3(b) gate): a NEW decision whose normalized
+# text matches an already-alerted group must not re-present identically within
+# 7 days — it folds silently; after the window it may present again.
+GRP_HOME="$T/group-state"; mkdir -p "$GRP_HOME"
+export MISSION_CONTROL_HOME="$GRP_HOME"
+export DECISION_ALERT_NOW_EPOCH=1784365200
+G1="$(run_json ingest --source-kind git --source-key grp-first \
+  --text 'Choose the identical group question' --evidence 'grp-a' \
+  --trust structured --provenance git-facts)" || G1=""
+G1_ID="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["decision"]["id"])' "$G1")"
+: > "$CAPTURE"
+G_FIRST="$(run_json alert --send)" || G_FIRST=""
+export DECISION_ALERT_NOW_EPOCH=1784368800
+G2="$(run_json ingest --source-kind git --source-key grp-second \
+  --text 'Choose the identical group question' --evidence 'grp-b' \
+  --trust structured --provenance git-facts)" || G2=""
+G2_ID="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["decision"]["id"])' "$G2")"
+G_SECOND="$(run_json alert --send)" || G_SECOND=""
+export DECISION_ALERT_NOW_EPOCH=1784970011
+G_EXPIRED="$(run_json alert --send)" || G_EXPIRED=""
+if python3 - "$G_FIRST" "$G_SECOND" "$G_EXPIRED" "$G1_ID" "$G2_ID" <<'PY'
+import json,sys
+first,second,expired=map(json.loads,sys.argv[1:4])
+g1,g2=sys.argv[4],sys.argv[5]
+assert g1 in first["sent"]
+# The identically-worded NEW row is suppressed, visibly and with provenance.
+assert second["sent_count"] == 0 and g2 not in second["sent"]
+sup={s["id"]: s for s in second.get("suppressed_group") or []}
+assert g2 in sup and sup[g2]["reason"] == "group_repeat_within_7d"
+assert sup[g2]["prior_alerted"] == g1
+# Past the 7-day window the group may present again (fold, not permanent mute).
+assert g2 in expired["sent"]
+PY
+then pass "group re-ask: identical new row is suppressed within 7 days, expires after"
+else fail "group re-ask: identical new row is suppressed within 7 days, expires after"; fi
+
+# Escalate path: a new group member whose stored severity outranks the alerted
+# peer IS allowed through, and the escalation is recorded as an event.
+ESC_HOME="$T/esc-state"; mkdir -p "$ESC_HOME"
+export MISSION_CONTROL_HOME="$ESC_HOME"
+export MISSION_CONTROL_ADMISSION_SCHEMA=1
+export DECISION_ALERT_NOW_EPOCH=1784365200
+E1="$(run_json ingest --source-kind git --source-key esc-first \
+  --text 'Handle the repeated escalation question' --evidence 'esc-a' \
+  --trust structured --provenance git-facts)" || E1=""
+E1_ID="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["decision"]["id"])' "$E1")"
+: > "$CAPTURE"
+run_json alert --send >/dev/null 2>&1
+export DECISION_ALERT_NOW_EPOCH=1784368800
+E2="$(run_json ingest --source-kind git --source-key esc-second \
+  --text 'Handle the repeated escalation question' --evidence 'esc-b' \
+  --trust structured --provenance git-facts)" || E2=""
+E2_ID="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["decision"]["id"])' "$E2")"
+# Simulate an urgency-raising re-ask (e.g. a future channel writer stamping
+# severity up without changing the text) directly on the stored column.
+python3 - "$ESC_HOME/decisions/decisions.db" "$E2_ID" <<'PY'
+import sqlite3,sys
+c=sqlite3.connect(sys.argv[1])
+c.execute("UPDATE decisions SET severity='security' WHERE decision_id=?",(sys.argv[2],))
+c.commit()
+PY
+E_SEND="$(run_json alert --send)" || E_SEND=""
+E_HIST="$(run_json history "$E2_ID")" || E_HIST=""
+if python3 - "$E_SEND" "$E_HIST" "$E1_ID" "$E2_ID" <<'PY'
+import json,sys
+send,hist=map(json.loads,sys.argv[1:3])
+e1,e2=sys.argv[3],sys.argv[4]
+assert e2 in send["sent"]
+assert e2 in (send.get("escalated") or [])
+events=[e for e in hist["events"] if e["event_type"]=="group_escalation"]
+assert len(events) == 1
+assert events[0]["evidence_type"] == "severity_increase"
+assert events[0]["evidence_ref"] == e1
+PY
+then pass "group re-ask: severity escalation is allowed through and recorded"
+else fail "group re-ask: severity escalation is allowed through and recorded"; fi
+unset MISSION_CONTROL_ADMISSION_SCHEMA
+export MISSION_CONTROL_HOME="$T/state"
+
 printf '%s\n' '----'
 if [ "$FAIL" -eq 0 ]; then echo 'ALL PASS'; exit 0; fi
 echo "$FAIL FAILED"; exit 1

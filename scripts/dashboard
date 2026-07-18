@@ -1164,7 +1164,7 @@ do_install() {
   local stamp_path="$MISSION_CONTROL_HOME/bin/install-stamp.json"
   # Keep this Bash 3.2 install loop aligned with the canonical verifier manifest
   # in mission_control_common.py; dashboard.test.sh asserts the exact set.
-  local required_runtimes="dashboard morning-brief morning-brief-deadman decision-alert mission_control_common.py compose-decision-prompt.py mc-panel.swift"
+  local required_runtimes="dashboard morning-brief morning-brief-deadman decision-alert mission_control_common.py queue_admission.py compose-decision-prompt.py mc-panel.swift"
   local required_assets="index.html vendor/cytoscape.min.js panel.html launchd/com.gillettes.mc-panel.plist.template"
   # Safe file install: refuse a symlink or non-regular-file destination (never
   # write THROUGH a link, which would escape the target dir), write via a temp
@@ -1239,7 +1239,7 @@ do_install() {
     fi
   fi
   local runtime dest
-  for runtime in chat-graph morning-brief morning-brief-deadman decision-alert mission_control_common.py compose-decision-prompt.py mc-panel.swift; do
+  for runtime in chat-graph morning-brief morning-brief-deadman decision-alert mission_control_common.py queue_admission.py compose-decision-prompt.py mc-panel.swift; do
     dest="$MISSION_CONTROL_HOME/bin/$runtime"
     if [ "$provenance" = "head" ]; then
       if git -C "$REPO_ROOT" cat-file -e "$head_sha:scripts/$runtime" 2>/dev/null; then
@@ -1255,7 +1255,7 @@ do_install() {
       install_failed=1; continue
     fi
     case "$runtime" in
-      mission_control_common.py|mc-panel.swift) chmod 600 "$dest" || { echo "install: could not secure runtime: $dest" >&2; install_failed=1; continue; } ;;
+      mission_control_common.py|queue_admission.py|mc-panel.swift) chmod 600 "$dest" || { echo "install: could not secure runtime: $dest" >&2; install_failed=1; continue; } ;;
       *) chmod 700 "$dest" || { echo "install: could not set executable mode: $dest" >&2; install_failed=1; continue; } ;;
     esac
     echo "installed runtime -> $dest"
