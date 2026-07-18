@@ -415,6 +415,7 @@ def rollup(rows):
                  "source_kind": m.get("source_kind"),
                  "source_key": m.get("source_key"),
                  "state": m.get("state"),
+                 "answer_pending": m.get("answer_pending"),
                  "first_seen": m.get("first_seen"),
                  "last_seen": m.get("last_seen")}
                 for m in members
@@ -431,12 +432,11 @@ def plan_rollup_supersession(card_members, primary_decision_id):
 
     Returns {"supersede": [decision_id, ...], "independent": [decision_id, ...]}.
     This function only PLANS the fan-out (pure, no I/O, no DB writes) — the
-    write path (decision-alert.py, patched separately) executes it by
-    calling the EXISTING resolve() primitive per superseded member, one at
-    a time, with evidence_type="manual_resolution" and evidence_ref
-    pointing at the primary decision_id. That write path is validated only
-    against a copy of the live database in this session (see
-    scripts/queue_admission.test.py), never against live.
+    write path (decision-alert) records one `answered_pending` event per
+    eligible member in a single transaction. It deliberately does NOT call
+    resolve(): the owning task must later supply graph-verified consumption
+    evidence for its exact member. This function remains pure and performs
+    no I/O or state transition.
     """
     by_id = {m["decision_id"]: m for m in card_members}
     primary = by_id.get(primary_decision_id)

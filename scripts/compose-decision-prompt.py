@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import fcntl
+import hashlib
 import json
 import os
 import re
@@ -14,6 +15,11 @@ import sys
 import tempfile
 import time
 from datetime import datetime, timezone
+
+from mission_control_common import IDENTIFIER, sanitize_text
+
+
+_ROLLUP_METADATA_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/+@-]{0,255}$")
 
 
 def parse_options(text: str) -> list[str]:
@@ -183,6 +189,277 @@ def _test_pause_after_stage(home_fd: int) -> None:
     raise RuntimeError("decide answer: test transaction release timed out")
 
 
+def _open_existing_private_dir(parent_fd: int, name: str, label: str) -> int:
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        fd = os.open(name, flags, dir_fd=parent_fd)
+    except OSError as exc:
+        raise RuntimeError("decide answer-rollup: unsafe %s directory" % label) from exc
+    if not stat.S_ISDIR(os.fstat(fd).st_mode):
+        os.close(fd)
+        raise RuntimeError("decide answer-rollup: unsafe %s directory" % label)
+    return fd
+
+
+def _validate_rollup_dirs(home: str, home_fd: int, batches_fd: int) -> None:
+    checks = (
+        (os.fstat(home_fd), os.lstat(home), "state"),
+        (os.fstat(batches_fd),
+         os.stat("answer-batches", dir_fd=home_fd, follow_symlinks=False),
+         "answer-batches"),
+    )
+    for held, current, label in checks:
+        if not stat.S_ISDIR(held.st_mode) or not stat.S_ISDIR(current.st_mode):
+            raise RuntimeError("decide answer-rollup: unsafe %s directory" % label)
+        if not _same_inode(held, current):
+            raise RuntimeError(
+                "decide answer-rollup: %s directory changed during transaction" % label)
+
+
+def _write_exact_file(dir_fd: int, name: str, content: bytes) -> None:
+    flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_NOFOLLOW", 0)
+    fd = os.open(name, flags, 0o600, dir_fd=dir_fd)
+    try:
+        os.fchmod(fd, 0o600)
+        view = memoryview(content)
+        while view:
+            view = view[os.write(fd, view):]
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
+def _read_private_file(dir_fd: int, name: str, label: str) -> bytes:
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        fd = os.open(name, flags, dir_fd=dir_fd)
+    except OSError as exc:
+        raise RuntimeError("decide answer-rollup: missing %s" % label) from exc
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode) or stat.S_IMODE(info.st_mode) != 0o600:
+            raise RuntimeError("decide answer-rollup: unsafe %s" % label)
+        chunks = []
+        total = 0
+        while True:
+            chunk = os.read(fd, 65536)
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > 2 * 1024 * 1024:
+                raise RuntimeError("decide answer-rollup: oversized %s" % label)
+            chunks.append(chunk)
+        return b"".join(chunks)
+    finally:
+        os.close(fd)
+
+
+def _cleanup_rollup_stage(batches_fd: int, stage_name: str | None,
+                          target_ids: list[str]) -> None:
+    if not stage_name:
+        return
+    try:
+        stage_fd = _open_existing_private_dir(batches_fd, stage_name, "stage")
+    except RuntimeError:
+        return
+    try:
+        for child, suffix in (("answers", ".json"), ("prompts", ".md")):
+            try:
+                child_fd = _open_existing_private_dir(stage_fd, child, child)
+            except RuntimeError:
+                continue
+            try:
+                for decision_id in target_ids:
+                    try:
+                        os.unlink(decision_id + suffix, dir_fd=child_fd)
+                    except FileNotFoundError:
+                        pass
+            finally:
+                os.close(child_fd)
+            try:
+                os.rmdir(child, dir_fd=stage_fd)
+            except OSError:
+                pass
+        try:
+            os.unlink("manifest.json", dir_fd=stage_fd)
+        except FileNotFoundError:
+            pass
+    finally:
+        os.close(stage_fd)
+    try:
+        os.rmdir(stage_name, dir_fd=batches_fd)
+    except OSError:
+        pass
+
+
+def _batch_destination_exists(batches_fd: int, batch_name: str) -> bool:
+    try:
+        current = os.stat(batch_name, dir_fd=batches_fd, follow_symlinks=False)
+    except FileNotFoundError:
+        return False
+    if not stat.S_ISDIR(current.st_mode):
+        raise RuntimeError(
+            "decide answer-rollup: batch destination must be a private directory")
+    return True
+
+
+def _verify_rollup_batch(batches_fd: int, batch_name: str,
+                         expected: dict) -> dict:
+    batch_fd = _open_existing_private_dir(batches_fd, batch_name, "published batch")
+    try:
+        if stat.S_IMODE(os.fstat(batch_fd).st_mode) != 0o700:
+            raise RuntimeError("decide answer-rollup: unsafe published batch mode")
+        raw = _read_private_file(batch_fd, "manifest.json", "batch manifest")
+        try:
+            manifest = json.loads(raw)
+        except (TypeError, ValueError) as exc:
+            raise RuntimeError("decide answer-rollup: invalid batch manifest") from exc
+        for key in ("batch_key", "scope_key", "card_id",
+                    "primary_decision_id", "choice", "member_ids",
+                    "target_ids", "independent_ids", "already_pending_ids",
+                    "source", "resume_chat_id", "resume_provider"):
+            if manifest.get(key) != expected.get(key):
+                raise RuntimeError(
+                    "decide answer-rollup: published batch conflicts with current answer")
+        artifacts = manifest.get("artifacts")
+        if not isinstance(artifacts, dict) or set(artifacts) != set(expected["target_ids"]):
+            raise RuntimeError("decide answer-rollup: incomplete batch manifest")
+        answers_fd = _open_existing_private_dir(batch_fd, "answers", "batch answers")
+        prompts_fd = _open_existing_private_dir(batch_fd, "prompts", "batch prompts")
+        try:
+            for decision_id in expected["target_ids"]:
+                item = artifacts.get(decision_id)
+                if not isinstance(item, dict):
+                    raise RuntimeError("decide answer-rollup: invalid member manifest")
+                answer = _read_private_file(
+                    answers_fd, decision_id + ".json", "member answer")
+                prompt = _read_private_file(
+                    prompts_fd, decision_id + ".md", "member prompt")
+                if (hashlib.sha256(answer).hexdigest() != item.get("answer_sha256") or
+                        hashlib.sha256(prompt).hexdigest() != item.get("prompt_sha256")):
+                    raise RuntimeError("decide answer-rollup: member artifact hash mismatch")
+        finally:
+            os.close(prompts_fd)
+            os.close(answers_fd)
+        return manifest
+    finally:
+        os.close(batch_fd)
+
+
+def _stage_rollup_batch(
+    home: str, batches_fd: int, plan: dict, source: str,
+    resume_chat_id: str, resume_provider: str,
+) -> tuple[str, dict]:
+    target_ids = list(plan["target_ids"])
+    stage_name = None
+    stage_fd = answers_fd = prompts_fd = -1
+    try:
+        for _ in range(32):
+            candidate = ".rollup-stage.%s" % secrets.token_hex(12)
+            try:
+                os.mkdir(candidate, 0o700, dir_fd=batches_fd)
+            except FileExistsError:
+                continue
+            stage_name = candidate
+            break
+        if stage_name is None:
+            raise RuntimeError("decide answer-rollup: could not allocate stage directory")
+        stage_fd = _open_existing_private_dir(batches_fd, stage_name, "stage")
+        os.fchmod(stage_fd, 0o700)
+        answers_fd = _open_private_dir(stage_fd, "answers")
+        prompts_fd = _open_private_dir(stage_fd, "prompts")
+        os.fchmod(answers_fd, 0o700)
+        os.fchmod(prompts_fd, 0o700)
+
+        artifacts = {}
+        for target in plan["targets"]:
+            decision_id = target.get("id")
+            if (not isinstance(decision_id, str) or
+                    not re.fullmatch(r"decision:[0-9a-f]{24}", decision_id)):
+                raise RuntimeError("decide answer-rollup: invalid planned member")
+            prompt, label = build_prompt(
+                decision_id, plan["choice"], target.get("text") or "",
+                resume_chat_id, resume_provider)
+            prompt_path = os.path.join(
+                home, "answer-batches", plan["batch_key"],
+                "prompts", decision_id + ".md")
+            answer = {
+                "schema": 1,
+                "batch_key": plan["batch_key"],
+                "card_id": plan["card_id"],
+                "primary_decision_id": plan["primary_decision_id"],
+                "decision_id": decision_id,
+                "choice": plan["choice"],
+                "label": label,
+                "reason": "Trevor chose option %d via Mission Control" % plan["choice"],
+                "prompt_path": prompt_path,
+            }
+            answer_bytes = (json.dumps(answer, sort_keys=True) + "\n").encode("utf-8")
+            prompt_bytes = prompt.encode("utf-8")
+            _write_exact_file(answers_fd, decision_id + ".json", answer_bytes)
+            _write_exact_file(prompts_fd, decision_id + ".md", prompt_bytes)
+            artifacts[decision_id] = {
+                "answer": "answers/%s.json" % decision_id,
+                "answer_sha256": hashlib.sha256(answer_bytes).hexdigest(),
+                "prompt": "prompts/%s.md" % decision_id,
+                "prompt_sha256": hashlib.sha256(prompt_bytes).hexdigest(),
+            }
+
+        manifest = {
+            "schema": 1,
+            "batch_key": plan["batch_key"],
+            "scope_key": plan["scope_key"],
+            "card_id": plan["card_id"],
+            "primary_decision_id": plan["primary_decision_id"],
+            "choice": plan["choice"],
+            "member_ids": plan["member_ids"],
+            "target_ids": target_ids,
+            "independent_ids": plan["independent_ids"],
+            "already_pending_ids": plan["already_pending_ids"],
+            "source": source,
+            "resume_chat_id": resume_chat_id,
+            "resume_provider": resume_provider,
+            "artifacts": artifacts,
+            "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        }
+        _write_exact_file(
+            stage_fd, "manifest.json",
+            (json.dumps(manifest, sort_keys=True) + "\n").encode("utf-8"))
+        os.fsync(answers_fd)
+        os.fsync(prompts_fd)
+        os.fsync(stage_fd)
+        return stage_name, manifest
+    except BaseException:
+        for fd in (prompts_fd, answers_fd, stage_fd):
+            if fd >= 0:
+                os.close(fd)
+        prompts_fd = answers_fd = stage_fd = -1
+        _cleanup_rollup_stage(batches_fd, stage_name, target_ids)
+        raise
+    finally:
+        for fd in (prompts_fd, answers_fd, stage_fd):
+            if fd >= 0:
+                os.close(fd)
+
+
+def _test_pause_after_rollup_stage(home_fd: int) -> None:
+    if os.environ.get("DASHBOARD_TESTING") != "1":
+        return
+    marker = ".rollup-answer-test-ready"
+    release = ".rollup-answer-test-continue"
+    fd = os.open(marker, os.O_CREAT | os.O_WRONLY | os.O_TRUNC, 0o600,
+                 dir_fd=home_fd)
+    os.close(fd)
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        try:
+            os.stat(release, dir_fd=home_fd, follow_symlinks=False)
+            return
+        except FileNotFoundError:
+            time.sleep(0.01)
+    raise RuntimeError("decide answer-rollup: test transaction release timed out")
+
+
 def _run_alert(decision_alert: str, home: str, *args: str) -> dict:
     env = dict(os.environ)
     env["MISSION_CONTROL_HOME"] = home
@@ -236,6 +513,9 @@ def answer_transaction(
 
         history = _run_alert(decision_alert, home, "history", decision_id, "--json")
         decision = history.get("decision") or {}
+        if decision.get("answer_pending") is not None:
+            raise RuntimeError(
+                "decide answer: answered-pending decision awaits owner consumption")
         evidence_ref = ((decision.get("resolution") or {}).get("evidence_ref"))
         evidence_type = ((decision.get("resolution") or {}).get("evidence_type"))
         if decision.get("state") == "open":
@@ -324,6 +604,169 @@ def answer_transaction(
                 os.close(fd)
 
 
+def answer_rollup_transaction(
+    home: str, decision_alert: str, card_id: str, primary_decision_id: str,
+    choice: int, resume_chat_id: str = "", resume_provider: str = "",
+    source: str = "",
+) -> dict:
+    """Stage, transactionally record, and atomically publish one rollup answer."""
+    if not re.fullmatch(r"card:[0-9a-f]{16}", card_id or ""):
+        raise ValueError("decide answer-rollup: invalid card id")
+    if not re.fullmatch(r"decision:[0-9a-f]{24}", primary_decision_id or ""):
+        raise ValueError("decide answer-rollup: invalid primary decision id")
+    if choice < 1:
+        raise ValueError("decide answer-rollup: choice must be >= 1")
+    metadata = []
+    for value, label in (
+        (source, "source"),
+        (resume_chat_id, "resume chat id"),
+        (resume_provider, "resume provider"),
+    ):
+        if not value:
+            metadata.append("")
+            continue
+        screened = sanitize_text(value, IDENTIFIER)
+        clean = screened.value.strip()
+        if (screened.dropped or not _ROLLUP_METADATA_RE.fullmatch(clean)):
+            raise ValueError(
+                "decide answer-rollup: invalid %s" % label)
+        metadata.append(clean)
+    source, resume_chat_id, resume_provider = metadata
+    home = os.path.abspath(os.path.expanduser(home))
+    parent = os.path.dirname(home)
+    if not os.path.isdir(parent):
+        raise RuntimeError("decide answer-rollup: state parent does not exist")
+
+    home_fd = batches_fd = lock_fd = -1
+    stage_name = None
+    target_ids: list[str] = []
+    try:
+        home_fd = _open_private_dir(None, home)
+        batches_fd = _open_private_dir(home_fd, "answer-batches")
+        os.fchmod(home_fd, 0o700)
+        os.fchmod(batches_fd, 0o700)
+        _validate_rollup_dirs(home, home_fd, batches_fd)
+
+        lock_hash = hashlib.sha256(
+            (card_id + "\0" + primary_decision_id).encode("utf-8")).hexdigest()[:32]
+        lock_name = ".rollup-%s.lock" % lock_hash
+        flags = os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0)
+        lock_fd = os.open(lock_name, flags, 0o600, dir_fd=batches_fd)
+        os.fchmod(lock_fd, 0o600)
+        if not stat.S_ISREG(os.fstat(lock_fd).st_mode):
+            raise RuntimeError("decide answer-rollup: lock must be a regular file")
+        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+        lock_path = os.stat(lock_name, dir_fd=batches_fd, follow_symlinks=False)
+        if not _same_inode(os.fstat(lock_fd), lock_path):
+            raise RuntimeError("decide answer-rollup: lock inode changed")
+
+        plan = _run_alert(
+            decision_alert, home, "plan-rollup-answer", card_id,
+            primary_decision_id, str(choice), "--json")
+        target_ids = list(plan.get("target_ids") or [])
+        if (not target_ids or primary_decision_id not in target_ids or
+                not re.fullmatch(r"scope:[0-9a-f]{40}", plan.get("scope_key") or "") or
+                not re.fullmatch(r"rollup-[0-9a-f]{40}", plan.get("batch_key") or "")):
+            raise RuntimeError("decide answer-rollup: invalid current plan")
+
+        primary_target = next(
+            (target for target in plan.get("targets") or []
+             if target.get("id") == primary_decision_id), None)
+        pending = ((primary_target or {}).get("answer_pending") or {})
+        if pending.get("valid") is True:
+            effective_source = str(pending.get("source") or "")
+            effective_resume_chat = str(pending.get("resume_chat_id") or "")
+            effective_resume_provider = str(pending.get("resume_provider") or "")
+        else:
+            effective_source = source
+            effective_resume_chat = resume_chat_id
+            effective_resume_provider = resume_provider
+
+        expected = {
+            "batch_key": plan["batch_key"],
+            "scope_key": plan["scope_key"],
+            "card_id": card_id,
+            "primary_decision_id": primary_decision_id,
+            "choice": choice,
+            "member_ids": plan["member_ids"],
+            "target_ids": target_ids,
+            "independent_ids": plan["independent_ids"],
+            "already_pending_ids": plan["already_pending_ids"],
+            "source": effective_source,
+            "resume_chat_id": effective_resume_chat,
+            "resume_provider": effective_resume_provider,
+        }
+        final_exists = _batch_destination_exists(batches_fd, plan["batch_key"])
+        if final_exists:
+            if pending.get("valid") is not True:
+                raise RuntimeError(
+                    "decide answer-rollup: published batch has no pending receipt")
+            manifest = _verify_rollup_batch(batches_fd, plan["batch_key"], expected)
+            artifact_name = plan["batch_key"]
+        else:
+            stage_name, manifest = _stage_rollup_batch(
+                home, batches_fd, plan, effective_source,
+                effective_resume_chat, effective_resume_provider)
+            artifact_name = stage_name
+        manifest_bytes = (json.dumps(manifest, sort_keys=True) + "\n").encode("utf-8")
+        manifest_sha256 = hashlib.sha256(manifest_bytes).hexdigest()
+        _test_pause_after_rollup_stage(home_fd)
+        _validate_rollup_dirs(home, home_fd, batches_fd)
+        if os.environ.get("DASHBOARD_TEST_ROLLUP_FAIL_BEFORE_COMMIT") == "1":
+            raise RuntimeError("decide answer-rollup: forced pre-commit failure")
+
+        record_args = [
+            "answer-rollup", card_id, primary_decision_id, str(choice),
+            "--expected-scope-key", plan["scope_key"],
+            "--artifact-batch-name", artifact_name,
+            "--artifact-manifest-sha256", manifest_sha256,
+        ]
+        if effective_source:
+            record_args += ["--source", effective_source]
+        if effective_resume_chat:
+            record_args += ["--resume-chat-id", effective_resume_chat]
+        if effective_resume_provider:
+            record_args += ["--resume-provider", effective_resume_provider]
+        record_args.append("--json")
+        decision_result = _run_alert(decision_alert, home, *record_args)
+
+        if os.environ.get("DASHBOARD_TEST_ROLLUP_FAIL_AFTER_COMMIT") == "1":
+            raise RuntimeError("decide answer-rollup: forced post-commit failure")
+        _validate_rollup_dirs(home, home_fd, batches_fd)
+        if stage_name:
+            if _batch_destination_exists(batches_fd, plan["batch_key"]):
+                _verify_rollup_batch(batches_fd, plan["batch_key"], expected)
+                _cleanup_rollup_stage(batches_fd, stage_name, target_ids)
+                stage_name = None
+            else:
+                os.rename(stage_name, plan["batch_key"],
+                          src_dir_fd=batches_fd, dst_dir_fd=batches_fd)
+                stage_name = None
+                os.fsync(batches_fd)
+        manifest = _verify_rollup_batch(batches_fd, plan["batch_key"], expected)
+        return {
+            "ok": True,
+            "card_id": card_id,
+            "primary_decision_id": primary_decision_id,
+            "choice": choice,
+            "scope_key": plan["scope_key"],
+            "batch_key": plan["batch_key"],
+            "batch_path": os.path.join(home, "answer-batches", plan["batch_key"]),
+            "target_ids": target_ids,
+            "independent_ids": plan["independent_ids"],
+            "already_pending_ids": plan["already_pending_ids"],
+            "changed": bool(decision_result.get("changed")),
+            "replayed": not bool(decision_result.get("changed")),
+            "manifest_sha256": manifest_sha256,
+        }
+    finally:
+        if batches_fd >= 0:
+            _cleanup_rollup_stage(batches_fd, stage_name, target_ids)
+        for fd in (lock_fd, batches_fd, home_fd):
+            if fd >= 0:
+                os.close(fd)
+
+
 def answer_transaction_main(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(description="Atomically answer one Mission Control decision")
     ap.add_argument("--home", required=True)
@@ -352,7 +795,33 @@ def answer_transaction_main(argv: list[str]) -> int:
     return 0
 
 
+def answer_rollup_transaction_main(argv: list[str]) -> int:
+    ap = argparse.ArgumentParser(
+        description="Atomically record one Mission Control rollup answer")
+    ap.add_argument("--home", required=True)
+    ap.add_argument("--decision-alert", required=True)
+    ap.add_argument("--card-id", required=True)
+    ap.add_argument("--primary-decision-id", required=True)
+    ap.add_argument("--choice", required=True, type=int)
+    ap.add_argument("--resume-chat-id", default="")
+    ap.add_argument("--resume-provider", default="")
+    ap.add_argument("--source", default="")
+    args = ap.parse_args(argv)
+    try:
+        result = answer_rollup_transaction(
+            args.home, args.decision_alert, args.card_id,
+            args.primary_decision_id, args.choice, args.resume_chat_id,
+            args.resume_provider, args.source)
+    except (OSError, ValueError, RuntimeError, json.JSONDecodeError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    print(json.dumps(result, sort_keys=True))
+    return 0
+
+
 def main() -> int:
+    if len(sys.argv) > 1 and sys.argv[1] == "--answer-rollup-transaction":
+        return answer_rollup_transaction_main(sys.argv[2:])
     if len(sys.argv) > 1 and sys.argv[1] == "--answer-transaction":
         return answer_transaction_main(sys.argv[2:])
     ap = argparse.ArgumentParser(description=__doc__)

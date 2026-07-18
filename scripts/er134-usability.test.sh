@@ -76,6 +76,12 @@ test -x "$PANEL_TEST_BIN" && pass "mc-panel binary built in isolated test state"
 grep -q 'disableAutomaticTermination' "$ROOT/scripts/mc-panel.swift" && pass "panel disables TAL" || fail "panel disables TAL"
 grep -q 'beginActivity' "$ROOT/scripts/mc-panel.swift" && pass "panel RunningBoard activity" || fail "panel RunningBoard activity"
 grep -q 'mcDecide' "$ROOT/dashboard/panel.html" && pass "panel one-click bridge" || fail "panel one-click bridge"
+if grep -q 'd\.answer_pending' "$ROOT/dashboard/panel.html" && \
+   grep -q 'Awaiting owner consumption' "$ROOT/dashboard/panel.html"; then
+  pass "panel renders answered-pending decisions read-only"
+else
+  fail "panel answered-pending read-only state"
+fi
 grep -q 'mcDecide' "$ROOT/scripts/mc-panel.swift" && pass "swift mcDecide handler" || fail "swift mcDecide handler"
 grep -q '\^decision:\[0-9a-f\].*24' "$ROOT/scripts/mc-panel.swift" && pass "swift exact decision id contract" || fail "swift exact decision id contract"
 grep -q 'terminationHandler' "$ROOT/scripts/mc-panel.swift" && pass "swift decision bridge is asynchronous" || fail "swift decision bridge async"

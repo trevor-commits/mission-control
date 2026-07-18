@@ -51,7 +51,7 @@ button.linkish, a.linkish {
 </style>
 </head>
 <body>
-<h1>Needs you</h1>
+<h1 id="title">Needs you</h1>
 <div id="health" class="health"></div>
 <div id="list" class="card"></div>
 <div class="row">
@@ -132,6 +132,9 @@ button.linkish, a.linkish {
     var pinned = ((dec.data || {}).pinned) || [];
     var list = document.getElementById("list");
     list.textContent = "";
+    var actionable = pinned.filter(function (d) { return d.answer_pending == null; }).length;
+    document.getElementById("title").textContent = actionable ? "Needs you" :
+      (pinned.length ? "Awaiting owner consumption" : "Needs you");
     if (!pinned.length) {
       list.appendChild(document.createTextNode("Nothing waiting on you right now."));
     } else {
@@ -147,7 +150,16 @@ button.linkish, a.linkish {
         q.className = "q";
         q.textContent = (i + 1) + ". " + parsed.q;
         item.appendChild(q);
-        if (parsed.opts.length) {
+        if (d.answer_pending != null) {
+          var pending = document.createElement("div");
+          pending.className = "meta";
+          var rawChoice = d.answer_pending && d.answer_pending.choice;
+          var choice = +rawChoice;
+          pending.textContent = isFinite(choice) && choice > 0 && Math.floor(choice) === choice ?
+            "Awaiting owner consumption · choice " + choice + " recorded" :
+            "Awaiting owner consumption · choice recorded";
+          item.appendChild(pending);
+        } else if (parsed.opts.length) {
           var row = document.createElement("div");
           row.className = "opts";
           parsed.opts.forEach(function (label, oi) {

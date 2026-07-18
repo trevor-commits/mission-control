@@ -1448,6 +1448,17 @@ body {
     p.body.appendChild(list);
     p.body.appendChild(h("a", { class: "mc-jump", href: "#brief" }, "Read the full brief →"));
   }
+  function isAnswerPending(decision) {
+    return !!(decision && decision.answer_pending != null);
+  }
+  function answerPendingText(decision) {
+    var raw = decision && decision.answer_pending && decision.answer_pending.choice;
+    var choice = +raw;
+    if (isFinite(choice) && choice > 0 && Math.floor(choice) === choice) {
+      return "Awaiting owner consumption · choice " + choice + " recorded";
+    }
+    return "Awaiting owner consumption · choice recorded";
+  }
   function renderPinnedDecisions(main, limit, opts) {
     var g = guard("decisions");
     if (!g.ok || !g.data) return 0;
@@ -1455,12 +1466,17 @@ body {
     if (!pinned.length) return 0;
     limit = limit == null ? 3 : limit;
     opts = opts || {};
+    var pendingCount = pinned.filter(isAnswerPending).length;
+    var actionableCount = pinned.length - pendingCount;
+    var heading = actionableCount ?
+      (opts.glance ? "Needs you" : "Decisions waiting for you") :
+      "Awaiting owner consumption";
     var section = h("section", { class: opts.glance ? "mc-glance-card" : "mc-attention" });
     section.appendChild(h("div", { class: "mc-section-head" },
-      h("h2", { text: opts.glance ? "Needs you" : "Decisions waiting for you" }), ageSpan(g.epoch)));
+      h("h2", { text: heading }), ageSpan(g.epoch)));
     if (!opts.glance) {
       appendPanelProvenance(section, "decisions", g,
-        pinned.length + " confirmed open decision(s)");
+        actionableCount + " awaiting answer; " + pendingCount + " answer(s) recorded");
     }
     var shown = pinned.slice(0, limit);
     shown.forEach(function (decision, idx) {
@@ -1474,7 +1490,10 @@ body {
         var item = h("div", { class: "mc-glance-item" });
         item.appendChild(h("div", { class: "mc-glance-q" },
           (idx + 1) + ". " + parsed.question));
-        if (parsed.options.length) {
+        if (isAnswerPending(decision)) {
+          item.appendChild(h("div", { class: "mc-row-meta" },
+            answerPendingText(decision)));
+        } else if (parsed.options.length) {
           var row = h("div", { class: "mc-glance-opts" });
           parsed.options.forEach(function (label, oi) {
             var n = oi + 1;
@@ -1506,23 +1525,28 @@ body {
             "Confirmed · " + (decision.provenance || decision.source_kind || "structured source")));
           if (id) item.appendChild(copyable("dashboard decide dismiss " + id, "Copy dismiss command"));
         }
-        var receipt = decision.alert_receipt;
-        var attempt = decision.alert_attempt;
-        if (receipt && receipt.succeeded_at) {
-          item.appendChild(h("div", { class: "mc-row-meta" }, "Alert receipt on file"));
-        } else if (attempt && attempt.state === "failed") {
-          item.appendChild(h("div", { class: "mc-row-meta" }, "Alert attempt failed — will retry"));
-        } else {
-          item.appendChild(h("div", { class: "mc-row-meta" }, "Alert pending"));
+        if (!isAnswerPending(decision)) {
+          var receipt = decision.alert_receipt;
+          var attempt = decision.alert_attempt;
+          if (receipt && receipt.succeeded_at) {
+            item.appendChild(h("div", { class: "mc-row-meta" }, "Alert receipt on file"));
+          } else if (attempt && attempt.state === "failed") {
+            item.appendChild(h("div", { class: "mc-row-meta" }, "Alert attempt failed — will retry"));
+          } else {
+            item.appendChild(h("div", { class: "mc-row-meta" }, "Alert pending"));
+          }
         }
         section.appendChild(item);
       } else {
-        var row2 = h("div", { class: "mc-row" }, glyphSpan("red"),
+        var pending = isAnswerPending(decision);
+        var row2 = h("div", { class: "mc-row" }, glyphSpan(pending ? "amber" : "red"),
           h("div", { class: "mc-row-body" },
-            h("div", { class: "mc-row-problem" }, decision.text || "Decision needs review"),
-            h("div", { class: "mc-row-meta" }, "Confirmed · " +
-              (decision.provenance || decision.source_kind || "structured source"))));
-        if (id) row2.appendChild(copyable("dashboard decide dismiss " + id, "Copy dismiss command"));
+            h("div", { class: "mc-row-problem" },
+              pending ? parsed.question : (decision.text || "Decision needs review")),
+            h("div", { class: "mc-row-meta" }, pending ? answerPendingText(decision) :
+              ("Confirmed · " +
+               (decision.provenance || decision.source_kind || "structured source")))));
+        if (id && !pending) row2.appendChild(copyable("dashboard decide dismiss " + id, "Copy dismiss command"));
         section.appendChild(row2);
       }
     });
@@ -1535,7 +1559,12 @@ body {
   function renderHome(main) {
     var home = combinedHomeState();
     var glance = h("div", { class: "mc-glance" });
-    glance.appendChild(h("h1", { class: "mc-glance-title" }, "Needs you"));
+    var decisionGuard = guard("decisions");
+    var homePinned = decisionGuard.ok && decisionGuard.data &&
+      Array.isArray(decisionGuard.data.pinned) ? decisionGuard.data.pinned : [];
+    var homeActionable = homePinned.filter(function (d) { return !isAnswerPending(d); }).length;
+    glance.appendChild(h("h1", { class: "mc-glance-title" },
+      homeActionable ? "Needs you" : (homePinned.length ? "Answers recorded" : "Needs you")));
     var count = renderPinnedDecisions(glance, 3, { glance: true });
     if (!count) {
       glance.appendChild(h("div", { class: "mc-glance-card mc-allgreen" },

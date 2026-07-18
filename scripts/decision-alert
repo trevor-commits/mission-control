@@ -17,6 +17,7 @@ import json
 import os
 import re
 import sqlite3
+import stat
 import subprocess
 import sys
 import time
@@ -55,6 +56,11 @@ RESOLUTION_TYPES = (
 )
 DECISION_STATES = ("open", "dismissed", "resolved")
 _ID_RE = re.compile(r"^decision:[0-9a-f]{24}$")
+_CARD_ID_RE = re.compile(r"^card:[0-9a-f]{16}$")
+_SCOPE_KEY_RE = re.compile(r"^scope:[0-9a-f]{40}$")
+_ARTIFACT_BATCH_RE = re.compile(
+    r"^(?:rollup-[0-9a-f]{40}|\.rollup-stage\.[0-9a-f]{24})$")
+_SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
 
 class DecisionError(Exception):
@@ -338,6 +344,40 @@ def _latest_attempt(con, decision_id, fingerprint):
     return dict(row) if row else None
 
 
+def _active_answer_pending(con, row):
+    """Return the current-fingerprint pending marker while the row is open.
+
+    `answered_pending` is an immutable event interpretation, not a new state
+    enum. A changed fingerprint therefore deactivates the old marker without
+    rewriting history. Malformed local event detail fails toward suppression:
+    callers see an invalid marker instead of treating the decision as safely
+    unanswered.
+    """
+    if row is None or row["state"] != "open":
+        return None
+    event = con.execute("""SELECT event_id,occurred_at,detail_json
+        FROM decision_events
+        WHERE decision_id=? AND event_type='answered_pending'
+          AND evidence_fingerprint=?
+        ORDER BY event_id DESC LIMIT 1""", (
+            row["decision_id"], row["evidence_fingerprint"],
+        )).fetchone()
+    if event is None:
+        return None
+    try:
+        detail = json.loads(event["detail_json"] or "null")
+    except (TypeError, ValueError):
+        detail = None
+    if not isinstance(detail, dict):
+        detail = {"valid": False}
+    else:
+        detail = dict(detail)
+        detail["valid"] = True
+    detail["event_id"] = event["event_id"]
+    detail["occurred_at"] = event["occurred_at"]
+    return detail
+
+
 def _presentation_from_text(text):
     """Derive one compatibility presentation packet at the domain boundary."""
     raw = str(text or "")
@@ -405,6 +445,7 @@ def _decision_dict(con, row):
         con, data["id"], data["evidence_fingerprint"])
     data["alert_attempt"] = _latest_attempt(
         con, data["id"], data["evidence_fingerprint"])
+    data["answer_pending"] = _active_answer_pending(con, row)
     # Consumers receive a structured packet and only need their prose parser for
     # old fixture/cache compatibility.
     data.update(_presentation_from_text(data.get("text")))
@@ -579,6 +620,9 @@ def dismiss(args):
         row = _get(con, args.decision_id)
         if row["state"] == "resolved":
             raise DecisionError("resolved decision cannot be dismissed")
+        if _active_answer_pending(con, row) is not None:
+            raise DecisionError(
+                "answered-pending decision awaits verified owner consumption")
         changed = row["state"] != "dismissed"
         if changed:
             con.execute("""UPDATE decisions SET state='dismissed',
@@ -619,6 +663,10 @@ def resolve(args):
     try:
         _tx(con)
         row = _get(con, args.decision_id)
+        pending = _active_answer_pending(con, row)
+        if pending is not None and evidence_type == "manual_resolution":
+            raise DecisionError(
+                "answered-pending decision requires verified owner consumption")
         if evidence_type != "manual_resolution":
             if not supplied_key or supplied_key != row["resolution_key"]:
                 raise DecisionError("resolution key does not exactly match decision")
@@ -764,6 +812,348 @@ def admission_backfill(_args):
         con.close()
 
 
+def _open_rollup_rows(con):
+    rows = con.execute("""SELECT decision_id, source_kind, source_key,
+        evidence_fingerprint, resolution_key, trust_state, provenance,
+        state, text, first_seen, last_seen FROM decisions
+        WHERE state='open' ORDER BY first_seen, decision_id""").fetchall()
+    enriched = []
+    for row in rows:
+        d = dict(row)
+        d.update(queue_admission.classify_row(d.get("text")))
+        d["answer_pending"] = _active_answer_pending(con, row)
+        enriched.append(d)
+    return enriched
+
+
+def _rollup_answer_plan(con, card_id, primary_decision_id, choice):
+    if not _CARD_ID_RE.match(str(card_id or "")):
+        raise DecisionError("invalid rollup card id")
+    if not _ID_RE.match(str(primary_decision_id or "")):
+        raise DecisionError("invalid primary decision id")
+    try:
+        choice = int(choice)
+    except (TypeError, ValueError):
+        raise DecisionError("rollup answer choice must be a positive integer")
+    if choice < 1:
+        raise DecisionError("rollup answer choice must be a positive integer")
+
+    enriched = _open_rollup_rows(con)
+    cards = queue_admission.rollup(enriched)
+    card = next((item for item in cards if item["card_id"] == card_id), None)
+    if card is None:
+        raise DecisionError("rollup card is not current and open")
+    by_id = {row["decision_id"]: row for row in enriched}
+    member_ids = [member["decision_id"] for member in card["members"]]
+    if primary_decision_id not in member_ids:
+        raise DecisionError("primary decision is not a current card member")
+    members = [by_id[decision_id] for decision_id in member_ids]
+    strict = queue_admission.plan_rollup_supersession(
+        members, primary_decision_id)
+    primary = by_id[primary_decision_id]
+    primary_pending = primary.get("answer_pending")
+    if primary_pending is not None:
+        prior_targets = primary_pending.get("target_ids")
+        if (primary_pending.get("valid") is not True or
+                not isinstance(prior_targets, list) or
+                primary_decision_id not in prior_targets or
+                any(target not in by_id for target in prior_targets)):
+            raise DecisionError("current answered-pending marker is invalid")
+        target_ids = list(prior_targets)
+        independent_ids = list(primary_pending.get("independent_ids") or [])
+        already_pending_ids = list(
+            primary_pending.get("already_pending_ids") or [])
+    else:
+        already_pending_ids = [
+            decision_id for decision_id in strict["supersede"]
+            if by_id[decision_id].get("answer_pending") is not None
+        ]
+        target_ids = [primary_decision_id] + [
+            decision_id for decision_id in strict["supersede"]
+            if decision_id not in already_pending_ids
+        ]
+        independent_ids = list(strict["independent"])
+
+    for decision_id in target_ids:
+        presentation = _presentation_from_text(by_id[decision_id]["text"])
+        options = presentation.get("options") or []
+        if options and choice > len(options):
+            raise DecisionError("rollup answer choice is out of range")
+
+    scope_packet = {
+        "schema": 1,
+        "card_id": card_id,
+        "primary_decision_id": primary_decision_id,
+        "members": [[decision_id, by_id[decision_id]["evidence_fingerprint"]]
+                    for decision_id in member_ids],
+        "target_ids": target_ids,
+        "independent_ids": independent_ids,
+        "already_pending_ids": already_pending_ids,
+    }
+    scope_key = "scope:%s" % _sha(_canonical(scope_packet))[:40]
+    batch_key = "rollup-%s" % _sha(_canonical(
+        ["rollup-answer-v1", scope_key, choice]))[:40]
+    targets = []
+    for decision_id in target_ids:
+        row = by_id[decision_id]
+        targets.append({
+            "id": decision_id,
+            "text": row["text"],
+            "evidence_fingerprint": row["evidence_fingerprint"],
+            "resolution_key": row["resolution_key"],
+            "answer_pending": row.get("answer_pending"),
+            "answer_artifact": "answer-batches/%s/answers/%s.json" % (
+                batch_key, decision_id),
+            "prompt_artifact": "answer-batches/%s/prompts/%s.md" % (
+                batch_key, decision_id),
+        })
+    return {
+        "ok": True,
+        "card_id": card_id,
+        "primary_decision_id": primary_decision_id,
+        "choice": choice,
+        "scope_key": scope_key,
+        "batch_key": batch_key,
+        "member_ids": member_ids,
+        "target_ids": target_ids,
+        "independent_ids": independent_ids,
+        "already_pending_ids": already_pending_ids,
+        "targets": targets,
+    }
+
+
+def plan_rollup_answer(args):
+    con = _connect()
+    try:
+        return _rollup_answer_plan(
+            con, args.card_id, args.primary_decision_id, args.choice)
+    finally:
+        con.close()
+
+
+def _open_artifact_dir(parent_fd, name, label):
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(
+        os, "O_NOFOLLOW", 0)
+    try:
+        fd = os.open(name, flags, dir_fd=parent_fd)
+    except OSError:
+        raise DecisionError("rollup artifact proof is missing or unsafe")
+    info = os.fstat(fd)
+    if not stat.S_ISDIR(info.st_mode) or stat.S_IMODE(info.st_mode) != 0o700:
+        os.close(fd)
+        raise DecisionError("rollup artifact proof has unsafe %s mode" % label)
+    return fd
+
+
+def _read_artifact_file(parent_fd, name, label):
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        fd = os.open(name, flags, dir_fd=parent_fd)
+    except OSError:
+        raise DecisionError("rollup artifact proof is missing %s" % label)
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode) or stat.S_IMODE(info.st_mode) != 0o600:
+            raise DecisionError("rollup artifact proof has unsafe %s mode" % label)
+        chunks = []
+        total = 0
+        while True:
+            chunk = os.read(fd, 65536)
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > 2 * 1024 * 1024:
+                raise DecisionError("rollup artifact proof has oversized %s" % label)
+            chunks.append(chunk)
+        return b"".join(chunks)
+    finally:
+        os.close(fd)
+
+
+def _verify_rollup_artifact_proof(
+        plan, batch_name, manifest_sha256, source, resume_chat_id,
+        resume_provider):
+    if not _ARTIFACT_BATCH_RE.match(str(batch_name or "")):
+        raise DecisionError("invalid rollup artifact batch name")
+    if not _SHA256_RE.match(str(manifest_sha256 or "")):
+        raise DecisionError("invalid rollup artifact manifest digest")
+    home = os.path.abspath(os.path.expanduser(os.environ.get(
+        "MISSION_CONTROL_HOME", "~/.mission-control")))
+    root_fd = batches_fd = batch_fd = answers_fd = prompts_fd = -1
+    try:
+        root_fd = _open_artifact_dir(None, home, "state")
+        batches_fd = _open_artifact_dir(root_fd, "answer-batches", "batch parent")
+        batch_fd = _open_artifact_dir(batches_fd, batch_name, "batch")
+        manifest_raw = _read_artifact_file(batch_fd, "manifest.json", "manifest")
+        if hashlib.sha256(manifest_raw).hexdigest() != manifest_sha256:
+            raise DecisionError("rollup artifact manifest digest mismatch")
+        try:
+            manifest = json.loads(manifest_raw)
+        except (TypeError, ValueError):
+            raise DecisionError("rollup artifact manifest is invalid")
+        expected = {
+            "batch_key": plan["batch_key"],
+            "scope_key": plan["scope_key"],
+            "card_id": plan["card_id"],
+            "primary_decision_id": plan["primary_decision_id"],
+            "choice": plan["choice"],
+            "member_ids": plan["member_ids"],
+            "target_ids": plan["target_ids"],
+            "independent_ids": plan["independent_ids"],
+            "already_pending_ids": plan["already_pending_ids"],
+            "source": source or "",
+            "resume_chat_id": resume_chat_id or "",
+            "resume_provider": resume_provider or "",
+        }
+        if not isinstance(manifest, dict) or any(
+                manifest.get(key) != value for key, value in expected.items()):
+            raise DecisionError("rollup artifact manifest does not match current scope")
+        artifacts = manifest.get("artifacts")
+        if not isinstance(artifacts, dict) or set(artifacts) != set(plan["target_ids"]):
+            raise DecisionError("rollup artifact manifest is incomplete")
+        answers_fd = _open_artifact_dir(batch_fd, "answers", "answers")
+        prompts_fd = _open_artifact_dir(batch_fd, "prompts", "prompts")
+        for decision_id in plan["target_ids"]:
+            item = artifacts.get(decision_id)
+            answer_name = decision_id + ".json"
+            prompt_name = decision_id + ".md"
+            if (not isinstance(item, dict) or
+                    item.get("answer") != "answers/" + answer_name or
+                    item.get("prompt") != "prompts/" + prompt_name or
+                    not _SHA256_RE.match(str(item.get("answer_sha256") or "")) or
+                    not _SHA256_RE.match(str(item.get("prompt_sha256") or ""))):
+                raise DecisionError("rollup artifact member receipt is invalid")
+            answer_raw = _read_artifact_file(answers_fd, answer_name, "answer")
+            prompt_raw = _read_artifact_file(prompts_fd, prompt_name, "prompt")
+            if (hashlib.sha256(answer_raw).hexdigest() != item["answer_sha256"] or
+                    hashlib.sha256(prompt_raw).hexdigest() != item["prompt_sha256"]):
+                raise DecisionError("rollup artifact member digest mismatch")
+            try:
+                answer = json.loads(answer_raw)
+            except (TypeError, ValueError):
+                raise DecisionError("rollup answer artifact is invalid")
+            answer_expected = {
+                "schema": 1,
+                "batch_key": plan["batch_key"],
+                "card_id": plan["card_id"],
+                "primary_decision_id": plan["primary_decision_id"],
+                "decision_id": decision_id,
+                "choice": plan["choice"],
+                "prompt_path": os.path.join(
+                    home, "answer-batches", plan["batch_key"],
+                    "prompts", prompt_name),
+            }
+            if not isinstance(answer, dict) or any(
+                    answer.get(key) != value
+                    for key, value in answer_expected.items()):
+                raise DecisionError("rollup answer artifact does not match current scope")
+    finally:
+        for fd in (prompts_fd, answers_fd, batch_fd, batches_fd, root_fd):
+            if fd >= 0:
+                os.close(fd)
+
+
+def answer_rollup(args):
+    now = _now()
+    counters = EgressCounters()
+    source = _sanitize_optional(getattr(args, "source", None), IDENTIFIER,
+                                "rollup answer source", counters)
+    resume_chat_id = _sanitize_optional(
+        getattr(args, "resume_chat_id", None), IDENTIFIER,
+        "rollup answer resume chat id", counters)
+    resume_provider = _sanitize_optional(
+        getattr(args, "resume_provider", None), IDENTIFIER,
+        "rollup answer resume provider", counters)
+    expected_scope = _sanitize_required(
+        args.expected_scope_key, IDENTIFIER, "expected scope key", counters)
+    if not _SCOPE_KEY_RE.match(expected_scope):
+        raise DecisionError("invalid expected rollup scope key")
+    con = _connect()
+    try:
+        _tx(con)
+        plan = _rollup_answer_plan(
+            con, args.card_id, args.primary_decision_id, args.choice)
+        if plan["scope_key"] != expected_scope:
+            raise DecisionError("rollup answer scope changed before commit")
+        _verify_rollup_artifact_proof(
+            plan, args.artifact_batch_name,
+            args.artifact_manifest_sha256, source, resume_chat_id,
+            resume_provider)
+        rows = [_get(con, decision_id) for decision_id in plan["target_ids"]]
+        pending = [_active_answer_pending(con, row) for row in rows]
+        if any(item is not None for item in pending):
+            if not all(item is not None for item in pending):
+                raise DecisionError("rollup answer has a partial pending target set")
+            expected = {
+                "scope_key": plan["scope_key"],
+                "batch_key": plan["batch_key"],
+                "card_id": plan["card_id"],
+                "primary_decision_id": plan["primary_decision_id"],
+                "choice": plan["choice"],
+                "target_ids": plan["target_ids"],
+                "independent_ids": plan["independent_ids"],
+                "already_pending_ids": plan["already_pending_ids"],
+            }
+            for item in pending:
+                if (item.get("valid") is not True or
+                        any(item.get(key) != value
+                            for key, value in expected.items())):
+                    raise DecisionError(
+                        "rollup answer conflicts with the current pending choice")
+            changed = False
+        else:
+            changed = True
+            common = {
+                "schema": 1,
+                "scope_key": plan["scope_key"],
+                "batch_key": plan["batch_key"],
+                "card_id": plan["card_id"],
+                "primary_decision_id": plan["primary_decision_id"],
+                "choice": plan["choice"],
+                "member_ids": plan["member_ids"],
+                "target_ids": plan["target_ids"],
+                "independent_ids": plan["independent_ids"],
+                "already_pending_ids": plan["already_pending_ids"],
+            }
+            if source:
+                common["source"] = source
+            if resume_chat_id:
+                common["resume_chat_id"] = resume_chat_id
+            if resume_provider:
+                common["resume_provider"] = resume_provider
+            target_by_id = {target["id"]: target for target in plan["targets"]}
+            for index, row in enumerate(rows):
+                target = target_by_id[row["decision_id"]]
+                detail = dict(common)
+                detail["answer_artifact"] = target["answer_artifact"]
+                detail["prompt_artifact"] = target["prompt_artifact"]
+                _event(con, row["decision_id"], "answered_pending",
+                       row["evidence_fingerprint"], now,
+                       evidence_type="operator_choice",
+                       evidence_ref=plan["batch_key"], detail=detail)
+                if (index == 0 and
+                        os.environ.get("DECISION_ALERT_TESTING") == "1" and
+                        os.environ.get(
+                            "DECISION_ALERT_TEST_FAIL_AFTER_PENDING_EVENT") == "1"):
+                    raise DecisionError("forced pending-event transaction failure")
+        con.commit()
+        decisions = [_decision_dict(con, _get(con, decision_id))
+                     for decision_id in plan["target_ids"]]
+        result = dict(plan)
+        result.update({
+            "changed": changed,
+            "replayed": not changed,
+            "decisions": decisions,
+            "egress_counters": counters.snapshot(),
+        })
+        return result
+    except Exception:
+        con.rollback()
+        raise
+    finally:
+        con.close()
+
+
 def rollup_cards(_args):
     """Phase 0 item 0.3(b): read-only rollup view over open decisions.
 
@@ -775,14 +1165,7 @@ def rollup_cards(_args):
     """
     con = _connect()
     try:
-        rows = con.execute("""SELECT decision_id, source_kind, source_key,
-            state, text, first_seen, last_seen FROM decisions
-            WHERE state='open'""").fetchall()
-        enriched = []
-        for row in rows:
-            d = dict(row)
-            d.update(queue_admission.classify_row(d.get("text")))
-            enriched.append(d)
+        enriched = _open_rollup_rows(con)
         cards = queue_admission.rollup(enriched)
         admission_counts = {}
         for d in enriched:
@@ -827,6 +1210,8 @@ def status(_args):
             counts[state] = sum(d["state"] == state for d in decisions)
         counts["structured_open"] = len(pinned)
         counts["inferred"] = len(inferred)
+        counts["answered_pending"] = sum(
+            d.get("answer_pending") is not None for d in pinned)
         data = {
             "counts": counts,
             "pinned": pinned,
@@ -1119,6 +1504,12 @@ def _alert_eligible(con, now, fresh_within_s=None, newest_first=False):
     for row in rows:
         if fresh_cutoff is not None and int(row["first_seen"]) < fresh_cutoff:
             continue
+        if _active_answer_pending(con, row) is not None:
+            suppressed.append({
+                "id": row["decision_id"],
+                "reason": "answered_pending_consumption",
+            })
+            continue
         if _recently_sent_or_reserved(con, row, now):
             continue
         verdict = _group_alert_verdict(con, row, now)
@@ -1163,6 +1554,12 @@ def _alert_eligible_by_ids(con, decision_ids, now):
         if row["state"] != "open" or row["trust_state"] != "structured":
             skipped.append({"id": decision_id, "reason": "not_open_structured"})
             continue
+        if _active_answer_pending(con, row) is not None:
+            skipped.append({
+                "id": decision_id,
+                "reason": "answered_pending_consumption",
+            })
+            continue
         if _recently_sent_or_reserved(con, row, now):
             skipped.append({"id": decision_id, "reason": "already_sent_or_reserved"})
             continue
@@ -1185,6 +1582,8 @@ def _reserve_alert(decision_id, now):
         _tx(con)
         row = _get(con, decision_id)
         if row["state"] != "open" or row["trust_state"] != "structured":
+            con.commit(); return None, None
+        if _active_answer_pending(con, row) is not None:
             con.commit(); return None, None
         success_cutoff = now - ALERT_WINDOW_S
         lease_cutoff = now - ALERT_RESERVATION_LEASE_S
@@ -1535,6 +1934,21 @@ def _parser():
     sub.add_parser("status")
     sub.add_parser("sync-snapshot")
     sub.add_parser("rollup")
+    p = sub.add_parser("plan-rollup-answer")
+    p.add_argument("card_id")
+    p.add_argument("primary_decision_id")
+    p.add_argument("choice", type=int)
+
+    p = sub.add_parser("answer-rollup")
+    p.add_argument("card_id")
+    p.add_argument("primary_decision_id")
+    p.add_argument("choice", type=int)
+    p.add_argument("--expected-scope-key", required=True)
+    p.add_argument("--artifact-batch-name", required=True)
+    p.add_argument("--artifact-manifest-sha256", required=True)
+    p.add_argument("--source")
+    p.add_argument("--resume-chat-id")
+    p.add_argument("--resume-provider")
     sub.add_parser("lanes")
     sub.add_parser("admission-backfill")
 
@@ -1582,6 +1996,8 @@ def main(argv=None):
             "sync-snapshot": sync_snapshot, "alert": alert,
             "alert-backfill": alert_backfill,
             "rollup": rollup_cards, "lanes": lanes,
+            "plan-rollup-answer": plan_rollup_answer,
+            "answer-rollup": answer_rollup,
             "admission-backfill": admission_backfill,
         }
         result = handlers[args.command](args)

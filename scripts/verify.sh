@@ -49,6 +49,7 @@ run "automation status" /bin/bash scripts/automation-status.test.sh
 run "chat graph" /bin/bash scripts/chat-graph.test.sh
 run "dashboard" env REPO_ROOT="$ROOT" /bin/bash scripts/dashboard.test.sh --require-shell
 run "decision alert" /bin/bash scripts/decision-alert.test.sh
+run "rollup answer" python3 scripts/rollup-answer.test.py
 run "ER-134 usability" /bin/bash scripts/er134-usability.test.sh
 run "loose-end runner" /bin/bash scripts/loose-end-runner.test.sh
 run "shared Mission Control policy" /bin/bash scripts/mission-control-common.test.sh

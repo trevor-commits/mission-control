@@ -31,28 +31,28 @@ max_iterations: 2
 verify: openspec validate rollup-answer --strict
 gate: auto
 
-- [ ] **Step 4: Write red queue and batch contracts**
+- [x] **Step 4: Write red queue and batch contracts**
 action: Add hermetic tests for targeting, pending derivation, suppression, exact consumption, changed evidence, atomic events, replay conflicts, recoverable publication, permissions, and path races; save the expected pre-implementation failures.
 loop: false
 max_iterations: 1
 verify: test -s records/evidence/rollup-answer-red.txt
 gate: auto
 
-- [ ] **Step 5: Implement queue semantics**
+- [x] **Step 5: Implement queue semantics**
 action: Add active-pending interpretation, read-only current planning, one-transaction event recording, alert/dismiss/single-answer suppression, and exact graph-verified consumption.
 loop: until focused queue tests pass
 max_iterations: 2
 verify: /bin/bash scripts/decision-alert.test.sh && python3 scripts/queue_admission.test.py
 gate: auto
 
-- [ ] **Step 6: Implement recoverable private batches**
+- [x] **Step 6: Implement recoverable private batches**
 action: Add fd-pinned staging, deterministic scope/batch identity, mode-600 member artifacts, atomic directory publication, post-commit exact recovery, and conflicting-choice refusal.
 loop: until rollup-answer batch tests pass
 max_iterations: 2
 verify: python3 scripts/rollup-answer.test.py
 gate: auto
 
-- [ ] **Step 7: Wire CLI and truthful local presentation**
+- [x] **Step 7: Wire CLI and truthful local presentation**
 action: Add `dashboard decide answer-rollup`, preserve independent-member output, skip pending in Morning Brief NEEDS YOU, and render pending without action buttons in Home and the menu-bar panel.
 loop: until CLI, dashboard, usability, render, and Bash 3.2 checks pass
 max_iterations: 2

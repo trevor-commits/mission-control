@@ -108,6 +108,18 @@ if (!feeds.brief || feeds.brief.cadence_s !== 300) {
 if (feeds.chats && feeds.chats.data && feeds.chats.data.counts) {
   feeds.chats.data.counts.ingest_skipped = true;
 }
+// answered_pending is durable receipt state, not a second request for input.
+// Keep one synthetic pending member at the front so both Home render passes
+// exercise it within their display limits without changing committed fixtures.
+feeds.decisions.data.pinned.unshift({
+  id: 'decision:' + '9'.repeat(24),
+  text: '**DECISION NEEDED:** Pending rollup choice. **`PENDING-UNIQUE-A`**. **`PENDING-UNIQUE-B`**.',
+  question: 'Pending rollup choice.',
+  options: ['PENDING-UNIQUE-A', 'PENDING-UNIQUE-B'],
+  trust: 'structured',
+  provenance: 'chat-graph tier1',
+  answer_pending: { choice: 2, batch_key: 'b'.repeat(64) }
+});
 // Defect (b) JS-guard coverage: a daily brief older than 2x its cadence but still
 // inside a LEGIT (within-horizon) valid_until window must NOT show the stale
 // banner — the guard honors product validity over the poll cadence. Composed at
@@ -266,6 +278,12 @@ for (const tab of TABS) {
     if (txt.indexOf('Decisions waiting for you') === -1 ||
         txt.indexOf('Copy dismiss command') === -1) {
       console.error('FAIL: #home expanded depth is missing the pinned transactional decision queue');
+      fails++; continue;
+    }
+    if (txt.indexOf('Awaiting owner consumption · choice 2 recorded') === -1 ||
+        txt.indexOf('PENDING-UNIQUE-A') !== -1 ||
+        txt.indexOf('PENDING-UNIQUE-B') !== -1) {
+      console.error('FAIL: #home answered-pending decision is not rendered read-only');
       fails++; continue;
     }
     if ((documentElementShim.getAttribute('data-theme') || 'light') !== 'light') {
