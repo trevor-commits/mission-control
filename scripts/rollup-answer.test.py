@@ -41,6 +41,7 @@ class RollupAnswerTests(unittest.TestCase):
             "REPO_ROOT": str(ROOT),
             "DASHBOARD_NO_OPEN": "1",
             "DECISION_ALERT_NOW_EPOCH": "1784368800",
+            "MISSION_CONTROL_NOW_EPOCH": "1784368800",
             "PYTHONDONTWRITEBYTECODE": "1",
         })
 
@@ -163,6 +164,8 @@ class RollupAnswerTests(unittest.TestCase):
             self.assertEqual(pending["choice"], 1)
             self.assertEqual(pending["source"], "test-suite")
             self.assertEqual(pending["card_id"], card_id)
+            self.assertEqual(
+                pending["artifact_manifest_sha256"], result["manifest_sha256"])
             self.assertEqual(len(self._pending_events(decision_id)), 1)
             answer = batch / "answers" / (decision_id + ".json")
             prompt = batch / "prompts" / (decision_id + ".md")
@@ -307,7 +310,7 @@ class RollupAnswerTests(unittest.TestCase):
         for decision_id in (ids["primary"], ids["equivalent"]):
             self.assertEqual(self._pending_events(decision_id), [])
 
-    def test_tampered_or_orphaned_published_batch_fails_closed(self) -> None:
+    def test_tampered_published_batch_is_quarantined_and_rebuilt_on_replay(self) -> None:
         fixture = self._three_member_card()
         ids = fixture["ids"]
         card_id = fixture["card"]["card_id"]
@@ -318,12 +321,17 @@ class RollupAnswerTests(unittest.TestCase):
         prompt.write_text(prompt.read_text() + "tampered\n")
         prompt.chmod(0o600)
 
-        self._dashboard(
-            "decide", "answer-rollup", card_id, ids["primary"], "1",
-            ok=False)
+        replay = self._dashboard(
+            "decide", "answer-rollup", card_id, ids["primary"], "1")
+        self.assertTrue(replay["replayed"])
+        self.assertTrue(Path(replay["batch_path"]).is_dir())
+        self.assertNotIn("tampered", prompt.read_text())
+        self.assertTrue(any(batch.parent.glob(".rollup-quarantine.*")))
         for decision_id in (ids["primary"], ids["equivalent"]):
             self.assertEqual(len(self._pending_events(decision_id)), 1)
 
+        # A published batch without a matching immutable pending receipt remains
+        # an orphan and must never be adopted as current operator intent.
         con = sqlite3.connect(self.home / "decisions" / "decisions.db")
         con.execute("DELETE FROM decision_events WHERE event_type='answered_pending'")
         con.commit()
@@ -366,14 +374,21 @@ class RollupAnswerTests(unittest.TestCase):
             "decide", "answer-rollup", card_id, ids["primary"], "1",
             ok=False,
             extra_env={"DASHBOARD_TEST_ROLLUP_FAIL_AFTER_COMMIT": "1"})
+        pending_digest = self._history(
+            ids["primary"])["decision"]["answer_pending"][
+                "artifact_manifest_sha256"]
         for decision_id in (ids["primary"], ids["equivalent"]):
             self.assertEqual(len(self._pending_events(decision_id)), 1)
         self.assertFalse((batch_parent / plan["batch_key"]).exists())
         self.assertFalse(any(batch_parent.glob(".rollup-stage.*")))
 
+        # Reproduction after a different wall-clock second proves the staged
+        # bytes and persisted digest are deterministic, not timestamp-derived.
+        time.sleep(1.1)
         recovered = self._dashboard(
             "decide", "answer-rollup", card_id, ids["primary"], "1")
         self.assertTrue(recovered["replayed"])
+        self.assertEqual(recovered["manifest_sha256"], pending_digest)
         self.assertTrue(Path(recovered["batch_path"]).is_dir())
         for decision_id in (ids["primary"], ids["equivalent"]):
             self.assertEqual(len(self._pending_events(decision_id)), 1)
@@ -423,6 +438,156 @@ class RollupAnswerTests(unittest.TestCase):
             self.assertEqual(self._pending_events(decision_id), [])
         self.assertFalse(any(old_parent.glob(".rollup-stage.*")))
         self.assertFalse(any(batch_parent.iterdir()))
+
+    def test_postcommit_stage_mutation_is_quarantined_then_exactly_replayed(self) -> None:
+        fixture = self._three_member_card()
+        ids = fixture["ids"]
+        card_id = fixture["card"]["card_id"]
+        env = dict(self.env)
+        env.update({
+            "DASHBOARD_TESTING": "1",
+            "DASHBOARD_TEST_ROLLUP_PAUSE_AFTER_COMMIT": "1",
+        })
+        proc = subprocess.Popen(
+            ["/bin/bash", str(DASHBOARD), "decide", "answer-rollup",
+             card_id, ids["primary"], "1"],
+            env=env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        ready = self.home / ".rollup-answer-postcommit-test-ready"
+        deadline = time.monotonic() + 5
+        while not ready.exists() and time.monotonic() < deadline:
+            if proc.poll() is not None:
+                break
+            time.sleep(0.01)
+        if not ready.exists():
+            stdout, stderr = proc.communicate(timeout=2)
+            self.fail("rollup transaction did not reach postcommit pause: %s %s" % (
+                stdout, stderr))
+        stage = next((self.home / "answer-batches").glob(".rollup-stage.*"))
+        prompt = stage / "prompts" / (ids["primary"] + ".md")
+        prompt.write_text(prompt.read_text() + "mutated-after-commit\n")
+        prompt.chmod(0o600)
+        (self.home / ".rollup-answer-postcommit-test-continue").touch(mode=0o600)
+        stdout, stderr = proc.communicate(timeout=10)
+        self.assertNotEqual(proc.returncode, 0, (stdout, stderr))
+        for decision_id in (ids["primary"], ids["equivalent"]):
+            self.assertEqual(len(self._pending_events(decision_id)), 1)
+        parent = self.home / "answer-batches"
+        self.assertFalse((parent / self._alert(
+            "plan-rollup-answer", card_id, ids["primary"], "1")["batch_key"]).exists())
+        self.assertTrue(any(parent.glob(".rollup-quarantine.*")))
+
+        recovered = self._dashboard(
+            "decide", "answer-rollup", card_id, ids["primary"], "1")
+        self.assertTrue(recovered["replayed"])
+        self.assertTrue(Path(recovered["batch_path"]).is_dir())
+        for decision_id in (ids["primary"], ids["equivalent"]):
+            self.assertEqual(len(self._pending_events(decision_id)), 1)
+
+    def test_postcommit_parent_swap_fails_then_replays_into_current_parent(self) -> None:
+        fixture = self._three_member_card()
+        ids = fixture["ids"]
+        card_id = fixture["card"]["card_id"]
+        env = dict(self.env)
+        env.update({
+            "DASHBOARD_TESTING": "1",
+            "DASHBOARD_TEST_ROLLUP_PAUSE_AFTER_COMMIT": "1",
+        })
+        proc = subprocess.Popen(
+            ["/bin/bash", str(DASHBOARD), "decide", "answer-rollup",
+             card_id, ids["primary"], "1"],
+            env=env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        ready = self.home / ".rollup-answer-postcommit-test-ready"
+        deadline = time.monotonic() + 5
+        while not ready.exists() and time.monotonic() < deadline:
+            if proc.poll() is not None:
+                break
+            time.sleep(0.01)
+        if not ready.exists():
+            stdout, stderr = proc.communicate(timeout=2)
+            self.fail("rollup transaction did not reach postcommit pause: %s %s" % (
+                stdout, stderr))
+        parent = self.home / "answer-batches"
+        old_parent = self.home / "answer-batches-old-postcommit"
+        parent.rename(old_parent)
+        parent.mkdir(mode=0o700)
+        (self.home / ".rollup-answer-postcommit-test-continue").touch(mode=0o600)
+        stdout, stderr = proc.communicate(timeout=10)
+        self.assertNotEqual(proc.returncode, 0, (stdout, stderr))
+        for decision_id in (ids["primary"], ids["equivalent"]):
+            self.assertEqual(len(self._pending_events(decision_id)), 1)
+
+        recovered = self._dashboard(
+            "decide", "answer-rollup", card_id, ids["primary"], "1")
+        self.assertTrue(recovered["replayed"])
+        self.assertTrue(Path(recovered["batch_path"]).is_dir())
+        self.assertTrue(str(Path(recovered["batch_path"])).startswith(str(parent)))
+        self.assertTrue(any(old_parent.glob(".rollup-quarantine.*")))
+
+    def test_public_answer_refreshes_feed_without_provider_send(self) -> None:
+        fixture = self._three_member_card()
+        ids = fixture["ids"]
+        card_id = fixture["card"]["card_id"]
+        marker = self.temp / "provider-send-invoked"
+        sender = self.temp / "fake-sender"
+        sender.write_text("#!/bin/sh\ntouch \"$DECISION_TEST_SEND_MARKER\"\nexit 0\n")
+        sender.chmod(0o700)
+        no_send_env = {
+            "DECISION_ALERT_AUTO": "0",
+            "DECISION_ALERT_SEND_BIN": str(sender),
+            "DECISION_TEST_SEND_MARKER": str(marker),
+        }
+        self._proc(
+            ["/bin/bash", str(DASHBOARD), "refresh", "decisions"],
+            extra_env=no_send_env)
+        before = json.loads((self.home / "data" / "decisions.json").read_text())
+        before_by_id = {row["id"]: row for row in before["data"]["pinned"]}
+        self.assertIsNone(before_by_id[ids["primary"]]["answer_pending"])
+
+        self._dashboard(
+            "decide", "answer-rollup", card_id, ids["primary"], "1",
+            extra_env=no_send_env)
+        after = json.loads((self.home / "data" / "decisions.json").read_text())
+        after_by_id = {row["id"]: row for row in after["data"]["pinned"]}
+        self.assertIsNotNone(after_by_id[ids["primary"]]["answer_pending"])
+        self.assertIsNotNone(after_by_id[ids["equivalent"]]["answer_pending"])
+        self.assertFalse(marker.exists())
+
+        # Morning Brief consumes the refreshed public feed and therefore omits
+        # the answered-pending request from the actionable NEEDS YOU section.
+        data_dir = self.home / "data"
+        for name, cadence in (("automation", 300), ("git", 900), ("chats", 1800)):
+            (data_dir / (name + ".json")).write_text(json.dumps({
+                "schema": 1,
+                "feed": name,
+                "generated_epoch": 1784368800,
+                "cadence_s": cadence,
+                "ok": True,
+                "error": None,
+                "data": {"test_fixture": True},
+            }))
+        brief = self._proc(
+            [str(ROOT / "scripts" / "morning-brief"), "--print"],
+            extra_env={**no_send_env, "MORNING_BRIEF_NOW_EPOCH": "1784368800"})
+        self.assertNotIn(ids["primary"], brief.stdout)
+        self.assertNotIn(ids["equivalent"], brief.stdout)
+        self.assertIn(ids["independent"], brief.stdout)
+        self.assertFalse(marker.exists())
+
+    def test_public_answer_reports_committed_feed_refresh_failure(self) -> None:
+        fixture = self._three_member_card()
+        ids = fixture["ids"]
+        card_id = fixture["card"]["card_id"]
+        failed = self._dashboard(
+            "decide", "answer-rollup", card_id, ids["primary"], "1",
+            ok=False, extra_env={
+                "DECISION_ALERT_AUTO": "0",
+                "DASHBOARD_CMD_DECISIONS": "/usr/bin/false",
+            })
+        payload = json.loads(failed["stdout"])
+        self.assertTrue(payload["ok"])
+        self.assertIn("committed", failed["stderr"])
+        self.assertIsNotNone(
+            self._history(ids["primary"])["decision"]["answer_pending"])
 
 
 if __name__ == "__main__":

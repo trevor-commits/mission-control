@@ -1529,10 +1529,17 @@ case "$cmd" in
         [ -n "$answer_source" ] && compose_argv+=(--source "$answer_source")
         [ -n "$answer_resume_chat" ] && compose_argv+=(--resume-chat-id "$answer_resume_chat")
         [ -n "$answer_resume_provider" ] && compose_argv+=(--resume-provider "$answer_resume_provider")
-        python3 "$compose_bin" "${compose_argv[@]}" || exit $?
-        # Refresh feed for UI; do not fail the answer if collectors are unavailable.
-        "$SCRIPT_DIR/decision-alert" sync-snapshot --json >/dev/null 2>&1 || \
-          engine collect --force decisions >/dev/null 2>&1 || true
+        answer_result="$(python3 "$compose_bin" "${compose_argv[@]}")" || exit $?
+        # A public answer is not fully reported while Home and Morning Brief can
+        # still read the stale actionable feed. Refresh strictly with alert egress
+        # disabled; the committed JSON remains available for exact replay.
+        if ! (export DECISION_ALERT_AUTO=0
+              engine collect --force --strict decisions >/dev/null); then
+          printf '%s\n' "$answer_result"
+          echo "decide answer: committed but decisions feed refresh failed; exact replay is safe" >&2
+          exit 1
+        fi
+        printf '%s\n' "$answer_result"
         ;;
       answer-rollup)
         [ $# -ge 4 ] || { usage; exit 2; }
@@ -1569,10 +1576,17 @@ case "$cmd" in
         [ -n "$answer_source" ] && compose_argv+=(--source "$answer_source")
         [ -n "$answer_resume_chat" ] && compose_argv+=(--resume-chat-id "$answer_resume_chat")
         [ -n "$answer_resume_provider" ] && compose_argv+=(--resume-provider "$answer_resume_provider")
-        python3 "$compose_bin" "${compose_argv[@]}" || exit $?
-        # Refresh the local decision snapshot only; no provider send occurs.
-        "$SCRIPT_DIR/decision-alert" sync-snapshot --json >/dev/null 2>&1 || \
-          engine collect --force decisions >/dev/null 2>&1 || true
+        answer_result="$(python3 "$compose_bin" "${compose_argv[@]}")" || exit $?
+        # Bind public success to the current decisions feed. DECISION_ALERT_AUTO=0
+        # makes this a local collector only; a failed refresh is loud while the
+        # persisted digest keeps exact replay safe and idempotent.
+        if ! (export DECISION_ALERT_AUTO=0
+              engine collect --force --strict decisions >/dev/null); then
+          printf '%s\n' "$answer_result"
+          echo "decide answer-rollup: committed but decisions feed refresh failed; exact replay is safe" >&2
+          exit 1
+        fi
+        printf '%s\n' "$answer_result"
         ;;
       alert-backfill)
         shift

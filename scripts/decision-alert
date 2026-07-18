@@ -854,15 +854,32 @@ def _rollup_answer_plan(con, card_id, primary_decision_id, choice):
     primary_pending = primary.get("answer_pending")
     if primary_pending is not None:
         prior_targets = primary_pending.get("target_ids")
+        prior_independent = primary_pending.get("independent_ids")
+        prior_already_pending = primary_pending.get("already_pending_ids")
+        prior_lists = (prior_targets, prior_independent, prior_already_pending)
+        prior_lists_valid = (
+            all(isinstance(items, list) for items in prior_lists) and
+            all(isinstance(item, str)
+                for items in prior_lists for item in items))
         if (primary_pending.get("valid") is not True or
-                not isinstance(prior_targets, list) or
-                primary_decision_id not in prior_targets or
-                any(target not in by_id for target in prior_targets)):
+                not prior_lists_valid or
+                primary_pending.get("member_ids") != member_ids or
+                primary_decision_id not in (prior_targets or []) or
+                len(set(prior_targets or [])) != len(prior_targets or []) or
+                len(set(prior_independent or [])) != len(prior_independent or []) or
+                len(set(prior_already_pending or [])) != len(prior_already_pending or []) or
+                any(target not in by_id for target in (
+                    (prior_targets or []) + (prior_independent or []) +
+                    (prior_already_pending or []))) or
+                (set(prior_targets or []) & set(prior_independent or [])) or
+                (set(prior_targets or []) & set(prior_already_pending or [])) or
+                (set(prior_independent or []) & set(prior_already_pending or [])) or
+                not _SHA256_RE.match(str(
+                    primary_pending.get("artifact_manifest_sha256") or ""))):
             raise DecisionError("current answered-pending marker is invalid")
         target_ids = list(prior_targets)
-        independent_ids = list(primary_pending.get("independent_ids") or [])
-        already_pending_ids = list(
-            primary_pending.get("already_pending_ids") or [])
+        independent_ids = list(prior_independent)
+        already_pending_ids = list(prior_already_pending)
     else:
         already_pending_ids = [
             decision_id for decision_id in strict["supersede"]
@@ -1084,17 +1101,27 @@ def answer_rollup(args):
         if any(item is not None for item in pending):
             if not all(item is not None for item in pending):
                 raise DecisionError("rollup answer has a partial pending target set")
-            expected = {
+            expected_common = {
                 "scope_key": plan["scope_key"],
                 "batch_key": plan["batch_key"],
                 "card_id": plan["card_id"],
                 "primary_decision_id": plan["primary_decision_id"],
                 "choice": plan["choice"],
+                "member_ids": plan["member_ids"],
                 "target_ids": plan["target_ids"],
                 "independent_ids": plan["independent_ids"],
                 "already_pending_ids": plan["already_pending_ids"],
+                "source": source or "",
+                "resume_chat_id": resume_chat_id or "",
+                "resume_provider": resume_provider or "",
+                "artifact_manifest_sha256": args.artifact_manifest_sha256,
             }
-            for item in pending:
+            target_by_id = {target["id"]: target for target in plan["targets"]}
+            for row, item in zip(rows, pending):
+                target = target_by_id[row["decision_id"]]
+                expected = dict(expected_common)
+                expected["answer_artifact"] = target["answer_artifact"]
+                expected["prompt_artifact"] = target["prompt_artifact"]
                 if (item.get("valid") is not True or
                         any(item.get(key) != value
                             for key, value in expected.items())):
@@ -1114,13 +1141,11 @@ def answer_rollup(args):
                 "target_ids": plan["target_ids"],
                 "independent_ids": plan["independent_ids"],
                 "already_pending_ids": plan["already_pending_ids"],
+                "source": source or "",
+                "resume_chat_id": resume_chat_id or "",
+                "resume_provider": resume_provider or "",
+                "artifact_manifest_sha256": args.artifact_manifest_sha256,
             }
-            if source:
-                common["source"] = source
-            if resume_chat_id:
-                common["resume_chat_id"] = resume_chat_id
-            if resume_provider:
-                common["resume_provider"] = resume_provider
             target_by_id = {target["id"]: target for target in plan["targets"]}
             for index, row in enumerate(rows):
                 target = target_by_id[row["decision_id"]]

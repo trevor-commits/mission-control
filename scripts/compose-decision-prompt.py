@@ -65,6 +65,7 @@ def build_prompt(
     text: str = "",
     resume_chat_id: str = "",
     resume_provider: str = "",
+    include_generated_at: bool = True,
 ) -> tuple[str, str]:
     """Return the prompt bytes and chosen label without performing I/O."""
     if choice < 1:
@@ -94,9 +95,13 @@ def build_prompt(
         "4. Close with evidence: what changed, what was verified, what remains.",
         "",
         "Stop conditions: irreversible/destructive/outward publish still require an explicit gate.",
-        "",
-        "Generated at: %s" % datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
     ]
+    if include_generated_at:
+        lines.extend((
+            "",
+            "Generated at: %s" % datetime.now(timezone.utc).strftime(
+                "%Y-%m-%dT%H:%M:%SZ"),
+        ))
     if resume_chat_id:
         lines.append("Resume chat: `%s`" % resume_chat_id)
     if resume_provider:
@@ -254,42 +259,83 @@ def _read_private_file(dir_fd: int, name: str, label: str) -> bytes:
         os.close(fd)
 
 
+def _validate_named_dir(parent_fd: int, name: str, held_fd: int,
+                        label: str) -> None:
+    """Prove a name still resolves to the exact pinned private directory."""
+    try:
+        current = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+    except OSError as exc:
+        raise RuntimeError(
+            "decide answer-rollup: %s path changed during transaction" % label
+        ) from exc
+    held = os.fstat(held_fd)
+    if (not stat.S_ISDIR(held.st_mode) or not stat.S_ISDIR(current.st_mode) or
+            stat.S_IMODE(held.st_mode) != 0o700 or
+            stat.S_IMODE(current.st_mode) != 0o700 or
+            not _same_inode(held, current)):
+        raise RuntimeError(
+            "decide answer-rollup: %s path changed during transaction" % label)
+
+
 def _cleanup_rollup_stage(batches_fd: int, stage_name: str | None,
-                          target_ids: list[str]) -> None:
-    if not stage_name:
-        return
+                          stage_fd: int, target_ids: list[str]) -> bool:
+    """Delete only a pre-commit stage whose name still binds to its pinned fd."""
+    if not stage_name or stage_fd < 0:
+        return False
     try:
-        stage_fd = _open_existing_private_dir(batches_fd, stage_name, "stage")
+        _validate_named_dir(batches_fd, stage_name, stage_fd, "stage")
     except RuntimeError:
-        return
-    try:
-        for child, suffix in (("answers", ".json"), ("prompts", ".md")):
-            try:
-                child_fd = _open_existing_private_dir(stage_fd, child, child)
-            except RuntimeError:
-                continue
-            try:
-                for decision_id in target_ids:
-                    try:
-                        os.unlink(decision_id + suffix, dir_fd=child_fd)
-                    except FileNotFoundError:
-                        pass
-            finally:
-                os.close(child_fd)
-            try:
-                os.rmdir(child, dir_fd=stage_fd)
-            except OSError:
-                pass
+        return False
+    for child, suffix in (("answers", ".json"), ("prompts", ".md")):
         try:
-            os.unlink("manifest.json", dir_fd=stage_fd)
-        except FileNotFoundError:
+            child_fd = _open_existing_private_dir(stage_fd, child, child)
+        except RuntimeError:
+            continue
+        try:
+            for decision_id in target_ids:
+                try:
+                    os.unlink(decision_id + suffix, dir_fd=child_fd)
+                except FileNotFoundError:
+                    pass
+        finally:
+            os.close(child_fd)
+        try:
+            os.rmdir(child, dir_fd=stage_fd)
+        except OSError:
             pass
-    finally:
-        os.close(stage_fd)
+    try:
+        os.unlink("manifest.json", dir_fd=stage_fd)
+    except FileNotFoundError:
+        pass
     try:
         os.rmdir(stage_name, dir_fd=batches_fd)
     except OSError:
-        pass
+        return False
+    os.fsync(batches_fd)
+    return True
+
+
+def _quarantine_rollup_dir(batches_fd: int, name: str | None, held_fd: int,
+                           label: str) -> str | None:
+    """Atomically preserve a suspect committed artifact under a private name."""
+    if not name or held_fd < 0:
+        return None
+    try:
+        _validate_named_dir(batches_fd, name, held_fd, label)
+    except RuntimeError:
+        return None
+    for _ in range(32):
+        quarantine = ".rollup-quarantine.%s.%s" % (
+            label, secrets.token_hex(12))
+        try:
+            os.stat(quarantine, dir_fd=batches_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            os.rename(name, quarantine,
+                      src_dir_fd=batches_fd, dst_dir_fd=batches_fd)
+            os.fsync(batches_fd)
+            _validate_named_dir(batches_fd, quarantine, held_fd, "quarantine")
+            return quarantine
+    raise RuntimeError("decide answer-rollup: could not allocate quarantine name")
 
 
 def _batch_destination_exists(batches_fd: int, batch_name: str) -> bool:
@@ -303,45 +349,57 @@ def _batch_destination_exists(batches_fd: int, batch_name: str) -> bool:
     return True
 
 
+def _verify_rollup_batch_fd(batch_fd: int, expected: dict,
+                            expected_manifest_sha256: str = "") -> tuple[dict, str]:
+    if stat.S_IMODE(os.fstat(batch_fd).st_mode) != 0o700:
+        raise RuntimeError("decide answer-rollup: unsafe published batch mode")
+    raw = _read_private_file(batch_fd, "manifest.json", "batch manifest")
+    manifest_sha256 = hashlib.sha256(raw).hexdigest()
+    if (expected_manifest_sha256 and
+            manifest_sha256 != expected_manifest_sha256):
+        raise RuntimeError("decide answer-rollup: batch manifest digest mismatch")
+    try:
+        manifest = json.loads(raw)
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError("decide answer-rollup: invalid batch manifest") from exc
+    for key in ("batch_key", "scope_key", "card_id",
+                "primary_decision_id", "choice", "member_ids",
+                "target_ids", "independent_ids", "already_pending_ids",
+                "source", "resume_chat_id", "resume_provider"):
+        if manifest.get(key) != expected.get(key):
+            raise RuntimeError(
+                "decide answer-rollup: published batch conflicts with current answer")
+    artifacts = manifest.get("artifacts")
+    if not isinstance(artifacts, dict) or set(artifacts) != set(expected["target_ids"]):
+        raise RuntimeError("decide answer-rollup: incomplete batch manifest")
+    answers_fd = _open_existing_private_dir(batch_fd, "answers", "batch answers")
+    prompts_fd = _open_existing_private_dir(batch_fd, "prompts", "batch prompts")
+    try:
+        for decision_id in expected["target_ids"]:
+            item = artifacts.get(decision_id)
+            if not isinstance(item, dict):
+                raise RuntimeError("decide answer-rollup: invalid member manifest")
+            answer = _read_private_file(
+                answers_fd, decision_id + ".json", "member answer")
+            prompt = _read_private_file(
+                prompts_fd, decision_id + ".md", "member prompt")
+            if (hashlib.sha256(answer).hexdigest() != item.get("answer_sha256") or
+                    hashlib.sha256(prompt).hexdigest() != item.get("prompt_sha256")):
+                raise RuntimeError("decide answer-rollup: member artifact hash mismatch")
+    finally:
+        os.close(prompts_fd)
+        os.close(answers_fd)
+    return manifest, manifest_sha256
+
+
 def _verify_rollup_batch(batches_fd: int, batch_name: str,
-                         expected: dict) -> dict:
+                         expected: dict,
+                         expected_manifest_sha256: str = "") -> tuple[dict, str]:
     batch_fd = _open_existing_private_dir(batches_fd, batch_name, "published batch")
     try:
-        if stat.S_IMODE(os.fstat(batch_fd).st_mode) != 0o700:
-            raise RuntimeError("decide answer-rollup: unsafe published batch mode")
-        raw = _read_private_file(batch_fd, "manifest.json", "batch manifest")
-        try:
-            manifest = json.loads(raw)
-        except (TypeError, ValueError) as exc:
-            raise RuntimeError("decide answer-rollup: invalid batch manifest") from exc
-        for key in ("batch_key", "scope_key", "card_id",
-                    "primary_decision_id", "choice", "member_ids",
-                    "target_ids", "independent_ids", "already_pending_ids",
-                    "source", "resume_chat_id", "resume_provider"):
-            if manifest.get(key) != expected.get(key):
-                raise RuntimeError(
-                    "decide answer-rollup: published batch conflicts with current answer")
-        artifacts = manifest.get("artifacts")
-        if not isinstance(artifacts, dict) or set(artifacts) != set(expected["target_ids"]):
-            raise RuntimeError("decide answer-rollup: incomplete batch manifest")
-        answers_fd = _open_existing_private_dir(batch_fd, "answers", "batch answers")
-        prompts_fd = _open_existing_private_dir(batch_fd, "prompts", "batch prompts")
-        try:
-            for decision_id in expected["target_ids"]:
-                item = artifacts.get(decision_id)
-                if not isinstance(item, dict):
-                    raise RuntimeError("decide answer-rollup: invalid member manifest")
-                answer = _read_private_file(
-                    answers_fd, decision_id + ".json", "member answer")
-                prompt = _read_private_file(
-                    prompts_fd, decision_id + ".md", "member prompt")
-                if (hashlib.sha256(answer).hexdigest() != item.get("answer_sha256") or
-                        hashlib.sha256(prompt).hexdigest() != item.get("prompt_sha256")):
-                    raise RuntimeError("decide answer-rollup: member artifact hash mismatch")
-        finally:
-            os.close(prompts_fd)
-            os.close(answers_fd)
-        return manifest
+        _validate_named_dir(batches_fd, batch_name, batch_fd, "published batch")
+        return _verify_rollup_batch_fd(
+            batch_fd, expected, expected_manifest_sha256)
     finally:
         os.close(batch_fd)
 
@@ -349,7 +407,7 @@ def _verify_rollup_batch(batches_fd: int, batch_name: str,
 def _stage_rollup_batch(
     home: str, batches_fd: int, plan: dict, source: str,
     resume_chat_id: str, resume_provider: str,
-) -> tuple[str, dict]:
+) -> tuple[str, int, dict]:
     target_ids = list(plan["target_ids"])
     stage_name = None
     stage_fd = answers_fd = prompts_fd = -1
@@ -379,7 +437,7 @@ def _stage_rollup_batch(
                 raise RuntimeError("decide answer-rollup: invalid planned member")
             prompt, label = build_prompt(
                 decision_id, plan["choice"], target.get("text") or "",
-                resume_chat_id, resume_provider)
+                resume_chat_id, resume_provider, include_generated_at=False)
             prompt_path = os.path.join(
                 home, "answer-batches", plan["batch_key"],
                 "prompts", decision_id + ".md")
@@ -420,7 +478,6 @@ def _stage_rollup_batch(
             "resume_chat_id": resume_chat_id,
             "resume_provider": resume_provider,
             "artifacts": artifacts,
-            "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         }
         _write_exact_file(
             stage_fd, "manifest.json",
@@ -428,13 +485,23 @@ def _stage_rollup_batch(
         os.fsync(answers_fd)
         os.fsync(prompts_fd)
         os.fsync(stage_fd)
-        return stage_name, manifest
+        result_fd = stage_fd
+        stage_fd = -1
+        return stage_name, result_fd, manifest
     except BaseException:
         for fd in (prompts_fd, answers_fd, stage_fd):
             if fd >= 0:
                 os.close(fd)
         prompts_fd = answers_fd = stage_fd = -1
-        _cleanup_rollup_stage(batches_fd, stage_name, target_ids)
+        cleanup_fd = -1
+        try:
+            cleanup_fd = _open_existing_private_dir(batches_fd, stage_name, "stage") \
+                if stage_name else -1
+            _cleanup_rollup_stage(
+                batches_fd, stage_name, cleanup_fd, target_ids)
+        finally:
+            if cleanup_fd >= 0:
+                os.close(cleanup_fd)
         raise
     finally:
         for fd in (prompts_fd, answers_fd, stage_fd):
@@ -444,6 +511,8 @@ def _stage_rollup_batch(
 
 def _test_pause_after_rollup_stage(home_fd: int) -> None:
     if os.environ.get("DASHBOARD_TESTING") != "1":
+        return
+    if os.environ.get("DASHBOARD_TEST_ROLLUP_PAUSE_AFTER_COMMIT") == "1":
         return
     marker = ".rollup-answer-test-ready"
     release = ".rollup-answer-test-continue"
@@ -458,6 +527,25 @@ def _test_pause_after_rollup_stage(home_fd: int) -> None:
         except FileNotFoundError:
             time.sleep(0.01)
     raise RuntimeError("decide answer-rollup: test transaction release timed out")
+
+
+def _test_pause_after_rollup_commit(home_fd: int) -> None:
+    if (os.environ.get("DASHBOARD_TESTING") != "1" or
+            os.environ.get("DASHBOARD_TEST_ROLLUP_PAUSE_AFTER_COMMIT") != "1"):
+        return
+    marker = ".rollup-answer-postcommit-test-ready"
+    release = ".rollup-answer-postcommit-test-continue"
+    fd = os.open(marker, os.O_CREAT | os.O_WRONLY | os.O_TRUNC, 0o600,
+                 dir_fd=home_fd)
+    os.close(fd)
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        try:
+            os.stat(release, dir_fd=home_fd, follow_symlinks=False)
+            return
+        except FileNotFoundError:
+            time.sleep(0.01)
+    raise RuntimeError("decide answer-rollup: postcommit test release timed out")
 
 
 def _run_alert(decision_alert: str, home: str, *args: str) -> dict:
@@ -637,8 +725,13 @@ def answer_rollup_transaction(
     if not os.path.isdir(parent):
         raise RuntimeError("decide answer-rollup: state parent does not exist")
 
-    home_fd = batches_fd = lock_fd = -1
-    stage_name = None
+    home_fd = batches_fd = lock_fd = artifact_fd = -1
+    stage_name = artifact_name = None
+    artifact_is_stage = False
+    published_from_stage = False
+    receipt_exists = False
+    commit_recorded = False
+    transaction_complete = False
     target_ids: list[str] = []
     try:
         home_fd = _open_private_dir(None, home)
@@ -674,13 +767,20 @@ def answer_rollup_transaction(
              if target.get("id") == primary_decision_id), None)
         pending = ((primary_target or {}).get("answer_pending") or {})
         if pending.get("valid") is True:
+            receipt_exists = True
             effective_source = str(pending.get("source") or "")
             effective_resume_chat = str(pending.get("resume_chat_id") or "")
             effective_resume_provider = str(pending.get("resume_provider") or "")
+            pending_manifest_sha256 = str(
+                pending.get("artifact_manifest_sha256") or "")
+            if not re.fullmatch(r"[0-9a-f]{64}", pending_manifest_sha256):
+                raise RuntimeError(
+                    "decide answer-rollup: pending receipt lacks an exact manifest digest")
         else:
             effective_source = source
             effective_resume_chat = resume_chat_id
             effective_resume_provider = resume_provider
+            pending_manifest_sha256 = ""
 
         expected = {
             "batch_key": plan["batch_key"],
@@ -701,17 +801,40 @@ def answer_rollup_transaction(
             if pending.get("valid") is not True:
                 raise RuntimeError(
                     "decide answer-rollup: published batch has no pending receipt")
-            manifest = _verify_rollup_batch(batches_fd, plan["batch_key"], expected)
-            artifact_name = plan["batch_key"]
-        else:
-            stage_name, manifest = _stage_rollup_batch(
+            artifact_fd = _open_existing_private_dir(
+                batches_fd, plan["batch_key"], "published batch")
+            try:
+                _validate_named_dir(
+                    batches_fd, plan["batch_key"], artifact_fd, "published batch")
+                manifest, manifest_sha256 = _verify_rollup_batch_fd(
+                    artifact_fd, expected, pending_manifest_sha256)
+            except RuntimeError:
+                _quarantine_rollup_dir(
+                    batches_fd, plan["batch_key"], artifact_fd,
+                    "invalid-published")
+                os.close(artifact_fd)
+                artifact_fd = -1
+                final_exists = False
+            else:
+                artifact_name = plan["batch_key"]
+        if not final_exists:
+            stage_name, artifact_fd, manifest = _stage_rollup_batch(
                 home, batches_fd, plan, effective_source,
                 effective_resume_chat, effective_resume_provider)
             artifact_name = stage_name
-        manifest_bytes = (json.dumps(manifest, sort_keys=True) + "\n").encode("utf-8")
-        manifest_sha256 = hashlib.sha256(manifest_bytes).hexdigest()
+            artifact_is_stage = True
+            manifest_bytes = (
+                json.dumps(manifest, sort_keys=True) + "\n").encode("utf-8")
+            manifest_sha256 = hashlib.sha256(manifest_bytes).hexdigest()
+            if (pending_manifest_sha256 and
+                    manifest_sha256 != pending_manifest_sha256):
+                raise RuntimeError(
+                    "decide answer-rollup: deterministic replay digest mismatch")
         _test_pause_after_rollup_stage(home_fd)
         _validate_rollup_dirs(home, home_fd, batches_fd)
+        _validate_named_dir(
+            batches_fd, artifact_name, artifact_fd, "artifact proof")
+        _verify_rollup_batch_fd(artifact_fd, expected, manifest_sha256)
         if os.environ.get("DASHBOARD_TEST_ROLLUP_FAIL_BEFORE_COMMIT") == "1":
             raise RuntimeError("decide answer-rollup: forced pre-commit failure")
 
@@ -729,21 +852,58 @@ def answer_rollup_transaction(
             record_args += ["--resume-provider", effective_resume_provider]
         record_args.append("--json")
         decision_result = _run_alert(decision_alert, home, *record_args)
+        commit_recorded = True
 
         if os.environ.get("DASHBOARD_TEST_ROLLUP_FAIL_AFTER_COMMIT") == "1":
             raise RuntimeError("decide answer-rollup: forced post-commit failure")
+        _test_pause_after_rollup_commit(home_fd)
         _validate_rollup_dirs(home, home_fd, batches_fd)
-        if stage_name:
+        _validate_named_dir(
+            batches_fd, artifact_name, artifact_fd, "artifact proof")
+        _verify_rollup_batch_fd(artifact_fd, expected, manifest_sha256)
+        if artifact_is_stage:
             if _batch_destination_exists(batches_fd, plan["batch_key"]):
-                _verify_rollup_batch(batches_fd, plan["batch_key"], expected)
-                _cleanup_rollup_stage(batches_fd, stage_name, target_ids)
-                stage_name = None
-            else:
+                final_fd = _open_existing_private_dir(
+                    batches_fd, plan["batch_key"], "published batch")
+                try:
+                    _validate_named_dir(
+                        batches_fd, plan["batch_key"], final_fd,
+                        "published batch")
+                    _verify_rollup_batch_fd(
+                        final_fd, expected, manifest_sha256)
+                except RuntimeError:
+                    _quarantine_rollup_dir(
+                        batches_fd, plan["batch_key"], final_fd,
+                        "invalid-published")
+                    os.close(final_fd)
+                    final_fd = -1
+                if final_fd >= 0:
+                    if not _cleanup_rollup_stage(
+                            batches_fd, stage_name, artifact_fd, target_ids):
+                        os.close(final_fd)
+                        raise RuntimeError(
+                            "decide answer-rollup: redundant stage path changed")
+                    stage_name = None
+                    os.close(artifact_fd)
+                    artifact_fd = final_fd
+                    artifact_name = plan["batch_key"]
+                    artifact_is_stage = False
+            if artifact_is_stage:
                 os.rename(stage_name, plan["batch_key"],
                           src_dir_fd=batches_fd, dst_dir_fd=batches_fd)
                 stage_name = None
+                artifact_name = plan["batch_key"]
+                artifact_is_stage = False
+                published_from_stage = True
                 os.fsync(batches_fd)
-        manifest = _verify_rollup_batch(batches_fd, plan["batch_key"], expected)
+        _validate_rollup_dirs(home, home_fd, batches_fd)
+        _validate_named_dir(
+            batches_fd, plan["batch_key"], artifact_fd, "published batch")
+        manifest, verified_manifest_sha256 = _verify_rollup_batch_fd(
+            artifact_fd, expected, manifest_sha256)
+        if verified_manifest_sha256 != manifest_sha256:
+            raise RuntimeError("decide answer-rollup: published digest changed")
+        transaction_complete = True
         return {
             "ok": True,
             "card_id": card_id,
@@ -760,9 +920,16 @@ def answer_rollup_transaction(
             "manifest_sha256": manifest_sha256,
         }
     finally:
-        if batches_fd >= 0:
-            _cleanup_rollup_stage(batches_fd, stage_name, target_ids)
-        for fd in (lock_fd, batches_fd, home_fd):
+        if (not transaction_complete and batches_fd >= 0 and artifact_fd >= 0):
+            if commit_recorded or receipt_exists:
+                suspect_name = (plan["batch_key"] if published_from_stage
+                                else stage_name if artifact_is_stage else None)
+                _quarantine_rollup_dir(
+                    batches_fd, suspect_name, artifact_fd, "postcommit")
+            elif artifact_is_stage:
+                _cleanup_rollup_stage(
+                    batches_fd, stage_name, artifact_fd, target_ids)
+        for fd in (artifact_fd, lock_fd, batches_fd, home_fd):
             if fd >= 0:
                 os.close(fd)
 
