@@ -392,6 +392,49 @@ def _verify_rollup_batch_fd(batch_fd: int, expected: dict,
     return manifest, manifest_sha256
 
 
+def _quarantine_visible_rollup_conflict(
+    home: str, home_fd: int, pinned_batches_fd: int, batch_name: str,
+    expected: dict, manifest_sha256: str,
+) -> str | None:
+    """Quarantine an invalid canonical batch below a replacement parent.
+
+    Receipt-backed cleanup first preserves the exact artifact held below the
+    descriptor-pinned parent. If the visible answer-batches name now resolves
+    to a different private directory, validate that replacement independently
+    and quarantine only an exact invalid canonical directory. A valid copy is
+    left alone, and any name/inode race fails without renaming an unbound path.
+    """
+    current_batches_fd = current_batch_fd = -1
+    try:
+        current_batches_fd = _open_existing_private_dir(
+            home_fd, "answer-batches", "current answer-batches")
+        _validate_rollup_dirs(home, home_fd, current_batches_fd)
+        if _same_inode(
+                os.fstat(current_batches_fd), os.fstat(pinned_batches_fd)):
+            return None
+        if not _batch_destination_exists(current_batches_fd, batch_name):
+            return None
+        current_batch_fd = _open_existing_private_dir(
+            current_batches_fd, batch_name, "current published batch")
+        _validate_named_dir(
+            current_batches_fd, batch_name, current_batch_fd,
+            "current published batch")
+        try:
+            _verify_rollup_batch_fd(
+                current_batch_fd, expected, manifest_sha256)
+        except RuntimeError:
+            return _quarantine_rollup_dir(
+                current_batches_fd, batch_name, current_batch_fd,
+                "visible-conflict")
+        return None
+    except (OSError, RuntimeError):
+        return None
+    finally:
+        for fd in (current_batch_fd, current_batches_fd):
+            if fd >= 0:
+                os.close(fd)
+
+
 def _verify_rollup_batch(batches_fd: int, batch_name: str,
                          expected: dict,
                          expected_manifest_sha256: str = "") -> tuple[dict, str]:
@@ -732,6 +775,9 @@ def answer_rollup_transaction(
     commit_recorded = False
     transaction_complete = False
     target_ids: list[str] = []
+    batch_name = ""
+    expected: dict | None = None
+    manifest_sha256 = ""
     try:
         home_fd = _open_private_dir(None, home)
         batches_fd = _open_private_dir(home_fd, "answer-batches")
@@ -760,6 +806,7 @@ def answer_rollup_transaction(
                 not re.fullmatch(r"scope:[0-9a-f]{40}", plan.get("scope_key") or "") or
                 not re.fullmatch(r"rollup-[0-9a-f]{40}", plan.get("batch_key") or "")):
             raise RuntimeError("decide answer-rollup: invalid current plan")
+        batch_name = plan["batch_key"]
 
         primary_target = next(
             (target for target in plan.get("targets") or []
@@ -926,6 +973,10 @@ def answer_rollup_transaction(
                 # already-published batch; lifecycle booleans are not identity.
                 _quarantine_rollup_dir(
                     batches_fd, artifact_name, artifact_fd, "postcommit")
+                if expected is not None and batch_name and manifest_sha256:
+                    _quarantine_visible_rollup_conflict(
+                        home, home_fd, batches_fd, batch_name, expected,
+                        manifest_sha256)
             elif artifact_is_stage:
                 _cleanup_rollup_stage(
                     batches_fd, stage_name, artifact_fd, target_ids)
