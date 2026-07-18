@@ -628,7 +628,7 @@ Keep materially new suggestions here so they survive beyond the current chat.
 - delete when: after merge and closeout
 - retain reason: n/a after merge
 - cleanup command: `git worktree remove '/Users/gillettes/Coding Projects/mission-control-worktrees/phase0-work-record' && git branch -d codex/phase0-work-record`
-- linked PR/audit/completion record: `records/2026-07-17-phase0-queue-and-answer-path.md`; `STATE.md`; PR pending
+- linked PR/audit/completion record: `records/2026-07-17-phase0-queue-and-answer-path.md`; `STATE.md`; https://github.com/trevor-commits/mission-control/pull/10; independent audit pending
 
 ### `codex/er103-git-state-and-morning-proof`
 - status: preserved-superseded dirty checkout
@@ -754,7 +754,7 @@ If it's not here, it isn't remembered.
   scenario: Phase 0.3 queue and Phase 0.2 answer-path corrective Work Record
   command(s): commit-object and `origin/main` containment checks for the eight packet-named commits/merges; central receipt read from `global-implementations` `origin/main`; targeted-bypass production call-site search at `c514a4d`; preview return-path inspection; `git diff --check`.
   result: pass before independent audit. All named commits are contained; security bypass is manual/per-ID; no automatic security-to-ping caller was found; no-`--send` returns preview with `sent_count: 0`; documentation diff is clean. Mandatory pre-push full verification passed `SUITES PASS=21 FAIL=0`, dashboard `67/0`, ER-134 `57/0`, browser `253`, OpenSpec, and syntax gates using hermetic fixtures.
-  log/PR reference: `records/2026-07-17-phase0-queue-and-answer-path.md`; `STATE.md`; PR pending
+  log/PR reference: `records/2026-07-17-phase0-queue-and-answer-path.md`; `STATE.md`; https://github.com/trevor-commits/mission-control/pull/10
   by: Codex `019f73d8-e5dc-73a0-acc5-8a4916ac6819`
   linear: self-contained; repo-only
 - 2026-07-13 | commands: installed `/Users/gillettes/.codex/scripts/chat-source find mission control`; exact `chat-source describe/latest` for resolved sessions and audit chat; direct and mandatory pre-push `/bin/bash scripts/verify.sh` runs; process inspection at Trevor stop boundary; LaunchAgent/plist/runtime/worktree checks | result: session lookup returned five exact sources in 85.19 seconds; four were reconciled and one unrelated third-party product session excluded. Both verifier runs completed the first 16/21 top-level suites, including dashboard `67/0`, ER-134 `50/0`, usage `24/0`, and two sender `14/14` runs; each browser run slept with Chrome gone, so browser plus four subsequent suites are interrupted/incomplete, not pass/fail. The records-only push used the global hook's documented `--no-verify` escape hatch. Delegation Audit runtime is clean at `27aa2e3`, focused `66/0`, dry-run exit 0, plist loaded/linted, natural runs still 0. | log/PR reference: stop-boundary addendum in `records/2026-07-12-full-repo-convergence-audit.md` | by: Codex + audit chat `019f5bea` | linear: repo-only.

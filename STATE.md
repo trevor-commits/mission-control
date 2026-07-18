@@ -5,6 +5,8 @@
 - Base: `origin/main@8582e182d5db3b8964ec21738a82806d94c78a55`
 - Worktree: `/Users/gillettes/Coding Projects/mission-control-worktrees/phase0-work-record`
 - Scope: documentation-only corrective work record
+- Evidence commits: `595230a`, `952df08`
+- Pull request: https://github.com/trevor-commits/mission-control/pull/10
 - Live/deploy actions: none
 
 ## Evidence transcript
@@ -54,5 +56,5 @@ At `c514a4d`, production references expose targeted bypass only as the manual `d
 ## Done / next / resume
 
 - Done: source containment, commit/receipt synthesis, correction boundaries, dated record, and repo ledger updates.
-- Next: commit, push, open the PR, then include this branch in the independent same-model audit.
+- Next: include this branch in the independent same-model audit and append its disposition before final handoff.
 - Exact resume: `cd '/Users/gillettes/Coding Projects/mission-control-worktrees/phase0-work-record' && git status -sb && git diff --check && sed -n '1,240p' records/2026-07-17-phase0-queue-and-answer-path.md`
