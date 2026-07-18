@@ -765,6 +765,73 @@ else fail "group re-ask: severity escalation is allowed through and recorded"; f
 unset MISSION_CONTROL_ADMISSION_SCHEMA
 export MISSION_CONTROL_HOME="$T/state"
 
+# Admission backfill + flagless steady state (0.3 deploy gaps): NULL rows are
+# stamped once; already-classified rows are never touched; once the columns
+# exist, ingest stamps new entrants WITHOUT the env flag.
+BKF_HOME="$T/backfill-state"; mkdir -p "$BKF_HOME"
+export MISSION_CONTROL_HOME="$BKF_HOME"
+export DECISION_ALERT_NOW_EPOCH=1785000000
+# Unmigrated home fails closed with a plain error.
+if ! run_json admission-backfill >"$T/bkf-unmig.out" 2>"$T/bkf-unmig.err"; then
+  if python3 - "$T/bkf-unmig.err" <<'PY'
+import json,sys
+err=json.loads(open(sys.argv[1]).read())
+assert err.get("ok") is False and "not migrated" in str(err.get("error",""))
+PY
+  then pass "admission-backfill fails closed on an unmigrated home"
+  else fail "admission-backfill fails closed on an unmigrated home"; fi
+else fail "admission-backfill fails closed on an unmigrated home"; fi
+export MISSION_CONTROL_ADMISSION_SCHEMA=1
+BKF_A="$(run_json ingest --source-kind git --source-key bkf-choice \
+  --text '**DECISION NEEDED:** Choose **`Lane A`** or **`Lane B`**.' --evidence bkf-a \
+  --trust structured --provenance git-facts)" || BKF_A=""
+BKF_B="$(run_json ingest --source-kind git --source-key bkf-directive \
+  --text 'Restart the stale worker service.' --evidence bkf-b \
+  --trust structured --provenance git-facts)" || BKF_B=""
+unset MISSION_CONTROL_ADMISSION_SCHEMA
+A_ID="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["decision"]["id"])' "$BKF_A")"
+B_ID="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["decision"]["id"])' "$BKF_B")"
+# Simulate pre-schema rows: NULL one row's fields entirely, and give the other
+# a deliberately WRONG class the backfill must not correct (no-touch proof).
+python3 - "$BKF_HOME/decisions/decisions.db" "$A_ID" "$B_ID" <<'PY'
+import sqlite3,sys
+c=sqlite3.connect(sys.argv[1])
+c.execute("""UPDATE decisions SET admission_class=NULL, admission_rule=NULL,
+    domain=NULL, severity=NULL, required_action=NULL, deadline=NULL
+    WHERE decision_id=?""",(sys.argv[3],))
+c.execute("UPDATE decisions SET admission_class='noop' WHERE decision_id=?",
+          (sys.argv[2],))
+c.commit()
+PY
+BKF_RUN1="$(run_json admission-backfill)" || BKF_RUN1=""
+BKF_RUN2="$(run_json admission-backfill)" || BKF_RUN2=""
+# Flagless steady state: a brand-new ingest with NO env flag must stamp.
+BKF_C="$(run_json ingest --source-kind git --source-key bkf-flagless \
+  --text 'Merge the reviewed hotfix branch now.' --evidence bkf-c \
+  --trust structured --provenance git-facts)" || BKF_C=""
+if python3 - "$BKF_RUN1" "$BKF_RUN2" "$BKF_C" "$BKF_HOME/decisions/decisions.db" "$A_ID" "$B_ID" <<'PY'
+import json,sqlite3,sys
+run1,run2,flagless=map(json.loads,sys.argv[1:4])
+con=sqlite3.connect(sys.argv[4]); con.row_factory=sqlite3.Row
+a=con.execute("SELECT * FROM decisions WHERE decision_id=?",(sys.argv[5],)).fetchone()
+b=con.execute("SELECT * FROM decisions WHERE decision_id=?",(sys.argv[6],)).fetchone()
+# Run 1 stamped exactly the NULL row; run 2 found nothing left (idempotent).
+assert run1["stamped"] == 1 and run1["remaining_null"] == 0
+assert run2["stamped"] == 0
+# The NULLed directive row is now fully classified by the shared rules.
+assert b["admission_class"] == "workorder" and b["domain"] == "infra"
+assert b["severity"] == "normal" and b["admission_rule"] == "bounded_directive_no_choice"
+# The deliberately mislabeled row kept its existing class — backfill never
+# touches rows that already carry one (its rule stayed the ingest-time one).
+assert a["admission_class"] == "noop"
+# Flagless ingest stamped the new entrant via schema-presence detection.
+d=flagless["decision"]
+assert d["admission_class"] == "workorder" and d["domain"] == "infra"
+PY
+then pass "admission-backfill stamps NULL rows once, never touches classified rows, and flagless ingest stamps"
+else fail "admission-backfill stamps NULL rows once, never touches classified rows, and flagless ingest stamps"; fi
+export MISSION_CONTROL_HOME="$T/state"
+
 printf '%s\n' '----'
 if [ "$FAIL" -eq 0 ]; then echo 'ALL PASS'; exit 0; fi
 echo "$FAIL FAILED"; exit 1

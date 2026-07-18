@@ -103,9 +103,16 @@ consumed by `scripts/decision-alert`:
   already went out.
 - **Deploy gate** — the new `admission_class` / `admission_rule` / `domain` /
   `severity` / `required_action` / `deadline` / `snoozed_until` columns are
-  additive (mirrors the existing `anchor_ref` migration) and OFF by default:
-  set `MISSION_CONTROL_ADMISSION_SCHEMA=1` in the installed job's
-  environment to activate the migration + ingest-time stamping. `rollup`
+  additive (mirrors the existing `anchor_ref` migration). The MIGRATION is
+  gated: run any decision-alert command once with
+  `MISSION_CONTROL_ADMISSION_SCHEMA=1` to add the columns. STAMPING is then
+  unconditional — once the columns exist (schema presence = prior opt-in),
+  every ingest classifies and stamps the row with no env flag needed, so
+  the flagless installed launchd job keeps new entrants classified in
+  steady state. `decision-alert admission-backfill` one-shot-stamps every
+  open row still carrying NULL admission fields (rows whose stale sources
+  never re-report); it is idempotent, transactional, and never touches a
+  row that already has a class. `rollup`
   and `lanes` work read-only regardless of that flag (they recompute
   classification fresh from `text` every call). Tests:
   `scripts/queue_admission.test.py` (equivalence contract, classification
