@@ -24,4 +24,4 @@ The first full verifier was necessary but insufficient. Independent review found
 
 ## Remaining boundary
 
-Fresh audit of frozen `8b8fa77` reopened the receipt-binding and regular-file canonical-entry boundaries. Both counterexamples are now RED/GREEN in focused tests; the successor still requires a committed authoritative gate and a new exact-head review-clean verdict before branch push/PR. Merge, installation, live-store use, provider delivery, plist, and launchd actions remain outside this branch-only change.
+Fresh audit of frozen `8b8fa77` reopened the receipt-binding and regular-file canonical-entry boundaries. Both counterexamples are RED/GREEN, and exact repair `c0d0a53` passes the authoritative `23/0` gate. The receipt successor still requires a new exact-head review-clean verdict before branch push/PR. Merge, installation, live-store use, provider delivery, plist, and launchd actions remain outside this branch-only change.

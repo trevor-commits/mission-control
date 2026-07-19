@@ -1,6 +1,6 @@
 # Lane D state — rollup-answer CLI wiring
 
-- Status: FIFTH-AUDIT REPAIR FOCUSED GREEN / CODE COMMIT + AUTHORITATIVE GATE PENDING; frozen `8b8fa772336239eab812b38e2b152e69dce65a96` was rejected on two reproduced P1s: byte-unbound delivered receipts and a regular file retained at the canonical batch name
+- Status: FIFTH-AUDIT REPAIR AUTHORITATIVE-GATE GREEN / RECEIPT COMMIT + FRESH FROZEN-HEAD AUDIT PENDING; frozen `8b8fa772336239eab812b38e2b152e69dce65a96` was rejected on two reproduced P1s, repaired in `c0d0a53`, which passes `SUITES PASS=23 FAIL=0`
 - Branch: `codex/rollup-answer-wiring`
 - Review base: `53e91392dcef3d2deeedf748c14159320a8572e0`
 - Original implementation checkpoint: `754de932301113e81f51bbf4febe2d3fc28c01e0`
@@ -9,7 +9,7 @@
 - Second-audit repair: `8613d25` (`fix(decisions): close replay and reader skew gaps`)
 - Third-audit repair: `bfaf10b` (`fix(decisions): quarantine visible rollup conflicts`)
 - Fourth-audit local-view repair: `0ce6d3d7704a8e305159cdbd78965bd34f1b8a02` (`fix(decisions): reconcile local views after answers`)
-- Fifth-audit receipt/entry repair: pending code commit
+- Fifth-audit receipt/entry repair: `c0d0a5306ae51a81fb7ace3948804e78e810b651` (`fix(decisions): bind receipts and canonical entries`)
 - Worktree: `/Users/gillettes/Coding Projects/mission-control-worktrees/rollup-answer-wiring`
 - Source chat: Codex `019f73d8-e5dc-73a0-acc5-8a4916ac6819`
 - Trust Gate: on — durable operator direction and completion semantics
@@ -62,7 +62,7 @@ Trevor approved the following seven points through `thread_goal_updated` at `202
 - Fourth fresh audit: `/root/lane_d_final_audit`, `gpt-5.6-sol`/max, reviewed frozen `af083a6` and returned `NOT MERGE-READY` with one P1 and one P2. P1: `answer-rollup` could return zero after updating only decisions while persisted `latest.json` and `data/brief.json` stayed byte-identical/actionable. P2: records still described already-completed evidence steps as pending.
 - Disposition: both accepted. The public-command-only counterexample is RED before repair; the same-runtime local reconciliation repair is green across 23 rollup tests, the authoritative 23/0 verifier, Morning Brief, dashboard 67/0, delivered/in-flight/prior-day/missing-receipt/no-send/stale-runtime boundaries, and static checks. Records were reconciled; frozen successor `8b8fa77` then advanced to the fifth audit below.
 - Fifth fresh audit: `/root/lane_d_local_view_reaudit`, `gpt-5.6-sol`/max, reviewed frozen `8b8fa77` and returned `NOT MERGE-READY` with two P1s despite the green declared suites. P1: structurally complete 64-hex receipt fields did not bind actual delivered Markdown/chunks. P1: a mode-0600 regular file at the canonical name in a replacement parent survived failure and wedged later replay.
-- Disposition: both accepted and independently RED-reproduced. The successor binds full Markdown, chunking, ordered chunks, and exact receipt bytes, and quarantines only exact fd/inode-bound receipt-backed regular-file/directory conflicts. Targeted 3/3, rollup 25/25, and Morning Brief delivery are green; authoritative full gate and fresh successor audit remain pending.
+- Disposition: both accepted and independently RED-reproduced. Exact repair `c0d0a53` binds full Markdown, chunking, ordered chunks, and exact receipt bytes, and quarantines only exact fd/inode-bound receipt-backed regular-file/directory conflicts. Targeted 3/3, rollup 25/25, Morning Brief delivery, and authoritative 23/0 are green; only the fresh successor audit remains pending.
 
 ## Evidence
 
@@ -145,7 +145,9 @@ Trevor approved the following seven points through `thread_goal_updated` at `202
 | Exact counterexamples after repair | 3 targeted tests, OK |
 | Rollup answer after repair | 25 tests in 35.034s, OK |
 | Morning Brief delivery | all pass, including retry/concurrency/content binding |
-| Authoritative verifier / fresh successor audit | pending after code commit |
+| Exact committed repair head | `c0d0a5306ae51a81fb7ace3948804e78e810b651` |
+| Authoritative verifier | `SUITES PASS=23 FAIL=0`; rollup 25/25; dashboard 67/0; ER-134 59/0; usage 24/0; browser 253; OpenSpec 2/0; static/artifact pass |
+| Fresh successor audit | pending after this receipt commit |
 
 Receipts:
 
@@ -157,15 +159,16 @@ Receipts:
 - `records/evidence/rollup-answer-morning-brief-coherence-red-green.txt`
 - `records/evidence/rollup-answer-morning-brief-coherence-full-green.txt`
 - `records/evidence/rollup-answer-receipt-entry-red-green.txt`
+- `records/evidence/rollup-answer-receipt-entry-full-green.txt`
 - `records/rollup-answer-independent-codex-audit.md`
 - `records/2026-07-18-rollup-answer-work-record.md`
 
 ## Claims and limits
 
 - Confirmed: both first-audit P1 findings, all three second-audit findings, the third-audit occupied-parent P1, the fourth-audit persisted-view P1, and both fifth-audit P1s were independently reproduced and have behavior-level regressions.
-- Confirmed: repair `bfaf10b` passed the targeted occupied-parent contract and 18/18 rollup contracts; exact records-complete `bc9014d` passed the historical authoritative `23/0` verifier. Fourth repair `0ce6d3d` passes the replacement authoritative `23/0` verifier, including rollup 23/23, dashboard 67/0, ER-134 59/0, usage 24/0, browser 253, OpenSpec 2/0, and the final source-artifact predicate.
+- Confirmed: repair `bfaf10b` passed the targeted occupied-parent contract and 18/18 rollup contracts; exact records-complete `bc9014d` passed the historical authoritative `23/0` verifier; fourth repair `0ce6d3d` passed its replacement authoritative `23/0` verifier. Fifth repair `c0d0a53` passes the current authoritative `23/0` verifier, including rollup 25/25, dashboard 67/0, ER-134 59/0, usage 24/0, browser 253, OpenSpec 2/0, and final source-artifact predicate.
 - Confirmed: no schema migration, dependency, live-store write, provider send, main touch, install, deploy, release, plist, or launchd action occurred.
-- Did not verify: the fifth repair's authoritative full gate or final independent verdict.
+- Did not verify: the fifth repair's final independent verdict.
 - Did not verify: hosted PR checks or merge state; no Lane D PR exists yet.
 - Did not verify: merged-main, installed runtime, provider delivery, or live-store behavior because those actions are prohibited here.
 - Do not do: merge, install, deploy, send, write a live store, change plist/launchd, or resolve live decision `decision:a6f185b53cbc1278499b062d` from this lane.
@@ -173,5 +176,5 @@ Receipts:
 
 ## Exact resume
 
-1. Commit the fifth-audit code/spec/test repair, run the authoritative verifier at that exact commit, commit its receipt, and freeze the successor.
-2. Send the exact frozen successor to a new fresh `gpt-5.6-sol`/max auditor; on review-clean, append the verdict, push, open the review-ready PR with the approval citation and live-card merge-sitting note, verify hosted checks, and stop before merge/deploy.
+1. Commit this exact `c0d0a53` authoritative-gate receipt and freeze the successor.
+2. Send the frozen successor to a new fresh `gpt-5.6-sol`/max auditor; on review-clean, append the verdict, push, open the review-ready PR with the approval citation and live-card merge-sitting note, verify hosted checks, and stop before merge/deploy.

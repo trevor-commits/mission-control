@@ -68,9 +68,9 @@ Evidence: `records/evidence/rollup-answer-occupied-parent-red-green.txt`.
 
 ## Final attempt
 
-- Status: fifth-audit repair is focused green; its code commit, authoritative full gate, receipt commit, and a new frozen-head same-model/max verdict remain pending.
-- Full-gate evidence: prior `records/evidence/rollup-answer-morning-brief-coherence-full-green.txt` (`SUITES PASS=23 FAIL=0`); fifth repair focused evidence is `records/evidence/rollup-answer-receipt-entry-red-green.txt`.
-- Did not verify: fifth-repair authoritative gate, final review-clean verdict, remote/PR state, merged-main behavior, install/deploy, provider delivery, or live-store behavior.
+- Status: fifth-audit repair `c0d0a5306ae51a81fb7ace3948804e78e810b651` is focused and authoritative-gate green; this receipt commit and a new frozen-head same-model/max verdict remain pending.
+- Full-gate evidence: `records/evidence/rollup-answer-receipt-entry-full-green.txt` (`SUITES PASS=23 FAIL=0`, rollup 25/25); prior historical receipt is `records/evidence/rollup-answer-morning-brief-coherence-full-green.txt`.
+- Did not verify: final review-clean verdict, remote/PR state, merged-main behavior, install/deploy, provider delivery, or live-store behavior.
 
 ## Audited Chat
 
