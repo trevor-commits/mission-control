@@ -121,6 +121,19 @@ class RollupAnswerTests(unittest.TestCase):
         return [e for e in self._history(decision_id)["events"]
                 if e["event_type"] == "answered_pending"]
 
+    def _seed_brief_inputs(self) -> None:
+        data_dir = self.home / "data"
+        for name, cadence in (("automation", 300), ("git", 900), ("chats", 1800)):
+            (data_dir / (name + ".json")).write_text(json.dumps({
+                "schema": 1,
+                "feed": name,
+                "generated_epoch": 1784368800,
+                "cadence_s": cadence,
+                "ok": True,
+                "error": None,
+                "data": {"test_fixture": True},
+            }))
+
     def test_plan_targets_only_strict_equivalents_without_writes(self) -> None:
         fixture = self._three_member_card()
         card_id = fixture["card"]["card_id"]
@@ -671,7 +684,7 @@ class RollupAnswerTests(unittest.TestCase):
         for decision_id in (ids["primary"], ids["equivalent"]):
             self.assertEqual(len(self._pending_events(decision_id)), 1)
 
-    def test_public_answer_refreshes_feed_without_provider_send(self) -> None:
+    def test_public_answer_refreshes_local_views_without_provider_send(self) -> None:
         fixture = self._three_member_card()
         ids = fixture["ids"]
         card_id = fixture["card"]["card_id"]
@@ -683,6 +696,8 @@ class RollupAnswerTests(unittest.TestCase):
             "DECISION_ALERT_AUTO": "0",
             "DECISION_ALERT_SEND_BIN": str(sender),
             "DECISION_TEST_SEND_MARKER": str(marker),
+            "MORNING_BRIEF_SEND_BIN": str(sender),
+            "MORNING_BRIEF_CHAT_ID": "123",
         }
         self._proc(
             ["/bin/bash", str(DASHBOARD), "refresh", "decisions"],
@@ -691,34 +706,330 @@ class RollupAnswerTests(unittest.TestCase):
         before_by_id = {row["id"]: row for row in before["data"]["pinned"]}
         self.assertIsNone(before_by_id[ids["primary"]]["answer_pending"])
 
+        # Persist both Morning Brief surfaces before the answer. The public
+        # transaction itself must reconcile these already-existing views; a
+        # later preview is not evidence that its reported success was coherent.
+        data_dir = self.home / "data"
+        self._seed_brief_inputs()
+        brief_env = {
+            **no_send_env,
+            "MORNING_BRIEF_NOW_EPOCH": "1784368800",
+        }
+        self._proc([str(ROOT / "scripts" / "morning-brief")],
+                   extra_env=brief_env)
+        self._proc(["/bin/bash", str(DASHBOARD), "refresh", "brief"],
+                   extra_env=brief_env)
+        latest_path = self.home / "morning-brief" / "latest.json"
+        brief_feed_path = data_dir / "brief.json"
+        latest_before = latest_path.read_text()
+        brief_feed_before = brief_feed_path.read_text()
+        for decision_id in ids.values():
+            self.assertIn(decision_id, latest_before)
+            self.assertIn(decision_id, brief_feed_before)
+
         self._dashboard(
             "decide", "answer-rollup", card_id, ids["primary"], "1",
-            extra_env=no_send_env)
+            extra_env=brief_env)
         after = json.loads((self.home / "data" / "decisions.json").read_text())
         after_by_id = {row["id"]: row for row in after["data"]["pinned"]}
         self.assertIsNotNone(after_by_id[ids["primary"]]["answer_pending"])
         self.assertIsNotNone(after_by_id[ids["equivalent"]]["answer_pending"])
+        latest_after = latest_path.read_text()
+        brief_feed_after = brief_feed_path.read_text()
+        self.assertNotEqual(latest_before, latest_after)
+        self.assertNotEqual(brief_feed_before, brief_feed_after)
+        for decision_id in (ids["primary"], ids["equivalent"]):
+            self.assertNotIn(decision_id, latest_after)
+            self.assertNotIn(decision_id, brief_feed_after)
+        self.assertIn(ids["independent"], latest_after)
+        self.assertIn(ids["independent"], brief_feed_after)
         self.assertFalse(marker.exists())
 
-        # Morning Brief consumes the refreshed public feed and therefore omits
-        # the answered-pending request from the actionable NEEDS YOU section.
-        data_dir = self.home / "data"
-        for name, cadence in (("automation", 300), ("git", 900), ("chats", 1800)):
-            (data_dir / (name + ".json")).write_text(json.dumps({
-                "schema": 1,
-                "feed": name,
-                "generated_epoch": 1784368800,
-                "cadence_s": cadence,
-                "ok": True,
-                "error": None,
-                "data": {"test_fixture": True},
-            }))
-        brief = self._proc(
-            [str(ROOT / "scripts" / "morning-brief"), "--print"],
-            extra_env={**no_send_env, "MORNING_BRIEF_NOW_EPOCH": "1784368800"})
-        self.assertNotIn(ids["primary"], brief.stdout)
-        self.assertNotIn(ids["equivalent"], brief.stdout)
-        self.assertIn(ids["independent"], brief.stdout)
+    def test_public_answer_refreshes_delivered_brief_without_resend(self) -> None:
+        fixture = self._three_member_card()
+        ids = fixture["ids"]
+        card_id = fixture["card"]["card_id"]
+        marker = self.temp / "provider-send-invoked"
+        sender = self.temp / "fake-sender"
+        sender.write_text("#!/bin/sh\ntouch \"$DECISION_TEST_SEND_MARKER\"\nexit 0\n")
+        sender.chmod(0o700)
+        brief_env = {
+            "DECISION_ALERT_AUTO": "0",
+            "DECISION_ALERT_SEND_BIN": str(sender),
+            "DECISION_TEST_SEND_MARKER": str(marker),
+            "MORNING_BRIEF_SEND_BIN": str(sender),
+            "MORNING_BRIEF_CHAT_ID": "123",
+            "MORNING_BRIEF_NOW_EPOCH": "1784368800",
+        }
+        self._proc(["/bin/bash", str(DASHBOARD), "refresh", "decisions"],
+                   extra_env=brief_env)
+        self._seed_brief_inputs()
+        self._proc([str(ROOT / "scripts" / "morning-brief")],
+                   extra_env=brief_env)
+
+        brief_home = self.home / "morning-brief"
+        latest_path = brief_home / "latest.json"
+        latest = json.loads(latest_path.read_text())
+        brief_id = latest["brief_id"]
+        delivered_hash = latest["markdown_sha256"]
+        latest["delivery"] = {
+            # Receipt is authoritative even if a prior process died before it
+            # copied delivered state back into the sidecar.
+            "state": "not_sent", "confirmed_chunks": 0, "total_chunks": 0,
+        }
+        latest_path.write_text(json.dumps(latest, indent=2, sort_keys=True) + "\n")
+        delivery_dir = brief_home / "delivery"
+        delivery_dir.mkdir(mode=0o700)
+        receipt_path = delivery_dir / (brief_id + ".json")
+        receipt_path.write_text(json.dumps({
+            "schema": 1, "brief_id": brief_id, "state": "delivered",
+            "confirmed_chunks": 1, "total_chunks": 1,
+            "chunks": [{
+                "index": 1, "content_hash": "a" * 64,
+                "state": "confirmed", "attempts": 1,
+            }],
+        }, indent=2, sort_keys=True) + "\n")
+        cursor_path = brief_home / "delivery-cursor.json"
+        cursor_path.write_text(json.dumps({
+            "schema": 1, "brief_id": brief_id, "delivered_at": 1784368800,
+            "loose_end_changes": [0, ""],
+        }, indent=2, sort_keys=True) + "\n")
+        receipt_before = receipt_path.read_text()
+        cursor_before = cursor_path.read_text()
+        self._proc(["/bin/bash", str(DASHBOARD), "refresh", "brief"],
+                   extra_env=brief_env)
+
+        self._dashboard(
+            "decide", "answer-rollup", card_id, ids["primary"], "1",
+            extra_env=brief_env)
+
+        refreshed = json.loads(latest_path.read_text())
+        self.assertEqual(refreshed["brief_id"], brief_id)
+        self.assertEqual(refreshed["delivery"]["state"], "delivered")
+        self.assertEqual(
+            refreshed["local_refresh"]["delivered_markdown_sha256"], delivered_hash)
+        rendered = latest_path.read_text()
+        brief_feed = (self.home / "data" / "brief.json").read_text()
+        for decision_id in (ids["primary"], ids["equivalent"]):
+            self.assertNotIn(decision_id, rendered)
+            self.assertNotIn(decision_id, brief_feed)
+        self.assertIn(ids["independent"], rendered)
+        self.assertIn(ids["independent"], brief_feed)
+        self.assertEqual(receipt_path.read_text(), receipt_before)
+        self.assertEqual(cursor_path.read_text(), cursor_before)
+        self.assertFalse(marker.exists())
+
+    def test_public_answer_rejects_delivered_brief_without_valid_receipt(self) -> None:
+        fixture = self._three_member_card()
+        ids = fixture["ids"]
+        card_id = fixture["card"]["card_id"]
+        marker = self.temp / "provider-send-invoked"
+        sender = self.temp / "fake-sender"
+        sender.write_text("#!/bin/sh\ntouch \"$DECISION_TEST_SEND_MARKER\"\nexit 0\n")
+        sender.chmod(0o700)
+        brief_env = {
+            "DECISION_ALERT_AUTO": "0",
+            "DECISION_ALERT_SEND_BIN": str(sender),
+            "DECISION_TEST_SEND_MARKER": str(marker),
+            "MORNING_BRIEF_SEND_BIN": str(sender),
+            "MORNING_BRIEF_CHAT_ID": "123",
+            "MORNING_BRIEF_NOW_EPOCH": "1784368800",
+        }
+        self._proc(["/bin/bash", str(DASHBOARD), "refresh", "decisions"],
+                   extra_env=brief_env)
+        self._seed_brief_inputs()
+        self._proc([str(ROOT / "scripts" / "morning-brief")],
+                   extra_env=brief_env)
+
+        brief_home = self.home / "morning-brief"
+        latest_path = brief_home / "latest.json"
+        markdown_path = brief_home / "latest.md"
+        latest = json.loads(latest_path.read_text())
+        latest["delivery"] = {
+            "state": "delivered", "confirmed_chunks": 1, "total_chunks": 1,
+        }
+        latest_path.write_text(json.dumps(latest, indent=2, sort_keys=True) + "\n")
+        delivery_dir = brief_home / "delivery"
+        delivery_dir.mkdir(mode=0o700)
+        receipt_path = delivery_dir / (latest["brief_id"] + ".json")
+        # Matching top-level counters are not enough: without the confirmed
+        # per-chunk digest list this cannot bind the delivered bytes.
+        receipt_path.write_text(json.dumps({
+            "schema": 1, "brief_id": latest["brief_id"], "state": "delivered",
+            "confirmed_chunks": 1, "total_chunks": 1,
+        }, indent=2, sort_keys=True) + "\n")
+        self._proc(["/bin/bash", str(DASHBOARD), "refresh", "brief"],
+                   extra_env=brief_env)
+        brief_feed_path = self.home / "data" / "brief.json"
+        latest_before = latest_path.read_text()
+        markdown_before = markdown_path.read_text()
+        receipt_before = receipt_path.read_text()
+        feed_before = brief_feed_path.read_text()
+
+        failed = self._dashboard(
+            "decide", "answer-rollup", card_id, ids["primary"], "1",
+            ok=False, extra_env=brief_env)
+
+        self.assertTrue(json.loads(failed["stdout"])["ok"])
+        self.assertIn("committed but local view refresh failed", failed["stderr"])
+        self.assertIsNotNone(self._history(ids["primary"])["decision"]["answer_pending"])
+        self.assertEqual(latest_path.read_text(), latest_before)
+        self.assertEqual(markdown_path.read_text(), markdown_before)
+        self.assertEqual(receipt_path.read_text(), receipt_before)
+        self.assertEqual(brief_feed_path.read_text(), feed_before)
+        self.assertFalse(marker.exists())
+
+    def test_public_answer_preserves_prior_day_inflight_brief(self) -> None:
+        fixture = self._three_member_card()
+        ids = fixture["ids"]
+        card_id = fixture["card"]["card_id"]
+        marker = self.temp / "provider-send-invoked"
+        sender = self.temp / "fake-sender"
+        sender.write_text("#!/bin/sh\ntouch \"$DECISION_TEST_SEND_MARKER\"\nexit 0\n")
+        sender.chmod(0o700)
+        brief_env = {
+            "DECISION_ALERT_AUTO": "0",
+            "DECISION_ALERT_SEND_BIN": str(sender),
+            "DECISION_TEST_SEND_MARKER": str(marker),
+            "MORNING_BRIEF_SEND_BIN": str(sender),
+            "MORNING_BRIEF_CHAT_ID": "123",
+            "MORNING_BRIEF_NOW_EPOCH": "1784368800",
+        }
+        self._proc(["/bin/bash", str(DASHBOARD), "refresh", "decisions"],
+                   extra_env=brief_env)
+        self._seed_brief_inputs()
+        self._proc([str(ROOT / "scripts" / "morning-brief")],
+                   extra_env=brief_env)
+
+        brief_home = self.home / "morning-brief"
+        latest_path = brief_home / "latest.json"
+        markdown_path = brief_home / "latest.md"
+        latest = json.loads(latest_path.read_text())
+        latest["generated_epoch"] = 1784368800 - 86400
+        latest["delivery"] = {
+            "state": "pending", "confirmed_chunks": 0, "total_chunks": 1,
+        }
+        latest_path.write_text(json.dumps(latest, indent=2, sort_keys=True) + "\n")
+        delivery_dir = brief_home / "delivery"
+        delivery_dir.mkdir(mode=0o700)
+        receipt_path = delivery_dir / (latest["brief_id"] + ".json")
+        receipt_path.write_text(json.dumps({
+            "schema": 1, "brief_id": latest["brief_id"], "state": "pending",
+            "confirmed_chunks": 0, "total_chunks": 1,
+        }, indent=2, sort_keys=True) + "\n")
+        self._proc(["/bin/bash", str(DASHBOARD), "refresh", "brief"],
+                   extra_env=brief_env)
+        brief_feed_path = self.home / "data" / "brief.json"
+        latest_before = latest_path.read_text()
+        markdown_before = markdown_path.read_text()
+        receipt_before = receipt_path.read_text()
+        feed_before = brief_feed_path.read_text()
+
+        failed = self._dashboard(
+            "decide", "answer-rollup", card_id, ids["primary"], "1",
+            ok=False, extra_env=brief_env)
+
+        self.assertTrue(json.loads(failed["stdout"])["ok"])
+        self.assertIn("committed but local view refresh failed", failed["stderr"])
+        self.assertIsNotNone(self._history(ids["primary"])["decision"]["answer_pending"])
+        self.assertEqual(latest_path.read_text(), latest_before)
+        self.assertEqual(markdown_path.read_text(), markdown_before)
+        self.assertEqual(receipt_path.read_text(), receipt_before)
+        self.assertEqual(brief_feed_path.read_text(), feed_before)
+        self.assertFalse(marker.exists())
+
+    def test_public_single_answer_refreshes_local_views_without_send(self) -> None:
+        ingested = self._ingest("owner-a", "one")
+        decision_id = ingested["decision"]["id"]
+        marker = self.temp / "provider-send-invoked"
+        sender = self.temp / "fake-sender"
+        sender.write_text("#!/bin/sh\ntouch \"$DECISION_TEST_SEND_MARKER\"\nexit 0\n")
+        sender.chmod(0o700)
+        brief_env = {
+            "DECISION_ALERT_AUTO": "0",
+            "DECISION_ALERT_SEND_BIN": str(sender),
+            "DECISION_TEST_SEND_MARKER": str(marker),
+            "MORNING_BRIEF_SEND_BIN": str(sender),
+            "MORNING_BRIEF_CHAT_ID": "123",
+            "MORNING_BRIEF_NOW_EPOCH": "1784368800",
+        }
+        self._proc(["/bin/bash", str(DASHBOARD), "refresh", "decisions"],
+                   extra_env=brief_env)
+        self._seed_brief_inputs()
+        self._proc([str(ROOT / "scripts" / "morning-brief")],
+                   extra_env=brief_env)
+        self._proc(["/bin/bash", str(DASHBOARD), "refresh", "brief"],
+                   extra_env=brief_env)
+        latest_path = self.home / "morning-brief" / "latest.json"
+        brief_feed_path = self.home / "data" / "brief.json"
+        self.assertIn(decision_id, latest_path.read_text())
+        self.assertIn(decision_id, brief_feed_path.read_text())
+
+        answered = self._proc(
+            ["/bin/bash", str(DASHBOARD), "decide", "answer", decision_id, "1"],
+            extra_env=brief_env)
+
+        self.assertIn("prompt:", answered.stdout)
+        self.assertEqual(self._history(decision_id)["decision"]["state"], "resolved")
+        self.assertNotIn(decision_id, latest_path.read_text())
+        self.assertNotIn(decision_id, brief_feed_path.read_text())
+        self.assertFalse(marker.exists())
+
+    def test_public_answer_fails_closed_for_inflight_brief_delivery(self) -> None:
+        fixture = self._three_member_card()
+        ids = fixture["ids"]
+        card_id = fixture["card"]["card_id"]
+        marker = self.temp / "provider-send-invoked"
+        sender = self.temp / "fake-sender"
+        sender.write_text("#!/bin/sh\ntouch \"$DECISION_TEST_SEND_MARKER\"\nexit 0\n")
+        sender.chmod(0o700)
+        brief_env = {
+            "DECISION_ALERT_AUTO": "0",
+            "DECISION_ALERT_SEND_BIN": str(sender),
+            "DECISION_TEST_SEND_MARKER": str(marker),
+            "MORNING_BRIEF_SEND_BIN": str(sender),
+            "MORNING_BRIEF_CHAT_ID": "123",
+            "MORNING_BRIEF_NOW_EPOCH": "1784368800",
+        }
+        self._proc(["/bin/bash", str(DASHBOARD), "refresh", "decisions"],
+                   extra_env=brief_env)
+        self._seed_brief_inputs()
+        self._proc([str(ROOT / "scripts" / "morning-brief")],
+                   extra_env=brief_env)
+        brief_home = self.home / "morning-brief"
+        latest_path = brief_home / "latest.json"
+        markdown_path = brief_home / "latest.md"
+        latest = json.loads(latest_path.read_text())
+        latest["delivery"] = {
+            "state": "pending", "confirmed_chunks": 0, "total_chunks": 1,
+        }
+        latest_path.write_text(json.dumps(latest, indent=2, sort_keys=True) + "\n")
+        delivery_dir = brief_home / "delivery"
+        delivery_dir.mkdir(mode=0o700)
+        receipt_path = delivery_dir / (latest["brief_id"] + ".json")
+        receipt_path.write_text(json.dumps({
+            "schema": 1, "brief_id": latest["brief_id"], "state": "pending",
+            "confirmed_chunks": 0, "total_chunks": 1,
+        }, indent=2, sort_keys=True) + "\n")
+        self._proc(["/bin/bash", str(DASHBOARD), "refresh", "brief"],
+                   extra_env=brief_env)
+        brief_feed_path = self.home / "data" / "brief.json"
+        latest_before = latest_path.read_text()
+        markdown_before = markdown_path.read_text()
+        receipt_before = receipt_path.read_text()
+        feed_before = brief_feed_path.read_text()
+
+        failed = self._dashboard(
+            "decide", "answer-rollup", card_id, ids["primary"], "1",
+            ok=False, extra_env=brief_env)
+
+        self.assertTrue(json.loads(failed["stdout"])["ok"])
+        self.assertIn("committed but local view refresh failed", failed["stderr"])
+        self.assertIsNotNone(self._history(ids["primary"])["decision"]["answer_pending"])
+        self.assertEqual(latest_path.read_text(), latest_before)
+        self.assertEqual(markdown_path.read_text(), markdown_before)
+        self.assertEqual(receipt_path.read_text(), receipt_before)
+        self.assertEqual(brief_feed_path.read_text(), feed_before)
         self.assertFalse(marker.exists())
 
     def test_public_answer_ignores_stale_installed_decision_reader(self) -> None:
@@ -742,26 +1053,58 @@ class RollupAnswerTests(unittest.TestCase):
             "Path(os.environ['STALE_READER_MARKER']).touch()\n"
             "print(%r)\n" % json.dumps(stale_payload, sort_keys=True))
         installed.chmod(0o700)
+        stale_brief_marker = self.temp / "stale-installed-brief-invoked"
+        installed_brief = self.home / "bin" / "morning-brief"
+        installed_brief.write_text(
+            "#!/bin/sh\n"
+            "touch \"$STALE_BRIEF_MARKER\"\n"
+            "exit 17\n")
+        installed_brief.chmod(0o700)
+        stale_composer_marker = self.temp / "stale-composer-invoked"
+        stale_repo_scripts = self.temp / "stale-repo" / "scripts"
+        stale_repo_scripts.mkdir(parents=True, mode=0o700)
+        stale_composer = stale_repo_scripts / "compose-decision-prompt.py"
+        stale_composer.write_text(
+            "#!/bin/sh\n"
+            "touch \"$STALE_COMPOSER_MARKER\"\n"
+            "exit 17\n")
+        stale_composer.chmod(0o700)
 
         self._dashboard(
             "decide", "answer-rollup", card_id, ids["primary"], "1",
-            extra_env={**no_send_env, "STALE_READER_MARKER": str(marker)})
+            extra_env={
+                **no_send_env,
+                "STALE_READER_MARKER": str(marker),
+                "STALE_BRIEF_MARKER": str(stale_brief_marker),
+                "MORNING_BRIEF_NOW_EPOCH": "1784368800",
+                "DASHBOARD_CMD_DECISIONS": str(installed),
+                "DASHBOARD_CMD_BRIEF": str(installed_brief),
+                "REPO_ROOT": str(stale_repo_scripts.parent),
+                "STALE_COMPOSER_MARKER": str(stale_composer_marker),
+            })
         feed = json.loads((self.home / "data" / "decisions.json").read_text())
         by_id = {row["id"]: row for row in feed["data"]["pinned"]}
         self.assertIsNotNone(by_id[ids["primary"]]["answer_pending"])
         self.assertIsNotNone(by_id[ids["equivalent"]]["answer_pending"])
         self.assertIsNone(by_id[ids["independent"]]["answer_pending"])
         self.assertFalse(marker.exists())
+        self.assertFalse(stale_brief_marker.exists())
+        self.assertFalse(stale_composer_marker.exists())
 
     def test_public_answer_reports_committed_feed_refresh_failure(self) -> None:
         fixture = self._three_member_card()
         ids = fixture["ids"]
         card_id = fixture["card"]["card_id"]
+        data_dir = self.home / "data"
+        data_dir.mkdir(mode=0o700)
+        # A directory at the feed destination forces the real exact-runtime
+        # collector's atomic replace to fail; no ambient feeder override is
+        # needed (or trusted) by the public answer transaction.
+        (data_dir / "decisions.json").mkdir(mode=0o700)
         failed = self._dashboard(
             "decide", "answer-rollup", card_id, ids["primary"], "1",
             ok=False, extra_env={
                 "DECISION_ALERT_AUTO": "0",
-                "DASHBOARD_CMD_DECISIONS": "/usr/bin/false",
             })
         payload = json.loads(failed["stdout"])
         self.assertTrue(payload["ok"])

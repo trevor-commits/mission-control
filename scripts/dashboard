@@ -1471,6 +1471,22 @@ do_demo() {
   fi
 }
 
+refresh_answer_views() {
+  # One public answer spans three local read surfaces. Bind every step to this
+  # dashboard runtime, disable alert egress, and fail closed if any view cannot
+  # be made current after the durable answer transaction commits.
+  (
+    export DECISION_ALERT_AUTO=0
+    # Feeder overrides are useful for ordinary collection and tests, but a
+    # state-changing answer must prove coherence through the same exact runtime
+    # as its writer. Ambient overrides cannot participate in this transaction.
+    unset DASHBOARD_CMD_DECISIONS DASHBOARD_CMD_BRIEF
+    engine collect --force --strict decisions >/dev/null &&
+      "$SCRIPT_DIR/morning-brief" --refresh-local >/dev/null &&
+      engine collect --force --strict brief >/dev/null
+  )
+}
+
 cmd="${1:-}"
 [ $# -gt 0 ] && shift
 case "$cmd" in
@@ -1522,8 +1538,10 @@ case "$cmd" in
         printf '%s\n' "$did" | grep -Eq '^decision:[0-9a-f]{24}$' || {
           echo "decide answer: invalid decision id" >&2; exit 2;
         }
-        compose_bin="$REPO_ROOT/scripts/compose-decision-prompt.py"
-        [ -f "$compose_bin" ] || compose_bin="$SCRIPT_DIR/compose-decision-prompt.py"
+        compose_bin="$SCRIPT_DIR/compose-decision-prompt.py"
+        [ -f "$compose_bin" ] || {
+          echo "decide answer: exact-runtime composer is unavailable" >&2; exit 1;
+        }
         compose_argv=(--answer-transaction --home "$MISSION_CONTROL_HOME" \
           --decision-alert "$SCRIPT_DIR/decision-alert" \
           --decision-id "$did" --choice "$choice")
@@ -1531,13 +1549,12 @@ case "$cmd" in
         [ -n "$answer_resume_chat" ] && compose_argv+=(--resume-chat-id "$answer_resume_chat")
         [ -n "$answer_resume_provider" ] && compose_argv+=(--resume-provider "$answer_resume_provider")
         answer_result="$(python3 "$compose_bin" "${compose_argv[@]}")" || exit $?
-        # A public answer is not fully reported while Home and Morning Brief can
-        # still read the stale actionable feed. Refresh strictly with alert egress
-        # disabled; the committed JSON remains available for exact replay.
-        if ! (export DECISION_ALERT_AUTO=0
-              engine collect --force --strict decisions >/dev/null); then
+        # A public answer is not fully reported while Home or Morning Brief can
+        # still read stale actionable state. The committed JSON remains
+        # available for exact replay if any local refresh step fails.
+        if ! refresh_answer_views; then
           printf '%s\n' "$answer_result"
-          echo "decide answer: committed but decisions feed refresh failed; exact replay is safe" >&2
+          echo "decide answer: committed but local view refresh failed; exact replay is safe" >&2
           exit 1
         fi
         printf '%s\n' "$answer_result"
@@ -1568,8 +1585,10 @@ case "$cmd" in
         printf '%s\n' "$primary_did" | grep -Eq '^decision:[0-9a-f]{24}$' || {
           echo "decide answer-rollup: invalid primary decision id" >&2; exit 2;
         }
-        compose_bin="$REPO_ROOT/scripts/compose-decision-prompt.py"
-        [ -f "$compose_bin" ] || compose_bin="$SCRIPT_DIR/compose-decision-prompt.py"
+        compose_bin="$SCRIPT_DIR/compose-decision-prompt.py"
+        [ -f "$compose_bin" ] || {
+          echo "decide answer-rollup: exact-runtime composer is unavailable" >&2; exit 1;
+        }
         compose_argv=(--answer-rollup-transaction --home "$MISSION_CONTROL_HOME" \
           --decision-alert "$SCRIPT_DIR/decision-alert" \
           --card-id "$card_id" --primary-decision-id "$primary_did" \
@@ -1578,13 +1597,11 @@ case "$cmd" in
         [ -n "$answer_resume_chat" ] && compose_argv+=(--resume-chat-id "$answer_resume_chat")
         [ -n "$answer_resume_provider" ] && compose_argv+=(--resume-provider "$answer_resume_provider")
         answer_result="$(python3 "$compose_bin" "${compose_argv[@]}")" || exit $?
-        # Bind public success to the current decisions feed. DECISION_ALERT_AUTO=0
-        # makes this a local collector only; a failed refresh is loud while the
-        # persisted digest keeps exact replay safe and idempotent.
-        if ! (export DECISION_ALERT_AUTO=0
-              engine collect --force --strict decisions >/dev/null); then
+        # Bind public success to all local decision views. A failed refresh is
+        # loud while the persisted digest keeps exact replay safe and idempotent.
+        if ! refresh_answer_views; then
           printf '%s\n' "$answer_result"
-          echo "decide answer-rollup: committed but decisions feed refresh failed; exact replay is safe" >&2
+          echo "decide answer-rollup: committed but local view refresh failed; exact replay is safe" >&2
           exit 1
         fi
         printf '%s\n' "$answer_result"

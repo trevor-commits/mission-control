@@ -44,10 +44,22 @@ Evidence: `records/evidence/rollup-answer-final-audit-red-green.txt`.
 
 Evidence: `records/evidence/rollup-answer-occupied-parent-red-green.txt`.
 
+## Attempt 4 — rejected persisted Morning Brief coherence boundary
+
+- Audit task: Codex `/root/lane_d_final_audit` (fresh same-model/max worker of source task `019f73d8-e5dc-73a0-acc5-8a4916ac6819`).
+- Model/reasoning: `gpt-5.6-sol` / max.
+- Reviewed range: `53e91392dcef3d2deeedf748c14159320a8572e0..af083a64e8dd7a264d1cdfc4ed7d344b8a895b20`.
+- Verdict: `NOT MERGE-READY` despite the source task's committed `SUITES PASS=23 FAIL=0` receipt.
+- P1: the public answer transaction refreshed only `data/decisions.json`; an already-persisted `morning-brief/latest.json` and public `data/brief.json` remained byte-identical, retained the answered decision, and still allowed exit zero.
+- P2: `verify.md`, `STATE.md`, and `todo.md` still described already-committed/full-green steps as pending.
+- Disposition: accepted. The P1 was reproduced with a public-command-only RED test at frozen `af083a6`. The repair adds exact-runtime `morning-brief --refresh-local`, strict brief-feed publication, authoritative delivered-receipt validation, receipt/cursor preservation, in-flight delivery fail-closed behavior across a day rollover, single-answer parity, and planted stale runtime/no-send traps. Focused gates are rollup `23/23`, Morning Brief all pass, dashboard `67/0`, ER-134 `59/0`, syntax/diff clean. The P2 records are reconciled in the same repair change.
+- Evidence: `records/evidence/rollup-answer-morning-brief-coherence-red-green.txt`.
+- Auditor limitation: its focused `18/18` rerun passed, but its own full verifier was interrupted after several green suites. The source task's exact `af083a6` full-gate receipt remains the authoritative pre-repair gate; a new post-repair authoritative gate is still required.
+
 ## Final attempt
 
-- Status: records-complete `bc9014d686c477fe674987072f1ef8a5f4a96718` passed the authoritative `SUITES PASS=23 FAIL=0` gate; a new fresh same-model/max audit of the evidence successor remains pending.
-- Full-gate evidence: `records/evidence/rollup-answer-occupied-parent-full-green.txt`.
+- Status: fourth-audit focused repair is green; repair commit, authoritative full gate, and a new frozen-head same-model/max verdict remain pending.
+- Full-gate evidence: pending post-repair receipt; historical pre-repair receipt is `records/evidence/rollup-answer-occupied-parent-full-green.txt`.
 - Did not verify: final review-clean verdict, remote/PR state, merged-main behavior, install/deploy, provider delivery, or live-store behavior.
 
 ## Audited Chat

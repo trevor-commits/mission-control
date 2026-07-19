@@ -27,6 +27,7 @@
 - [x] 4.5 Send frozen `708031f` to a new same-model/max-reasoning Codex audit; reproduce its two P1 and one P2 findings.
 - [x] 4.6 Quarantine the exact receipt-bound held artifact during existing-batch replay failure, bind writer/collector to one runtime, prioritize actionable bounded rows, and add five hermetic counterexamples.
 - [x] 4.7 Return frozen `16a3e51` to the fresh auditor; reproduce its occupied replacement-parent P1 and repair it in `bfaf10b` with a hermetic regression.
-- [ ] 4.8 Run the records-complete authoritative gate and send the exact repaired head to a new fresh same-model/max auditor for a review-clean verdict.
-- [ ] 4.9 Update `verify.md`, retrospective, `STATE.md`, `todo.md`, branch ledger, and the final audit coverage disposition.
-- [ ] 4.10 Commit, push the topic branch, open a review-ready PR, and stop without merging or deploying.
+- [x] 4.8 Run the records-complete authoritative gate; send frozen `af083a6` to a new fresh same-model/max auditor; reproduce its persisted Morning Brief/public brief-feed P1 and stale-record P2.
+- [ ] 4.9 Bind decisions, persisted Morning Brief, and public brief feed into one same-runtime no-egress success boundary; require an authoritative complete delivered receipt, preserve receipts/cursors, fail closed on in-flight delivery across day rollover, rerun the authoritative gate, and require a fresh review-clean verdict.
+- [ ] 4.10 Update `verify.md`, retrospective, `STATE.md`, `todo.md`, branch ledger, and the final audit coverage disposition.
+- [ ] 4.11 Commit, push the topic branch, open a review-ready PR, and stop without merging or deploying.

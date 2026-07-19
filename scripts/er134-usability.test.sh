@@ -37,6 +37,7 @@ cp "$ROOT/scripts/mission_control_common.py" "$MISSION_CONTROL_HOME/bin/mission_
 cp "$ROOT/scripts/queue_admission.py" "$MISSION_CONTROL_HOME/bin/queue_admission.py"
 cp "$ROOT/scripts/dashboard" "$MISSION_CONTROL_HOME/bin/dashboard"
 cp "$COMPOSE" "$MISSION_CONTROL_HOME/bin/compose-decision-prompt.py"
+cp "$ROOT/scripts/morning-brief" "$MISSION_CONTROL_HOME/bin/morning-brief"
 chmod +x "$MISSION_CONTROL_HOME/bin/"*
 
 python3 - <<'PY'

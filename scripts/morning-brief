@@ -3,7 +3,8 @@
 
 The composer reads one stable in-memory snapshot of local dashboard feeds. It
 does not call a model, execute suggested actions, or advance delivery cursors.
-Normal compose atomically writes latest.md + latest.json; --print is preview.
+Normal compose atomically writes latest.md + latest.json; --print is preview;
+--refresh-local reconciles the local view without sending or changing cursors.
 """
 
 import hashlib
@@ -956,17 +957,165 @@ def compose(preview=False):
             pass
 
 
+def _refresh_local_locked():
+    """Reconcile a same-day local brief after a decision-state transition.
+
+    A not-yet-sent brief can be composed normally. A delivered brief must keep
+    its delivery identity and receipt, so only its local NEEDS YOU view is
+    rebuilt from a fresh snapshot. In-flight or failed delivery receipts bind
+    retry bytes and therefore fail closed instead of being rewritten.
+    """
+    _reset_egress_counters()
+    now = _now()
+    latest_path = os.path.join(_brief_home(), "latest.json")
+    latest_present = os.path.lexists(latest_path)
+    existing = _load_json(latest_path)
+    if not existing:
+        if latest_present:
+            sys.stderr.write("morning-brief: local refresh invalid sidecar\n")
+            return 1
+        return _compose_locked(preview=False)
+
+    brief_id = existing.get("brief_id")
+    if not isinstance(brief_id, str) or not brief_id:
+        sys.stderr.write("morning-brief: local refresh unavailable\n")
+        return 1
+    receipt_path = _receipt_path(brief_id)
+    receipt_present = os.path.lexists(receipt_path)
+    receipt = _load_json(receipt_path) if receipt_present else None
+    if receipt_present and receipt is None:
+        sys.stderr.write("morning-brief: local refresh invalid delivery receipt\n")
+        return 1
+    delivery_meta = existing.get("delivery")
+    if delivery_meta is not None and not isinstance(delivery_meta, dict):
+        sys.stderr.write("morning-brief: local refresh unavailable\n")
+        return 1
+    if receipt is not None:
+        if receipt.get("brief_id") != brief_id:
+            sys.stderr.write("morning-brief: local refresh receipt mismatch\n")
+            return 1
+        delivery_state = receipt.get("state")
+    else:
+        delivery_state = (delivery_meta or {}).get("state") or "not_sent"
+    if delivery_state not in ("not_sent", "pending", "partial", "failed", "delivered"):
+        sys.stderr.write("morning-brief: local refresh invalid delivery state\n")
+        return 1
+    if receipt is not None and delivery_state == "not_sent":
+        sys.stderr.write("morning-brief: local refresh invalid delivery receipt\n")
+        return 1
+    if delivery_state == "delivered" and receipt is None:
+        # Delivery is durable only through its receipt. A sidecar alone can be
+        # stale after an interrupted or corrupted write and cannot authorize
+        # replacing the bytes that a retry might still need.
+        sys.stderr.write("morning-brief: local refresh missing delivery receipt\n")
+        return 1
+    if delivery_state in ("pending", "partial", "failed"):
+        sys.stderr.write(
+            "morning-brief: local refresh blocked by delivery state %s\n" %
+            delivery_state)
+        return 1
+
+    if delivery_state == "delivered":
+        confirmed = receipt.get("confirmed_chunks")
+        total = receipt.get("total_chunks")
+        chunks = receipt.get("chunks")
+        if (type(confirmed) is not int or type(total) is not int or
+                receipt.get("schema") != 1 or total < 1 or confirmed != total or
+                not isinstance(chunks, list) or len(chunks) != total or
+                any(not isinstance(chunk, dict) or
+                    chunk.get("index") != index or
+                    chunk.get("state") != "confirmed" or
+                    not re.fullmatch(r"[0-9a-f]{64}",
+                                     str(chunk.get("content_hash") or ""))
+                    for index, chunk in enumerate(chunks, 1))):
+            sys.stderr.write("morning-brief: local refresh invalid delivery receipt\n")
+            return 1
+        existing["delivery"] = {
+            "state": "delivered",
+            "confirmed_chunks": confirmed,
+            "total_chunks": total,
+        }
+
+    # Evaluate delivery state before the local-day boundary. In-flight retry
+    # bytes remain pinned even after midnight; only an unsent or completely
+    # delivered prior-day brief may give way to a newly composed local view.
+    if delivery_state != "delivered" or not _same_local_day(
+            existing.get("generated_epoch"), now):
+        return _compose_locked(preview=False)
+
+    sections = existing.get("sections")
+    if not isinstance(sections, list):
+        sys.stderr.write("morning-brief: local refresh unavailable\n")
+        return 1
+    needs_indexes = [index for index, section in enumerate(sections)
+                     if isinstance(section, dict) and section.get("title") == "NEEDS YOU"]
+    if len(needs_indexes) != 1:
+        sys.stderr.write("morning-brief: local refresh unavailable\n")
+        return 1
+
+    snapshot = _snapshot_inputs()
+    health = {name: _input_health(name, snapshot[name], now) for name in INPUTS}
+    needs_cap = _bounded_int("MORNING_BRIEF_NEEDS_YOU_MAX", 3, maximum=10)
+    needs, collapsed, _stale = _needs_you(snapshot, health, needs_cap)
+    sections[needs_indexes[0]] = _section("NEEDS YOU", needs, collapsed)
+    inputs = existing.get("inputs")
+    if isinstance(inputs, dict):
+        inputs["decisions"] = health["decisions"]
+
+    prior_refresh = existing.get("local_refresh")
+    delivered_hash = (prior_refresh.get("delivered_markdown_sha256")
+                      if isinstance(prior_refresh, dict) else None)
+    existing["local_refresh"] = {
+        "reason": "decision_state_changed",
+        "refreshed_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now)),
+        "refreshed_epoch": now,
+        "delivery_state_preserved": "delivered",
+        "delivered_markdown_sha256": delivered_hash or existing.get("markdown_sha256"),
+    }
+    existing.setdefault("egress_counters", {})["local_refresh"] = \
+        _EGRESS_COUNTERS.snapshot()
+    if not isinstance(existing.get("valid_until"), int):
+        existing["valid_until"] = next_local_midnight(now)
+
+    markdown = _render_markdown(existing)
+    existing["markdown_sha256"] = hashlib.sha256(markdown.encode("utf-8")).hexdigest()
+    _atomic_write(os.path.join(_brief_home(), "latest.md"), markdown)
+    dated = os.path.join(_brief_home(), time.strftime("%Y-%m-%d.md", time.localtime(now)))
+    _atomic_write(dated, markdown)
+    # Publish the sidecar last so the dashboard never observes new metadata
+    # before the corresponding local Markdown bytes exist.
+    _atomic_json(latest_path, existing)
+    print("refreshed local view: %s" % brief_id)
+    return 0
+
+
+def refresh_local():
+    lock = _acquire_delivery_lock()
+    if not lock:
+        sys.stderr.write("morning-brief: state lock busy\n")
+        return 75
+    try:
+        return _refresh_local_locked()
+    finally:
+        try:
+            os.rmdir(lock)
+        except OSError:
+            pass
+
+
 def main(argv):
-    allowed = {"--print", "--send"}
+    allowed = {"--print", "--send", "--refresh-local"}
     unknown = [arg for arg in argv if arg not in allowed]
     if unknown:
-        sys.stderr.write("usage: morning-brief [--print|--send]\n")
+        sys.stderr.write("usage: morning-brief [--print|--send|--refresh-local]\n")
         return 2
-    if "--print" in argv and "--send" in argv:
-        sys.stderr.write("usage: morning-brief [--print|--send]\n")
+    if len(argv) > 1:
+        sys.stderr.write("usage: morning-brief [--print|--send|--refresh-local]\n")
         return 2
     if "--send" in argv:
         return deliver()
+    if "--refresh-local" in argv:
+        return refresh_local()
     return compose(preview="--print" in argv)
 
 

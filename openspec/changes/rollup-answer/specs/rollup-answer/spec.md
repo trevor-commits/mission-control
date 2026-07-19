@@ -71,7 +71,7 @@ Exact current scope plus choice MUST be idempotent; a conflicting choice or part
 - **THEN** the prior pending event remains in history but is no longer active and a new answer may be recorded
 
 ### Requirement: Public decision-feed coherence without egress
-The public dashboard answer and rollup-answer commands MUST run the strict decisions collector with automatic alerts disabled, MUST update Home and Morning Brief before reporting full success, and MUST surface a committed-but-refresh-failed result without sending to any provider.
+The public dashboard answer and rollup-answer commands MUST run the strict decisions collector with automatic alerts disabled, MUST reconcile the persisted Morning Brief and strict public brief feed before reporting full success, and MUST surface a committed-but-refresh-failed result without sending to any provider or changing delivery cursors.
 
 #### Scenario: Feed refresh succeeds
 - **WHEN** a rollup answer commits and the local decisions collector succeeds
@@ -81,8 +81,28 @@ The public dashboard answer and rollup-answer commands MUST run the strict decis
 - **WHEN** the source dashboard command writes a rollup answer while an older executable decision reader exists under the temporary Mission Control state home
 - **THEN** the strict collector uses the same runtime implementation as the writer, exposes `answer_pending`, and does not invoke the stale installed reader
 
+#### Scenario: Ambient runtime selectors name stale executables
+- **WHEN** `REPO_ROOT` or decision/brief feeder override variables name independently versioned executables during a public answer
+- **THEN** the transaction ignores those selectors, uses its exact `SCRIPT_DIR` composer/readers, and either publishes current local views or fails nonzero
+
+#### Scenario: Persisted Morning Brief predates the answer
+- **WHEN** `morning-brief/latest.json` and `data/brief.json` already expose a target before the public answer commits
+- **THEN** the command reconciles both persisted views through its own runtime, omits the answered target, preserves independent actionable members, and only then returns zero
+
+#### Scenario: Today's Morning Brief was already delivered
+- **WHEN** the answer commits after a same-day brief has a delivered receipt
+- **THEN** the local `NEEDS YOU` view is reconciled without changing the receipt, delivery cursor, brief identity, or delivered state and without attempting another send
+
+#### Scenario: Delivered state lacks an authoritative complete receipt
+- **WHEN** the local sidecar claims delivered but its receipt is absent, malformed, or not completely confirmed
+- **THEN** the local brief is not rewritten and the public command returns committed-but-refresh-failed nonzero
+
+#### Scenario: Morning Brief delivery is in flight
+- **WHEN** the answer commits while the current brief receipt is pending, partial, or failed
+- **THEN** receipt-bound retry bytes remain unchanged even across a local-day rollover and the public command returns committed-but-refresh-failed nonzero so exact replay may retry after delivery settles
+
 #### Scenario: Feed refresh fails after commit
-- **WHEN** the database and private artifacts commit but the strict decisions collector fails
+- **WHEN** the database and private artifacts commit but any strict local-view refresh step fails
 - **THEN** the command returns nonzero, prints the committed structured receipt, identifies the degraded refresh on stderr, and permits an exact idempotent replay
 
 ### Requirement: Bounded decision views preserve actionable work

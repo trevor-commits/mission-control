@@ -15,7 +15,11 @@ The first full verifier was necessary but insufficient. Independent review found
 7. A public transaction cannot select independently versioned writer and reader implementations. Runtime identity is part of feed-coherence proof.
 8. A bounded view must order by domain actionability before slicing; counting actionables across the full list is not enough if the visible prefix contains only receipts.
 9. A path-visible parent replacement creates two identities to reconcile: preserve the exact held old-parent object, then independently fd-bind and invalidate any unverified canonical conflict in the current parent before returning.
+10. A consumer test run after the public command is not proof of transaction coherence. Persist the consumer view first, invoke only the public command, and require those exact bytes/feed artifacts to advance before zero.
+11. Local-view reconciliation and notification delivery are different lifecycles. A delivered brief may update its local action view only while preserving receipt/cursor identity and suppressing resend; in-flight receipt-bound bytes must fail closed instead of being rewritten.
+12. Same-runtime claims must cover every ambient selector, including `REPO_ROOT` and explicit feeder overrides, as well as installed-path selection. A state-changing transaction should bind composer and readers to one script directory while ordinary collection may retain overrides.
+13. Calendar rollover is presentation state, not delivery authority. Validate the receipt lifecycle first: an incomplete retry stays pinned after midnight, and a sidecar-only delivered claim cannot authorize changing notification-derived local bytes.
 
 ## Remaining boundary
 
-One new exact-head audit by a fresh same-model/max task and hosted PR checks remain. Merge, installation, live-store use, provider delivery, plist, and launchd actions are outside this branch-only change.
+A committed authoritative gate, one new exact-head audit by a fresh same-model/max task, and hosted PR checks remain. Merge, installation, live-store use, provider delivery, plist, and launchd actions are outside this branch-only change.
