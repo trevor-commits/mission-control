@@ -1,0 +1,58 @@
+Lane D rollup-answer authoritative full-green evidence
+Date: 2026-07-18
+Branch: codex/rollup-answer-wiring
+Candidate SHA: ed8ce3591b5fb3070b132b98a062be1125a5f991
+Base: 53e91392dcef3d2deeedf748c14159320a8572e0
+Command: `PYTHONDONTWRITEBYTECODE=1 /bin/bash scripts/verify.sh`
+Environment: committed code plus temporary test homes/stores, synthetic feeds, test stubs, and loopback-only transport fixtures; no live Mission Control store, provider send, install, deploy, release, plist, or launchd action
+
+Terminal receipt:
+```
+== OpenSpec strict ==
+✓ change/morning-brief
+✓ change/rollup-answer
+Totals: 2 passed, 0 failed (2 items)
+
+== Python syntax ==
+== shell syntax ==
+== source tree artifacts ==
+
+====
+SUITES PASS=23 FAIL=0
+```
+
+Selected suite receipts:
+- Verify aggregator self-test -> pass, including retained synthetic failure accounting.
+- Automation status -> ALL PASS.
+- Chat graph -> ALL PASS.
+- Dashboard -> PASS=67 FAIL=0.
+- Decision alert -> ALL PASS.
+- Rollup answer -> Ran 10 tests, OK.
+- ER-134 usability -> 58 passed, 0 failed.
+- Loose-end runner -> PASS=32 FAIL=0.
+- Shared Mission Control policy -> PASS=2 FAIL=0.
+- Morning Brief, delivery, deadman, and outcome suites -> ALL PASS.
+- Morning Brief sender -> Ran 15 tests, OK, including the isolated no-bytecode regression.
+- Usage snapshot -> PASS=24 FAIL=0.
+- Dashboard browser -> 253 assertions passed.
+- Unfinished-work scanner -> SELF-TEST PASS.
+- OpenSpec strict -> 2 passed, 0 failed.
+- Python syntax, macOS Bash 3.2 shell syntax, and final source-tree artifact suite -> pass.
+
+Post-run state:
+- `git status -sb` -> clean topic worktree, branch ahead of its topic remote only.
+- `find scripts` for `__pycache__`, `*.pyc`, and `*.pyo` -> no output.
+- `git diff --check` for the current tree and `53e9139..ed8ce35` -> pass.
+- HOTL workflow document lint -> pass.
+
+Diff summary (`53e9139..ed8ce35`):
+- 22 files changed, 1,753 insertions, 131 deletions.
+- Scope: queue/pending semantics, private batch composer, dashboard CLI/presentation, hermetic tests, verifier hardening, OpenSpec/HOTL/state/todo, and evidence only.
+
+Claims:
+- Confirmed: every declared authoritative suite passed on committed candidate `ed8ce35`, including final repository-artifact cleanliness.
+- Confirmed: the approved seven-point `answered_pending` contract is covered by focused negative/mutation tests and the full repository matrix.
+- Confirmed: no schema migration or new dependency was added.
+- Did not verify: the required fresh same-model/max-reasoning independent audit.
+- Did not verify: PR/remote review state; the post-implementation commits are not pushed yet and no implementation PR exists.
+- Did not verify: install, deployment, provider delivery, or live-store behavior because those actions are explicitly out of scope and prohibited for this lane.

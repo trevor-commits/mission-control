@@ -1,0 +1,21 @@
+Lane D answered-pending presentation TDD failure evidence
+Date: 2026-07-18
+Branch: codex/rollup-answer-wiring
+Candidate before presentation implementation: 53e9139 plus uncommitted core implementation
+Environment: synthetic dashboard feeds and temporary Mission Control homes only; no provider, network, install, deploy, or live-store path
+
+$ /bin/bash scripts/morning-brief.test.sh
+FAIL: sidecar preserves order, freshness, equal-timestamp cursor, Git and open deltas
+Assertion evidence: NEEDS YOU still contained `Pending rollup answer must stay out of NEEDS YOU` with a dismiss command.
+FAIL: fresh empty required input warns and marks the brief incomplete
+Result: 2 FAILED; all other Morning Brief checks passed.
+
+$ node scripts/dashboard-render-smoke.js .
+FAIL: #home answered-pending decision is not rendered read-only
+Result: render-smoke: 1 tab(s) FAILED; all other tab, freshness, accessibility, and clipboard checks passed.
+
+$ /bin/bash scripts/er134-usability.test.sh
+FAIL: panel answered-pending read-only state
+Result: er134-usability: 57 passed, 1 failed.
+
+Interpretation: the backend now exposes `answer_pending`, but the existing Morning Brief, Home dashboard, and menu panel still presented those rows as actionable. These are the expected pre-presentation failures for the approved rule that a recorded answer remains visible while being suppressed from duplicate owner-action surfaces.

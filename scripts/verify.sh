@@ -19,6 +19,15 @@ run() {
   fi
 }
 
+source_tree_artifacts() {
+  local artifact
+  artifact="$(find "$ROOT/scripts" \( -type d -name '__pycache__' -o -type f \( -name '*.pyc' -o -name '*.pyo' \) \) -print -quit)"
+  if [ -n "$artifact" ]; then
+    printf 'unexpected source-tree artifact: %s\n' "$artifact" >&2
+    return 1
+  fi
+}
+
 self_test() {
   local t rc
   t="$(mktemp -d)"
@@ -49,6 +58,7 @@ run "automation status" /bin/bash scripts/automation-status.test.sh
 run "chat graph" /bin/bash scripts/chat-graph.test.sh
 run "dashboard" env REPO_ROOT="$ROOT" /bin/bash scripts/dashboard.test.sh --require-shell
 run "decision alert" /bin/bash scripts/decision-alert.test.sh
+run "rollup answer" python3 scripts/rollup-answer.test.py
 run "ER-134 usability" /bin/bash scripts/er134-usability.test.sh
 run "loose-end runner" /bin/bash scripts/loose-end-runner.test.sh
 run "shared Mission Control policy" /bin/bash scripts/mission-control-common.test.sh
@@ -65,6 +75,7 @@ run "unfinished-work scanner" scripts/scan-unfinished-work --self-test
 run "OpenSpec strict" openspec validate --all --strict
 run "Python syntax" python3 -c 'import pathlib; files=["scripts/chat-graph","scripts/decision-alert","scripts/mission_control_common.py","scripts/outcome_extractor.py","scripts/compose-decision-prompt.py","scripts/harvest-morning-brief-proof"]; [compile(pathlib.Path(p).read_text(),p,"exec") for p in files]'
 run "shell syntax" /bin/bash -n scripts/dashboard scripts/*.test.sh scripts/verify.sh
+run "source tree artifacts" source_tree_artifacts
 
 printf '\n====\nSUITES PASS=%s FAIL=%s\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

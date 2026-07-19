@@ -1,0 +1,129 @@
+Lane D public-answer Morning Brief coherence repair
+Date: 2026-07-18
+Source task: Codex 019f73d8-e5dc-73a0-acc5-8a4916ac6819
+Worktree: /Users/gillettes/Coding Projects/mission-control-worktrees/rollup-answer-wiring
+Branch: codex/rollup-answer-wiring
+Rejected frozen head: af083a64e8dd7a264d1cdfc4ed7d344b8a895b20
+Environment: hermetic temporary Mission Control homes, synthetic decision/feed data,
+fake executable senders, no provider/network/live-store path.
+
+AUDIT COUNTEREXAMPLE
+The fresh frozen-head auditor showed that `dashboard decide answer-rollup` returned
+zero after refreshing only data/decisions.json. An already-persisted
+morning-brief/latest.json and public data/brief.json remained byte-identical and
+continued to contain the answered decision.
+
+RED
+Command:
+  PYTHONDONTWRITEBYTECODE=1 python3 scripts/rollup-answer.test.py RollupAnswerTests.test_public_answer_refreshes_local_views_without_provider_send
+Result:
+  FAIL
+  AssertionError: latest_before == latest_after
+  Ran 1 test in 1.018s
+  FAILED (failures=1)
+
+The RED fixture persisted both Morning Brief surfaces before invoking the public
+answer command. It did not run a later preview or collector as surrogate proof.
+
+REPAIR
+- `scripts/dashboard` now treats decisions.json, Morning Brief local state, and
+  data/brief.json as one strict post-commit public-success boundary.
+- Every step is bound to the current SCRIPT_DIR runtime with
+  DECISION_ALERT_AUTO=0; ambient decision/brief feeder overrides are ignored for
+  this transaction; the command returns nonzero with its committed receipt if
+  any local view cannot be refreshed.
+- `scripts/morning-brief --refresh-local` recomposes a not-yet-sent brief. For a
+  delivered same-day brief it refreshes only the local NEEDS YOU view while
+  preserving brief identity, receipt bytes, delivery cursor, and delivered
+  state. Pending/partial/failed delivery bytes are not rewritten; refresh fails
+  closed so exact answer replay can retry later.
+- No send path is called by the new mode.
+
+GREEN — targeted public boundaries
+Command:
+  PYTHONDONTWRITEBYTECODE=1 python3 scripts/rollup-answer.test.py <seven public-view tests>
+Result:
+  pre-existing not-sent view: PASS
+  delivered view / immutable receipt and cursor / no resend: PASS
+  single-answer parity: PASS
+  in-flight delivery fail-closed / no view mutation: PASS
+  delivered sidecar without an authoritative receipt: PASS (nonzero, unchanged)
+  prior-day in-flight receipt: PASS (nonzero, retry bytes unchanged)
+  stale installed decision + Morning Brief readers uninvoked: PASS
+
+SELF-REVIEW RED/GREEN — ambient feeder overrides
+RED: the stale-runtime test named the planted executables through both
+DASHBOARD_CMD_DECISIONS and DASHBOARD_CMD_BRIEF. The public command invoked the
+overrides and returned committed-but-refresh-failed instead of using one runtime.
+GREEN: the answer-only refresh boundary unsets those two overrides; both planted
+markers remain absent, current feeds are published, and the paired real-collector
+failure test still returns the committed receipt nonzero.
+
+SELF-REVIEW RED/GREEN — ambient composer root
+RED: a planted `REPO_ROOT/scripts/compose-decision-prompt.py` was selected before
+the exact-runtime readers and terminated the public command.
+GREEN: both answer branches select only `SCRIPT_DIR/compose-decision-prompt.py`;
+the planted composer marker remains absent alongside both reader markers.
+
+SELF-REVIEW RED/GREEN — receipt authority before calendar rollover
+RED: a sidecar-only `delivered` claim authorized a local rewrite without any
+delivery receipt, and the early same-day check allowed a prior-day pending
+receipt to be overwritten by a new compose. Both public commands returned zero.
+GREEN: receipt presence, schema, complete counters, and every confirmed chunk
+digest are required before a delivered local rewrite; pending/partial/failed
+state is evaluated before the day boundary, so retry bytes remain pinned across
+midnight and the committed answer returns degraded nonzero until delivery settles.
+
+The optional single-answer probe was corrected after two test-construction
+near-misses: the established command emits three receipt lines and terminally
+resolves a single decision; it does not emit one JSON object or answered_pending.
+Those were probe assumptions, not product failures. The corrected behavior is
+covered by the complete gate below.
+
+GREEN — complete focused suites
+Command:
+  PYTHONDONTWRITEBYTECODE=1 python3 scripts/rollup-answer.test.py
+Result:
+  Ran 23 tests in 30.549s (final pre-commit rerun; prior complete rerun 39.509s)
+  OK
+
+Command:
+  PYTHONDONTWRITEBYTECODE=1 /bin/bash scripts/morning-brief.test.sh
+Result:
+  ALL PASS
+
+Command:
+  PYTHONDONTWRITEBYTECODE=1 REPO_ROOT="$PWD" /bin/bash scripts/dashboard.test.sh --require-shell
+Result:
+  PASS=67 FAIL=0
+
+Command:
+  PYTHONDONTWRITEBYTECODE=1 /bin/bash scripts/er134-usability.test.sh
+Result:
+  er134-usability: 59 passed, 0 failed
+  (The first post-repair run correctly failed because its partial installed-stack
+  fixture omitted the now-required morning-brief runtime; adding that production-
+  required runtime to the hermetic fixture made the exact rerun green.)
+
+STATIC CHECKS
+  /bin/bash -n scripts/dashboard                                      PASS
+  /bin/bash -n scripts/er134-usability.test.sh                         PASS
+  in-memory compile scripts/morning-brief                              PASS
+  in-memory compile scripts/rollup-answer.test.py                      PASS
+  openspec validate rollup-answer --strict                             PASS
+  git diff --check                                                     PASS
+
+CLAIMS
+- Confirmed: a public answer cannot return zero while its persisted Morning Brief
+  or public brief feed still exposes the answered target in the tested states.
+- Confirmed: branch/runtime identity is fixed for decision and Morning Brief
+  refresh and for the transaction composer; planted stale installed executables,
+  ambient feeder overrides, and ambient composer-root routes remain uninvoked.
+- Confirmed: delivered receipt and cursor bytes remain identical and no fake
+  provider sender marker is created.
+- Confirmed: in-flight delivery state yields committed-but-refresh-failed nonzero
+  without rewriting the pinned retry content, including after a local-day
+  rollover; a sidecar-only delivered claim cannot authorize a rewrite.
+- Did not verify: the authoritative full 23-suite gate, a fresh frozen-head audit,
+  hosted checks, merge, install/deploy, provider delivery, live-store behavior,
+  plist/launchd, or the live pending decision. Those remain pending or prohibited.

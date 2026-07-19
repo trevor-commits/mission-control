@@ -1,0 +1,45 @@
+Lane D independent-audit repair RED/GREEN evidence
+Date: 2026-07-18
+Branch: codex/rollup-answer-wiring
+Rejected audited head: daa8c72708b36472e5b370cb9e2374a17d23b41d
+Repair commit: 34687c9340787557d0b7b39bc543034f3ac5f125
+Environment: temporary Mission Control homes/stores, synthetic feeds, and fake senders only; no live store, provider send, install, deploy, release, plist, launchd, or main-branch action
+
+Independent RED source:
+- Fresh Codex task `019f762c-c815-77b3-97c0-021c66fd3b7e`, `gpt-5.6-sol`/max, reran the full verifier at `daa8c72` (`23/23`) but returned `NOT MERGE-READY` on two P1 behavioral defects.
+- P1 publication divergence: SQLite committed before the mutable stage and path-visible parent were revalidated, so post-commit mutation/replacement could strand or publish bytes not bound to the receipt.
+- P1 public-feed staleness: `decision-alert sync-snapshot` succeeded without writing `data/decisions.json`, preventing the fallback collector and allowing Home/Morning Brief to retain actionable pre-answer data.
+
+Focused RED command after adding regression contracts:
+`PYTHONDONTWRITEBYTECODE=1 python3 scripts/rollup-answer.test.py`
+
+Observed before production repair:
+- `artifact_manifest_sha256` missing from current pending details (2 errors).
+- post-commit stage-mutation and parent-replacement tests never reached the new boundary (2 failures).
+- public answer left the primary target's feed `answer_pending` null (1 failure).
+- forced collector failure returned success instead of a committed-but-degraded result (1 failure).
+- tampered published batch failed permanently instead of quarantining and exact-replaying (1 failure).
+- Suite result: `FAILED (failures=5, errors=2)` across 14 tests.
+
+GREEN:
+`PYTHONDONTWRITEBYTECODE=1 python3 scripts/rollup-answer.test.py`
+
+Terminal receipt:
+```
+Ran 14 tests in 18.317s
+
+OK
+```
+
+New contracts proven green:
+- canonical manifest digest is stored on every target event and reproduced after a different wall-clock second;
+- stage and final name-to-fd bindings plus held bytes are checked before/after commit;
+- post-commit stage mutation and batch-parent replacement fail, quarantine suspect material, and replay exactly once;
+- a tampered published batch is quarantined and rebuilt only when its immutable pending receipt exists;
+- public answer refreshes `data/decisions.json`, removes only exact pending targets from Morning Brief `NEEDS YOU`, and never invokes the fake provider sender;
+- strict collector failure returns nonzero with committed JSON and an explicit degraded stderr receipt.
+
+Claims:
+- Confirmed: every reproduced P1 boundary has a behavior-level red-before-green regression.
+- Confirmed: no new dependency or schema migration was added.
+- Did not verify: final fresh independent audit, hosted PR checks, merge, install, deploy, provider delivery, or live-store behavior.

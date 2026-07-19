@@ -350,9 +350,10 @@ def _run_builtin_brief(timeout_s):
 
 
 def _run_builtin_decisions(timeout_s):
-    installed = os.path.join(HOME, "bin", "decision-alert")
-    tool = installed if os.path.isfile(installed) and os.access(installed, os.X_OK) \
-        else os.path.join(REPO, "scripts", "decision-alert")
+    # The public answer transaction writes through SCRIPT_DIR/decision-alert.
+    # Read through that same runtime so an unrelated stale installed home cannot
+    # turn a successful strict refresh into a version-skewed feed.
+    tool = os.path.join(RUNTIME_DIR, "decision-alert")
     p, run_error = _run_argv([tool, "sync-snapshot", "--json"], timeout_s)
     if run_error:
         return None, ("decision queue timed out after %ds" % timeout_s
@@ -770,6 +771,8 @@ usage: dashboard <command>
                                     dismiss one queued decision; execute no action
   decide answer <decision-id> <n> [--source <src>] [--resume-chat-id <id>] [--resume-provider <p>]
                                     record Trevor choice n, write Goal prompt, resolve decision
+  decide answer-rollup <card-id> <primary-decision-id> <n> [--source <src>] [--resume-chat-id <id>] [--resume-provider <p>]
+                                    record one recoverable pending answer for strictly equivalent members
   decide alert-backfill [--max N]  send remaining eligible alerts (default 10, ceiling 25)
   panel [--install-only]           refresh feeds + open corner menu-bar panel; installs login KeepAlive (ER-134)
   open [--serve]                   collect --due, open the shell (--serve: local http)
@@ -1468,6 +1471,22 @@ do_demo() {
   fi
 }
 
+refresh_answer_views() {
+  # One public answer spans three local read surfaces. Bind every step to this
+  # dashboard runtime, disable alert egress, and fail closed if any view cannot
+  # be made current after the durable answer transaction commits.
+  (
+    export DECISION_ALERT_AUTO=0
+    # Feeder overrides are useful for ordinary collection and tests, but a
+    # state-changing answer must prove coherence through the same exact runtime
+    # as its writer. Ambient overrides cannot participate in this transaction.
+    unset DASHBOARD_CMD_DECISIONS DASHBOARD_CMD_BRIEF
+    engine collect --force --strict decisions >/dev/null &&
+      "$SCRIPT_DIR/morning-brief" --refresh-local >/dev/null &&
+      engine collect --force --strict brief >/dev/null
+  )
+}
+
 cmd="${1:-}"
 [ $# -gt 0 ] && shift
 case "$cmd" in
@@ -1519,18 +1538,73 @@ case "$cmd" in
         printf '%s\n' "$did" | grep -Eq '^decision:[0-9a-f]{24}$' || {
           echo "decide answer: invalid decision id" >&2; exit 2;
         }
-        compose_bin="$REPO_ROOT/scripts/compose-decision-prompt.py"
-        [ -f "$compose_bin" ] || compose_bin="$SCRIPT_DIR/compose-decision-prompt.py"
+        compose_bin="$SCRIPT_DIR/compose-decision-prompt.py"
+        [ -f "$compose_bin" ] || {
+          echo "decide answer: exact-runtime composer is unavailable" >&2; exit 1;
+        }
         compose_argv=(--answer-transaction --home "$MISSION_CONTROL_HOME" \
           --decision-alert "$SCRIPT_DIR/decision-alert" \
           --decision-id "$did" --choice "$choice")
         [ -n "$answer_source" ] && compose_argv+=(--source "$answer_source")
         [ -n "$answer_resume_chat" ] && compose_argv+=(--resume-chat-id "$answer_resume_chat")
         [ -n "$answer_resume_provider" ] && compose_argv+=(--resume-provider "$answer_resume_provider")
-        python3 "$compose_bin" "${compose_argv[@]}" || exit $?
-        # Refresh feed for UI; do not fail the answer if collectors are unavailable.
-        "$SCRIPT_DIR/decision-alert" sync-snapshot --json >/dev/null 2>&1 || \
-          engine collect --force decisions >/dev/null 2>&1 || true
+        answer_result="$(python3 "$compose_bin" "${compose_argv[@]}")" || exit $?
+        # A public answer is not fully reported while Home or Morning Brief can
+        # still read stale actionable state. The committed JSON remains
+        # available for exact replay if any local refresh step fails.
+        if ! refresh_answer_views; then
+          printf '%s\n' "$answer_result"
+          echo "decide answer: committed but local view refresh failed; exact replay is safe" >&2
+          exit 1
+        fi
+        printf '%s\n' "$answer_result"
+        ;;
+      answer-rollup)
+        [ $# -ge 4 ] || { usage; exit 2; }
+        card_id="$2"; primary_did="$3"; choice="$4"; shift 4
+        answer_source=""; answer_resume_chat=""; answer_resume_provider=""
+        while [ $# -gt 0 ]; do
+          case "$1" in
+            --source)
+              [ $# -ge 2 ] || { echo "decide answer-rollup: --source needs a value" >&2; exit 2; }
+              answer_source="$2"; shift 2 ;;
+            --resume-chat-id)
+              [ $# -ge 2 ] || { echo "decide answer-rollup: --resume-chat-id needs a value" >&2; exit 2; }
+              answer_resume_chat="$2"; shift 2 ;;
+            --resume-provider)
+              [ $# -ge 2 ] || { echo "decide answer-rollup: --resume-provider needs a value" >&2; exit 2; }
+              answer_resume_provider="$2"; shift 2 ;;
+            *) echo "decide answer-rollup: unknown argument: $1" >&2; usage; exit 2 ;;
+          esac
+        done
+        case "$choice" in *[!0-9]*|"") echo "decide answer-rollup: choice must be a positive integer" >&2; exit 2 ;; esac
+        [ "$choice" -ge 1 ] || { echo "decide answer-rollup: choice must be >= 1" >&2; exit 2; }
+        printf '%s\n' "$card_id" | grep -Eq '^card:[0-9a-f]{16}$' || {
+          echo "decide answer-rollup: invalid card id" >&2; exit 2;
+        }
+        printf '%s\n' "$primary_did" | grep -Eq '^decision:[0-9a-f]{24}$' || {
+          echo "decide answer-rollup: invalid primary decision id" >&2; exit 2;
+        }
+        compose_bin="$SCRIPT_DIR/compose-decision-prompt.py"
+        [ -f "$compose_bin" ] || {
+          echo "decide answer-rollup: exact-runtime composer is unavailable" >&2; exit 1;
+        }
+        compose_argv=(--answer-rollup-transaction --home "$MISSION_CONTROL_HOME" \
+          --decision-alert "$SCRIPT_DIR/decision-alert" \
+          --card-id "$card_id" --primary-decision-id "$primary_did" \
+          --choice "$choice")
+        [ -n "$answer_source" ] && compose_argv+=(--source "$answer_source")
+        [ -n "$answer_resume_chat" ] && compose_argv+=(--resume-chat-id "$answer_resume_chat")
+        [ -n "$answer_resume_provider" ] && compose_argv+=(--resume-provider "$answer_resume_provider")
+        answer_result="$(python3 "$compose_bin" "${compose_argv[@]}")" || exit $?
+        # Bind public success to all local decision views. A failed refresh is
+        # loud while the persisted digest keeps exact replay safe and idempotent.
+        if ! refresh_answer_views; then
+          printf '%s\n' "$answer_result"
+          echo "decide answer-rollup: committed but local view refresh failed; exact replay is safe" >&2
+          exit 1
+        fi
+        printf '%s\n' "$answer_result"
         ;;
       alert-backfill)
         shift

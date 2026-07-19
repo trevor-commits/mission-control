@@ -35,6 +35,9 @@ write("usage", {"providers": [
 write("decisions", {"pinned": [
     {"id": "decision:" + "1"*24, "text": "Choose the rollout window",
      "trust": "structured", "provenance": "chat-graph tier1"},
+    {"id": "decision:" + "4"*24, "text": "Pending rollup answer must stay out of NEEDS YOU",
+     "trust": "structured", "provenance": "chat-graph tier1",
+     "answer_pending": {"choice": 2, "batch_key": "b"*64}},
     {"id": "decision:" + "3"*24,
      "text": "DECISION NEEDED: Which rollout path? " + "| Option | Meaning " * 12,
      "trust": "structured", "provenance": "chat-graph tier1"}],
@@ -155,6 +158,7 @@ assert long_line["text"].endswith("(options in dashboard)"), long_line["text"]
 short_line=next(r for r in needs["lines"] if r["text"]=="Choose the rollout window")
 assert "options in dashboard" not in short_line["text"]
 assert all("Trevor needs to review the evidence" not in row["text"] for row in needs["lines"])
+assert all("Pending rollup answer" not in row["text"] for row in needs["lines"]), needs["lines"]
 assert any("Trevor needs to review the evidence" in row["text"] for row in possible["lines"])
 assert "Morning Brief implementation" in md and "Implemented the verified outcome" in md
 assert "Audit: OAuth handling [global-implementations]" in md

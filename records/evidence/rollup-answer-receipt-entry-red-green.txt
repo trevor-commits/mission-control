@@ -1,0 +1,74 @@
+Lane D fifth-audit repair — receipt binding and canonical-entry quarantine
+Date: 2026-07-18
+Frozen rejected head: 8b8fa772336239eab812b38e2b152e69dce65a96
+Environment: hermetic temporary Mission Control homes and fake senders only
+
+RED — receipt-backed canonical name occupied by a regular file
+
+$ PYTHONDONTWRITEBYTECODE=1 python3 scripts/rollup-answer.test.py RollupAnswerTests.test_existing_batch_parent_swap_quarantines_visible_regular_file
+FAIL: test_existing_batch_parent_swap_quarantines_visible_regular_file
+AssertionError: True is not false
+Ran 1 test in 1.083s
+FAILED (failures=1)
+
+Observed: the public replay failed and quarantined the held old-parent batch, but
+the mode-0600 regular file remained at the current canonical batch name.
+
+RED — structurally valid receipt with a planted chunk digest
+
+$ PYTHONDONTWRITEBYTECODE=1 python3 scripts/rollup-answer.test.py RollupAnswerTests.test_public_answer_rejects_unbound_delivered_receipt
+FAIL: test_public_answer_rejects_unbound_delivered_receipt
+AssertionError: command unexpectedly succeeded
+Ran 1 test in 1.558s
+FAILED (failures=1)
+
+Observed: a delivered receipt with complete counters and confirmed chunk shape,
+but a planted 64-hex chunk digest, authorized local Morning Brief rewriting.
+
+GREEN — exact counterexamples after repair
+
+$ PYTHONDONTWRITEBYTECODE=1 python3 scripts/rollup-answer.test.py RollupAnswerTests.test_existing_batch_parent_swap_quarantines_visible_regular_file
+Ran 1 test in 3.551s
+OK
+
+$ PYTHONDONTWRITEBYTECODE=1 python3 scripts/rollup-answer.test.py RollupAnswerTests.test_public_answer_rejects_unbound_delivered_receipt
+Ran 1 test in 2.787s
+OK
+
+$ PYTHONDONTWRITEBYTECODE=1 python3 scripts/rollup-answer.test.py RollupAnswerTests.test_public_answer_refreshes_delivered_brief_without_resend
+Ran 1 test in 2.345s
+OK
+
+GREEN — focused suites
+
+$ PYTHONDONTWRITEBYTECODE=1 python3 scripts/rollup-answer.test.py
+Ran 25 tests in 35.034s
+OK
+
+$ PYTHONDONTWRITEBYTECODE=1 /bin/bash scripts/morning-brief-delivery.test.sh
+PASS: whole-notification screening catches a boundary-spanning secret
+PASS: partial send exits nonzero
+PASS: partial receipt confirms only chunk one and stops at failure
+PASS: failed delivery does not advance cursor
+PASS: retry sends only unconfirmed chunks and advances cursor on completion
+PASS: delivery retry does not create a second compose-run marker
+PASS: completed brief resend is a no-op
+PASS: sender receives fixed argv plus identified, hashed, scrubbed chunks
+PASS: delivery receipt is mode 600
+PASS: Markdown/sidecar content mismatch fails closed before send
+PASS: concurrent senders emit one external send per chunk
+PASS: delivery lock is released
+PASS: compose and send serialize around one coherent brief identity
+ALL PASS
+
+Claims:
+- Confirmed: a receipt-backed regular-file collision is fd-bound, quarantined
+  under a private name, and exact replay rebuilds with one pending event/member.
+- Confirmed: a delivered receipt must bind the full Markdown digest, the
+  deterministic chunk limit, and every exact chunk digest before local rewrite.
+- Confirmed: first local rewrite pins the exact receipt bytes; replay preserves
+  the receipt and delivery cursor and does not call the fake sender.
+- Confirmed: tests used temporary state only; no provider, live store, install,
+  deployment, plist, launchd, release, merge, or main path was touched.
+- Did not verify: authoritative full verifier, fresh successor-head audit,
+  hosted checks, merged/installed behavior, provider delivery, or live stores.
