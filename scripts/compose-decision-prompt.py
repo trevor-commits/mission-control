@@ -317,7 +317,7 @@ def _cleanup_rollup_stage(batches_fd: int, stage_name: str | None,
 
 def _validate_named_entry(parent_fd: int, name: str, held_fd: int,
                           label: str) -> None:
-    """Prove a name still resolves to the exact pinned regular file/directory."""
+    """Prove a name still resolves to the exact pinned safe entry."""
     try:
         current = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
     except OSError as exc:
@@ -325,7 +325,7 @@ def _validate_named_entry(parent_fd: int, name: str, held_fd: int,
             "decide answer-rollup: %s path changed during transaction" % label
         ) from exc
     held = os.fstat(held_fd)
-    allowed = (stat.S_ISREG, stat.S_ISDIR)
+    allowed = (stat.S_ISREG, stat.S_ISDIR, stat.S_ISLNK)
     if (not any(predicate(held.st_mode) for predicate in allowed) or
             not any(predicate(current.st_mode) for predicate in allowed) or
             stat.S_IFMT(held.st_mode) != stat.S_IFMT(current.st_mode) or
@@ -335,19 +335,71 @@ def _validate_named_entry(parent_fd: int, name: str, held_fd: int,
 
 
 def _open_existing_quarantine_entry(parent_fd: int, name: str, label: str) -> int:
-    """Pin a non-symlink regular file or directory without blocking on FIFOs."""
-    flags = (os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) |
-             getattr(os, "O_NONBLOCK", 0))
+    """Pin a regular file, directory, or symlink without following targets."""
+    try:
+        current = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+    except OSError as exc:
+        raise RuntimeError(
+            "decide answer-rollup: unsafe %s entry" % label) from exc
+    if stat.S_ISLNK(current.st_mode):
+        # macOS exposes O_SYMLINK in the SDK header but Python's os module
+        # does not surface it; O_PATH is Linux-only. Fall back to the exact
+        # macOS value so the symlink entry itself is pinned without following
+        # its target across both platforms.
+        o_symlink = getattr(os, "O_SYMLINK", None)
+        if o_symlink is None and sys.platform == "darwin":
+            o_symlink = 0x00200000
+        if o_symlink is not None:
+            flags = os.O_RDONLY | o_symlink
+        elif hasattr(os, "O_PATH"):
+            flags = os.O_PATH | getattr(os, "O_NOFOLLOW", 0)
+        else:
+            raise RuntimeError(
+                "decide answer-rollup: unsafe %s entry" % label)
+    else:
+        flags = (os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) |
+                 getattr(os, "O_NONBLOCK", 0))
     try:
         fd = os.open(name, flags, dir_fd=parent_fd)
     except OSError as exc:
         raise RuntimeError(
             "decide answer-rollup: unsafe %s entry" % label) from exc
     held = os.fstat(fd)
-    if not (stat.S_ISREG(held.st_mode) or stat.S_ISDIR(held.st_mode)):
+    if not (stat.S_ISREG(held.st_mode) or stat.S_ISDIR(held.st_mode) or
+            stat.S_ISLNK(held.st_mode)):
         os.close(fd)
         raise RuntimeError("decide answer-rollup: unsafe %s entry" % label)
+    try:
+        _validate_named_entry(parent_fd, name, fd, label)
+    except RuntimeError:
+        os.close(fd)
+        raise
     return fd
+
+
+def _restore_misbound_quarantine_entry(
+    parent_fd: int, name: str, quarantine: str,
+) -> None:
+    """Restore a raced replacement after a quarantine identity mismatch."""
+    moved_fd = _open_existing_quarantine_entry(
+        parent_fd, quarantine, "quarantine rollback")
+    try:
+        try:
+            os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            pass
+        else:
+            raise RuntimeError(
+                "decide answer-rollup: quarantine rollback destination changed")
+        _validate_named_entry(
+            parent_fd, quarantine, moved_fd, "quarantine rollback")
+        os.rename(
+            quarantine, name, src_dir_fd=parent_fd, dst_dir_fd=parent_fd)
+        os.fsync(parent_fd)
+        _validate_named_entry(
+            parent_fd, name, moved_fd, "quarantine rollback")
+    finally:
+        os.close(moved_fd)
 
 
 def _quarantine_rollup_entry(batches_fd: int, name: str, held_fd: int,
@@ -363,8 +415,18 @@ def _quarantine_rollup_entry(batches_fd: int, name: str, held_fd: int,
             os.rename(name, quarantine,
                       src_dir_fd=batches_fd, dst_dir_fd=batches_fd)
             os.fsync(batches_fd)
-            _validate_named_entry(
-                batches_fd, quarantine, held_fd, "quarantine")
+            try:
+                _validate_named_entry(
+                    batches_fd, quarantine, held_fd, "quarantine")
+            except RuntimeError as mismatch:
+                try:
+                    _restore_misbound_quarantine_entry(
+                        batches_fd, name, quarantine)
+                except RuntimeError as rollback_error:
+                    raise RuntimeError(
+                        "decide answer-rollup: quarantine identity mismatch; "
+                        "verified rollback failed") from rollback_error
+                raise mismatch
             return quarantine
     raise RuntimeError("decide answer-rollup: could not allocate quarantine name")
 

@@ -9,6 +9,7 @@ reachable from this suite.
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -24,6 +25,14 @@ import unittest
 ROOT = Path(__file__).resolve().parent.parent
 ALERT = ROOT / "scripts" / "decision-alert"
 DASHBOARD = ROOT / "scripts" / "dashboard"
+
+COMPOSER_SPEC = importlib.util.spec_from_file_location(
+    "mission_control_compose_decision_prompt",
+    ROOT / "scripts" / "compose-decision-prompt.py")
+if COMPOSER_SPEC is None or COMPOSER_SPEC.loader is None:
+    raise RuntimeError("could not load compose-decision-prompt.py")
+COMPOSER = importlib.util.module_from_spec(COMPOSER_SPEC)
+COMPOSER_SPEC.loader.exec_module(COMPOSER)
 
 TEXT = (
     "**DECISION NEEDED:** Approve `feature/rollup`. "
@@ -738,6 +747,99 @@ class RollupAnswerTests(unittest.TestCase):
         for decision_id in (ids["primary"], ids["equivalent"]):
             self.assertEqual(len(self._pending_events(decision_id)), 1)
 
+    def test_receipt_backed_canonical_symlink_is_quarantined_and_rebuilt(self) -> None:
+        fixture = self._three_member_card()
+        ids = fixture["ids"]
+        card_id = fixture["card"]["card_id"]
+        initial = self._dashboard(
+            "decide", "answer-rollup", card_id, ids["primary"], "1")
+        batch = Path(initial["batch_path"])
+        parent = batch.parent
+        held = parent / (batch.name + ".held")
+        batch.rename(held)
+        os.symlink(held.name, batch)
+
+        recovered = self._dashboard(
+            "decide", "answer-rollup", card_id, ids["primary"], "1")
+
+        self.assertTrue(recovered["replayed"])
+        self.assertTrue(batch.is_dir())
+        self.assertFalse(batch.is_symlink())
+        self.assertTrue(held.is_dir())
+        quarantines = list(parent.glob(".rollup-quarantine.*"))
+        self.assertTrue(any(path.is_symlink() for path in quarantines))
+        replay = self._dashboard(
+            "decide", "answer-rollup", card_id, ids["primary"], "1")
+        self.assertTrue(replay["replayed"])
+        for decision_id in (ids["primary"], ids["equivalent"]):
+            self.assertEqual(len(self._pending_events(decision_id)), 1)
+
+    def test_orphan_first_answer_symlink_is_untouched(self) -> None:
+        fixture = self._three_member_card()
+        ids = fixture["ids"]
+        card_id = fixture["card"]["card_id"]
+        plan = self._alert(
+            "plan-rollup-answer", card_id, ids["primary"], "1")
+        parent = self.home / "answer-batches"
+        parent.mkdir(mode=0o700)
+        held = parent / "unrelated-held"
+        held.mkdir(mode=0o700)
+        canonical = parent / plan["batch_key"]
+        os.symlink(held.name, canonical)
+
+        self._dashboard(
+            "decide", "answer-rollup", card_id, ids["primary"], "1",
+            ok=False)
+
+        self.assertTrue(canonical.is_symlink())
+        self.assertTrue(held.is_dir())
+        self.assertFalse(any(parent.glob(".rollup-quarantine.*")))
+        for decision_id in (ids["primary"], ids["equivalent"]):
+            self.assertEqual(self._pending_events(decision_id), [])
+
+    def test_quarantine_name_swap_rolls_back_unbound_replacement(self) -> None:
+        parent = self.temp / "quarantine-race"
+        parent.mkdir(mode=0o700)
+        canonical = parent / "canonical"
+        canonical.write_text("receipt-backed\n")
+        canonical.chmod(0o600)
+        replacement = parent / "replacement"
+        replacement.write_text("unbound replacement\n")
+        replacement.chmod(0o600)
+        parent_fd = os.open(parent, os.O_RDONLY | os.O_DIRECTORY)
+        held_fd = os.open(canonical, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        real_rename = COMPOSER.os.rename
+        raced = False
+
+        def racing_rename(src, dst, *, src_dir_fd=None, dst_dir_fd=None):
+            nonlocal raced
+            if src == "canonical" and str(dst).startswith(
+                    ".rollup-quarantine.") and not raced:
+                raced = True
+                real_rename(
+                    "canonical", "held-away",
+                    src_dir_fd=src_dir_fd, dst_dir_fd=dst_dir_fd)
+                real_rename(
+                    "replacement", "canonical",
+                    src_dir_fd=src_dir_fd, dst_dir_fd=dst_dir_fd)
+            return real_rename(
+                src, dst, src_dir_fd=src_dir_fd, dst_dir_fd=dst_dir_fd)
+
+        COMPOSER.os.rename = racing_rename
+        try:
+            with self.assertRaisesRegex(RuntimeError, "path changed"):
+                COMPOSER._quarantine_rollup_entry(
+                    parent_fd, "canonical", held_fd, "race")
+        finally:
+            COMPOSER.os.rename = real_rename
+            os.close(held_fd)
+            os.close(parent_fd)
+
+        self.assertTrue(raced)
+        self.assertEqual(canonical.read_text(), "unbound replacement\n")
+        self.assertEqual((parent / "held-away").read_text(), "receipt-backed\n")
+        self.assertFalse(any(parent.glob(".rollup-quarantine.*")))
+
     def test_public_answer_refreshes_local_views_without_provider_send(self) -> None:
         fixture = self._three_member_card()
         ids = fixture["ids"]
@@ -994,6 +1096,66 @@ class RollupAnswerTests(unittest.TestCase):
         self.assertEqual(receipt_path.read_text(), receipt_before)
         self.assertEqual(brief_feed_path.read_text(), feed_before)
         self.assertFalse(marker.exists())
+
+    def test_public_answer_rejects_missing_delivery_binding_fields(self) -> None:
+        fixture = self._three_member_card()
+        ids = fixture["ids"]
+        card_id = fixture["card"]["card_id"]
+        marker = self.temp / "provider-send-invoked"
+        sender = self.temp / "fake-sender"
+        sender.write_text("#!/bin/sh\ntouch \"$DECISION_TEST_SEND_MARKER\"\nexit 0\n")
+        sender.chmod(0o700)
+        brief_env = {
+            "DECISION_ALERT_AUTO": "0",
+            "DECISION_ALERT_SEND_BIN": str(sender),
+            "DECISION_TEST_SEND_MARKER": str(marker),
+            "MORNING_BRIEF_SEND_BIN": str(sender),
+            "MORNING_BRIEF_CHAT_ID": "123",
+            "MORNING_BRIEF_NOW_EPOCH": "1784368800",
+        }
+        self._proc(["/bin/bash", str(DASHBOARD), "refresh", "decisions"],
+                   extra_env=brief_env)
+        self._seed_brief_inputs()
+        self._proc([str(ROOT / "scripts" / "morning-brief")],
+                   extra_env=brief_env)
+        self._proc([str(ROOT / "scripts" / "morning-brief"), "--send"],
+                   extra_env=brief_env)
+
+        brief_home = self.home / "morning-brief"
+        latest_path = brief_home / "latest.json"
+        markdown_path = brief_home / "latest.md"
+        latest = json.loads(latest_path.read_text())
+        receipt_path = brief_home / "delivery" / (latest["brief_id"] + ".json")
+        complete_receipt = json.loads(receipt_path.read_text())
+        marker.unlink()
+        self._proc(["/bin/bash", str(DASHBOARD), "refresh", "brief"],
+                   extra_env=brief_env)
+        brief_feed_path = self.home / "data" / "brief.json"
+
+        for missing_field in ("markdown_sha256", "chunk_bytes"):
+            with self.subTest(missing_field=missing_field):
+                incomplete = dict(complete_receipt)
+                incomplete.pop(missing_field)
+                receipt_path.write_text(
+                    json.dumps(incomplete, indent=2, sort_keys=True) + "\n")
+                receipt_path.chmod(0o600)
+                latest_before = latest_path.read_text()
+                markdown_before = markdown_path.read_text()
+                receipt_before = receipt_path.read_text()
+                feed_before = brief_feed_path.read_text()
+
+                failed = self._dashboard(
+                    "decide", "answer-rollup", card_id, ids["primary"], "1",
+                    ok=False, extra_env=brief_env)
+
+                self.assertTrue(json.loads(failed["stdout"])["ok"])
+                self.assertIn(
+                    "committed but local view refresh failed", failed["stderr"])
+                self.assertEqual(latest_path.read_text(), latest_before)
+                self.assertEqual(markdown_path.read_text(), markdown_before)
+                self.assertEqual(receipt_path.read_text(), receipt_before)
+                self.assertEqual(brief_feed_path.read_text(), feed_before)
+                self.assertFalse(marker.exists())
 
     def test_public_answer_preserves_prior_day_inflight_brief(self) -> None:
         fixture = self._three_member_card()

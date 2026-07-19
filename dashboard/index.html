@@ -1567,8 +1567,9 @@ body {
     var homePinned = decisionGuard.ok && decisionGuard.data &&
       Array.isArray(decisionGuard.data.pinned) ? decisionGuard.data.pinned : [];
     var homeActionable = homePinned.filter(function (d) { return !isAnswerPending(d); }).length;
+    var homeNeedsAction = home.status === "attention" || homeActionable > 0;
     glance.appendChild(h("h1", { class: "mc-glance-title" },
-      homeActionable ? "Needs you" : (homePinned.length ? "Answers recorded" : "Needs you")));
+      homeNeedsAction ? "Needs you" : (homePinned.length ? "Answers recorded" : "Needs you")));
     var count = renderPinnedDecisions(glance, 3, { glance: true });
     if (!count) {
       glance.appendChild(h("div", { class: "mc-glance-card mc-allgreen" },

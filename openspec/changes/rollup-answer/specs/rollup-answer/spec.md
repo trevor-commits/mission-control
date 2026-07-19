@@ -63,6 +63,14 @@ The system MUST stage every private member artifact before the database transiti
 - **WHEN** a receipt-backed exact replay observes a non-directory entry at the deterministic canonical batch name
 - **THEN** the command binds that exact entry by descriptor, preserves it under a private quarantine name, leaves no invalid canonical entry, and later exact replay reconstructs the persisted batch without duplicate events
 
+#### Scenario: Canonical name is occupied by a symlink
+- **WHEN** a receipt-backed exact replay observes a symlink at the deterministic canonical batch name
+- **THEN** the command binds and quarantines the symlink entry itself without following its target, rebuilds the batch, and leaves an orphan first-answer symlink untouched
+
+#### Scenario: Canonical name changes during quarantine
+- **WHEN** the canonical entry is replaced after descriptor validation but before the quarantine rename
+- **THEN** the command detects that the moved entry is not the receipt-bound object, restores the replacement to the canonical name, and fails without claiming it quarantined the held object
+
 ### Requirement: Replay and changed-evidence semantics
 Exact current scope plus choice MUST be idempotent; a conflicting choice or partial current pending set MUST fail closed; a new evidence fingerprint MUST make the member answerable again.
 
@@ -101,6 +109,10 @@ The public dashboard answer and rollup-answer commands MUST run the strict decis
 - **WHEN** a structurally complete delivered receipt has a Markdown digest, chunking parameter, or confirmed chunk digest that does not match the sidecar-bound delivered Markdown
 - **THEN** the local brief remains unchanged and the public command returns committed-but-refresh-failed nonzero without attempting a send
 
+#### Scenario: Delivered receipt omits an identity field
+- **WHEN** a delivered receipt omits either its full Markdown digest or recorded chunking limit
+- **THEN** the local brief remains unchanged and the public command returns committed-but-refresh-failed nonzero without reconstructing identity from an ambient default
+
 #### Scenario: Delivered receipt changes after local reconciliation
 - **WHEN** a later exact replay sees delivery-receipt bytes different from the receipt pinned by the first local reconciliation
 - **THEN** the local view is not rewritten and the public command fails nonzero while preserving the committed answer receipt
@@ -123,3 +135,7 @@ Home and panel MUST stably order actionable decisions before answered-pending re
 #### Scenario: Pending rows precede the only actionable row
 - **WHEN** more pending rows than the visible limit precede a later actionable decision
 - **THEN** a `Needs you` view displays the actionable decision and its control before pending receipt rows
+
+#### Scenario: Non-decision work needs attention while every decision is pending
+- **WHEN** all visible decisions are answered-pending but another Home feed reports an actionable failure
+- **THEN** Home's global headline says `Needs you` while the decision rows remain read-only pending receipts
