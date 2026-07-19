@@ -28,6 +28,8 @@
 - [x] 4.6 Quarantine the exact receipt-bound held artifact during existing-batch replay failure, bind writer/collector to one runtime, prioritize actionable bounded rows, and add five hermetic counterexamples.
 - [x] 4.7 Return frozen `16a3e51` to the fresh auditor; reproduce its occupied replacement-parent P1 and repair it in `bfaf10b` with a hermetic regression.
 - [x] 4.8 Run the records-complete authoritative gate; send frozen `af083a6` to a new fresh same-model/max auditor; reproduce its persisted Morning Brief/public brief-feed P1 and stale-record P2.
-- [ ] 4.9 Bind decisions, persisted Morning Brief, and public brief feed into one same-runtime no-egress success boundary; require an authoritative complete delivered receipt, preserve receipts/cursors, fail closed on in-flight delivery across day rollover, rerun the authoritative gate, and require a fresh review-clean verdict.
-- [ ] 4.10 Update `verify.md`, retrospective, `STATE.md`, `todo.md`, branch ledger, and the final audit coverage disposition.
-- [ ] 4.11 Commit, push the topic branch, open a review-ready PR, and stop without merging or deploying.
+- [x] 4.9 Bind decisions, persisted Morning Brief, and public brief feed into one same-runtime no-egress success boundary; preserve receipts/cursors, fail closed on in-flight delivery across day rollover, and rerun the authoritative gate.
+- [x] 4.10 Send frozen `8b8fa77` to a fresh same-model/max audit; reproduce its two P1 findings for structurally valid but byte-unbound delivery receipts and a regular file retained at the canonical batch name after parent replacement.
+- [ ] 4.11 Bind delivered receipts to full Markdown, deterministic chunking, ordered chunk hashes, and exact receipt bytes; fd-bind/quarantine receipt-backed non-directory canonical entries; rerun the authoritative gate and require a fresh review-clean verdict.
+- [ ] 4.12 Update `verify.md`, retrospective, `STATE.md`, `todo.md`, branch ledger, and the final audit coverage disposition.
+- [ ] 4.13 Commit, push the topic branch, open a review-ready PR, and stop without merging or deploying.

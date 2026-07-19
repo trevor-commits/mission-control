@@ -8,6 +8,7 @@ reachable from this suite.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -684,6 +685,59 @@ class RollupAnswerTests(unittest.TestCase):
         for decision_id in (ids["primary"], ids["equivalent"]):
             self.assertEqual(len(self._pending_events(decision_id)), 1)
 
+    def test_existing_batch_parent_swap_quarantines_visible_regular_file(self) -> None:
+        fixture = self._three_member_card()
+        ids = fixture["ids"]
+        card_id = fixture["card"]["card_id"]
+        initial = self._dashboard(
+            "decide", "answer-rollup", card_id, ids["primary"], "1")
+        batch_name = Path(initial["batch_path"]).name
+
+        env = dict(self.env)
+        env.update({
+            "DASHBOARD_TESTING": "1",
+            "DASHBOARD_TEST_ROLLUP_PAUSE_AFTER_COMMIT": "1",
+        })
+        proc = subprocess.Popen(
+            ["/bin/bash", str(DASHBOARD), "decide", "answer-rollup",
+             card_id, ids["primary"], "1"],
+            env=env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        ready = self.home / ".rollup-answer-postcommit-test-ready"
+        deadline = time.monotonic() + 5
+        while not ready.exists() and time.monotonic() < deadline:
+            if proc.poll() is not None:
+                break
+            time.sleep(0.01)
+        if not ready.exists():
+            stdout, stderr = proc.communicate(timeout=2)
+            self.fail("replay did not reach postcommit pause: %s %s" % (
+                stdout, stderr))
+
+        parent = self.home / "answer-batches"
+        old_parent = self.home / "answer-batches-old-regular-conflict"
+        parent.rename(old_parent)
+        parent.mkdir(mode=0o700)
+        conflict = parent / batch_name
+        conflict.write_text("occupied canonical name\n")
+        conflict.chmod(0o600)
+        (self.home / ".rollup-answer-postcommit-test-continue").touch(mode=0o600)
+        stdout, stderr = proc.communicate(timeout=10)
+        self.assertNotEqual(proc.returncode, 0, (stdout, stderr))
+        self.assertFalse((old_parent / batch_name).exists())
+        self.assertTrue(any(old_parent.glob(".rollup-quarantine.*")))
+        self.assertFalse(conflict.exists())
+        self.assertTrue(any(parent.glob(".rollup-quarantine.*")))
+        for decision_id in (ids["primary"], ids["equivalent"]):
+            self.assertEqual(len(self._pending_events(decision_id)), 1)
+
+        recovered = self._dashboard(
+            "decide", "answer-rollup", card_id, ids["primary"], "1")
+        self.assertTrue(recovered["replayed"])
+        self.assertEqual(Path(recovered["batch_path"]).parent, parent)
+        self.assertTrue(Path(recovered["batch_path"]).is_dir())
+        for decision_id in (ids["primary"], ids["equivalent"]):
+            self.assertEqual(len(self._pending_events(decision_id)), 1)
+
     def test_public_answer_refreshes_local_views_without_provider_send(self) -> None:
         fixture = self._three_member_card()
         ids = fixture["ids"]
@@ -767,6 +821,14 @@ class RollupAnswerTests(unittest.TestCase):
         self._proc([str(ROOT / "scripts" / "morning-brief")],
                    extra_env=brief_env)
 
+        # Generate the receipt through the real delivery transaction and a
+        # hermetic sender. Clear its marker so the assertion below covers only
+        # the public answer path, which must never resend.
+        self._proc([str(ROOT / "scripts" / "morning-brief"), "--send"],
+                   extra_env=brief_env)
+        self.assertTrue(marker.exists())
+        marker.unlink()
+
         brief_home = self.home / "morning-brief"
         latest_path = brief_home / "latest.json"
         latest = json.loads(latest_path.read_text())
@@ -779,21 +841,8 @@ class RollupAnswerTests(unittest.TestCase):
         }
         latest_path.write_text(json.dumps(latest, indent=2, sort_keys=True) + "\n")
         delivery_dir = brief_home / "delivery"
-        delivery_dir.mkdir(mode=0o700)
         receipt_path = delivery_dir / (brief_id + ".json")
-        receipt_path.write_text(json.dumps({
-            "schema": 1, "brief_id": brief_id, "state": "delivered",
-            "confirmed_chunks": 1, "total_chunks": 1,
-            "chunks": [{
-                "index": 1, "content_hash": "a" * 64,
-                "state": "confirmed", "attempts": 1,
-            }],
-        }, indent=2, sort_keys=True) + "\n")
         cursor_path = brief_home / "delivery-cursor.json"
-        cursor_path.write_text(json.dumps({
-            "schema": 1, "brief_id": brief_id, "delivered_at": 1784368800,
-            "loose_end_changes": [0, ""],
-        }, indent=2, sort_keys=True) + "\n")
         receipt_before = receipt_path.read_text()
         cursor_before = cursor_path.read_text()
         self._proc(["/bin/bash", str(DASHBOARD), "refresh", "brief"],
@@ -808,6 +857,9 @@ class RollupAnswerTests(unittest.TestCase):
         self.assertEqual(refreshed["delivery"]["state"], "delivered")
         self.assertEqual(
             refreshed["local_refresh"]["delivered_markdown_sha256"], delivered_hash)
+        self.assertEqual(
+            refreshed["local_refresh"]["delivered_receipt_sha256"],
+            hashlib.sha256(receipt_before.encode("utf-8")).hexdigest())
         rendered = latest_path.read_text()
         brief_feed = (self.home / "data" / "brief.json").read_text()
         for decision_id in (ids["primary"], ids["equivalent"]):
@@ -815,6 +867,14 @@ class RollupAnswerTests(unittest.TestCase):
             self.assertNotIn(decision_id, brief_feed)
         self.assertIn(ids["independent"], rendered)
         self.assertIn(ids["independent"], brief_feed)
+        self.assertEqual(receipt_path.read_text(), receipt_before)
+        self.assertEqual(cursor_path.read_text(), cursor_before)
+        self.assertFalse(marker.exists())
+
+        replay = self._dashboard(
+            "decide", "answer-rollup", card_id, ids["primary"], "1",
+            extra_env=brief_env)
+        self.assertTrue(replay["replayed"])
         self.assertEqual(receipt_path.read_text(), receipt_before)
         self.assertEqual(cursor_path.read_text(), cursor_before)
         self.assertFalse(marker.exists())
@@ -858,6 +918,62 @@ class RollupAnswerTests(unittest.TestCase):
             "schema": 1, "brief_id": latest["brief_id"], "state": "delivered",
             "confirmed_chunks": 1, "total_chunks": 1,
         }, indent=2, sort_keys=True) + "\n")
+        receipt_path.chmod(0o600)
+        self._proc(["/bin/bash", str(DASHBOARD), "refresh", "brief"],
+                   extra_env=brief_env)
+        brief_feed_path = self.home / "data" / "brief.json"
+        latest_before = latest_path.read_text()
+        markdown_before = markdown_path.read_text()
+        receipt_before = receipt_path.read_text()
+        feed_before = brief_feed_path.read_text()
+
+        failed = self._dashboard(
+            "decide", "answer-rollup", card_id, ids["primary"], "1",
+            ok=False, extra_env=brief_env)
+
+        self.assertTrue(json.loads(failed["stdout"])["ok"])
+        self.assertIn("committed but local view refresh failed", failed["stderr"])
+        self.assertIsNotNone(self._history(ids["primary"])["decision"]["answer_pending"])
+        self.assertEqual(latest_path.read_text(), latest_before)
+        self.assertEqual(markdown_path.read_text(), markdown_before)
+        self.assertEqual(receipt_path.read_text(), receipt_before)
+        self.assertEqual(brief_feed_path.read_text(), feed_before)
+        self.assertFalse(marker.exists())
+
+    def test_public_answer_rejects_unbound_delivered_receipt(self) -> None:
+        fixture = self._three_member_card()
+        ids = fixture["ids"]
+        card_id = fixture["card"]["card_id"]
+        marker = self.temp / "provider-send-invoked"
+        sender = self.temp / "fake-sender"
+        sender.write_text("#!/bin/sh\ntouch \"$DECISION_TEST_SEND_MARKER\"\nexit 0\n")
+        sender.chmod(0o700)
+        brief_env = {
+            "DECISION_ALERT_AUTO": "0",
+            "DECISION_ALERT_SEND_BIN": str(sender),
+            "DECISION_TEST_SEND_MARKER": str(marker),
+            "MORNING_BRIEF_SEND_BIN": str(sender),
+            "MORNING_BRIEF_CHAT_ID": "123",
+            "MORNING_BRIEF_NOW_EPOCH": "1784368800",
+        }
+        self._proc(["/bin/bash", str(DASHBOARD), "refresh", "decisions"],
+                   extra_env=brief_env)
+        self._seed_brief_inputs()
+        self._proc([str(ROOT / "scripts" / "morning-brief")],
+                   extra_env=brief_env)
+        self._proc([str(ROOT / "scripts" / "morning-brief"), "--send"],
+                   extra_env=brief_env)
+
+        brief_home = self.home / "morning-brief"
+        latest_path = brief_home / "latest.json"
+        markdown_path = brief_home / "latest.md"
+        latest = json.loads(latest_path.read_text())
+        receipt_path = brief_home / "delivery" / (latest["brief_id"] + ".json")
+        receipt = json.loads(receipt_path.read_text())
+        receipt["chunks"][0]["content_hash"] = "a" * 64
+        receipt_path.write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n")
+        receipt_path.chmod(0o600)
+        marker.unlink()
         self._proc(["/bin/bash", str(DASHBOARD), "refresh", "brief"],
                    extra_env=brief_env)
         brief_feed_path = self.home / "data" / "brief.json"
@@ -917,6 +1033,7 @@ class RollupAnswerTests(unittest.TestCase):
             "schema": 1, "brief_id": latest["brief_id"], "state": "pending",
             "confirmed_chunks": 0, "total_chunks": 1,
         }, indent=2, sort_keys=True) + "\n")
+        receipt_path.chmod(0o600)
         self._proc(["/bin/bash", str(DASHBOARD), "refresh", "brief"],
                    extra_env=brief_env)
         brief_feed_path = self.home / "data" / "brief.json"
@@ -1011,6 +1128,7 @@ class RollupAnswerTests(unittest.TestCase):
             "schema": 1, "brief_id": latest["brief_id"], "state": "pending",
             "confirmed_chunks": 0, "total_chunks": 1,
         }, indent=2, sort_keys=True) + "\n")
+        receipt_path.chmod(0o600)
         self._proc(["/bin/bash", str(DASHBOARD), "refresh", "brief"],
                    extra_env=brief_env)
         brief_feed_path = self.home / "data" / "brief.json"

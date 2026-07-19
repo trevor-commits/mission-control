@@ -315,15 +315,45 @@ def _cleanup_rollup_stage(batches_fd: int, stage_name: str | None,
     return True
 
 
-def _quarantine_rollup_dir(batches_fd: int, name: str | None, held_fd: int,
-                           label: str) -> str | None:
-    """Atomically preserve a suspect committed artifact under a private name."""
-    if not name or held_fd < 0:
-        return None
+def _validate_named_entry(parent_fd: int, name: str, held_fd: int,
+                          label: str) -> None:
+    """Prove a name still resolves to the exact pinned regular file/directory."""
     try:
-        _validate_named_dir(batches_fd, name, held_fd, label)
-    except RuntimeError:
-        return None
+        current = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+    except OSError as exc:
+        raise RuntimeError(
+            "decide answer-rollup: %s path changed during transaction" % label
+        ) from exc
+    held = os.fstat(held_fd)
+    allowed = (stat.S_ISREG, stat.S_ISDIR)
+    if (not any(predicate(held.st_mode) for predicate in allowed) or
+            not any(predicate(current.st_mode) for predicate in allowed) or
+            stat.S_IFMT(held.st_mode) != stat.S_IFMT(current.st_mode) or
+            not _same_inode(held, current)):
+        raise RuntimeError(
+            "decide answer-rollup: %s path changed during transaction" % label)
+
+
+def _open_existing_quarantine_entry(parent_fd: int, name: str, label: str) -> int:
+    """Pin a non-symlink regular file or directory without blocking on FIFOs."""
+    flags = (os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) |
+             getattr(os, "O_NONBLOCK", 0))
+    try:
+        fd = os.open(name, flags, dir_fd=parent_fd)
+    except OSError as exc:
+        raise RuntimeError(
+            "decide answer-rollup: unsafe %s entry" % label) from exc
+    held = os.fstat(fd)
+    if not (stat.S_ISREG(held.st_mode) or stat.S_ISDIR(held.st_mode)):
+        os.close(fd)
+        raise RuntimeError("decide answer-rollup: unsafe %s entry" % label)
+    return fd
+
+
+def _quarantine_rollup_entry(batches_fd: int, name: str, held_fd: int,
+                             label: str) -> str:
+    """Atomically preserve one exact receipt-backed entry under a private name."""
+    _validate_named_entry(batches_fd, name, held_fd, label)
     for _ in range(32):
         quarantine = ".rollup-quarantine.%s.%s" % (
             label, secrets.token_hex(12))
@@ -333,9 +363,21 @@ def _quarantine_rollup_dir(batches_fd: int, name: str | None, held_fd: int,
             os.rename(name, quarantine,
                       src_dir_fd=batches_fd, dst_dir_fd=batches_fd)
             os.fsync(batches_fd)
-            _validate_named_dir(batches_fd, quarantine, held_fd, "quarantine")
+            _validate_named_entry(
+                batches_fd, quarantine, held_fd, "quarantine")
             return quarantine
     raise RuntimeError("decide answer-rollup: could not allocate quarantine name")
+
+
+def _quarantine_rollup_dir(batches_fd: int, name: str | None, held_fd: int,
+                           label: str) -> str | None:
+    """Best-effort wrapper for a suspect held artifact of any safe entry type."""
+    if not name or held_fd < 0:
+        return None
+    try:
+        return _quarantine_rollup_entry(batches_fd, name, held_fd, label)
+    except RuntimeError:
+        return None
 
 
 def _batch_destination_exists(batches_fd: int, batch_name: str) -> bool:
@@ -393,30 +435,37 @@ def _verify_rollup_batch_fd(batch_fd: int, expected: dict,
 
 
 def _quarantine_visible_rollup_conflict(
-    home: str, home_fd: int, pinned_batches_fd: int, batch_name: str,
-    expected: dict, manifest_sha256: str,
+    home: str, home_fd: int, batch_name: str, expected: dict,
+    manifest_sha256: str,
 ) -> str | None:
-    """Quarantine an invalid canonical batch below a replacement parent.
+    """Quarantine an invalid visible canonical entry after a held-object failure.
 
     Receipt-backed cleanup first preserves the exact artifact held below the
-    descriptor-pinned parent. If the visible answer-batches name now resolves
-    to a different private directory, validate that replacement independently
-    and quarantine only an exact invalid canonical directory. A valid copy is
-    left alone, and any name/inode race fails without renaming an unbound path.
+    descriptor-pinned parent. Validate the currently visible canonical entry
+    independently even when it remains below that same parent: a concurrent
+    regular-file or directory collision must not survive under the canonical
+    name. A valid copy is left alone, and any name/inode race fails without
+    renaming an unbound path.
     """
     current_batches_fd = current_batch_fd = -1
     try:
         current_batches_fd = _open_existing_private_dir(
             home_fd, "answer-batches", "current answer-batches")
         _validate_rollup_dirs(home, home_fd, current_batches_fd)
-        if _same_inode(
-                os.fstat(current_batches_fd), os.fstat(pinned_batches_fd)):
+        try:
+            current = os.stat(
+                batch_name, dir_fd=current_batches_fd, follow_symlinks=False)
+        except FileNotFoundError:
             return None
-        if not _batch_destination_exists(current_batches_fd, batch_name):
-            return None
+        if not stat.S_ISDIR(current.st_mode):
+            current_batch_fd = _open_existing_quarantine_entry(
+                current_batches_fd, batch_name, "current published batch")
+            return _quarantine_rollup_entry(
+                current_batches_fd, batch_name, current_batch_fd,
+                "visible-conflict")
         current_batch_fd = _open_existing_private_dir(
             current_batches_fd, batch_name, "current published batch")
-        _validate_named_dir(
+        _validate_named_entry(
             current_batches_fd, batch_name, current_batch_fd,
             "current published batch")
         try:
@@ -842,7 +891,25 @@ def answer_rollup_transaction(
             "resume_chat_id": effective_resume_chat,
             "resume_provider": effective_resume_provider,
         }
-        final_exists = _batch_destination_exists(batches_fd, plan["batch_key"])
+        try:
+            final_exists = _batch_destination_exists(
+                batches_fd, plan["batch_key"])
+        except RuntimeError:
+            # A valid pending receipt is the authority to recover a canonical
+            # name occupied by a non-directory entry. Pin and quarantine that
+            # exact object; never rename an unbound name and never mutate an
+            # orphan conflict for a first-time answer.
+            if not receipt_exists:
+                raise
+            conflict_fd = _open_existing_quarantine_entry(
+                batches_fd, plan["batch_key"], "published batch conflict")
+            try:
+                _quarantine_rollup_entry(
+                    batches_fd, plan["batch_key"], conflict_fd,
+                    "invalid-published")
+            finally:
+                os.close(conflict_fd)
+            final_exists = False
         if final_exists:
             if pending.get("valid") is not True:
                 raise RuntimeError(
@@ -975,8 +1042,7 @@ def answer_rollup_transaction(
                     batches_fd, artifact_name, artifact_fd, "postcommit")
                 if expected is not None and batch_name and manifest_sha256:
                     _quarantine_visible_rollup_conflict(
-                        home, home_fd, batches_fd, batch_name, expected,
-                        manifest_sha256)
+                        home, home_fd, batch_name, expected, manifest_sha256)
             elif artifact_is_stage:
                 _cleanup_rollup_stage(
                     batches_fd, stage_name, artifact_fd, target_ids)

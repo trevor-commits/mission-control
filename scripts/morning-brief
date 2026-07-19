@@ -11,6 +11,7 @@ import hashlib
 import json
 import os
 import re
+import stat
 import subprocess
 import sys
 import time
@@ -73,6 +74,36 @@ def _load_json(path):
         return value if isinstance(value, dict) else None
     except (OSError, ValueError):
         return None
+
+
+def _load_private_json_bytes(path, maximum=1024 * 1024):
+    """Read one bounded, mode-0600, non-symlink JSON object and its exact bytes."""
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        fd = os.open(path, flags)
+    except OSError:
+        return None, None
+    try:
+        info = os.fstat(fd)
+        if (not stat.S_ISREG(info.st_mode) or
+                stat.S_IMODE(info.st_mode) != 0o600):
+            return None, None
+        chunks, total = [], 0
+        while True:
+            chunk = os.read(fd, 65536)
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > maximum:
+                return None, None
+            chunks.append(chunk)
+        raw = b"".join(chunks)
+        value = json.loads(raw.decode("utf-8"))
+        return (value, raw) if isinstance(value, dict) else (None, None)
+    except (OSError, UnicodeError, ValueError):
+        return None, None
+    finally:
+        os.close(fd)
 
 
 def _snapshot_inputs():
@@ -676,12 +707,17 @@ def _receipt_path(brief_id):
     return os.path.join(_brief_home(), "delivery", safe_id + ".json")
 
 
-def _delivery_chunks(brief_id, markdown):
+def _delivery_chunk_limit():
     try:
         limit = int(os.environ.get("MORNING_BRIEF_CHUNK_BYTES", "3500"))
     except ValueError:
         limit = 3500
-    limit = min(3900, max(200, limit))
+    return min(3900, max(200, limit))
+
+
+def _delivery_chunks(brief_id, markdown, chunk_bytes=None):
+    limit = (_delivery_chunk_limit() if chunk_bytes is None else
+             min(3900, max(200, int(chunk_bytes))))
     # Screen the complete notification before division so a secret/PII value
     # cannot evade detection by straddling two otherwise-safe chunk bodies.
     whole = sanitize_text(markdown, NOTIFICATION, counters=_EGRESS_COUNTERS)
@@ -784,7 +820,8 @@ def _deliver_locked():
     if sidecar.get("markdown_sha256") != actual_hash:
         sys.stderr.write("morning-brief: delivery content mismatch\n")
         return 1
-    chunks = _delivery_chunks(brief_id, markdown)
+    chunk_bytes = _delivery_chunk_limit()
+    chunks = _delivery_chunks(brief_id, markdown, chunk_bytes)
     sidecar.setdefault("egress_counters", {})["delivery"] = _EGRESS_COUNTERS.snapshot()
     if not chunks:
         _atomic_json(latest_path, sidecar)
@@ -797,7 +834,9 @@ def _deliver_locked():
                 row["content_hash"] for row in expected]:
         receipt = {"schema": 1, "brief_id": brief_id, "state": "pending",
                    "confirmed_chunks": 0, "total_chunks": len(chunks),
-                   "chunks": expected, "created_at": now, "updated_at": now}
+                   "chunks": expected, "markdown_sha256": actual_hash,
+                   "chunk_bytes": chunk_bytes,
+                   "created_at": now, "updated_at": now}
         _atomic_json(receipt_path, receipt)
 
     failed = False
@@ -982,8 +1021,10 @@ def _refresh_local_locked():
         return 1
     receipt_path = _receipt_path(brief_id)
     receipt_present = os.path.lexists(receipt_path)
-    receipt = _load_json(receipt_path) if receipt_present else None
-    if receipt_present and receipt is None:
+    receipt, receipt_bytes = (
+        _load_private_json_bytes(receipt_path) if receipt_present else
+        (None, None))
+    if receipt_present and (receipt is None or receipt_bytes is None):
         sys.stderr.write("morning-brief: local refresh invalid delivery receipt\n")
         return 1
     delivery_meta = existing.get("delivery")
@@ -1030,6 +1071,65 @@ def _refresh_local_locked():
                     for index, chunk in enumerate(chunks, 1))):
             sys.stderr.write("morning-brief: local refresh invalid delivery receipt\n")
             return 1
+
+        receipt_sha256 = hashlib.sha256(receipt_bytes).hexdigest()
+        receipt_markdown_sha256 = receipt.get("markdown_sha256")
+        if (receipt_markdown_sha256 is not None and
+                not re.fullmatch(r"[0-9a-f]{64}",
+                                 str(receipt_markdown_sha256))):
+            sys.stderr.write("morning-brief: local refresh invalid delivery receipt\n")
+            return 1
+        receipt_chunk_bytes = receipt.get("chunk_bytes")
+        if (receipt_chunk_bytes is not None and
+                (type(receipt_chunk_bytes) is not int or
+                 receipt_chunk_bytes < 200 or receipt_chunk_bytes > 3900)):
+            sys.stderr.write("morning-brief: local refresh invalid delivery receipt\n")
+            return 1
+
+        prior_refresh = existing.get("local_refresh")
+        if prior_refresh is not None and not isinstance(prior_refresh, dict):
+            sys.stderr.write("morning-brief: local refresh unavailable\n")
+            return 1
+        if prior_refresh is not None:
+            delivered_hash = prior_refresh.get("delivered_markdown_sha256")
+            delivered_receipt_hash = prior_refresh.get(
+                "delivered_receipt_sha256")
+            if (not re.fullmatch(r"[0-9a-f]{64}", str(delivered_hash or "")) or
+                    not re.fullmatch(r"[0-9a-f]{64}",
+                                     str(delivered_receipt_hash or "")) or
+                    delivered_receipt_hash != receipt_sha256 or
+                    (receipt_markdown_sha256 is not None and
+                     receipt_markdown_sha256 != delivered_hash)):
+                sys.stderr.write(
+                    "morning-brief: local refresh delivery receipt changed\n")
+                return 1
+            current_markdown = _render_markdown(existing)
+            current_hash = hashlib.sha256(
+                current_markdown.encode("utf-8")).hexdigest()
+            if existing.get("markdown_sha256") != current_hash:
+                sys.stderr.write("morning-brief: local refresh content mismatch\n")
+                return 1
+        else:
+            # The sidecar was the exact source for the delivered bytes: the
+            # delivery transaction required latest.md to match this digest
+            # before sending. Re-render it before changing any local section,
+            # then bind both the full Markdown and every chunk receipt.
+            delivered_markdown = _render_markdown(existing)
+            delivered_hash = hashlib.sha256(
+                delivered_markdown.encode("utf-8")).hexdigest()
+            if (existing.get("markdown_sha256") != delivered_hash or
+                    (receipt_markdown_sha256 is not None and
+                     receipt_markdown_sha256 != delivered_hash)):
+                sys.stderr.write("morning-brief: local refresh receipt mismatch\n")
+                return 1
+            expected_chunks = _delivery_chunks(
+                brief_id, delivered_markdown, receipt_chunk_bytes)
+            expected_hashes = ([row["content_hash"] for row in expected_chunks]
+                               if expected_chunks else None)
+            receipt_hashes = [row.get("content_hash") for row in chunks]
+            if expected_hashes != receipt_hashes:
+                sys.stderr.write("morning-brief: local refresh receipt mismatch\n")
+                return 1
         existing["delivery"] = {
             "state": "delivered",
             "confirmed_chunks": confirmed,
@@ -1062,15 +1162,13 @@ def _refresh_local_locked():
     if isinstance(inputs, dict):
         inputs["decisions"] = health["decisions"]
 
-    prior_refresh = existing.get("local_refresh")
-    delivered_hash = (prior_refresh.get("delivered_markdown_sha256")
-                      if isinstance(prior_refresh, dict) else None)
     existing["local_refresh"] = {
         "reason": "decision_state_changed",
         "refreshed_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now)),
         "refreshed_epoch": now,
         "delivery_state_preserved": "delivered",
-        "delivered_markdown_sha256": delivered_hash or existing.get("markdown_sha256"),
+        "delivered_markdown_sha256": delivered_hash,
+        "delivered_receipt_sha256": receipt_sha256,
     }
     existing.setdefault("egress_counters", {})["local_refresh"] = \
         _EGRESS_COUNTERS.snapshot()

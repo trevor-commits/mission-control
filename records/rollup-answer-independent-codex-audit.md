@@ -56,11 +56,21 @@ Evidence: `records/evidence/rollup-answer-occupied-parent-red-green.txt`.
 - Evidence: `records/evidence/rollup-answer-morning-brief-coherence-red-green.txt`.
 - Auditor limitation: its focused `18/18` rerun passed, but its own full verifier was interrupted after several green suites. The source task's exact `af083a6` full-gate receipt remains the authoritative pre-repair gate; a new post-repair authoritative gate is still required.
 
+## Attempt 5 — rejected receipt identity and regular-file entry boundaries
+
+- Audit task: Codex `/root/lane_d_local_view_reaudit`, fresh `gpt-5.6-sol` / max worker of source task `019f73d8-e5dc-73a0-acc5-8a4916ac6819`.
+- Reviewed range: `53e91392dcef3d2deeedf748c14159320a8572e0..8b8fa772336239eab812b38e2b152e69dce65a96`.
+- Verdict: `NOT MERGE-READY` despite rollup `23/23` and authoritative `SUITES PASS=23 FAIL=0` receipts.
+- P1: a delivered receipt with valid schema/counters and confirmed 64-hex chunk fields could contain digests unrelated to the sidecar-bound delivered Markdown. The public answer returned zero and rewrote local Morning Brief artifacts anyway.
+- P1: during exact replay, replacing the batch parent and occupying the current canonical name with a mode-0600 regular file preserved/quarantined the held old-parent batch but left the visible file canonical, wedging every later replay.
+- Disposition: both accepted and independently reproduced RED at frozen `8b8fa77`. The repair makes new receipts carry the full Markdown digest and deterministic chunk limit; local refresh recomputes every ordered chunk digest and pins the exact receipt-byte digest across replay. Canonical cleanup now pins regular-file or directory entries without symlink traversal, verifies name/inode identity, quarantines the exact receipt-backed conflict, and never mutates an orphan first-answer entry. Targeted regressions and the 25-test focused suite are green.
+- Evidence: `records/evidence/rollup-answer-receipt-entry-red-green.txt`.
+
 ## Final attempt
 
-- Status: fourth-audit repair `0ce6d3d` is focused and authoritative-gate green; a new frozen-head same-model/max verdict remains pending.
-- Full-gate evidence: `records/evidence/rollup-answer-morning-brief-coherence-full-green.txt` (`SUITES PASS=23 FAIL=0`); historical pre-repair receipt is `records/evidence/rollup-answer-occupied-parent-full-green.txt`.
-- Did not verify: final review-clean verdict, remote/PR state, merged-main behavior, install/deploy, provider delivery, or live-store behavior.
+- Status: fifth-audit repair is focused green; its code commit, authoritative full gate, receipt commit, and a new frozen-head same-model/max verdict remain pending.
+- Full-gate evidence: prior `records/evidence/rollup-answer-morning-brief-coherence-full-green.txt` (`SUITES PASS=23 FAIL=0`); fifth repair focused evidence is `records/evidence/rollup-answer-receipt-entry-red-green.txt`.
+- Did not verify: fifth-repair authoritative gate, final review-clean verdict, remote/PR state, merged-main behavior, install/deploy, provider delivery, or live-store behavior.
 
 ## Audited Chat
 

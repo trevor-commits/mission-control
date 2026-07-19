@@ -67,7 +67,7 @@ verify: /bin/bash scripts/verify.sh
 gate: auto
 
 - [ ] **Step 9: Run independent same-model audit**
-action: Three earlier candidates were rejected and repaired at publication, replay, runtime, presentation, and occupied-parent boundaries. A new fresh audit of frozen `af083a6` then reproduced a persisted Morning Brief/public brief-feed stale-success P1. Repair `0ce6d3d` binds all local views to the exact runtime, requires an authoritative complete receipt for delivered local rewrites, preserves receipt/cursor identity, pins in-flight retry bytes across a day rollover, and passes the authoritative 23/0 gate; freeze the receipt successor and require a fresh review-clean verdict before closeout.
+action: Five audit rounds rejected earlier candidates at publication, replay, runtime, presentation, occupied-parent, persisted-view, receipt-identity, and canonical-entry boundaries. Frozen `8b8fa77` reopened two P1s: complete-looking receipt fields did not bind delivered bytes, and a regular-file canonical conflict survived parent replacement. The successor binds full Markdown/chunk/receipt identity and quarantines exact fd/inode-bound receipt-backed entries; commit it, rerun the authoritative gate, then freeze its receipt successor and require a fresh review-clean verdict before closeout.
 loop: until no material novel finding remains
 max_iterations: 2
 verify: test -s records/rollup-answer-independent-codex-audit.md

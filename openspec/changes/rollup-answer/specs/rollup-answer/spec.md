@@ -59,6 +59,10 @@ The system MUST stage every private member artifact before the database transiti
 - **WHEN** the path-visible batch parent is replaced during exact replay and the replacement already contains an unverified directory at the deterministic canonical batch name
 - **THEN** the command preserves the held old-parent artifact, removes the invalid current-parent canonical visibility under a private quarantine name, and later exact replay reconstructs the persisted digest without duplicate events
 
+#### Scenario: Canonical name is occupied by a regular file
+- **WHEN** a receipt-backed exact replay observes a non-directory entry at the deterministic canonical batch name
+- **THEN** the command binds that exact entry by descriptor, preserves it under a private quarantine name, leaves no invalid canonical entry, and later exact replay reconstructs the persisted batch without duplicate events
+
 ### Requirement: Replay and changed-evidence semantics
 Exact current scope plus choice MUST be idempotent; a conflicting choice or partial current pending set MUST fail closed; a new evidence fingerprint MUST make the member answerable again.
 
@@ -92,6 +96,14 @@ The public dashboard answer and rollup-answer commands MUST run the strict decis
 #### Scenario: Today's Morning Brief was already delivered
 - **WHEN** the answer commits after a same-day brief has a delivered receipt
 - **THEN** the local `NEEDS YOU` view is reconciled without changing the receipt, delivery cursor, brief identity, or delivered state and without attempting another send
+
+#### Scenario: Delivered receipt does not bind the delivered bytes
+- **WHEN** a structurally complete delivered receipt has a Markdown digest, chunking parameter, or confirmed chunk digest that does not match the sidecar-bound delivered Markdown
+- **THEN** the local brief remains unchanged and the public command returns committed-but-refresh-failed nonzero without attempting a send
+
+#### Scenario: Delivered receipt changes after local reconciliation
+- **WHEN** a later exact replay sees delivery-receipt bytes different from the receipt pinned by the first local reconciliation
+- **THEN** the local view is not rewritten and the public command fails nonzero while preserving the committed answer receipt
 
 #### Scenario: Delivered state lacks an authoritative complete receipt
 - **WHEN** the local sidecar claims delivered but its receipt is absent, malformed, or not completely confirmed

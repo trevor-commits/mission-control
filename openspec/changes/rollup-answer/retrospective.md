@@ -19,7 +19,9 @@ The first full verifier was necessary but insufficient. Independent review found
 11. Local-view reconciliation and notification delivery are different lifecycles. A delivered brief may update its local action view only while preserving receipt/cursor identity and suppressing resend; in-flight receipt-bound bytes must fail closed instead of being rewritten.
 12. Same-runtime claims must cover every ambient selector, including `REPO_ROOT` and explicit feeder overrides, as well as installed-path selection. A state-changing transaction should bind composer and readers to one script directory while ordinary collection may retain overrides.
 13. Calendar rollover is presentation state, not delivery authority. Validate the receipt lifecycle first: an incomplete retry stays pinned after midnight, and a sidecar-only delivered claim cannot authorize changing notification-derived local bytes.
+14. Receipt shape is not receipt identity. A complete counter and 64-hex-looking chunk list can still be invented; bind it to the full source Markdown, the exact chunking parameter, every ordered chunk digest, and then pin the immutable receipt bytes across later local rewrites.
+15. Canonical conflicts are entries, not only directories. Quarantine eligibility must follow an exact held regular-file/directory inode, while symlinks and unsupported entry types fail closed and first-answer orphan conflicts remain untouched.
 
 ## Remaining boundary
 
-The committed replacement authoritative gate is green at `0ce6d3d`. One new exact-head audit by a fresh same-model/max task and hosted PR checks remain. Merge, installation, live-store use, provider delivery, plist, and launchd actions are outside this branch-only change.
+Fresh audit of frozen `8b8fa77` reopened the receipt-binding and regular-file canonical-entry boundaries. Both counterexamples are now RED/GREEN in focused tests; the successor still requires a committed authoritative gate and a new exact-head review-clean verdict before branch push/PR. Merge, installation, live-store use, provider delivery, plist, and launchd actions remain outside this branch-only change.
