@@ -22,4 +22,4 @@ The first full verifier was necessary but insufficient. Independent review found
 
 ## Remaining boundary
 
-A committed authoritative gate, one new exact-head audit by a fresh same-model/max task, and hosted PR checks remain. Merge, installation, live-store use, provider delivery, plist, and launchd actions are outside this branch-only change.
+The committed replacement authoritative gate is green at `0ce6d3d`. One new exact-head audit by a fresh same-model/max task and hosted PR checks remain. Merge, installation, live-store use, provider delivery, plist, and launchd actions are outside this branch-only change.

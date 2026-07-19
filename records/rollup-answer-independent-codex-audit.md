@@ -58,8 +58,8 @@ Evidence: `records/evidence/rollup-answer-occupied-parent-red-green.txt`.
 
 ## Final attempt
 
-- Status: fourth-audit focused repair is green; repair commit, authoritative full gate, and a new frozen-head same-model/max verdict remain pending.
-- Full-gate evidence: pending post-repair receipt; historical pre-repair receipt is `records/evidence/rollup-answer-occupied-parent-full-green.txt`.
+- Status: fourth-audit repair `0ce6d3d` is focused and authoritative-gate green; a new frozen-head same-model/max verdict remains pending.
+- Full-gate evidence: `records/evidence/rollup-answer-morning-brief-coherence-full-green.txt` (`SUITES PASS=23 FAIL=0`); historical pre-repair receipt is `records/evidence/rollup-answer-occupied-parent-full-green.txt`.
 - Did not verify: final review-clean verdict, remote/PR state, merged-main behavior, install/deploy, provider delivery, or live-store behavior.
 
 ## Audited Chat
