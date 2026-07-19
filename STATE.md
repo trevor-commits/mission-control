@@ -1,6 +1,6 @@
 # Lane D state — rollup-answer CLI wiring
 
-- Status: FIFTH-AUDIT REPAIR AUTHORITATIVE-GATE GREEN / RECEIPT COMMIT + FRESH FROZEN-HEAD AUDIT PENDING; frozen `8b8fa772336239eab812b38e2b152e69dce65a96` was rejected on two reproduced P1s, repaired in `c0d0a53`, which passes `SUITES PASS=23 FAIL=0`
+- Status: SIXTH-AUDIT REPAIR AUTHORITATIVE-GATE GREEN AT `78672c46d94041f974ca97b0d2cfe5596c6b020a` / FRESH FROZEN-HEAD AUDIT PENDING; frozen `0bf1c6905a880bf26233db777d8d35aa3985cf19` was rejected on two reproduced P1s and two P2s; exact repair `78672c4` passes targeted 4/4, rollup 29/29, browser 254, and the authoritative `SUITES PASS=23 FAIL=0` gate on macOS 26.5
 - Branch: `codex/rollup-answer-wiring`
 - Review base: `53e91392dcef3d2deeedf748c14159320a8572e0`
 - Original implementation checkpoint: `754de932301113e81f51bbf4febe2d3fc28c01e0`
@@ -10,6 +10,7 @@
 - Third-audit repair: `bfaf10b` (`fix(decisions): quarantine visible rollup conflicts`)
 - Fourth-audit local-view repair: `0ce6d3d7704a8e305159cdbd78965bd34f1b8a02` (`fix(decisions): reconcile local views after answers`)
 - Fifth-audit receipt/entry repair: `c0d0a5306ae51a81fb7ace3948804e78e810b651` (`fix(decisions): bind receipts and canonical entries`)
+- Sixth-audit boundary repair: `78672c46d94041f974ca97b0d2cfe5596c6b020a` (`fix(decisions): harden symlink quarantine for macOS O_SYMLINK gap`) — authoritative `SUITES PASS=23 FAIL=0` at this exact head; evidence `records/evidence/rollup-answer-final-boundaries-red-green.txt` and `records/evidence/rollup-answer-final-boundaries-full-green.txt`
 - Worktree: `/Users/gillettes/Coding Projects/mission-control-worktrees/rollup-answer-wiring`
 - Source chat: Codex `019f73d8-e5dc-73a0-acc5-8a4916ac6819`
 - Trust Gate: on — durable operator direction and completion semantics
@@ -36,8 +37,8 @@ Trevor approved the following seven points through `thread_goal_updated` at `202
 - `scripts/decision-alert` derives pending from immutable events, replans current scope inside one immediate transaction, verifies private artifact proof, persists the canonical manifest SHA-256 plus exact member/metadata/artifact identity, inserts all target events atomically, and exact-compares every replay field.
 - `scripts/compose-decision-prompt.py` validates before paths, creates deterministic rollup bytes, retains pinned descriptors, verifies name-to-fd and member bytes before/after commit and publication, quarantines the exact receipt-bound held artifact on first publication/replay failure, and fd/inode-binds either a directory or regular-file canonical conflict before private quarantine; orphan first-answer conflicts remain untouched.
 - `scripts/dashboard` exposes public single/rollup answer commands and treats the strict decisions feed, persisted Morning Brief, and strict public brief feed as one same-`SCRIPT_DIR` success boundary with `DECISION_ALERT_AUTO=0`; committed-but-refresh-failed is nonzero with receipt stdout and explicit degraded stderr.
-- Morning Brief omits exactly current pending targets from `NEEDS YOU`; its local-only refresh recomposes not-sent state and accepts delivered state only after a private receipt binds the full delivered Markdown digest, deterministic chunk limit, every ordered chunk digest, and then the exact receipt bytes across replay. It preserves delivered identity/receipt/cursor bytes without resend and refuses to rewrite pending/partial/failed retry content even after local-day rollover. Home and panel show the recorded choice as read-only awaiting owner consumption, with actionable rows stably ordered before pending rows on bounded views.
-- `scripts/rollup-answer.test.py` covers 25 temporary-state contracts, including first-write and replay mutation/parent replacement, directory and regular-file occupied canonical names, stale installed decision/brief readers, tampered destination repair, deterministic digest replay, three-surface strict refresh failure, persisted/delivered/in-flight/prior-day Morning Brief behavior, malformed and byte-unbound delivered-receipt rejection, single-answer parity, and fake-sender no-egress proof.
+- Morning Brief omits exactly current pending targets from `NEEDS YOU`; its local-only refresh recomposes not-sent state and accepts delivered state only after a private receipt contains and matches the full delivered Markdown digest, deterministic chunk limit, every ordered chunk digest, and then the exact receipt bytes across replay. It preserves delivered identity/receipt/cursor bytes without resend and refuses to rewrite pending/partial/failed retry content even after local-day rollover. Home and panel show the recorded choice as read-only awaiting owner consumption, with actionable rows stably ordered before pending rows on bounded views; Home's global H1 also reflects combined non-decision attention.
+- `scripts/rollup-answer.test.py` covers 29 temporary-state contracts, including first-write and replay mutation/parent replacement, directory/regular-file/symlink occupied canonical names, quarantine name-swap rollback, orphan symlink preservation, stale installed decision/brief readers, tampered destination repair, deterministic digest replay, three-surface strict refresh failure, persisted/delivered/in-flight/prior-day Morning Brief behavior, malformed/byte-unbound/missing-field receipt rejection, single-answer parity, and fake-sender no-egress proof.
 
 ## Audit history and disposition
 
@@ -63,6 +64,8 @@ Trevor approved the following seven points through `thread_goal_updated` at `202
 - Disposition: both accepted. The public-command-only counterexample is RED before repair; the same-runtime local reconciliation repair is green across 23 rollup tests, the authoritative 23/0 verifier, Morning Brief, dashboard 67/0, delivered/in-flight/prior-day/missing-receipt/no-send/stale-runtime boundaries, and static checks. Records were reconciled; frozen successor `8b8fa77` then advanced to the fifth audit below.
 - Fifth fresh audit: `/root/lane_d_local_view_reaudit`, `gpt-5.6-sol`/max, reviewed frozen `8b8fa77` and returned `NOT MERGE-READY` with two P1s despite the green declared suites. P1: structurally complete 64-hex receipt fields did not bind actual delivered Markdown/chunks. P1: a mode-0600 regular file at the canonical name in a replacement parent survived failure and wedged later replay.
 - Disposition: both accepted and independently RED-reproduced. Exact repair `c0d0a53` binds full Markdown, chunking, ordered chunks, and exact receipt bytes, and quarantines only exact fd/inode-bound receipt-backed regular-file/directory conflicts. Targeted 3/3, rollup 25/25, Morning Brief delivery, and authoritative 23/0 are green; only the fresh successor audit remains pending.
+- Sixth fresh audit: Codex `019f77f3-4975-7f51-b296-fbdc2dbd3d47`, `gpt-5.6-sol`/max, reviewed frozen `0bf1c69` and returned `NOT REVIEW-CLEAN / NOT MERGE-READY` with two P1s and two P2s despite focused 25/25 and authoritative 23/0. P1: delivered receipt identity fields remained optional. P1: a receipt-backed canonical symlink remained visible and permanently wedged replay. P2: quarantine could move an unbound name-swap replacement before detecting the inode mismatch. P2: Home could say `Answers recorded` while non-decision work required attention.
+- Disposition: all four accepted and independently RED-reproduced. The current repair requires both identity fields, opens/quarantines symlink entries without target traversal, restores a raced moved replacement through descriptor-bound rollback, and binds the global Home H1 to combined attention. Targeted 4/4, rollup 29/29, browser 254, and static checks are green; the authoritative gate and fresh successor audit remain pending.
 
 ## Evidence
 
@@ -149,6 +152,20 @@ Trevor approved the following seven points through `thread_goal_updated` at `202
 | Authoritative verifier | `SUITES PASS=23 FAIL=0`; rollup 25/25; dashboard 67/0; ER-134 59/0; usage 24/0; browser 253; OpenSpec 2/0; static/artifact pass |
 | Fresh successor audit | pending after this receipt commit |
 
+### Sixth-audit final-boundary focused evidence
+
+| Gate | Result |
+|---|---|
+| Missing `markdown_sha256` or `chunk_bytes` before repair | RED — public answer returned zero and rewrote local views |
+| Receipt-backed canonical symlink before repair | RED — replay failed twice, symlink remained canonical, zero quarantines |
+| Quarantine name swap before repair | RED — unbound replacement moved and canonical became absent |
+| Global Home headline before repair | RED — combined attention rendered `Answers recorded` |
+| Four exact counterexamples after repair | 4 tests, OK |
+| Rollup answer after repair | 29 tests in 37.726s, OK |
+| Browser after repair | 254 assertions |
+| Authoritative verifier | `SUITES PASS=23 FAIL=0` at exact repair head `78672c46d94041f974ca97b0d2cfe5596c6b020a`; evidence `records/evidence/rollup-answer-final-boundaries-full-green.txt` |
+| Fresh successor audit | pending after this receipt commit |
+
 Receipts:
 
 - `records/evidence/rollup-answer-audit-repair-red-green.txt`
@@ -160,15 +177,19 @@ Receipts:
 - `records/evidence/rollup-answer-morning-brief-coherence-full-green.txt`
 - `records/evidence/rollup-answer-receipt-entry-red-green.txt`
 - `records/evidence/rollup-answer-receipt-entry-full-green.txt`
+- `records/evidence/rollup-answer-final-boundaries-red-green.txt`
+- `records/evidence/rollup-answer-final-boundaries-full-green.txt`
 - `records/rollup-answer-independent-codex-audit.md`
 - `records/2026-07-18-rollup-answer-work-record.md`
 
 ## Claims and limits
 
-- Confirmed: both first-audit P1 findings, all three second-audit findings, the third-audit occupied-parent P1, the fourth-audit persisted-view P1, and both fifth-audit P1s were independently reproduced and have behavior-level regressions.
+- Confirmed: both first-audit P1 findings, all three second-audit findings, the third-audit occupied-parent P1, the fourth-audit persisted-view P1, both fifth-audit P1s, and all four sixth-audit findings were independently reproduced and have behavior-level regressions.
 - Confirmed: repair `bfaf10b` passed the targeted occupied-parent contract and 18/18 rollup contracts; exact records-complete `bc9014d` passed the historical authoritative `23/0` verifier; fourth repair `0ce6d3d` passed its replacement authoritative `23/0` verifier. Fifth repair `c0d0a53` passes the current authoritative `23/0` verifier, including rollup 25/25, dashboard 67/0, ER-134 59/0, usage 24/0, browser 253, OpenSpec 2/0, and final source-artifact predicate.
 - Confirmed: no schema migration, dependency, live-store write, provider send, main touch, install, deploy, release, plist, or launchd action occurred.
-- Did not verify: the fifth repair's final independent verdict.
+- Confirmed: the sixth repair's focused matrix is targeted 4/4, rollup 29/29, browser 254, with syntax/diff/source-artifact checks green.
+- Confirmed: exact sixth-repair head `78672c46d94041f974ca97b0d2cfe5596c6b020a` passes the authoritative `SUITES PASS=23 FAIL=0` gate live on macOS 26.5 (evidence `records/evidence/rollup-answer-final-boundaries-full-green.txt`); the macOS `O_SYMLINK` gap was RED before this head and GREEN after.
+- Did not verify: a fresh independent (same-model/max) frozen-head audit at `78672c4`; the focused/full suites and authoritative gate are green, but the packet's two-attempt rule allowed one repair attempt (which succeeded), so a successor audit is out of scope for this gate and must precede any review-clean claim.
 - Did not verify: hosted PR checks or merge state; no Lane D PR exists yet.
 - Did not verify: merged-main, installed runtime, provider delivery, or live-store behavior because those actions are prohibited here.
 - Do not do: merge, install, deploy, send, write a live store, change plist/launchd, or resolve live decision `decision:a6f185b53cbc1278499b062d` from this lane.
@@ -176,5 +197,5 @@ Receipts:
 
 ## Exact resume
 
-1. Commit this exact `c0d0a53` authoritative-gate receipt and freeze the successor.
+1. Authoritative `SUITES PASS=23 FAIL=0` is green at exact repair head `78672c46d94041f974ca97b0d2cfe5596c6b020a`; commit its receipt and freeze the successor.
 2. Send the frozen successor to a new fresh `gpt-5.6-sol`/max auditor; on review-clean, append the verdict, push, open the review-ready PR with the approval citation and live-card merge-sitting note, verify hosted checks, and stop before merge/deploy.

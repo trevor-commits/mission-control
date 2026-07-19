@@ -67,7 +67,7 @@ verify: /bin/bash scripts/verify.sh
 gate: auto
 
 - [ ] **Step 9: Run independent same-model audit**
-action: Five audit rounds rejected earlier candidates at publication, replay, runtime, presentation, occupied-parent, persisted-view, receipt-identity, and canonical-entry boundaries. Frozen `8b8fa77` reopened two P1s: complete-looking receipt fields did not bind delivered bytes, and a regular-file canonical conflict survived parent replacement. Exact repair `c0d0a53` binds full Markdown/chunk/receipt identity, quarantines exact fd/inode-bound receipt-backed entries, and passes the authoritative 23/0 gate; commit its receipt, freeze the successor, and require a fresh review-clean verdict before closeout.
+action: Six audit rounds rejected earlier candidates at publication, replay, runtime, presentation, occupied-parent, persisted-view, receipt-identity, and canonical-entry boundaries. Frozen `0bf1c69` reopened two P1s and two P2s: receipt identity fields were optional, a receipt-backed symlink wedged replay, quarantine could move a raced replacement, and Home's global H1 ignored non-decision attention. Exact repair `78672c4` also fixes a live macOS defect (Python's `os` module lacks `O_SYMLINK`/`O_PATH`; the SDK header defines `O_SYMLINK = 0x00200000`) and passes targeted 4/4, rollup 29/29, browser 254, and the authoritative `SUITES PASS=23 FAIL=0` gate; freeze the successor and require a fresh review-clean verdict before closeout.
 loop: until no material novel finding remains
 max_iterations: 2
 verify: test -s records/rollup-answer-independent-codex-audit.md

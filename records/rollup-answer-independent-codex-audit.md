@@ -66,11 +66,25 @@ Evidence: `records/evidence/rollup-answer-occupied-parent-red-green.txt`.
 - Disposition: both accepted and independently reproduced RED at frozen `8b8fa77`. The repair makes new receipts carry the full Markdown digest and deterministic chunk limit; local refresh recomputes every ordered chunk digest and pins the exact receipt-byte digest across replay. Canonical cleanup now pins regular-file or directory entries without symlink traversal, verifies name/inode identity, quarantines the exact receipt-backed conflict, and never mutates an orphan first-answer entry. Targeted regressions and the 25-test focused suite are green.
 - Evidence: `records/evidence/rollup-answer-receipt-entry-red-green.txt`.
 
+## Attempt 6 — rejected missing identity, symlink, race, and global-headline boundaries
+
+- Audit task: Codex `019f77f3-4975-7f51-b296-fbdc2dbd3d47`, fresh `gpt-5.6-sol` / max worker of source task `019f73d8-e5dc-73a0-acc5-8a4916ac6819`.
+- Reviewed range: `53e91392dcef3d2deeedf748c14159320a8572e0..0bf1c6905a880bf26233db777d8d35aa3985cf19`.
+- Verdict: `NOT REVIEW-CLEAN / NOT MERGE-READY` despite focused rollup `25/25` and authoritative `SUITES PASS=23 FAIL=0`.
+- P1: deleting either `markdown_sha256` or `chunk_bytes` from a real delivered receipt still authorized public success and local-view rewriting because both fields were optional and missing chunking fell back to the ambient default.
+- P1: a symlink at a receipt-backed deterministic canonical batch name was rejected by `O_NOFOLLOW` recovery, remained canonical, and permanently wedged every replay.
+- P2: a deterministic name swap between quarantine validation and `rename()` moved an unbound replacement before post-rename detection.
+- P2: Home could say `Answers recorded` while every decision was pending and another feed required attention because the H1 ignored `combinedHomeState()`.
+- Disposition: all four accepted and independently RED-reproduced. The repair requires both receipt identity fields before any rewrite; opens and inode-binds the symlink entry itself without following its target; verifies and restores a raced moved replacement; and derives the global Home H1 from combined attention. Targeted 4/4, rollup 29/29, browser 254, and static checks are green. The authoritative repair gate and a new exact-head verdict remain pending.
+- Evidence: `records/evidence/rollup-answer-final-boundaries-red-green.txt`.
+
 ## Final attempt
 
-- Status: fifth-audit repair `c0d0a5306ae51a81fb7ace3948804e78e810b651` is focused and authoritative-gate green; this receipt commit and a new frozen-head same-model/max verdict remain pending.
-- Full-gate evidence: `records/evidence/rollup-answer-receipt-entry-full-green.txt` (`SUITES PASS=23 FAIL=0`, rollup 25/25); prior historical receipt is `records/evidence/rollup-answer-morning-brief-coherence-full-green.txt`.
-- Did not verify: final review-clean verdict, remote/PR state, merged-main behavior, install/deploy, provider delivery, or live-store behavior.
+- Status: sixth-audit boundary repair `78672c46d94041f974ca97b0d2cfe5596c6b020a` is authoritative-gate green (`SUITES PASS=23 FAIL=0` live on macOS 26.5, including a live macOS `O_SYMLINK` RED→GREEN); a new frozen-head same-model/max review-clean verdict and branch-only PR closeout remain pending.
+- Historical full-gate evidence: `records/evidence/rollup-answer-receipt-entry-full-green.txt` (`SUITES PASS=23 FAIL=0`, rollup 25/25).
+- Current focused evidence: `records/evidence/rollup-answer-final-boundaries-red-green.txt` (targeted 4/4, rollup 29/29, browser 254; records the live macOS `O_SYMLINK` RED and its repair).
+- Current authoritative evidence: `records/evidence/rollup-answer-final-boundaries-full-green.txt` (`SUITES PASS=23 FAIL=0` at exact repair head `78672c46d94041f974ca97b0d2cfe5596c6b020a`; rollup 29/29; browser 254; OpenSpec 2/0).
+- Did not verify: a fresh independent (same-model/max) frozen-head audit at `78672c4`; review-clean verdict, remote/PR state, merged-main behavior, install/deploy, provider delivery, or live-store behavior.
 
 ## Audited Chat
 
