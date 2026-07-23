@@ -96,7 +96,7 @@ const PRIVACY_CASES = JSON.parse(fs.readFileSync(
 // --- fixtures as window.MC.feeds -------------------------------------------
 const FIX = path.join(REPO, 'dashboard', 'fixtures');
 const feeds = {};
-for (const name of ['usage', 'git', 'chats', 'automation', 'decisions', 'brief']) {
+for (const name of ['usage', 'git', 'chats', 'automation', 'decisions', 'attention', 'brief']) {
   const p = path.join(FIX, name + '.json');
   if (!fs.existsSync(p)) { console.error('FAIL: missing fixture ' + p); process.exit(1); }
   feeds[name] = JSON.parse(fs.readFileSync(p, 'utf8'));
@@ -173,12 +173,13 @@ const markers = {
   git: firstStr(feeds.git, ['repos', 'repositories']),
   usage: firstStr(feeds.usage, ['providers']),
   automation: firstStr(feeds.automation, ['jobs']),
+  attention: 'Attention',
 };
 
 // --- run the IIFE once per tab ---------------------------------------------
 // The map tab uses Cytoscape in the browser. A tiny stub is enough to prove the
 // real graph path builds elements and wires handlers without loading the vendor.
-const TABS = ['home', 'brief', 'map', 'chats', 'git', 'usage', 'automation'];
+const TABS = ['home', 'brief', 'map', 'chats', 'git', 'usage', 'automation', 'attention'];
 let fails = 0;
 for (const tab of TABS) {
   resetDom();
