@@ -6,7 +6,7 @@ import WebKit
 // Loads ~/.mission-control/panel.html (or argv override).
 // Disables AppKit Automatic Termination — idle accessory apps otherwise exit silently.
 
-final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler {
+final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler, NSPopoverDelegate {
   var statusItem: NSStatusItem!
   var popover: NSPopover!
   var webView: WKWebView!
@@ -14,6 +14,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
   // Retained RunningBoard activity — anonymous menu-bar binaries otherwise get
   // Control Center "after-life.interrupted" / workspace invalidation and exit.
   var stayAliveActivity: NSObjectProtocol?
+  // Transient NSPopover + NSStatusItem races the opening click (mouse-down closes
+  // before mouse-up toggles). Drive dismissal ourselves instead.
+  var popoverEventMonitors: [Any] = []
 
   func applicationDidFinishLaunching(_ notification: Notification) {
     ProcessInfo.processInfo.disableAutomaticTermination("Mission Control menu bar")
@@ -40,7 +43,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
 
     let pop = NSPopover()
     pop.contentSize = NSSize(width: 380, height: 460)
-    pop.behavior = .transient
+    // applicationDefined: no auto-close on the status-item mouse-down that opens us.
+    pop.behavior = .applicationDefined
+    pop.delegate = self
     pop.contentViewController = NSViewController()
     pop.contentViewController!.view = web
     popover = pop
@@ -54,12 +59,65 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
   @objc func togglePopover(_ sender: Any?) {
     guard let button = statusItem.button else { return }
     if popover.isShown {
-      popover.performClose(sender)
-    } else {
-      reload()
-      popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
-      NSApp.activate(ignoringOtherApps: true)
+      closePopover()
+      return
     }
+    reload()
+    // Defer past the status-item click so the opening mouse-down cannot dismiss us.
+    DispatchQueue.main.async { [weak self] in
+      guard let self = self else { return }
+      self.popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+      self.popover.contentViewController?.view.window?.makeKey()
+      NSApp.activate(ignoringOtherApps: true)
+      self.installPopoverDismissalMonitors()
+    }
+  }
+
+  func closePopover() {
+    removePopoverDismissalMonitors()
+    if popover.isShown {
+      popover.performClose(nil)
+    }
+  }
+
+  func installPopoverDismissalMonitors() {
+    removePopoverDismissalMonitors()
+    let handler: (NSEvent) -> Void = { [weak self] event in
+      guard let self = self, self.popover.isShown else { return }
+      // Clicks on the status button are handled by togglePopover.
+      if let button = self.statusItem.button,
+         let win = button.window {
+        let loc = win.mouseLocationOutsideOfEventStream
+        if button.frame.contains(loc) { return }
+      }
+      // Clicks inside the popover content should not dismiss.
+      if let popWin = self.popover.contentViewController?.view.window,
+         event.window === popWin {
+        return
+      }
+      self.closePopover()
+    }
+    let mask: NSEvent.EventTypeMask = [.leftMouseDown, .rightMouseDown]
+    if let local = NSEvent.addLocalMonitorForEvents(matching: mask, handler: { event in
+      handler(event)
+      return event
+    }) {
+      popoverEventMonitors.append(local)
+    }
+    if let global = NSEvent.addGlobalMonitorForEvents(matching: mask, handler: handler) {
+      popoverEventMonitors.append(global)
+    }
+  }
+
+  func removePopoverDismissalMonitors() {
+    for monitor in popoverEventMonitors {
+      NSEvent.removeMonitor(monitor)
+    }
+    popoverEventMonitors.removeAll()
+  }
+
+  func popoverDidClose(_ notification: Notification) {
+    removePopoverDismissalMonitors()
   }
 
   func reload() {
