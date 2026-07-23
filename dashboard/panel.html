@@ -4,8 +4,10 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Mission Control Panel</title>
+<script src="data/attention.js"></script>
 <script src="data/decisions.js"></script>
 <script src="data/automation.js"></script>
+<script src="data/attention.error.js"></script>
 <script src="data/decisions.error.js"></script>
 <script src="data/automation.error.js"></script>
 <style>
@@ -126,75 +128,165 @@ button.linkish, a.linkish {
       return Promise.reject(error);
     }
   }
-  function render() {
+
+  function attentionFresh(attn) {
+    if (!attn || !attn.ok || attn.data == null) return false;
+    if (window.MC && window.MC.feedErrors && window.MC.feedErrors.attention) return false;
+    var epoch = attn.generated_epoch;
+    if (typeof epoch !== "number" || !isFinite(epoch) || epoch <= 0) return true;
+    var age = (Date.now() / 1000) - epoch;
+    // Stale after ~3x cadence (300s) — fall back to decisions so the panel never blanks.
+    return age < 900;
+  }
+
+  function renderDecisionItem(list, d, i) {
+    var parsed = (Array.isArray(d.options) && (d.question || d.title)) ? {
+      q: d.question || d.title,
+      opts: d.options.slice(0, 3),
+      suggested: d.recommended == null ? null : +d.recommended
+    } : parseOptions(d.text || d.title || "");
+    var item = document.createElement("div");
+    item.className = "item";
+    var q = document.createElement("div");
+    q.className = "q";
+    q.textContent = (i + 1) + ". " + parsed.q;
+    item.appendChild(q);
+    if (parsed.opts.length && d.id && /^decision:[0-9a-f]{24}$/.test(String(d.id))) {
+      var row = document.createElement("div");
+      row.className = "opts";
+      parsed.opts.forEach(function (label, oi) {
+        var n = oi + 1;
+        var btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "opt" + (parsed.suggested === n ? " suggested" : "");
+        btn.textContent = n + " — " + label;
+        btn.title = "Record choice " + n + " (or copies: dashboard decide answer " + d.id + " " + n + ")";
+        btn.onclick = function () {
+          var cmd = "dashboard decide answer " + d.id + " " + n;
+          if (window.webkit && window.webkit.messageHandlers &&
+              window.webkit.messageHandlers.mcDecide) {
+            btn.textContent = "Recording…";
+            window.webkit.messageHandlers.mcDecide.postMessage({ id: d.id, n: n });
+            setTimeout(function () { btn.textContent = n + " — " + label; }, 1600);
+            return;
+          }
+          var old = btn.textContent;
+          btn.disabled = true;
+          clipboardWrite(cmd).then(function () {
+            btn.textContent = "Copied command";
+          }, function () {
+            btn.textContent = "Copy failed — select command";
+          }).then(function () {
+            setTimeout(function () { btn.textContent = old; btn.disabled = false; }, 1600);
+          });
+        };
+        row.appendChild(btn);
+      });
+      item.appendChild(row);
+      if (parsed.suggested) {
+        var sug = document.createElement("div");
+        sug.className = "meta";
+        sug.textContent = "Suggested: " + parsed.suggested + " — " +
+          (parsed.opts[parsed.suggested - 1] || "");
+        item.appendChild(sug);
+      }
+    }
+    list.appendChild(item);
+  }
+
+  function renderAttentionItem(list, d, i) {
+    var kind = d.kind || "manual";
+    if (kind === "decision") {
+      renderDecisionItem(list, d, i);
+      return;
+    }
+    var item = document.createElement("div");
+    item.className = "item";
+    var q = document.createElement("div");
+    q.className = "q";
+    q.textContent = (i + 1) + ". " + (d.title || "Needs attention");
+    item.appendChild(q);
+    if (d.why) {
+      var why = document.createElement("div");
+      why.className = "meta";
+      why.textContent = d.why;
+      item.appendChild(why);
+    }
+    var meta = document.createElement("div");
+    meta.className = "meta";
+    meta.textContent = "severity " + (d.severity || "?") + " · " + kind +
+      (d.source ? (" · " + d.source) : "");
+    item.appendChild(meta);
+    if (d.id) {
+      var row = document.createElement("div");
+      row.className = "opts";
+      var btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "opt";
+      var cmd = "dashboard attention resolve " + d.id;
+      btn.textContent = "Copy resolve command";
+      btn.title = cmd;
+      btn.onclick = function () {
+        var old = btn.textContent;
+        btn.disabled = true;
+        clipboardWrite(cmd).then(function () {
+          btn.textContent = "Copied command";
+        }, function () {
+          btn.textContent = "Copy failed — select command";
+        }).then(function () {
+          setTimeout(function () { btn.textContent = old; btn.disabled = false; }, 1600);
+        });
+      };
+      row.appendChild(btn);
+      item.appendChild(row);
+    }
+    list.appendChild(item);
+  }
+
+  function renderFromDecisions(list) {
     var f = feeds();
     var dec = f.decisions || {};
     var pinned = ((dec.data || {}).pinned) || [];
-    var list = document.getElementById("list");
-    list.textContent = "";
     if (!pinned.length) {
       list.appendChild(document.createTextNode("Nothing waiting on you right now."));
-    } else {
-      pinned.slice(0, 3).forEach(function (d, i) {
-        var parsed = (Array.isArray(d.options) && d.question) ? {
-          q: d.question,
-          opts: d.options.slice(0, 3),
-          suggested: d.recommended == null ? null : +d.recommended
-        } : parseOptions(d.text);
-        var item = document.createElement("div");
-        item.className = "item";
-        var q = document.createElement("div");
-        q.className = "q";
-        q.textContent = (i + 1) + ". " + parsed.q;
-        item.appendChild(q);
-        if (parsed.opts.length) {
-          var row = document.createElement("div");
-          row.className = "opts";
-          parsed.opts.forEach(function (label, oi) {
-            var n = oi + 1;
-            var btn = document.createElement("button");
-            btn.type = "button";
-            btn.className = "opt" + (parsed.suggested === n ? " suggested" : "");
-            btn.textContent = n + " — " + label;
-            btn.title = "Record choice " + n + " (or copies: dashboard decide answer " + d.id + " " + n + ")";
-            btn.onclick = function () {
-              var cmd = "dashboard decide answer " + d.id + " " + n;
-              if (window.webkit && window.webkit.messageHandlers &&
-                  window.webkit.messageHandlers.mcDecide) {
-                btn.textContent = "Recording…";
-                window.webkit.messageHandlers.mcDecide.postMessage({ id: d.id, n: n });
-                setTimeout(function () { btn.textContent = n + " — " + label; }, 1600);
-                return;
-              }
-              var old = btn.textContent;
-              btn.disabled = true;
-              clipboardWrite(cmd).then(function () {
-                btn.textContent = "Copied command";
-              }, function () {
-                btn.textContent = "Copy failed — select command";
-              }).then(function () {
-                setTimeout(function () { btn.textContent = old; btn.disabled = false; }, 1600);
-              });
-            };
-            row.appendChild(btn);
-          });
-          item.appendChild(row);
-          if (parsed.suggested) {
-            var sug = document.createElement("div");
-            sug.className = "meta";
-            sug.textContent = "Suggested: " + parsed.suggested + " — " +
-              (parsed.opts[parsed.suggested - 1] || "");
-            item.appendChild(sug);
-          }
+      return 0;
+    }
+    pinned.slice(0, 5).forEach(function (d, i) { renderDecisionItem(list, d, i); });
+    if (pinned.length > 5) {
+      var more = document.createElement("div");
+      more.className = "meta";
+      more.textContent = "+" + (pinned.length - 5) + " more in full Mission Control";
+      list.appendChild(more);
+    }
+    return pinned.length;
+  }
+
+  function render() {
+    var f = feeds();
+    var list = document.getElementById("list");
+    list.textContent = "";
+    var attn = f.attention || {};
+    var usedAttention = false;
+    if (attentionFresh(attn)) {
+      var top5 = ((attn.data || {}).top5) || [];
+      var board = ((attn.data || {}).board) || [];
+      var total = board.length || top5.length;
+      if (top5.length) {
+        usedAttention = true;
+        top5.slice(0, 5).forEach(function (d, i) { renderAttentionItem(list, d, i); });
+        if (total > 5) {
+          var moreA = document.createElement("div");
+          moreA.className = "meta";
+          moreA.textContent = "+" + (total - 5) + " more in full Mission Control";
+          list.appendChild(moreA);
         }
-        list.appendChild(item);
-      });
-      if (pinned.length > 3) {
-        var more = document.createElement("div");
-        more.className = "meta";
-        more.textContent = "+" + (pinned.length - 3) + " more in full Mission Control";
-        list.appendChild(more);
+      } else {
+        usedAttention = true;
+        list.appendChild(document.createTextNode("Nothing waiting on you right now."));
       }
+    }
+    if (!usedAttention) {
+      renderFromDecisions(list);
     }
     var jobs = ((f.automation || {}).data || {}).jobs || [];
     var red = jobs.filter(function (j) { return j.state === "red"; }).length;

@@ -32,6 +32,7 @@ Mirror every configured Linear issue here with the repo-side home that explains 
 ## Completed
 If it's not here, it isn't remembered.
 Preserve a durable completion trail for verified work instead of deleting it from active planning.
+- 2026-07-23 | Attention lane (top-5 needs-attention board) — `dashboard attention` CLI + `attention` feed + stale-decision demotion (>14d archived) + panel top-5 from attention with decisions fallback + Attention tab + git `--with-timeouts` partial results (whole-feed 300s). Evidence: `docs/evidence/2026-07-23-attention-lane.md`. Branch `cursor/attention-lane` (not installed). | linear: self-contained.
 - 2026-07-17 | Phase 0.3 queue repair + 0.2 answer return path LIVE — admission classification as advisory-only metadata (NoOp/WorkOrder/OperatorDecision; authority-envelope fields carried as data, AST-scan-enforced no-execution invariant), rollup presentation with the strict supersession contract (same action + owner + target, fails closed), lane views from the domain field, security-severity bypass with non-duplicating alerts, group-level re-ask suppression (7-day window, severity escalation recorded), one-shot `admission-backfill`, schema-presence steady-state stamping, `--source` provenance and resume-chat/provider return-path metadata on answers. Live-fire on the real store: 113/113 open rows exactly one class (noop 5 / operator 96 / workorder 12), rollup 91 cards for 113 rows, lanes business 12 / faith 2 / infra 82 / personal 17, backfill idempotent (second run stamped 0), deployed-stack dismiss with `dismissed|{"source":"telegram"}` event on a cloned store. Merges `f554f96` + backfill merge installed and stamped; five suites green throughout (decision-alert / dashboard 67 / er134 57 / queue_admission 24 / common). Foreign checkout dirt preserved verbatim on `preserve/primary-dirt-20260717` (`cd26fd7`). Deferred with reasons: rollup-answer CLI wiring (belongs to the answer flow), WorkOrder writes into the autonomous loop's ready-packets directory (Phase 1.1 — loop authority unproven per plan §9).
 - 2026-07-13 | Global session lookup repair — implemented the documented multi-word `chat-source find` route, removed executable help backticks, preserved empty metadata fields, bounded Cursor indexing, and loaded global `34a9f77`; fixture/docs/governance gates pass and installed `find mission control` returned five exact sources under its 120-second bound.
 - 2026-07-13 | Delegation Audit code/runtime repair — restored the protected runtime, replaced calendar-decaying fixtures, repaired empty-state status, passed `66/0` focused tests and a notification-free real dry-run, and landed `27aa2e3` on global main; first natural schedule proof remains active above.
@@ -67,6 +68,21 @@ Preserve a durable completion trail for verified work instead of deleting it fro
 - 2026-07-04 | ER-087 follow-up audit gaps — governance scaffold, product intent, tab wording, stale-ingest honesty, and Map smoke coverage landed in this change; full record below.
 
 ## Work Record Log
+
+### 2026-07-23 — Attention lane (ranked top-5 needs-attention)
+- Problem: Panel showed top-3 of a noisy pinned-decisions list; git feed blanked at 120s whole-feed timeout.
+- Reasoning: Separate ranked attention feed (manual + fresh decisions + red automation); demote stale pinned decisions without rewriting the extractor; raise git budget with per-repo partial results.
+- Diagnosis inputs: live `git.error.json` `"feeder timed out after 120s"`; per-repo profile (~59 repos; slowest `3rd Party Git Hub Repo's` ~7.65s; cumulative >120s).
+- Implementation inputs: packet `global-implementations/docs/handoffs/2026-07-23-cursor-mc-attention-lane-packet.md`.
+- Fix: `dashboard attention` CLI + `attention` collect feed; decisions demotion to `archived`; panel/index top-5 Attention UI; `scan-unfinished-work --with-timeouts` + dashboard git timeout 300s.
+- Self-audit:
+  - method: new `attention-lane.test.sh`; full `dashboard.test.sh`; er134; browser; render-smoke; temp-home e2e; git collect verify (no install / no `~/.mission-control` writes).
+  - outcome: focused suites green; evidence in `docs/evidence/2026-07-23-attention-lane.md`.
+  - did not verify: live menu-bar install/runtime (auditor owns install); mc-panel.swift unchanged by design.
+- by: Cursor Agent session `1d286402-3c53-4511-aca4-eb08fdcecf7a` on branch `cursor/attention-lane`
+- triggered by: Claude Fable packet session `5c8cb478-26d4-4b84-9a07-671e26a9d8e9`
+- led to: auditor install + mc-panel follow-up (out of scope here)
+- linear: self-contained
 
 ### 2026-07-13 — Stop-boundary provenance and completion supersession
 - Problem: the 08:53:58Z closeout in source chat `019f59f8-bb9e-70c0-9497-a9686ea24154` mislabeled the executor as `gpt-5` although every turn context records `gpt-5.6-sol`/high, and it claimed complete/no-defects before later feeder, usage, schedule/runtime, session-locator, and Delegation Audit defects were found.
