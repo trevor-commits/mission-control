@@ -71,7 +71,7 @@ def _atomic_json(path, value):
 
 
 _CONFIG_KEYS = frozenset((
-    "ALLOWED_USER_ID",
+    "MC_ROUTE_INCIDENTS_CHAT_ID",
     "TELEGRAM_BOT_TOKEN",
     "TELEGRAM_BOT_TOKEN_KEYCHAIN_SERVICE",
 ))
@@ -176,13 +176,14 @@ def _config_values():
 
 
 def _chat_id(config=None):
-    if "MORNING_BRIEF_CHAT_ID" in os.environ:
-        return _valid_chat_id(os.environ.get("MORNING_BRIEF_CHAT_ID", "").strip())
+    if "MORNING_BRIEF_INCIDENTS_CHAT_ID" in os.environ:
+        return _valid_chat_id(
+            os.environ.get("MORNING_BRIEF_INCIDENTS_CHAT_ID", "").strip())
     if config is None:
         config = _config_values()
     if config is None:
         return None
-    return _valid_chat_id(config.get("ALLOWED_USER_ID", "").strip())
+    return _valid_chat_id(config.get("MC_ROUTE_INCIDENTS_CHAT_ID", "").strip())
 
 
 def _keychain_token(service):
@@ -369,7 +370,7 @@ def _send(category):
         except (OSError, subprocess.TimeoutExpired):
             return False
 
-    needs_config = ("MORNING_BRIEF_CHAT_ID" not in os.environ or
+    needs_config = ("MORNING_BRIEF_INCIDENTS_CHAT_ID" not in os.environ or
                     not any(name in os.environ for name in
                             ("MORNING_BRIEF_TELEGRAM_BOT_TOKEN",
                              "TELEGRAM_BOT_TOKEN")))

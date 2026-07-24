@@ -42,7 +42,7 @@ CAP="$T/send.json"
 run_deadman(){
   env -i HOME="$HOME_T" PATH="/usr/bin:/bin" MISSION_CONTROL_HOME="$STATE" \
     MORNING_BRIEF_DEADMAN_NOW_EPOCH="$1" MORNING_BRIEF_DEADMAN_THROTTLE_S=3600 \
-    MORNING_BRIEF_CHAT_ID=12345 MORNING_BRIEF_SEND_BIN="$SENDER" SEND_CAPTURE="$CAP" \
+    MORNING_BRIEF_INCIDENTS_CHAT_ID=12345 MORNING_BRIEF_SEND_BIN="$SENDER" SEND_CAPTURE="$CAP" \
     PYTHONPATH="$ROOT/scripts" "$DEADMAN" >/dev/null 2>"$T/err"
 }
 calls(){ python3 -c 'import json,sys; print(len(json.load(open(sys.argv[1]))))' "$CAP" 2>/dev/null || echo 0; }
@@ -229,7 +229,7 @@ json.dump({"brief_id":bid,"state":"delivered","confirmed_chunks":1,
 PY
 run_stamp_deadman(){
   env -i HOME="$HOME_T" PATH="/usr/bin:/bin" MISSION_CONTROL_HOME="$STAMP_STATE" \
-    MORNING_BRIEF_DEADMAN_NOW_EPOCH=1783676000 MORNING_BRIEF_CHAT_ID=12345 \
+    MORNING_BRIEF_DEADMAN_NOW_EPOCH=1783676000 MORNING_BRIEF_INCIDENTS_CHAT_ID=12345 \
     MORNING_BRIEF_SEND_BIN="$SENDER" SEND_CAPTURE="$STAMP_CAP" PYTHONPATH="$ROOT/scripts" \
     "$DEADMAN" >/dev/null 2>"$T/stamp-err"
 }
@@ -257,11 +257,11 @@ else fail "deadman: malformed install stamp did not fail closed"; fi
 STATE_C="$T/concurrent-state"; CAP_C="$T/concurrent-send.json"; mkdir -p "$STATE_C/morning-brief"
 env -i HOME="$HOME_T" PATH="/usr/bin:/bin" MISSION_CONTROL_HOME="$STATE_C" \
   MORNING_BRIEF_DEADMAN_NOW_EPOCH=1783676000 MORNING_BRIEF_DEADMAN_THROTTLE_S=3600 \
-  MORNING_BRIEF_CHAT_ID=12345 MORNING_BRIEF_SEND_BIN="$SENDER" SEND_CAPTURE="$CAP_C" \
+  MORNING_BRIEF_INCIDENTS_CHAT_ID=12345 MORNING_BRIEF_SEND_BIN="$SENDER" SEND_CAPTURE="$CAP_C" \
   PYTHONPATH="$ROOT/scripts" "$DEADMAN" >/dev/null 2>&1 & D1=$!
 env -i HOME="$HOME_T" PATH="/usr/bin:/bin" MISSION_CONTROL_HOME="$STATE_C" \
   MORNING_BRIEF_DEADMAN_NOW_EPOCH=1783676000 MORNING_BRIEF_DEADMAN_THROTTLE_S=3600 \
-  MORNING_BRIEF_CHAT_ID=12345 MORNING_BRIEF_SEND_BIN="$SENDER" SEND_CAPTURE="$CAP_C" \
+  MORNING_BRIEF_INCIDENTS_CHAT_ID=12345 MORNING_BRIEF_SEND_BIN="$SENDER" SEND_CAPTURE="$CAP_C" \
   PYTHONPATH="$ROOT/scripts" "$DEADMAN" >/dev/null 2>&1 & D2=$!
 wait "$D1"; DR1=$?; wait "$D2"; DR2=$?
 if [ "$DR1" -ne 0 ] && [ "$DR2" -ne 0 ] && [ "$(python3 -c 'import json,sys; print(len(json.load(open(sys.argv[1]))))' "$CAP_C")" = 1 ]; then

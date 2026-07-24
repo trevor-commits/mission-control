@@ -160,7 +160,7 @@ packet done unless its verify commands pass on the real machine.
 
 **Scope for phase 1 (deliberately small):**
 1. **Decision queue**: collectors append decision-needed items to `~/.mission-control/decisions.jsonl` — {id (stable hash), kind, title, action_cmd, first_seen, last_seen, state: open|dismissed}. Sources: automation red, git diverged/no-remote, usage red, repo-groom's DECIDE list (read `~/.local/state/repo-state-watcher/groom-last.txt`).
-2. **Loud channel**: a `scripts/decision-alert` run by the existing 300s ticker (guarded to fire per item at most once/24h, tracked in the queue file): sends each NEW open decision via the existing Telegram bridge (`mobile-connect` bot — reuse its send path; read its config, don't duplicate tokens).
+2. **Loud channel**: a `scripts/decision-alert` run by the existing 300s ticker (guarded to fire per item at most once/24h, tracked in the queue file): sends each NEW open decision through mobile-connect's route-aware Control decision verb; Mission Control reads neither tokens nor destination IDs.
 3. **Dashboard**: Home needs-attention pins queue items above everything with a distinct "needs a decision" style; a dismiss ✕ copies `dashboard decide dismiss <id>` (new CLI subcommand writing state=dismissed).
 4. **Explicit NON-goals phase 1** (write them in the code header): no auto-merge, no auto-PR, no auto-push of active work, no acting on decisions — surface only. Safe auto-fixes remain repo-groom's job (already live).
 **Acceptance:** a simulated red job produces exactly one Telegram message and one pinned Home row; dismiss round-trips; restart doesn't re-alert (dedupe file). Tests with a stubbed send command (`DECISION_ALERT_SEND_CMD` env).
