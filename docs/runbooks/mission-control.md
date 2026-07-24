@@ -58,3 +58,65 @@ It combines usage, git, chats, and automation feeds from the ER-087 scripts into
 - **Home** opens light by default with at most three **Needs you** decisions; use **Show more details** for the full depth view. Toggle **Dark mode** in the top strip.
 - **Corner panel:** `dashboard panel` installs `~/.mission-control/panel.html`, stages `~/.mission-control/Mission Control Panel.app` (LSUIElement), launches the menu-bar app (`MC`), and idempotently installs `com.gillettes.mc-panel` KeepAlive+RunAtLoad so MC returns after login/reboot. First launch may compile `scripts/mc-panel.swift` with `swiftc`.
 - **Answer a choice:** `dashboard decide answer <decision-id> <n>` writes a Goal prompt under `~/.mission-control/prompts/` and resolves the decision. Menu-bar option clicks run `dashboard decide answer` directly via the `mcDecide` bridge; Home browser option buttons still copy that command.
+
+## Decision-queue admission, rollup, and severity bypass (Phase 0 item 0.3)
+
+`scripts/queue_admission.py` is a pure classification/rollup module (no
+subprocess, no exec — see its module docstring for the authority invariant)
+consumed by `scripts/decision-alert`:
+
+- **Admission classification** — every open row gets exactly one of
+  `noop` / `workorder` / `operator_decision`, deterministically, via
+  `queue_admission.classify_row()`. A `workorder` packet
+  (`build_workorder_packet()`) is advisory data only, pointed at
+  `~/.cross-agent/autonomous-loop/ready-packets/`; it carries an
+  `authority_envelope` (capability/risk/expiry/rollback) but grants no
+  execution — the loop's own authority policy (Agency v2, currently no live
+  runtime effect) is the only thing that could ever act on it.
+- **Rollup, not row-dedup** — `decision-alert rollup` presents one card per
+  exact-normalized-text group (`queue_admission.normalize_text()`), members
+  kept underneath for provenance. Answering a card supersedes a member
+  ONLY when the STRICTER **action + owner + target** equivalence contract
+  holds (`queue_admission.same_equivalence()` / `plan_rollup_supersession()`)
+  — identical wording from different chat sessions does not auto-close
+  every occurrence. See the docstring on `same_equivalence()` for the exact
+  contract text.
+- **One queue, lane views** — `decision-alert lanes` derives
+  business/personal/infra/faith-personal-projects counts from the `domain`
+  field; there is no physical per-lane queue.
+- **Group re-ask suppression** — in the automatic alert path, a NEW decision
+  whose normalized text matches a different decision already alerted within
+  the last 7 days is not re-presented identically: it folds silently into
+  the group (reported under `suppressed_group` with the prior-alerted peer
+  id) unless its stored severity outranks the alerted peer, in which case
+  it is allowed through and a `group_escalation` event is recorded. The
+  same decision's own 24-hour re-alert cadence and the explicit
+  `--decision-id` targeted bypass are unchanged.
+- **Severity bypass** — `decision-alert alert --decision-id <id> [--decision-id <id> ...] [--send]`
+  targets specific decisions directly, bypassing normal eligibility
+  ordering AND `--fresh-within` (a queue-age filter would defeat the point
+  of surfacing an old, buried security item). Without `--send` it previews
+  the exact would-send text (`would_send_message`, built via the existing
+  `_alert_message()` formatter — never a new notifier) with zero external
+  side effects. `--decision-id` still respects the 24h alert-receipt /
+  60s in-flight-reservation dedup, so it cannot double-fire a ping that
+  already went out.
+- **Deploy gate** — the new `admission_class` / `admission_rule` / `domain` /
+  `severity` / `required_action` / `deadline` / `snoozed_until` columns are
+  additive (mirrors the existing `anchor_ref` migration). The MIGRATION is
+  gated: run any decision-alert command once with
+  `MISSION_CONTROL_ADMISSION_SCHEMA=1` to add the columns. STAMPING is then
+  unconditional — once the columns exist (schema presence = prior opt-in),
+  every ingest classifies and stamps the row with no env flag needed, so
+  the flagless installed launchd job keeps new entrants classified in
+  steady state. `decision-alert admission-backfill` one-shot-stamps every
+  open row still carrying NULL admission fields (rows whose stale sources
+  never re-report); it is idempotent, transactional, and never touches a
+  row that already has a class. `rollup`
+  and `lanes` work read-only regardless of that flag (they recompute
+  classification fresh from `text` every call). Tests:
+  `scripts/queue_admission.test.py` (equivalence contract, classification
+  determinism, authority invariant) plus the existing
+  `scripts/decision-alert.test.sh` / `scripts/dashboard.test.sh` suites,
+  which cover the new `rollup`/`lanes`/`alert --decision-id` surfaces via
+  regression (all green as of this change).

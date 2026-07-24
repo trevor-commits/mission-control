@@ -41,7 +41,7 @@ FIELD_CLASSES = frozenset((
 
 REQUIRED_INSTALL_RUNTIMES = (
     "dashboard", "chat-graph", "morning-brief", "morning-brief-deadman",
-    "decision-alert", "mission_control_common.py",
+    "decision-alert", "mission_control_common.py", "queue_admission.py",
     "compose-decision-prompt.py", "mc-panel.swift",
 )
 REQUIRED_INSTALL_ASSETS = (
@@ -684,7 +684,8 @@ def verify_install_stamp(bin_dir):
         else:
             try:
                 mode = os.stat(candidate).st_mode
-                if (name not in ("mission_control_common.py", "mc-panel.swift") and
+                if (name not in ("mission_control_common.py", "queue_admission.py",
+                                 "mc-panel.swift") and
                         not (mode & stat.S_IXUSR)):
                     mismatches.append(name)
                 elif _sha256_file(candidate) != expected:

@@ -32,7 +32,7 @@ export MISSION_CONTROL_HOME REPO_ROOT MISSION_CONTROL_RUNTIME_DIR
 # subcommand + args arrive as argv.
 engine() {
   python3 - "$@" <<'PYEOF'
-import errno, fcntl, json, math, os, re, shlex, shutil, signal, stat, subprocess, sys, time
+import errno, fcntl, hashlib, json, math, os, re, shlex, shutil, signal, stat, subprocess, sys, time
 
 HOME = os.environ["MISSION_CONTROL_HOME"]
 REPO = os.environ.get("REPO_ROOT", ".")
@@ -70,7 +70,9 @@ OK_EXITS = {"git": (0, 1)}
 FEEDS = [
     ("automation",  300, _repo_script("automation-status") + " --json --registry " + shlex.quote(os.path.join(REPO, "dashboard", "jobs.json")), "DASHBOARD_CMD_AUTOMATION", 30),
     ("usage",      1800, _repo_script("usage-snapshot") + " --no-ccusage", "DASHBOARD_CMD_USAGE", 60),
-    ("git",         900, _repo_script("scan-unfinished-work") + " --json", "DASHBOARD_CMD_GIT", 120),
+    # Per-repo sub-timeouts live in scan-unfinished-work --with-timeouts; whole-feed
+    # budget is 300s so a slow unit becomes a partial ok:true feed, not a blank tab.
+    ("git",         900, _repo_script("scan-unfinished-work") + " --json --with-timeouts", "DASHBOARD_CMD_GIT", 300),
     # export prints a status line; the JSON lives in the snapshot file -> run, then cat.
     # --catchup-limit bounds the stale-cursor catch-up scan (default 1500 files) so
     # export ALWAYS reaches its atomic rename inside the 150s budget even on a cold
@@ -80,6 +82,9 @@ FEEDS = [
     ("chats",      1800, "", "DASHBOARD_CMD_CHATS", 150),
     # Decisions consume deterministic Tier-1 chat outcomes and must follow chats.
     ("decisions",   300, "", "DASHBOARD_CMD_DECISIONS", 30),
+    # Attention merges manual queue + fresh decisions + red automation after those
+    # sibling feeds have been refreshed in this cycle (or last-good on disk).
+    ("attention",   300, "", "DASHBOARD_CMD_ATTENTION", 30),
     # Brief consumes the stable snapshots above and therefore MUST run last.
     ("brief",       300, "", "DASHBOARD_CMD_BRIEF", 30),
 ]
@@ -301,6 +306,375 @@ def _run_argv(argv, timeout_s, env=None, timeout_cleanup=None):
         raise
 
 
+# --- attention queue + ranked feed -----------------------------------------
+ATTENTION_FALLBACK_Q = "Decision needs your answer"
+DECISION_ATTENTION_MAX_AGE_S = 7 * 86400
+STALE_DECISION_ARCHIVE_S = 14 * 86400
+
+
+def _attention_dir():
+    path = os.path.join(HOME, "attention")
+    os.makedirs(path, exist_ok=True)
+    try:
+        os.chmod(path, 0o700)
+    except OSError:
+        pass
+    return path
+
+
+def _attention_queue_path():
+    return os.path.join(_attention_dir(), "queue.jsonl")
+
+
+def _attention_id_for_title(title):
+    norm = re.sub(r"\s+", " ", (title or "").strip().lower())
+    return "att:" + hashlib.sha1(norm.encode("utf-8")).hexdigest()[:12]
+
+
+def _attention_read_events():
+    path = _attention_queue_path()
+    if not os.path.isfile(path):
+        return []
+    events = []
+    try:
+        with open(path) as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    obj = json.loads(line)
+                except Exception:
+                    continue
+                if isinstance(obj, dict):
+                    events.append(obj)
+    except OSError:
+        return []
+    return events
+
+
+def _attention_append(event):
+    path = _attention_queue_path()
+    line = _dumps(event) + "\n"
+    flags = os.O_CREAT | os.O_APPEND | os.O_WRONLY | getattr(os, "O_NOFOLLOW", 0)
+    fd = os.open(path, flags, 0o600)
+    try:
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "a") as fh:
+            fh.write(line)
+            fh.flush()
+            os.fsync(fh.fileno())
+    except Exception:
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+        raise
+
+
+def _attention_open_items():
+    open_items = {}
+    for event in _attention_read_events():
+        eid = event.get("id")
+        if not isinstance(eid, str) or not eid.startswith("att:"):
+            continue
+        kind = event.get("event") or event.get("kind")
+        if kind in ("resolve", "resolved"):
+            open_items.pop(eid, None)
+            continue
+        # upsert / add / refresh
+        title = str(event.get("title") or "").strip()
+        if not title:
+            continue
+        why = str(event.get("why") or "").strip()
+        try:
+            severity = int(event.get("severity") or 2)
+        except (TypeError, ValueError):
+            severity = 2
+        if severity not in (1, 2, 3):
+            severity = 2
+        source = str(event.get("source") or "manual").strip() or "manual"
+        due = event.get("due")
+        if due is not None:
+            due = str(due).strip() or None
+        created = event.get("created_at")
+        if not isinstance(created, int) or created <= 0:
+            created = _now()
+        open_items[eid] = {
+            "id": eid,
+            "title": title[:90],
+            "why": why[:200],
+            "severity": severity,
+            "source": source,
+            "due": due,
+            "created_at": created,
+            "kind": "manual",
+        }
+    return list(open_items.values())
+
+
+def _parse_attention_args(argv):
+    out = {"title": None, "why": "", "severity": 2, "source": "manual", "due": None}
+    i = 0
+    while i < len(argv):
+        a = argv[i]
+        if a == "--title" and i + 1 < len(argv):
+            out["title"] = argv[i + 1]; i += 2
+        elif a == "--why" and i + 1 < len(argv):
+            out["why"] = argv[i + 1]; i += 2
+        elif a == "--severity" and i + 1 < len(argv):
+            out["severity"] = argv[i + 1]; i += 2
+        elif a == "--source" and i + 1 < len(argv):
+            out["source"] = argv[i + 1]; i += 2
+        elif a == "--due" and i + 1 < len(argv):
+            out["due"] = argv[i + 1]; i += 2
+        else:
+            raise ValueError("unknown attention argument: %s" % a)
+    return out
+
+
+def cmd_attention(argv):
+    ensure_state()
+    if not argv:
+        sys.stderr.write("attention: need add|resolve|list\n")
+        return 2
+    sub = argv[0]
+    rest = argv[1:]
+    if sub == "add":
+        try:
+            args = _parse_attention_args(rest)
+        except ValueError as exc:
+            sys.stderr.write("attention add: %s\n" % exc)
+            return 2
+        title = (args["title"] or "").strip()
+        if not title:
+            sys.stderr.write("attention add: --title is required\n")
+            return 2
+        if len(title) > 90:
+            sys.stderr.write("attention add: title must be <=90 chars\n")
+            return 2
+        why = (args["why"] or "").strip()
+        if len(why) > 200:
+            sys.stderr.write("attention add: why must be <=200 chars\n")
+            return 2
+        try:
+            severity = int(args["severity"])
+        except (TypeError, ValueError):
+            sys.stderr.write("attention add: --severity must be 1|2|3\n")
+            return 2
+        if severity not in (1, 2, 3):
+            sys.stderr.write("attention add: --severity must be 1|2|3\n")
+            return 2
+        due = args["due"]
+        if due is not None:
+            due = str(due).strip()
+            if due and not re.match(r"^\d{4}-\d{2}-\d{2}$", due):
+                sys.stderr.write("attention add: --due must be YYYY-MM-DD\n")
+                return 2
+            if not due:
+                due = None
+        eid = _attention_id_for_title(title)
+        now = _now()
+        _attention_append({
+            "event": "upsert",
+            "id": eid,
+            "title": title,
+            "why": why,
+            "severity": severity,
+            "source": (args["source"] or "manual").strip() or "manual",
+            "due": due,
+            "created_at": now,
+        })
+        print(eid)
+        return 0
+    if sub == "resolve":
+        if not rest:
+            sys.stderr.write("attention resolve: need <id>\n")
+            return 2
+        eid = rest[0].strip()
+        if not re.match(r"^att:[0-9a-f]{12}$", eid):
+            sys.stderr.write("attention resolve: invalid id\n")
+            return 2
+        _attention_append({
+            "event": "resolve",
+            "id": eid,
+            "resolved_at": _now(),
+        })
+        print(eid)
+        return 0
+    if sub == "list":
+        as_json = "--json" in rest
+        items = sorted(
+            _attention_open_items(),
+            key=lambda x: (x.get("severity", 2), x.get("due") or "9999-99-99",
+                           -(x.get("created_at") or 0)))
+        if as_json:
+            print(_dumps({"ok": True, "items": items, "count": len(items)}))
+        else:
+            if not items:
+                print("(no open attention items)")
+            for item in items:
+                print("%s  s%s  %s" % (item["id"], item["severity"], item["title"]))
+        return 0
+    sys.stderr.write("attention: unknown subcommand %r\n" % sub)
+    return 2
+
+
+def _demote_stale_decisions(obj):
+    """Move pinned decisions unanswered >14d into data.archived (keep on disk)."""
+    if not isinstance(obj, dict):
+        return obj
+    data = obj.get("data")
+    if not isinstance(data, dict):
+        return obj
+    pinned = data.get("pinned")
+    if not isinstance(pinned, list):
+        return obj
+    now = _now()
+    cutoff = now - STALE_DECISION_ARCHIVE_S
+    keep = []
+    archived = list(data.get("archived") or []) if isinstance(data.get("archived"), list) else []
+    seen_arch = set(d.get("id") for d in archived if isinstance(d, dict))
+    for item in pinned:
+        if not isinstance(item, dict):
+            continue
+        first_seen = item.get("first_seen")
+        try:
+            first_seen_i = int(first_seen) if first_seen is not None else None
+        except (TypeError, ValueError):
+            first_seen_i = None
+        if first_seen_i is not None and first_seen_i > 0 and first_seen_i < cutoff:
+            if item.get("id") not in seen_arch:
+                archived.append(item)
+                seen_arch.add(item.get("id"))
+        else:
+            keep.append(item)
+    data = dict(data)
+    data["pinned"] = keep
+    data["archived"] = archived
+    data["archived_count"] = len(archived)
+    out = dict(obj)
+    out["data"] = data
+    return out
+
+
+def _decision_quality_ok(item, now):
+    if not isinstance(item, dict):
+        return False
+    question = str(item.get("question") or "").strip()
+    if not question and item.get("text"):
+        # Fixture/old cache may only have text; use a cheap strip of markdown noise.
+        raw = str(item.get("text") or "")
+        question = re.sub(r"\*\*|`", " ", raw)
+        question = re.sub(r"\s+", " ", question).strip()
+        if question.lower().startswith("decision needed:"):
+            question = question[16:].strip()
+    if len(question) < 15:
+        return False
+    if question == ATTENTION_FALLBACK_Q:
+        return False
+    first_seen = item.get("first_seen")
+    try:
+        first_seen_i = int(first_seen) if first_seen is not None else None
+    except (TypeError, ValueError):
+        first_seen_i = None
+    if first_seen_i is None or first_seen_i <= 0:
+        # No age → treat as fresh enough to surface (fixtures often omit first_seen).
+        return True
+    return (now - first_seen_i) <= DECISION_ATTENTION_MAX_AGE_S
+
+
+def _rank_attention_entries(entries):
+    def due_key(item):
+        due = item.get("due")
+        if isinstance(due, str) and re.match(r"^\d{4}-\d{2}-\d{2}$", due):
+            return due
+        return "9999-99-99"
+
+    return sorted(
+        entries,
+        key=lambda x: (
+            int(x.get("severity") or 2),
+            due_key(x),
+            -(int(x.get("created_at") or 0)),
+        ),
+    )
+
+
+def _run_builtin_attention(_timeout_s):
+    now = _now()
+    entries = []
+    counts = {"manual": 0, "decision": 0, "automation": 0, "decisions_filtered_out": 0}
+
+    for item in _attention_open_items():
+        entries.append(item)
+        counts["manual"] += 1
+
+    dec_env = _load("decisions")
+    dec_data = (dec_env or {}).get("data") if isinstance(dec_env, dict) else None
+    pinned = (dec_data or {}).get("pinned") if isinstance(dec_data, dict) else []
+    if not isinstance(pinned, list):
+        pinned = []
+    for item in pinned:
+        if not isinstance(item, dict):
+            counts["decisions_filtered_out"] += 1
+            continue
+        if not _decision_quality_ok(item, now):
+            counts["decisions_filtered_out"] += 1
+            continue
+        question = str(item.get("question") or "").strip()
+        if not question:
+            question = str(item.get("text") or "").strip()[:90]
+        entry = {
+            "id": item.get("id"),
+            "title": question[:90] if question else "Decision",
+            "why": (str(item.get("provenance") or item.get("source_kind") or "decision")
+                    )[:200],
+            "severity": 1,
+            "source": "decisions",
+            "due": None,
+            "created_at": int(item.get("first_seen") or now),
+            "kind": "decision",
+            "options": item.get("options") if isinstance(item.get("options"), list) else None,
+            "question": item.get("question"),
+            "recommended": item.get("recommended"),
+            "text": item.get("text"),
+        }
+        entries.append(entry)
+        counts["decision"] += 1
+
+    auto_env = _load("automation")
+    auto_data = (auto_env or {}).get("data") if isinstance(auto_env, dict) else None
+    jobs = (auto_data or {}).get("jobs") if isinstance(auto_data, dict) else []
+    if not isinstance(jobs, list):
+        jobs = []
+    for job in jobs:
+        if not isinstance(job, dict) or job.get("state") != "red":
+            continue
+        name = str(job.get("label") or job.get("name") or "automation job")
+        why = str(job.get("err_log_tail") or job.get("schedule") or
+                  job.get("state") or "red")
+        jid = "auto:" + hashlib.sha1(name.encode("utf-8")).hexdigest()[:12]
+        entries.append({
+            "id": jid,
+            "title": name[:90],
+            "why": why[:200],
+            "severity": 1,
+            "source": "automation",
+            "due": None,
+            "created_at": now,
+            "kind": "automation",
+        })
+        counts["automation"] += 1
+
+    ranked = _rank_attention_entries(entries)
+    return {
+        "board": ranked[:25],
+        "top5": ranked[:5],
+        "counts": counts,
+    }, None
+
+
 def _run_builtin_chats(timeout_s):
     cg = os.path.join(REPO, "scripts", "chat-graph")
     child_env = dict(os.environ)
@@ -454,13 +828,21 @@ def _run_feeder(name, defcmd, envvar, timeout_s):
         if p.returncode not in OK_EXITS.get(name, (0,)):
             return None, "feeder exit %d: %s" % (p.returncode, (p.stderr or "").strip()[:200])
         try:
-            return json.loads(p.stdout), None
+            obj = json.loads(p.stdout)
         except Exception as e:
             return None, "feeder output not JSON: %s" % e
+        if name == "decisions":
+            obj = _demote_stale_decisions(obj)
+        return obj, None
     if name == "chats":
         return _run_builtin_chats(timeout_s)
     if name == "decisions":
-        return _run_builtin_decisions(timeout_s)
+        obj, err = _run_builtin_decisions(timeout_s)
+        if err:
+            return None, err
+        return _demote_stale_decisions(obj), None
+    if name == "attention":
+        return _run_builtin_attention(timeout_s)
     if name == "brief":
         return _run_builtin_brief(timeout_s)
     argv = shlex.split(defcmd)
@@ -470,9 +852,12 @@ def _run_feeder(name, defcmd, envvar, timeout_s):
     if p.returncode not in OK_EXITS.get(name, (0,)):
         return None, "feeder exit %d: %s" % (p.returncode, (p.stderr or "").strip()[:200])
     try:
-        return json.loads(p.stdout), None
+        obj = json.loads(p.stdout)
     except Exception as e:
         return None, "feeder output not JSON: %s" % e
+    if name == "decisions":
+        obj = _demote_stale_decisions(obj)
+    return obj, None
 
 
 def _collect_one(name, cadence, defcmd, envvar, timeout_s):
@@ -747,7 +1132,8 @@ def main():
     cmd = sys.argv[1] if len(sys.argv) > 1 else ""
     rest = sys.argv[2:]
     fn = {"collect": cmd_collect, "status": cmd_status,
-          "demo": cmd_demo, "freshness": cmd_freshness}.get(cmd)
+          "demo": cmd_demo, "freshness": cmd_freshness,
+          "attention": cmd_attention}.get(cmd)
     if not fn:
         sys.stderr.write("dashboard-engine: unknown command %r\n" % cmd)
         return 2
@@ -766,8 +1152,14 @@ usage: dashboard <command>
   status                           text health table; nonzero if any feed red
   brief --print                    print a deterministic preview; change no cursor
   extract-outcomes [options]       run bounded Tier 2 outcome enrichment
-  decide dismiss <decision-id>     dismiss one queued decision; execute no action
-  decide answer <decision-id> <n>  record Trevor choice n, write Goal prompt, resolve decision
+  attention add --title <text> [--why <text>] [--severity 1|2|3] [--source <text>] [--due YYYY-MM-DD]
+                                    publish/refresh a manual attention item; prints id
+  attention resolve <id>           resolve one manual attention item
+  attention list [--json]          list open manual attention items
+  decide dismiss <decision-id> [--source <src>]
+                                    dismiss one queued decision; execute no action
+  decide answer <decision-id> <n> [--source <src>] [--resume-chat-id <id>] [--resume-provider <p>]
+                                    record Trevor choice n, write Goal prompt, resolve decision
   decide alert-backfill [--max N]  send remaining eligible alerts (default 10, ceiling 25)
   panel [--install-only]           refresh feeds + open corner menu-bar panel; installs login KeepAlive (ER-134)
   open [--serve]                   collect --due, open the shell (--serve: local http)
@@ -947,7 +1339,7 @@ PYEOF
   then
     return 1
   fi
-  engine collect --due decisions automation >/dev/null 2>&1 || engine collect --force decisions automation >/dev/null || true
+  engine collect --due decisions automation attention >/dev/null 2>&1 || engine collect --force decisions automation attention >/dev/null || true
   local src_panel="$MISSION_CONTROL_HOME/panel.html"
   if [ -L "$src_panel" ] || { [ -e "$src_panel" ] && [ ! -f "$src_panel" ]; }; then
     echo "panel: unsafe installed panel destination" >&2
@@ -1164,7 +1556,7 @@ do_install() {
   local stamp_path="$MISSION_CONTROL_HOME/bin/install-stamp.json"
   # Keep this Bash 3.2 install loop aligned with the canonical verifier manifest
   # in mission_control_common.py; dashboard.test.sh asserts the exact set.
-  local required_runtimes="dashboard morning-brief morning-brief-deadman decision-alert mission_control_common.py compose-decision-prompt.py mc-panel.swift"
+  local required_runtimes="dashboard morning-brief morning-brief-deadman decision-alert mission_control_common.py queue_admission.py compose-decision-prompt.py mc-panel.swift"
   local required_assets="index.html vendor/cytoscape.min.js panel.html launchd/com.gillettes.mc-panel.plist.template"
   # Safe file install: refuse a symlink or non-regular-file destination (never
   # write THROUGH a link, which would escape the target dir), write via a temp
@@ -1239,7 +1631,7 @@ do_install() {
     fi
   fi
   local runtime dest
-  for runtime in chat-graph morning-brief morning-brief-deadman decision-alert mission_control_common.py compose-decision-prompt.py mc-panel.swift; do
+  for runtime in chat-graph morning-brief morning-brief-deadman decision-alert mission_control_common.py queue_admission.py compose-decision-prompt.py mc-panel.swift; do
     dest="$MISSION_CONTROL_HOME/bin/$runtime"
     if [ "$provenance" = "head" ]; then
       if git -C "$REPO_ROOT" cat-file -e "$head_sha:scripts/$runtime" 2>/dev/null; then
@@ -1255,7 +1647,7 @@ do_install() {
       install_failed=1; continue
     fi
     case "$runtime" in
-      mission_control_common.py|mc-panel.swift) chmod 600 "$dest" || { echo "install: could not secure runtime: $dest" >&2; install_failed=1; continue; } ;;
+      mission_control_common.py|queue_admission.py|mc-panel.swift) chmod 600 "$dest" || { echo "install: could not secure runtime: $dest" >&2; install_failed=1; continue; } ;;
       *) chmod 700 "$dest" || { echo "install: could not set executable mode: $dest" >&2; install_failed=1; continue; } ;;
     esac
     echo "installed runtime -> $dest"
@@ -1474,17 +1866,47 @@ case "$cmd" in
   status)   engine status "$@"; exit $? ;;
   brief)    exec "$SCRIPT_DIR/morning-brief" "$@" ;;
   extract-outcomes) exec "$REPO_ROOT/scripts/chat-graph" extract-outcomes "$@" ;;
+  attention)
+    engine attention "$@"
+    ;;
   decide)
     case "${1:-}" in
       dismiss)
-        [ $# -eq 2 ] || { usage; exit 2; }
-        decision_result="$("$SCRIPT_DIR/decision-alert" dismiss "$2" --json)" || exit $?
+        [ $# -ge 2 ] || { usage; exit 2; }
+        did="$2"; shift 2
+        dismiss_source=""
+        while [ $# -gt 0 ]; do
+          case "$1" in
+            --source)
+              [ $# -ge 2 ] || { echo "decide dismiss: --source needs a value" >&2; exit 2; }
+              dismiss_source="$2"; shift 2 ;;
+            *) echo "decide dismiss: unknown argument: $1" >&2; usage; exit 2 ;;
+          esac
+        done
+        dismiss_argv=(dismiss "$did" --json)
+        [ -n "$dismiss_source" ] && dismiss_argv=(dismiss "$did" --source "$dismiss_source" --json)
+        decision_result="$("$SCRIPT_DIR/decision-alert" "${dismiss_argv[@]}")" || exit $?
         engine collect --force --strict decisions >/dev/null || exit $?
         printf '%s\n' "$decision_result"
         ;;
       answer)
-        [ $# -eq 3 ] || { usage; exit 2; }
-        did="$2"; choice="$3"
+        [ $# -ge 3 ] || { usage; exit 2; }
+        did="$2"; choice="$3"; shift 3
+        answer_source=""; answer_resume_chat=""; answer_resume_provider=""
+        while [ $# -gt 0 ]; do
+          case "$1" in
+            --source)
+              [ $# -ge 2 ] || { echo "decide answer: --source needs a value" >&2; exit 2; }
+              answer_source="$2"; shift 2 ;;
+            --resume-chat-id)
+              [ $# -ge 2 ] || { echo "decide answer: --resume-chat-id needs a value" >&2; exit 2; }
+              answer_resume_chat="$2"; shift 2 ;;
+            --resume-provider)
+              [ $# -ge 2 ] || { echo "decide answer: --resume-provider needs a value" >&2; exit 2; }
+              answer_resume_provider="$2"; shift 2 ;;
+            *) echo "decide answer: unknown argument: $1" >&2; usage; exit 2 ;;
+          esac
+        done
         case "$choice" in *[!0-9]*|"") echo "decide answer: choice must be a positive integer" >&2; exit 2 ;; esac
         [ "$choice" -ge 1 ] || { echo "decide answer: choice must be >= 1" >&2; exit 2; }
         printf '%s\n' "$did" | grep -Eq '^decision:[0-9a-f]{24}$' || {
@@ -1492,10 +1914,13 @@ case "$cmd" in
         }
         compose_bin="$REPO_ROOT/scripts/compose-decision-prompt.py"
         [ -f "$compose_bin" ] || compose_bin="$SCRIPT_DIR/compose-decision-prompt.py"
-        python3 "$compose_bin" --answer-transaction \
-          --home "$MISSION_CONTROL_HOME" \
+        compose_argv=(--answer-transaction --home "$MISSION_CONTROL_HOME" \
           --decision-alert "$SCRIPT_DIR/decision-alert" \
-          --decision-id "$did" --choice "$choice" || exit $?
+          --decision-id "$did" --choice "$choice")
+        [ -n "$answer_source" ] && compose_argv+=(--source "$answer_source")
+        [ -n "$answer_resume_chat" ] && compose_argv+=(--resume-chat-id "$answer_resume_chat")
+        [ -n "$answer_resume_provider" ] && compose_argv+=(--resume-provider "$answer_resume_provider")
+        python3 "$compose_bin" "${compose_argv[@]}" || exit $?
         # Refresh feed for UI; do not fail the answer if collectors are unavailable.
         "$SCRIPT_DIR/decision-alert" sync-snapshot --json >/dev/null 2>&1 || \
           engine collect --force decisions >/dev/null 2>&1 || true

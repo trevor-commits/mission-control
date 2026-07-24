@@ -13,12 +13,14 @@
 <script src="data/chats.js"></script>
 <script src="data/automation.js"></script>
 <script src="data/decisions.js"></script>
+<script src="data/attention.js"></script>
 <script src="data/brief.js"></script>
 <script src="data/usage.error.js"></script>
 <script src="data/git.error.js"></script>
 <script src="data/chats.error.js"></script>
 <script src="data/automation.error.js"></script>
 <script src="data/decisions.error.js"></script>
+<script src="data/attention.error.js"></script>
 <script src="data/brief.error.js"></script>
 <!-- vendored graph engine (local, offline, no CDN) for the connection Map -->
 <script src="vendor/cytoscape.min.js"></script>
@@ -899,6 +901,7 @@ body {
     if (name === "git") return "local scan";
     if (name === "automation") return "local launchd evidence";
     if (name === "decisions") return "structured Tier-1 evidence only";
+    if (name === "attention") return "manual queue + filtered decisions + red automation";
     if (name === "brief") return "deterministic local facts";
     return "mixed by feed";
   }
@@ -934,6 +937,9 @@ body {
     }
     if (name === "decisions") {
       return ((g.data && g.data.pinned) || []).length ? "attention" : "fresh";
+    }
+    if (name === "attention") {
+      return (((g.data && g.data.top5) || []).length) ? "attention" : "fresh";
     }
     if (name === "brief") {
       if ((g.data && g.data.stale_required_inputs || []).length) return "attention — stale inputs";
@@ -1532,11 +1538,128 @@ body {
     return pinned.length;
   }
 
+  function attentionResolveCommand(item) {
+    if (!item) return "";
+    if (item.kind === "decision" && item.id) {
+      return "dashboard decide answer " + item.id + " 1";
+    }
+    if (item.id && String(item.id).indexOf("att:") === 0) {
+      return "dashboard attention resolve " + item.id;
+    }
+    return "";
+  }
+
+  function renderAttentionGlance(parent, limit) {
+    var g = guard("attention");
+    if (!g.ok || !g.data || g.flag === "stale") return 0;
+    var top = Array.isArray(g.data.top5) ? g.data.top5 : [];
+    if (!top.length) return 0;
+    limit = limit == null ? 5 : limit;
+    var section = h("section", { class: "mc-glance-card" });
+    section.appendChild(h("div", { class: "mc-section-head" },
+      h("h2", { text: "Needs you" }), ageSpan(g.epoch)));
+    top.slice(0, limit).forEach(function (item, idx) {
+      var title = item.title || item.question || "Needs attention";
+      var row = h("div", { class: "mc-glance-item" });
+      row.appendChild(h("div", { class: "mc-glance-q" },
+        (idx + 1) + ". " + title));
+      row.appendChild(h("div", { class: "mc-row-meta" },
+        (item.kind || "item") + " · severity " + (item.severity || "?") +
+        (item.why ? (" · " + item.why) : "")));
+      if (item.kind === "decision" && Array.isArray(item.options) && item.options.length) {
+        var opts = h("div", { class: "mc-glance-opts" });
+        item.options.slice(0, 3).forEach(function (label, oi) {
+          var n = oi + 1;
+          var btn = h("button", { class: "mc-opt", type: "button",
+            title: answerCommand(item.id, n) },
+            n + " — " + label);
+          btn.addEventListener("click", function () {
+            var old = btn.textContent;
+            btn.disabled = true;
+            clipboardWrite(answerCommand(item.id, n)).then(function () {
+              btn.textContent = "Copied: " + answerCommand(item.id, n);
+            }, function () {
+              btn.textContent = "Copy failed — select the command";
+            }).then(function () {
+              setTimeout(function () { btn.textContent = old; btn.disabled = false; }, 1600);
+            });
+          });
+          opts.appendChild(btn);
+        });
+        row.appendChild(opts);
+      } else {
+        var cmd = attentionResolveCommand(item);
+        if (cmd) row.appendChild(copyable(cmd, "Copy resolve command"));
+      }
+      section.appendChild(row);
+    });
+    var boardLen = Array.isArray(g.data.board) ? g.data.board.length : top.length;
+    if (boardLen > limit) {
+      section.appendChild(h("div", { class: "mc-card-foot" },
+        "+" + (boardLen - limit) + " more in Attention"));
+    }
+    parent.appendChild(section);
+    return top.length;
+  }
+
+  function renderAttention(main) {
+    var g = guard("attention");
+    var p = panel(g, "Attention: ranked needs-you board");
+    main.appendChild(p.wrap);
+    if (!p.body) return;
+    appendPanelProvenance(p.body, "attention", g);
+    var data = g.data || {};
+    var board = Array.isArray(data.board) ? data.board : [];
+    var counts = data.counts || {};
+    p.body.appendChild(h("div", { class: "mc-filters" },
+      h("span", { class: "mc-chip" }, board.length + " on board"),
+      h("span", { class: "mc-chip" }, (counts.manual || 0) + " manual"),
+      h("span", { class: "mc-chip" }, (counts.decision || 0) + " decisions"),
+      h("span", { class: "mc-chip" }, (counts.automation || 0) + " automation"),
+      h("span", { class: "mc-chip" },
+        (counts.decisions_filtered_out || 0) + " decisions filtered out")));
+    if (!board.length) {
+      p.body.appendChild(h("div", { class: "mc-allgreen" },
+        glyphSpan("green"), " Nothing on the attention board."));
+      return;
+    }
+    var table = h("table", { class: "mc-table" });
+    table.appendChild(h("tr", null,
+      h("th", null, "Rank"), h("th", null, "Kind"), h("th", null, "Severity"),
+      h("th", null, "Title"), h("th", null, "Why / source"), h("th", null, "Command")));
+    board.slice(0, 25).forEach(function (item, idx) {
+      var created = item.created_at;
+      var age = (typeof created === "number" && created > 0) ? fmtAge(created) : "—";
+      var cmd = "";
+      if (item.kind === "decision" && item.id) {
+        cmd = "dashboard decide answer " + item.id + " <n>";
+      } else if (item.id && String(item.id).indexOf("att:") === 0) {
+        cmd = "dashboard attention resolve " + item.id;
+      } else if (item.kind === "automation") {
+        cmd = "see Automation tab";
+      }
+      var tr = h("tr", null,
+        h("td", null, String(idx + 1)),
+        h("td", null, item.kind || "?"),
+        h("td", null, String(item.severity || "?")),
+        h("td", { class: "mc-ellipsis", title: item.title || "", style: "max-width:260px" },
+          item.title || "—"),
+        h("td", { class: "mc-ellipsis",
+          title: (item.why || "") + " · " + (item.source || "") + " · " + age,
+          style: "max-width:280px" },
+          (item.why || item.source || "—") + " · " + age),
+        h("td", null, cmd ? copyable(cmd, "Copy") : "—"));
+      table.appendChild(tr);
+    });
+    p.body.appendChild(table);
+  }
+
   function renderHome(main) {
     var home = combinedHomeState();
     var glance = h("div", { class: "mc-glance" });
     glance.appendChild(h("h1", { class: "mc-glance-title" }, "Needs you"));
-    var count = renderPinnedDecisions(glance, 3, { glance: true });
+    var count = renderAttentionGlance(glance, 5);
+    if (!count) count = renderPinnedDecisions(glance, 5, { glance: true });
     if (!count) {
       glance.appendChild(h("div", { class: "mc-glance-card mc-allgreen" },
         glyphSpan("green"), " Nothing waiting on you right now.",
@@ -2509,7 +2632,7 @@ body {
   // ===========================================================================
   //  ROUTER + lifecycle
   // ===========================================================================
-  var TABS = [["home", "Home"], ["brief", "Brief"], ["map", "Map"], ["chats", "Chats"], ["git", "Git"], ["usage", "Usage"], ["automation", "Automation"]];
+  var TABS = [["home", "Home"], ["brief", "Brief"], ["map", "Map"], ["chats", "Chats"], ["git", "Git"], ["usage", "Usage"], ["automation", "Automation"], ["attention", "Attention"]];
   // pure render functions, spec shape render.<tab>(feed, el) reading window.MC.feeds.*
   var render = {
     home:       function (feed, el) { renderHome(el); },
@@ -2518,7 +2641,8 @@ body {
     chats:      function (feed, el) { renderChats(el); },
     git:        function (feed, el) { renderGit(el); },
     usage:      function (feed, el) { renderUsage(el); },
-    automation: function (feed, el) { renderAutomation(el); }
+    automation: function (feed, el) { renderAutomation(el); },
+    attention:  function (feed, el) { renderAttention(el); }
   };
   var RENDER = render;
 

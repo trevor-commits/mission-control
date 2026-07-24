@@ -231,12 +231,17 @@ else fail "alert defaults to no external send"; fi
 SENT="$(run_json alert --send)" || SENT=""
 AGAIN="$(run_json alert --send)" || AGAIN=""
 if python3 - "$SENT" "$AGAIN" "$CAPTURE" "$ID" <<'PY'
-import json,sys
+import json,sys,re
 a,b=map(json.loads,sys.argv[1:3]); calls=json.load(open(sys.argv[3]))
 assert a["sent_count"] >= 1 and b["sent_count"] == 0
-assert all(len(args)==3 and args[0]=="send" and args[1]=="12345" for args in calls)
-assert all("dismiss " in args[2] for args in calls)
-assert all("Maybe choose" not in args[2] for args in calls)
+# decision-send (Phase 0.2), not the generic send -- so mobile-connect can
+# attach Dismiss/Option-N buttons and remember "last decision" for the
+# reply-number path: argv = decision-send <chat> <decision-id> <message> <num-options>
+assert all(len(args)==5 and args[0]=="decision-send" and args[1]=="12345" for args in calls)
+assert all(re.fullmatch(r"decision:[0-9a-f]{24}", args[2]) for args in calls)
+assert all("dismiss " in args[3] for args in calls)
+assert all("Maybe choose" not in args[3] for args in calls)
+assert all(args[4].isdigit() for args in calls)
 PY
 then pass "successful alerts are fixed-argv, filtered, and deduplicated"
 else fail "successful alerts are fixed-argv, filtered, and deduplicated"; fi
@@ -680,6 +685,152 @@ assert x["sent_count"] <= 10
 PY
 then pass "alert-backfill defaults to max 10 and sends"
 else fail "alert-backfill defaults to max 10 and sends"; fi
+
+# Text-GROUP re-ask suppression (0.3(b) gate): a NEW decision whose normalized
+# text matches an already-alerted group must not re-present identically within
+# 7 days — it folds silently; after the window it may present again.
+GRP_HOME="$T/group-state"; mkdir -p "$GRP_HOME"
+export MISSION_CONTROL_HOME="$GRP_HOME"
+export DECISION_ALERT_NOW_EPOCH=1784365200
+G1="$(run_json ingest --source-kind git --source-key grp-first \
+  --text 'Choose the identical group question' --evidence 'grp-a' \
+  --trust structured --provenance git-facts)" || G1=""
+G1_ID="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["decision"]["id"])' "$G1")"
+: > "$CAPTURE"
+G_FIRST="$(run_json alert --send)" || G_FIRST=""
+export DECISION_ALERT_NOW_EPOCH=1784368800
+G2="$(run_json ingest --source-kind git --source-key grp-second \
+  --text 'Choose the identical group question' --evidence 'grp-b' \
+  --trust structured --provenance git-facts)" || G2=""
+G2_ID="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["decision"]["id"])' "$G2")"
+G_SECOND="$(run_json alert --send)" || G_SECOND=""
+export DECISION_ALERT_NOW_EPOCH=1784970011
+G_EXPIRED="$(run_json alert --send)" || G_EXPIRED=""
+if python3 - "$G_FIRST" "$G_SECOND" "$G_EXPIRED" "$G1_ID" "$G2_ID" <<'PY'
+import json,sys
+first,second,expired=map(json.loads,sys.argv[1:4])
+g1,g2=sys.argv[4],sys.argv[5]
+assert g1 in first["sent"]
+# The identically-worded NEW row is suppressed, visibly and with provenance.
+assert second["sent_count"] == 0 and g2 not in second["sent"]
+sup={s["id"]: s for s in second.get("suppressed_group") or []}
+assert g2 in sup and sup[g2]["reason"] == "group_repeat_within_7d"
+assert sup[g2]["prior_alerted"] == g1
+# Past the 7-day window the group may present again (fold, not permanent mute).
+assert g2 in expired["sent"]
+PY
+then pass "group re-ask: identical new row is suppressed within 7 days, expires after"
+else fail "group re-ask: identical new row is suppressed within 7 days, expires after"; fi
+
+# Escalate path: a new group member whose stored severity outranks the alerted
+# peer IS allowed through, and the escalation is recorded as an event.
+ESC_HOME="$T/esc-state"; mkdir -p "$ESC_HOME"
+export MISSION_CONTROL_HOME="$ESC_HOME"
+export MISSION_CONTROL_ADMISSION_SCHEMA=1
+export DECISION_ALERT_NOW_EPOCH=1784365200
+E1="$(run_json ingest --source-kind git --source-key esc-first \
+  --text 'Handle the repeated escalation question' --evidence 'esc-a' \
+  --trust structured --provenance git-facts)" || E1=""
+E1_ID="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["decision"]["id"])' "$E1")"
+: > "$CAPTURE"
+run_json alert --send >/dev/null 2>&1
+export DECISION_ALERT_NOW_EPOCH=1784368800
+E2="$(run_json ingest --source-kind git --source-key esc-second \
+  --text 'Handle the repeated escalation question' --evidence 'esc-b' \
+  --trust structured --provenance git-facts)" || E2=""
+E2_ID="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["decision"]["id"])' "$E2")"
+# Simulate an urgency-raising re-ask (e.g. a future channel writer stamping
+# severity up without changing the text) directly on the stored column.
+python3 - "$ESC_HOME/decisions/decisions.db" "$E2_ID" <<'PY'
+import sqlite3,sys
+c=sqlite3.connect(sys.argv[1])
+c.execute("UPDATE decisions SET severity='security' WHERE decision_id=?",(sys.argv[2],))
+c.commit()
+PY
+E_SEND="$(run_json alert --send)" || E_SEND=""
+E_HIST="$(run_json history "$E2_ID")" || E_HIST=""
+if python3 - "$E_SEND" "$E_HIST" "$E1_ID" "$E2_ID" <<'PY'
+import json,sys
+send,hist=map(json.loads,sys.argv[1:3])
+e1,e2=sys.argv[3],sys.argv[4]
+assert e2 in send["sent"]
+assert e2 in (send.get("escalated") or [])
+events=[e for e in hist["events"] if e["event_type"]=="group_escalation"]
+assert len(events) == 1
+assert events[0]["evidence_type"] == "severity_increase"
+assert events[0]["evidence_ref"] == e1
+PY
+then pass "group re-ask: severity escalation is allowed through and recorded"
+else fail "group re-ask: severity escalation is allowed through and recorded"; fi
+unset MISSION_CONTROL_ADMISSION_SCHEMA
+export MISSION_CONTROL_HOME="$T/state"
+
+# Admission backfill + flagless steady state (0.3 deploy gaps): NULL rows are
+# stamped once; already-classified rows are never touched; once the columns
+# exist, ingest stamps new entrants WITHOUT the env flag.
+BKF_HOME="$T/backfill-state"; mkdir -p "$BKF_HOME"
+export MISSION_CONTROL_HOME="$BKF_HOME"
+export DECISION_ALERT_NOW_EPOCH=1785000000
+# Unmigrated home fails closed with a plain error.
+if ! run_json admission-backfill >"$T/bkf-unmig.out" 2>"$T/bkf-unmig.err"; then
+  if python3 - "$T/bkf-unmig.err" <<'PY'
+import json,sys
+err=json.loads(open(sys.argv[1]).read())
+assert err.get("ok") is False and "not migrated" in str(err.get("error",""))
+PY
+  then pass "admission-backfill fails closed on an unmigrated home"
+  else fail "admission-backfill fails closed on an unmigrated home"; fi
+else fail "admission-backfill fails closed on an unmigrated home"; fi
+export MISSION_CONTROL_ADMISSION_SCHEMA=1
+BKF_A="$(run_json ingest --source-kind git --source-key bkf-choice \
+  --text '**DECISION NEEDED:** Choose **`Lane A`** or **`Lane B`**.' --evidence bkf-a \
+  --trust structured --provenance git-facts)" || BKF_A=""
+BKF_B="$(run_json ingest --source-kind git --source-key bkf-directive \
+  --text 'Restart the stale worker service.' --evidence bkf-b \
+  --trust structured --provenance git-facts)" || BKF_B=""
+unset MISSION_CONTROL_ADMISSION_SCHEMA
+A_ID="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["decision"]["id"])' "$BKF_A")"
+B_ID="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["decision"]["id"])' "$BKF_B")"
+# Simulate pre-schema rows: NULL one row's fields entirely, and give the other
+# a deliberately WRONG class the backfill must not correct (no-touch proof).
+python3 - "$BKF_HOME/decisions/decisions.db" "$A_ID" "$B_ID" <<'PY'
+import sqlite3,sys
+c=sqlite3.connect(sys.argv[1])
+c.execute("""UPDATE decisions SET admission_class=NULL, admission_rule=NULL,
+    domain=NULL, severity=NULL, required_action=NULL, deadline=NULL
+    WHERE decision_id=?""",(sys.argv[3],))
+c.execute("UPDATE decisions SET admission_class='noop' WHERE decision_id=?",
+          (sys.argv[2],))
+c.commit()
+PY
+BKF_RUN1="$(run_json admission-backfill)" || BKF_RUN1=""
+BKF_RUN2="$(run_json admission-backfill)" || BKF_RUN2=""
+# Flagless steady state: a brand-new ingest with NO env flag must stamp.
+BKF_C="$(run_json ingest --source-kind git --source-key bkf-flagless \
+  --text 'Merge the reviewed hotfix branch now.' --evidence bkf-c \
+  --trust structured --provenance git-facts)" || BKF_C=""
+if python3 - "$BKF_RUN1" "$BKF_RUN2" "$BKF_C" "$BKF_HOME/decisions/decisions.db" "$A_ID" "$B_ID" <<'PY'
+import json,sqlite3,sys
+run1,run2,flagless=map(json.loads,sys.argv[1:4])
+con=sqlite3.connect(sys.argv[4]); con.row_factory=sqlite3.Row
+a=con.execute("SELECT * FROM decisions WHERE decision_id=?",(sys.argv[5],)).fetchone()
+b=con.execute("SELECT * FROM decisions WHERE decision_id=?",(sys.argv[6],)).fetchone()
+# Run 1 stamped exactly the NULL row; run 2 found nothing left (idempotent).
+assert run1["stamped"] == 1 and run1["remaining_null"] == 0
+assert run2["stamped"] == 0
+# The NULLed directive row is now fully classified by the shared rules.
+assert b["admission_class"] == "workorder" and b["domain"] == "infra"
+assert b["severity"] == "normal" and b["admission_rule"] == "bounded_directive_no_choice"
+# The deliberately mislabeled row kept its existing class — backfill never
+# touches rows that already carry one (its rule stayed the ingest-time one).
+assert a["admission_class"] == "noop"
+# Flagless ingest stamped the new entrant via schema-presence detection.
+d=flagless["decision"]
+assert d["admission_class"] == "workorder" and d["domain"] == "infra"
+PY
+then pass "admission-backfill stamps NULL rows once, never touches classified rows, and flagless ingest stamps"
+else fail "admission-backfill stamps NULL rows once, never touches classified rows, and flagless ingest stamps"; fi
+export MISSION_CONTROL_HOME="$T/state"
 
 printf '%s\n' '----'
 if [ "$FAIL" -eq 0 ]; then echo 'ALL PASS'; exit 0; fi

@@ -194,8 +194,17 @@ def _run_alert(decision_alert: str, home: str, *args: str) -> dict:
     return json.loads(proc.stdout)
 
 
-def answer_transaction(home: str, decision_alert: str, decision_id: str, choice: int) -> tuple[dict, dict, str]:
-    """Resolve and publish one answer while pinning every private directory."""
+def answer_transaction(
+    home: str, decision_alert: str, decision_id: str, choice: int,
+    resume_chat_id: str = "", resume_provider: str = "", source: str = "",
+) -> tuple[dict, dict, str]:
+    """Resolve and publish one answer while pinning every private directory.
+
+    resume_chat_id/resume_provider are carried into the composed Goal prompt
+    (build_prompt already renders them) so the resumed worker knows where to
+    send a consumption receipt once it finishes the waiting work. source is
+    recorded on the decision_events row (never in resolution_evidence_ref,
+    which stays the mc-answer:<choice> idempotent-replay key)."""
     if not re.fullmatch(r"decision:[0-9a-f]{24}", decision_id):
         raise ValueError("decide answer: invalid decision id")
     if choice < 1:
@@ -253,7 +262,8 @@ def answer_transaction(home: str, decision_alert: str, decision_id: str, choice:
         prompt_name = "%s.md" % decision_id
         _safe_destination(answers_fd, answer_name, "answer")
         _safe_destination(prompts_fd, prompt_name, "prompt")
-        prompt, label = build_prompt(decision_id, choice, text)
+        prompt, label = build_prompt(
+            decision_id, choice, text, resume_chat_id, resume_provider)
         prompt_path = os.path.join(home, "prompts", prompt_name)
         reason = "Trevor chose option %d via Mission Control" % choice
         answer = {
@@ -278,10 +288,15 @@ def answer_transaction(home: str, decision_alert: str, decision_id: str, choice:
         if recover:
             decision_result = history
         else:
-            decision_result = _run_alert(
-                decision_alert, home, "resolve", decision_id,
+            resolve_args = [
+                "resolve", decision_id,
                 "--evidence-type", "manual_resolution",
-                "--evidence-ref", "mc-answer:%d" % choice, "--json")
+                "--evidence-ref", "mc-answer:%d" % choice,
+            ]
+            if source:
+                resolve_args += ["--source", source]
+            resolve_args.append("--json")
+            decision_result = _run_alert(decision_alert, home, *resolve_args)
 
         # A post-resolution directory swap cannot redirect publication. It is
         # rejected here, and exact-choice replay can finish the derived files.
@@ -315,10 +330,19 @@ def answer_transaction_main(argv: list[str]) -> int:
     ap.add_argument("--decision-alert", required=True)
     ap.add_argument("--decision-id", required=True)
     ap.add_argument("--choice", required=True, type=int)
+    ap.add_argument("--resume-chat-id", default="",
+                    help="waiting chat/session id to notify once the resumed "
+                         "work consumes this answer (carried into the prompt)")
+    ap.add_argument("--resume-provider", default="",
+                    help="provider that owns --resume-chat-id (e.g. telegram)")
+    ap.add_argument("--source", default="",
+                    help="who triggered this answer (e.g. telegram); recorded "
+                         "on the decision_events row, not the replay key")
     args = ap.parse_args(argv)
     try:
         compose, decision, prompt_path = answer_transaction(
-            args.home, args.decision_alert, args.decision_id, args.choice)
+            args.home, args.decision_alert, args.decision_id, args.choice,
+            args.resume_chat_id, args.resume_provider, args.source)
     except (OSError, ValueError, RuntimeError, json.JSONDecodeError) as exc:
         print(str(exc), file=sys.stderr)
         return 1
