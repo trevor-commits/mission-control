@@ -602,38 +602,32 @@ def _atomic_json(path, value):
 _same_local_day = same_local_day
 
 
-def _chat_id():
-    configured = os.environ.get("MORNING_BRIEF_CHAT_ID", "").strip()
-    if re.match(r"^-?\d+$", configured):
-        return configured
-    path = os.path.expanduser(os.environ.get(
-        "MOBILE_CONNECT_CONFIG", "~/.mobile-connect/config"))
-    try:
-        with open(path) as handle:
-            for line in handle:
-                match = re.match(r"^\s*ALLOWED_USER_ID\s*=\s*['\"]?(-?\d+)['\"]?\s*$", line)
-                if match:
-                    return match.group(1)
-    except OSError:
-        pass
-    return None
-
-
 def _sender_bin():
     return os.path.expanduser(os.environ.get(
         "MORNING_BRIEF_SEND_BIN",
         "/Users/gillettes/Coding Projects/mobile-connect/mobile-connect.sh"))
 
 
-def _send_message(message):
-    sender, chat_id = _sender_bin(), _chat_id()
-    if not chat_id or not os.path.isfile(sender) or not os.access(sender, os.X_OK):
+def _send_message(message, brief_id, index, total):
+    sender = _sender_bin()
+    if not os.path.isfile(sender) or not os.access(sender, os.X_OK):
         return False
     try:
-        completed = subprocess.run([sender, "send", chat_id, message],
-                                   stdout=subprocess.DEVNULL,
+        completed = subprocess.run([
+            sender, "emit",
+            "--route", "briefs",
+            "--source", "mission-control-morning-brief",
+            "--event", "delivery-chunk",
+            "--severity", "info",
+            "--batch", brief_id,
+            "--part", "%d/%d" % (index, total),
+            "--text", message,
+        ],
+                                   stdout=subprocess.PIPE,
                                    stderr=subprocess.DEVNULL, timeout=30)
-        return completed.returncode == 0
+        return (completed.returncode == 0 and
+                completed.stdout.decode("utf-8", "replace").strip() in
+                ("delivered", "deduplicated"))
     except (OSError, subprocess.TimeoutExpired):
         return False
 
@@ -803,7 +797,7 @@ def _deliver_locked():
             continue
         state["attempts"] = int(state.get("attempts") or 0) + 1
         state["last_attempt_at"] = now
-        if _send_message(message["message"]):
+        if _send_message(message["message"], brief_id, message["index"], len(chunks)):
             state["state"] = "confirmed"
             state["confirmed_at"] = now
             state.pop("last_error", None)

@@ -894,7 +894,7 @@ PY
     no "brief-migrate: exact validity horizon did not become stale"
   fi
   send_out="$(MISSION_CONTROL_HOME="$H" MORNING_BRIEF_NOW_EPOCH="$NOW" \
-    MORNING_BRIEF_CHAT_ID=1 MORNING_BRIEF_SEND_BIN=/usr/bin/false \
+    MORNING_BRIEF_SEND_BIN=/usr/bin/false \
     "$BRIEF" --send 2>&1)" || { no "brief-migrate: delivered no-resend check failed"; return; }
   if printf '%s\n' "$send_out" | grep -q 'delivery already complete'; then
     ok "brief-migrate delivered receipt prevents re-send"
@@ -1662,7 +1662,15 @@ PY
        bash "$DASH" decide alert-backfill --max 26 >/dev/null 2>&1; then
     no "dashboard alert-backfill accepted max above ceiling"; return
   fi
-  out="$(DECISION_ALERT_SEND_BIN="$sender" DECISION_ALERT_CHAT_ID=12345 \
+  diag="$(env -u DASHBOARD_CMD_DECISIONS REPO_ROOT="$REPO" MISSION_CONTROL_HOME="$mch" \
+    bash "$DASH" decide alert-backfill --chat-id ignored 2>&1 || true)"
+  if printf '%s' "$diag" | grep -qi 'fixed to the Control route' &&
+     ! printf '%s' "$diag" | grep -Eqi 'chat.*env|destination.*env'; then
+    :
+  else
+    no "dashboard alert-backfill advertises removed destination override"; return
+  fi
+  out="$(DECISION_ALERT_SEND_BIN="$sender" \
     DECISION_SEND_CAPTURE="$capture" \
     env -u DASHBOARD_CMD_DECISIONS REPO_ROOT="$REPO" MISSION_CONTROL_HOME="$mch" \
     bash "$DASH" decide alert-backfill --max 2)" || { no "dashboard alert-backfill send failed"; return; }

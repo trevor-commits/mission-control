@@ -9,6 +9,13 @@ Capture the current goal plus the concrete dependency-ordered steps that are sti
 - Put audit-created actionable execution items at the top of this section so audit follow-through is the next queue to execute.
 - If the current chat creates or discovers more urgent execution-ready work than the existing queue reflects, persist and move that fresher work to the top of this section before handoff so the chat is not the only durable record.
 - When a step is verified complete, move or summarize it in `## Completed` instead of deleting the history.
+- ER-156 Telegram producer routing: source, tests, and docs now route decisions to Control,
+  normal Morning Brief chunks to Briefs, and the independent deadman to Incidents without
+  treating the authorization identity as a destination. The first exact-byte review findings
+  are independently review-clean; commit/push, canonical landing, install, and route
+  canaries remain open; live mutation is
+  gated on mobile-connect exact-SHA CI plus the three private Telegram bindings. | owner:
+  Codex thread `019f674e-a794-71f0-a6dc-ca861fec4864` | linear: repo-only ER-156.
 - Full-repo audit continuation (paused at Trevor's 2026-07-13 stop boundary): preserve the explicit provenance/completion supersession and resume only on a new Trevor direction. On resume, rerun the browser gate and complete the authoritative verifier, collect the first natural Delegation Audit schedule result, reconcile the fifth natural Morning Brief/operator evidence when it exists, and run a new independent closeout audit. The goal remains active; the stop-boundary verifier is interrupted/incomplete, not green or failed. | owner: Codex thread `019f59f8-bb9e-70c0-9497-a9686ea24154` | linear: repo-only.
 - Cross-repo Delegation Audit natural-run proof (time-gated): source, tests, protected runtime, empty-state status, plist, and notification-free dry-run are repaired through global `27aa2e3`; the loaded job still reports `runs=0`, `last exit=(never exited)` because the first 08:45 schedule has not occurred. Keep the separate Nightly Review defer truthful. | owner: next bounded status pass after the natural schedule | linear: repo-only.
 - ER-107 Morning Brief (highest, deterministic safety complete; elapsed/authorization proof open): the implementation is independently review-clean, contained by canonical `main`, and install/stamp/launchd verified without provider calibration. Four natural briefs (July 10–13) are durably recorded; the July 13 05:00 brief and 05:20 deadman both completed naturally with exit `0`. Remaining gates are the fifth natural morning, Trevor comprehension check-ins, a separately authorized privacy-screened provider calibration, and an explicit Outcome Extractor activation or deferral decision. | owner: Codex thread `019f59f8-bb9e-70c0-9497-a9686ea24154` | linear: repo-only; no Mission Control Linear team is configured.
@@ -68,6 +75,40 @@ Preserve a durable completion trail for verified work instead of deleting it fro
 - 2026-07-04 | ER-087 follow-up audit gaps — governance scaffold, product intent, tab wording, stale-ingest honesty, and Map smoke coverage landed in this change; full record below.
 
 ## Work Record Log
+
+### 2026-07-24 — ER-156 producer migration to purpose routes
+- Problem: decisions and Morning Brief delivery selected raw destination identifiers in
+  Mission Control, and the deadman reused the authorization identity as a destination.
+  Those contracts could bypass the four-route policy or send an incident to the wrong surface.
+- Reasoning: destination policy belongs in mobile-connect. Producers should emit a fixed
+  route/event contract, while the independent deadman may read only the dedicated Incidents
+  route key because it deliberately does not depend on the primary sender.
+- Diagnosis inputs: `/tmp/telegram-mission-control-red.txt` records the expected pre-fix
+  failures for route-aware decision cards, fixed Briefs event argv, Incidents-only deadman
+  configuration, and rejection of the authorization identity as a destination.
+- Implementation inputs: `scripts/decision-alert`, `scripts/morning-brief`,
+  `scripts/morning-brief-deadman`, their focused tests, and the existing ER-156 route design.
+- Fix: decision alerts invoke `decision-send --route control`; normal Morning Brief chunks
+  invoke `emit --route briefs` with a fixed source/event/severity/batch/part contract and
+  confirm only `delivered` or `deduplicated`; the deadman reads
+  only `MORNING_BRIEF_INCIDENTS_CHAT_ID` or `MC_ROUTE_INCIDENTS_CHAT_ID`; raw destination
+  fallback was removed from all three production paths. Provider failure now propagates from
+  mobile-connect, so decision-alert cannot stamp a false receipt.
+- Self-audit:
+  - method: focused decision, brief, delivery, deadman, dashboard, and ER-134 suites;
+    the complete offline verifier; source scans for forbidden destination fallback; diff review.
+  - outcome: focused suites pass, including the new suppression-status and dashboard
+    diagnostic regressions; `/tmp/er156-producer-review-mission-full-green.txt` records
+    the complete verifier at `21/21`. The real cross-repo adapter proof confirms failed
+    decisions remain retryable and six brief parts deliver exactly once.
+  - did not verify: no canonical merge, install, provider contact, or live route canary was
+    performed; those remain gated on mobile-connect landing and the private route bindings.
+- Ripple Check: updated producer docs, call-shape tests, deadman configuration tests,
+  Active Next Steps, branch state, Test Evidence, and Feedback Decision records together.
+- by: Codex `019f674e-a794-71f0-a6dc-ca861fec4864`
+- triggered by: ER-156 four-route flow-routing workflow and its corrected no-fallback contract
+- led to: independent exact-byte review before commit and the later coordinated runtime canaries
+- linear: repo-only ER-156
 
 ### 2026-07-23 — Attention lane (ranked top-5 needs-attention)
 - Problem: Panel showed top-3 of a noisy pinned-decisions list; git feed blanked at 120s whole-feed timeout.
@@ -627,18 +668,20 @@ Keep materially new suggestions here so they survive beyond the current chat.
 
 ## Active Branch Ledger
 ### `codex/er156-telegram-flow-routing`
-- status: branch-only and paused before producer edits at ER-156's Telegram destination-binding gate
+- status: source/tests/docs implemented; exact-byte review pending before commit
 - created: 2026-07-15
-- base: `origin/main@f355b5e`
+- base: current branch head `e46520ed1f5303aa32e4dfa0fc9196ea23523608`;
+  refreshed canonical comparison `origin/main@4d0d0c4a1ec72b795186bb17a44c066c9c6b3566`
 - worktree: `/Users/gillettes/Coding Projects/mission-control-worktrees/er156-telegram-flow-routing`
 - source chat: Codex `019f674e-a794-71f0-a6dc-ca861fec4864`, spawned by `019f62d4-a994-7dd3-8993-0734f727df9f`
-- last refreshed by chat: 2026-07-15, same
+- last refreshed by chat: 2026-07-24, same
 - purpose: route decisions to Control, normal Morning Briefs to Briefs, and the independent deadman to Incidents without destination fallback.
 - linked issue: self-contained ER-156; Linear repo-only mode
 - plugin mirror: none
 - merge expectation: merge to `main`
 - merge target: `main`
-- review surface: focused delivery/deadman/decision tests, installed proof, path canaries, and coordinator audit
+- review surface: exact producer diff; focused delivery/deadman/decision tests; full offline
+  verifier; later installed proof, path canaries, and coordinator audit
 - exit checklist: RED/GREEN; Work/Test records; commit/push; origin/main containment; install; canaries; cleanup
 - delete when: after origin/main containment and installed canaries
 - retain reason: n/a
@@ -765,6 +808,30 @@ If it's not here, it isn't remembered.
 - When a verification run closes or updates an audit finding, cross-reference the matching audit record entry and the chat or commit that performed the work.
 
 ## Test Evidence Log
+- 2026-07-24 | commands: deterministic ER-156 producer RED matrix; focused
+  `morning-brief`, delivery, deadman, deadman-sender, decision-alert, ER-134, and
+  dashboard suites; `/bin/bash scripts/verify.sh`; source fallback scans; diff checks |
+  result: PASS after the expected RED — focused deadman sender `15/15`, dashboard
+  `67/0`, ER-134 `60/0`, and full verifier `21/21`; no Telegram contact or runtime
+  mutation | logs: `/tmp/telegram-mission-control-red.txt`,
+  `/tmp/telegram-mission-control-focused-green.txt`,
+  `/tmp/telegram-mission-control-full-green.txt` | by: Codex
+  `019f674e-a794-71f0-a6dc-ca861fec4864` | linear: repo-only ER-156.
+- 2026-07-24 | commands: independent producer-review RED regressions; serial
+  mobile selftest; installer selftest; focused Morning Brief and dashboard suites;
+  Mission full offline verifier; real cross-repo Mission-to-mobile adapter proof |
+  result: PASS after deterministic RED — provider failure writes no alert receipt,
+  `suppressed` never confirms a brief chunk, six parts deliver exactly once through
+  one central burst slot, dashboard names fixed Control routing, Mission full verifier
+  `21/21` | logs: `/tmp/er156-producer-review-brief-red.txt` SHA-256
+  `d5d72aa5c86930c404d82840df3faa17fe59e48268cc12a7151c2af008c18024`;
+  `/tmp/er156-producer-review-dashboard-red.txt` SHA-256
+  `f42a3fa320755b526cc7a458bffbd361821635cc349dee6573d23f6c1fae03a2`;
+  `/tmp/er156-producer-review-mission-full-green.txt` SHA-256
+  `fd87b2965e02be0a7b366bd3a48b1b5422f5e65e70453edb7d27a837b964b3a9`;
+  `/tmp/er156-producer-review-cross-repo-green.txt` SHA-256
+  `a4245d44df25f7abf874454df94b30bf53779047305e6ccf911b640752ad68c9` |
+  by: Codex `019f674e-a794-71f0-a6dc-ca861fec4864` | linear: repo-only ER-156.
 - 2026-07-13 | commands: installed `/Users/gillettes/.codex/scripts/chat-source find mission control`; exact `chat-source describe/latest` for resolved sessions and audit chat; direct and mandatory pre-push `/bin/bash scripts/verify.sh` runs; process inspection at Trevor stop boundary; LaunchAgent/plist/runtime/worktree checks | result: session lookup returned five exact sources in 85.19 seconds; four were reconciled and one unrelated third-party product session excluded. Both verifier runs completed the first 16/21 top-level suites, including dashboard `67/0`, ER-134 `50/0`, usage `24/0`, and two sender `14/14` runs; each browser run slept with Chrome gone, so browser plus four subsequent suites are interrupted/incomplete, not pass/fail. The records-only push used the global hook's documented `--no-verify` escape hatch. Delegation Audit runtime is clean at `27aa2e3`, focused `66/0`, dry-run exit 0, plist loaded/linted, natural runs still 0. | log/PR reference: stop-boundary addendum in `records/2026-07-12-full-repo-convergence-audit.md` | by: Codex + audit chat `019f5bea` | linear: repo-only.
 - 2026-07-13 | commands: schedule/SLA RED-GREEN focused suites; Mission common, graph, brief, deadman, dashboard, render, full verifier; global nightly selftest/Bash/ShellCheck/full verifier; exact installs/stamps/hashes; real Nightly Review kickstart; graph export and installed dashboard Chats refresh | result: PASS — Mission full `21/21`, dashboard `67/0`, usage `24/0`, browser `253`; global full verifier pass; marker advanced before expected governor defer; graph/Chats SLA `100800` fresh; installed Mission `c66d7fb`, global runtime `6f21f4f`; Outcome Extractor inactive | logs: `/tmp/mission-control-c66d7fb-verify.log`, `/tmp/global-6f21f4f-verify.log`; convergence audit | by: Codex + `/root/worker_019f59f8_final_challenger` | linear: repo-only.
 - 2026-07-13 | commands: exact Mission/global focused and full verifiers; repeated independent counterexample/ShellCheck/plist/hash review; origin landing; npm Darwin ARM64 tarball/file/codesign/otool/version inspection; detached-runtime/hash/status checks; loaded plist/launchctl inspection; RunAtLoad and natural-recurrence state/history/dashboard/stdout/stderr/process/lock/temp checks; deployed router against latest snapshot | result: PASS — Mission `c8a1e75` usage `24/0`, full `21/21`, browser `253`; global `8b1ee91` usage `64/0` and complete verifier; three terminal clean challenger verdicts; loaded usage job reached `runs=3`, exit `0`; exact collector/native hashes; history/stdout advanced at 06:35 while historical stderr remained unchanged; no scoped process/lock/temp residue | log/PR reference: `/tmp/mission-control-c8a1e75-verify.log`; `/tmp/global-8b1ee91-verify.log`; `records/2026-07-12-full-repo-convergence-audit.md` | by: Codex `019f59f8-bb9e-70c0-9497-a9686ea24154` + `/root/worker_019f59f8_final_challenger` | linear: repo-only.
@@ -823,6 +890,22 @@ Record outside feedback and the resulting reasoning once, then update the same e
   - `by`
   - `linear`
 - Reuse or update an existing entry when the same feedback thread comes back instead of opening duplicate records.
+- 2026-07-24 | feedback source: ER-156 workflow and controller review | feedback
+  summary: producers must choose one purpose route and must never reuse the authorization
+  identity as a destination; normal briefs go to Briefs, decisions to Control, and the
+  independent deadman to Incidents | evaluation chat: Codex
+  `019f674e-a794-71f0-a6dc-ca861fec4864` | reasoning response: accepted; central
+  route resolution removes destination coupling, while the deadman's dedicated Incidents key
+  preserves its independent failure path | decision status: accepted |
+  implementation/disposition chat: same | linked branch / audit / suggestion / test
+  evidence: `codex/er156-telegram-flow-routing`; Work Record and Test Evidence dated
+  2026-07-24 | follow-up independent exact-byte review: accepted P1 provider false
+  success, accepted P1 brief burst false confirmation, and accepted P2 stale dashboard
+  diagnostic; each now has deterministic RED/GREEN plus a real cross-repo adapter proof.
+  The next re-review accepted one additional P2: an admitted fifth-slot batch re-entered
+  suppression on part two; the mobile regression and shared contract now keep all admitted
+  parts in the one logical slot; final exact-byte readback returned `REVIEW-CLEAN`
+  with no P0-P3 findings | by: Codex | linear: repo-only ER-156.
 - 2026-07-13 | feedback source: Codex audit `019f5bea-c97f-7263-bd2d-ef07aa68205b` | feedback summary: correct the source chat's actual `gpt-5.6-sol`/high provenance and explicitly supersede the premature complete/no-defect closeout using later counterevidence; then stop at Trevor's safe boundary | evaluation chat: Codex `019f59f8-bb9e-70c0-9497-a9686ea24154` | reasoning response: accepted; exact raw turn contexts and final were verified, later repairs were matched to commits, the hung browser/full verifier was interrupted without opening a new lane, and the goal remains active | decision status: accepted | implementation/disposition chat: same source chat | linked branch / audit / suggestion / test evidence: stop-boundary addendum, Work/Audit/Test records dated 2026-07-13 | by: Codex | linear: repo-only.
 - 2026-07-04 | feedback source: Trevor in Codex thread `019f2b73-9811-7392-b511-201c1f109997` | feedback summary: connected-chat view should include a tiny journal/log of what was done and which chat it happened in | evaluation chat: same Codex thread | reasoning response: accepted; implemented from existing chat-feed timestamps/titles instead of adding a new collector | decision status: accepted | implementation/disposition chat: same Codex thread | linked branch / audit / suggestion / test evidence: Work Record `2026-07-04 — Map recent chat journal`; Test Evidence `2026-07-04` | by: Codex | linear: self-contained until Linear is configured.
 - 2026-07-05 | feedback source: Trevor pasted a GitHub Copilot third-party-repo recommendation for this repo and asked which suggestions to agree with and which could actually be implemented | feedback summary: Copilot — working only from the repo description, not its contents, which it openly admitted — recommended an enterprise observability + data-warehouse + business-intelligence stack (OpenTelemetry Collector, Prometheus, Grafana, OpenObserve, Superset, Metabase, Airbyte, Meltano, dbt-core, Great Expectations, TensorZero, Helicone, OpenLIT, traceAI, TraceRoot, a Pull Request Analytics GitHub Action, onWatch, ECharts/Chart.js) plus a 4-phase "adopt Collector+Prometheus+Grafana+OpenLIT+dbt" plan | evaluation chat: this session (full adversarial review of pasted AI output) | reasoning response: category error against PROJECT_INTENT. One test disposes of the headline list — does it run as a background service/framework/separate warehouse, or is it a vendorable file the page loads offline? OTel Collector, Prometheus, Grafana, OpenObserve, Superset, Metabase, Airbyte, Meltano, dbt-core, Great Expectations, and TensorZero all fail it and collide with the explicit non-goals (no server, no framework rebuild, single-user, offline/file://). Copilot's Phase-1 (Collector+Prometheus+Grafana) would replace the double-clickable offline file with a multi-service ops stack — a different product, not a heavier version of this one. LLM-observability picks (Helicone/OpenLIT/traceAI/TraceRoot) require SDK/proxy instrumentation that cannot attach to first-party Claude Code/Codex/Cursor and reintroduce the rejected proxy/cookie surface. TensorZero is an LLM gateway/router, violating the passive read-only design. Great Expectations duplicates existing feed-boundary validation + `dashboard-render-smoke` at far heavier scale. What actually transfers is only: (a) the category instinct that token/session/cost observability is the right neighborhood — already better mapped by the 2026-07-04 dashboard-coding-tracker audit; (b) vendor-neutral normalized ingestion — already implemented as feed envelopes; (c) "cost per merged PR"-style metrics — already queued as the V2 yield lens; none require new infrastructure. onWatch was already triaged in the prior audit (GPL, pattern-only); no other Copilot pick improves on that audit's peer set. `leeoniya/uPlot` (tiny zero-dependency MIT canvas charting) is noted only as the right-sized counter-example to Copilot's Chart.js/ECharts/CDN pick if a chart ever earns its place; it still fails this repo's "no new dependency unless it reduces local-operability risk" bar for V1 | decision status: rejected (adopt none of the recommended tools) with partial value captured — category instinct and two ideas already reflected in the ER-089 usage-routing and V2 yield-lens queue | implementation/disposition chat: this session; nothing adopted, installed, or wired | linked branch / audit / suggestion / test evidence: `records/2026-07-04-dashboard-coding-tracker-search-audit.md` (the correct same-niche map); Suggested Recommendation Log 2026-07-05 | by: Claude Code (Opus 4.8) session `a9724039-6595-4205-a25b-bf361020250a` | linear: self-contained until Linear is configured.

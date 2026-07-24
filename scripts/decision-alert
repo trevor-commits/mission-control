@@ -1304,32 +1304,6 @@ def _default_sender_bin():
         "/Users/gillettes/Coding Projects/mobile-connect/mobile-connect.sh")
 
 
-def _default_chat_id():
-    configured = os.environ.get("DECISION_ALERT_CHAT_ID", "").strip()
-    if re.match(r"^-?[0-9]+$", configured):
-        return configured
-    path = os.path.expanduser(os.environ.get(
-        "MOBILE_CONNECT_CONFIG", "~/.mobile-connect/config"))
-    try:
-        with open(path) as handle:
-            for line in handle:
-                match = re.match(
-                    r"^\s*ALLOWED_USER_ID\s*=\s*['\"]?(-?\d+)['\"]?\s*$",
-                    line)
-                if match:
-                    return match.group(1)
-    except OSError:
-        pass
-    return ""
-
-
-def _chat_id(configured):
-    value = str(configured or _default_chat_id()).strip()
-    if not re.match(r"^-?[0-9]+$", value):
-        raise DecisionError("alert chat id must be numeric")
-    return value
-
-
 def alert(args):
     now = _now()
     try:
@@ -1389,7 +1363,6 @@ def alert(args):
     sender = os.path.expanduser(args.sender or _default_sender_bin())
     if not sender or not os.path.isfile(sender) or not os.access(sender, os.X_OK):
         raise DecisionError("alert sender is missing or not executable")
-    chat_id = _chat_id(args.chat_id)
     counters = EgressCounters()
     sent = []
     failed = []
@@ -1414,8 +1387,8 @@ def alert(args):
             # unreachable — only a hand-typed `dismiss decision:<full-id>` works.
             num_options = len(_presentation_from_text(current.get("text")).get("options") or [])
             result = subprocess.run(
-                [sender, "decision-send", chat_id, current["decision_id"], message,
-                 str(num_options)],
+                [sender, "decision-send", "--route", "control",
+                 current["decision_id"], message, str(num_options)],
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                 timeout=max(1, int(args.timeout)), check=False)
             success = result.returncode == 0
@@ -1478,7 +1451,6 @@ def alert_backfill(args):
     packet = argparse.Namespace(
         send=True,
         sender=getattr(args, "sender", None),
-        chat_id=getattr(args, "chat_id", None),
         timeout=getattr(args, "timeout", 30),
         max=max_send,
         fresh_within=None,
@@ -1541,7 +1513,6 @@ def _parser():
     p = sub.add_parser("alert")
     p.add_argument("--send", action="store_true")
     p.add_argument("--sender")
-    p.add_argument("--chat-id")
     p.add_argument("--timeout", type=int, default=30)
     p.add_argument("--max", type=int, default=0,
                    help="cap sends this run (0 = unlimited)")
@@ -1558,7 +1529,6 @@ def _parser():
         "alert-backfill",
         help="explicit capped backfill of remaining eligible alerts")
     p.add_argument("--sender")
-    p.add_argument("--chat-id")
     p.add_argument("--timeout", type=int, default=30)
     p.add_argument(
         "--max", type=int, default=ALERT_BACKFILL_DEFAULT_MAX,

@@ -220,7 +220,7 @@ if os.environ.get("DECISION_SEND_FAIL") == "1": sys.exit(4)
 sys.exit(0)
 PY
 chmod +x "$SENDER"
-export DECISION_ALERT_SEND_BIN="$SENDER" DECISION_ALERT_CHAT_ID=12345 DECISION_SEND_CAPTURE="$CAPTURE"
+export DECISION_ALERT_SEND_BIN="$SENDER" DECISION_SEND_CAPTURE="$CAPTURE"
 PREVIEW="$(run_json alert)" || PREVIEW=""
 if [ ! -e "$CAPTURE" ] && python3 - "$PREVIEW" <<'PY'
 import json,sys
@@ -234,14 +234,13 @@ if python3 - "$SENT" "$AGAIN" "$CAPTURE" "$ID" <<'PY'
 import json,sys,re
 a,b=map(json.loads,sys.argv[1:3]); calls=json.load(open(sys.argv[3]))
 assert a["sent_count"] >= 1 and b["sent_count"] == 0
-# decision-send (Phase 0.2), not the generic send -- so mobile-connect can
-# attach Dismiss/Option-N buttons and remember "last decision" for the
-# reply-number path: argv = decision-send <chat> <decision-id> <message> <num-options>
-assert all(len(args)==5 and args[0]=="decision-send" and args[1]=="12345" for args in calls)
-assert all(re.fullmatch(r"decision:[0-9a-f]{24}", args[2]) for args in calls)
-assert all("dismiss " in args[3] for args in calls)
-assert all("Maybe choose" not in args[3] for args in calls)
-assert all(args[4].isdigit() for args in calls)
+# Route-aware decision-send preserves the interactive buttons/last-decision
+# behavior while mobile-connect, not this producer, resolves Control.
+assert all(len(args)==6 and args[:3]==["decision-send","--route","control"] for args in calls)
+assert all(re.fullmatch(r"decision:[0-9a-f]{24}", args[3]) for args in calls)
+assert all("dismiss " in args[4] for args in calls)
+assert all("Maybe choose" not in args[4] for args in calls)
+assert all(args[5].isdigit() for args in calls)
 PY
 then pass "successful alerts are fixed-argv, filtered, and deduplicated"
 else fail "successful alerts are fixed-argv, filtered, and deduplicated"; fi
@@ -312,10 +311,10 @@ for i in $(seq 1 12); do
 done
 wait
 CID="$(python3 -c 'import json; print(json.load(open("'$T'/ingest.1"))["decision"]["id"])')"
-BEFORE="$(python3 -c 'import json,sys; print(sum(sys.argv[2] in row[2] for row in json.load(open(sys.argv[1]))))' "$CAPTURE" "$CID")"
+BEFORE="$(python3 -c 'import json,sys; print(sum(sys.argv[2] in row[3] for row in json.load(open(sys.argv[1]))))' "$CAPTURE" "$CID")"
 for i in $(seq 1 8); do run_json alert --send >"$T/alert.$i" 2>"$T/alert.$i.err" & done
 wait
-AFTER="$(python3 -c 'import json,sys; print(sum(sys.argv[2] in row[2] for row in json.load(open(sys.argv[1]))))' "$CAPTURE" "$CID")"
+AFTER="$(python3 -c 'import json,sys; print(sum(sys.argv[2] in row[3] for row in json.load(open(sys.argv[1]))))' "$CAPTURE" "$CID")"
 CH="$(run_json history "$CID")" || CH=""
 if [ $((AFTER-BEFORE)) -eq 1 ] && python3 - "$CH" <<'PY'
 import json,sys
@@ -594,7 +593,7 @@ import json,sys
 x=json.loads(sys.argv[1]); calls=json.load(open(sys.argv[4]))
 assert x["sent_count"] == 1 and sys.argv[2] in x["sent"] and sys.argv[3] not in x["sent"]
 assert x.get("attempted_count") == 1
-assert any(sys.argv[2] in row[2] for row in calls)
+assert any(sys.argv[2] in row[3] for row in calls)
 PY
 then pass "alert --max --newest-first sends only the newest eligible"
 else fail "alert --max --newest-first sends only the newest eligible"; fi
@@ -609,8 +608,7 @@ PY
 then pass "alert --fresh-within excludes older first_seen decisions"
 else fail "alert --fresh-within excludes older first_seen decisions"; fi
 
-# Mobile-connect config supplies chat id when env is unset.
-unset DECISION_ALERT_CHAT_ID
+# Authorization configuration must never become a decision destination.
 cat > "$T/mc-config" <<'CFG'
 ALLOWED_USER_ID=999888777
 CFG
@@ -625,12 +623,16 @@ if python3 - "$CFG_SENT" "$CAPTURE" <<'PY'
 import json,sys
 x=json.loads(sys.argv[1]); calls=json.load(open(sys.argv[2]))
 assert x["sent_count"] == 1
-assert any(args[1]=="999888777" for args in calls)
+assert any(args[:3]==["decision-send","--route","control"] for args in calls)
+assert all("999888777" not in args for args in calls)
 PY
-then pass "alert chat id falls back to mobile-connect ALLOWED_USER_ID"
-else fail "alert chat id falls back to mobile-connect ALLOWED_USER_ID"; fi
-export DECISION_ALERT_CHAT_ID=12345
+then pass "alert routes to Control without reading ALLOWED_USER_ID as a destination"
+else fail "alert routes to Control without reading ALLOWED_USER_ID as a destination"; fi
 unset MOBILE_CONNECT_CONFIG
+
+if ! grep -Eq 'DECISION_ALERT_CHAT_ID|ALLOWED_USER_ID' "$ROOT/scripts/decision-alert"; then
+  pass "decision alert source has no destination-ID fallback"
+else fail "decision alert source has destination-ID fallback"; fi
 
 
 
@@ -655,7 +657,7 @@ assert x["sent_count"] == 1 and sys.argv[2] in x["sent"] and sys.argv[3] not in 
 assert x.get("max") == 1
 assert x.get("backfill_ceiling") == 25
 assert x.get("fresh_within_s") is None
-assert any(sys.argv[2] in row[2] for row in calls)
+assert any(sys.argv[2] in row[3] for row in calls)
 db=os.path.join(os.environ["MISSION_CONTROL_HOME"], "decisions", "decisions.db")
 con=sqlite3.connect(db)
 row=con.execute("SELECT 1 FROM alert_receipts WHERE decision_id=?", (sys.argv[2],)).fetchone()

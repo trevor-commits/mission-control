@@ -346,7 +346,6 @@ SEND
 chmod +x "$ALERT_TMP/sender"
 export ALERT_CAPTURE="$ALERT_TMP/capture.json"
 export DECISION_ALERT_SEND_BIN="$ALERT_TMP/sender"
-export DECISION_ALERT_CHAT_ID=4242
 export DECISION_ALERT_MAX=1
 export DECISION_ALERT_FRESH_WITHIN_S=100000000
 MISSION_CONTROL_HOME="$ALERT_TMP/state" "$ALERT_TMP/repo/scripts/decision-alert" ingest \
@@ -368,7 +367,7 @@ assert any(d.get("alert_receipt") for d in pinned), pinned[0] if pinned else Non
 CHECK
 then pass "decisions collect auto-alerts and stamps receipts"
 else fail "decisions collect auto-alerts and stamps receipts"; fi
-unset ALERT_CAPTURE DECISION_ALERT_SEND_BIN DECISION_ALERT_CHAT_ID DECISION_ALERT_MAX DECISION_ALERT_FRESH_WITHIN_S
+unset ALERT_CAPTURE DECISION_ALERT_SEND_BIN DECISION_ALERT_MAX DECISION_ALERT_FRESH_WITHIN_S
 rm -rf "$ALERT_TMP"
 
 
