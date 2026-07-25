@@ -163,7 +163,7 @@ packet done unless its verify commands pass on the real machine.
 2. **Loud channel**: a `scripts/decision-alert` run by the existing 300s ticker (guarded to fire per item at most once/24h, tracked in the queue file): sends each NEW open decision through mobile-connect's route-aware Control decision verb; Mission Control reads neither tokens nor destination IDs.
 3. **Dashboard**: Home needs-attention pins queue items above everything with a distinct "needs a decision" style; a dismiss ✕ copies `dashboard decide dismiss <id>` (new CLI subcommand writing state=dismissed).
 4. **Explicit NON-goals phase 1** (write them in the code header): no auto-merge, no auto-PR, no auto-push of active work, no acting on decisions — surface only. Safe auto-fixes remain repo-groom's job (already live).
-**Acceptance:** a simulated red job produces exactly one Telegram message and one pinned Home row; dismiss round-trips; restart doesn't re-alert (dedupe file). Tests with a stubbed send command (`DECISION_ALERT_SEND_CMD` env).
+**Acceptance:** a simulated red job produces exactly one Telegram message and one pinned Home row; dismiss round-trips; restart doesn't re-alert (dedupe file). Tests with a stubbed send command (`DECISION_ALERT_SEND_BIN` env).
 **Verify:** new `scripts/decision-alert.test.sh` + live single-fire proof.
 **Recommended model:** Opus 4.8 high (touches alerting + boundaries).
 

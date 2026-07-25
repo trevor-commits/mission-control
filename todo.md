@@ -668,13 +668,13 @@ Keep materially new suggestions here so they survive beyond the current chat.
 
 ## Active Branch Ledger
 ### `codex/er156-telegram-flow-routing`
-- status: source/tests/docs implemented; exact-byte review pending before commit
+- status: source/tests/docs implemented; exact-byte review `REVIEW-CLEAN`; PR #12 open for landing
 - created: 2026-07-15
-- base: current branch head `e46520ed1f5303aa32e4dfa0fc9196ea23523608`;
+- base: current branch head `37f81653032add17054a9688a295f669ffcb6061`;
   refreshed canonical comparison `origin/main@4d0d0c4a1ec72b795186bb17a44c066c9c6b3566`
 - worktree: `/Users/gillettes/Coding Projects/mission-control-worktrees/er156-telegram-flow-routing`
 - source chat: Codex `019f674e-a794-71f0-a6dc-ca861fec4864`, spawned by `019f62d4-a994-7dd3-8993-0734f727df9f`
-- last refreshed by chat: 2026-07-24, same
+- last refreshed by chat: 2026-07-24 Cursor finish `37bafd0e-9155-4ff6-b6ff-c093a0f62745`
 - purpose: route decisions to Control, normal Morning Briefs to Briefs, and the independent deadman to Incidents without destination fallback.
 - linked issue: self-contained ER-156; Linear repo-only mode
 - plugin mirror: none
@@ -682,11 +682,11 @@ Keep materially new suggestions here so they survive beyond the current chat.
 - merge target: `main`
 - review surface: exact producer diff; focused delivery/deadman/decision tests; full offline
   verifier; later installed proof, path canaries, and coordinator audit
-- exit checklist: RED/GREEN; Work/Test records; commit/push; origin/main containment; install; canaries; cleanup
+- exit checklist: RED/GREEN done; Work/Test records done; exact-byte `REVIEW-CLEAN` done; commit/push done; origin/main containment; install; canaries; cleanup
 - delete when: after origin/main containment and installed canaries
-- retain reason: n/a
+- retain reason: waiting on PR merge + installed canaries
 - cleanup command: `git worktree remove "/Users/gillettes/Coding Projects/mission-control-worktrees/er156-telegram-flow-routing" && git branch -d codex/er156-telegram-flow-routing`
-- linked PR/audit/completion record: coordinator ER-156 verification record
+- linked PR/audit/completion record: https://github.com/trevor-commits/mission-control/pull/12 ; coordinator ER-156 verification record
 
 ### `codex/er103-git-state-and-morning-proof`
 - status: preserved-superseded dirty checkout
