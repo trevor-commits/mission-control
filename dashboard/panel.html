@@ -139,6 +139,19 @@ button.linkish, a.linkish {
     return age < 900;
   }
 
+  function isAnswerPending(d) {
+    return !!(d && d.answer_pending != null);
+  }
+
+  function answerPendingText(d) {
+    var raw = d && d.answer_pending && d.answer_pending.choice;
+    var choice = +raw;
+    if (isFinite(choice) && choice > 0 && Math.floor(choice) === choice) {
+      return "Awaiting owner consumption · choice " + choice + " recorded";
+    }
+    return "Awaiting owner consumption · choice recorded";
+  }
+
   function renderDecisionItem(list, d, i) {
     var parsed = (Array.isArray(d.options) && (d.question || d.title)) ? {
       q: d.question || d.title,
@@ -151,6 +164,14 @@ button.linkish, a.linkish {
     q.className = "q";
     q.textContent = (i + 1) + ". " + parsed.q;
     item.appendChild(q);
+    if (isAnswerPending(d)) {
+      var pending = document.createElement("div");
+      pending.className = "meta";
+      pending.textContent = answerPendingText(d);
+      item.appendChild(pending);
+      list.appendChild(item);
+      return;
+    }
     if (parsed.opts.length && d.id && /^decision:[0-9a-f]{24}$/.test(String(d.id))) {
       var row = document.createElement("div");
       row.className = "opts";
@@ -247,11 +268,17 @@ button.linkish, a.linkish {
     var f = feeds();
     var dec = f.decisions || {};
     var pinned = ((dec.data || {}).pinned) || [];
+    var actionable = pinned.filter(function (d) { return !isAnswerPending(d); });
+    var pending = pinned.filter(isAnswerPending);
+    document.getElementById("title").textContent = actionable.length ? "Needs you" :
+      (pinned.length ? "Awaiting owner consumption" : "Needs you");
     if (!pinned.length) {
       list.appendChild(document.createTextNode("Nothing waiting on you right now."));
       return 0;
     }
-    pinned.slice(0, 5).forEach(function (d, i) { renderDecisionItem(list, d, i); });
+    // Actionable rows must lead bounded views; preserve order within each group.
+    var shown = actionable.concat(pending).slice(0, 5);
+    shown.forEach(function (d, i) { renderDecisionItem(list, d, i); });
     if (pinned.length > 5) {
       var more = document.createElement("div");
       more.className = "meta";
@@ -273,6 +300,7 @@ button.linkish, a.linkish {
       var total = board.length || top5.length;
       if (top5.length) {
         usedAttention = true;
+        document.getElementById("title").textContent = "Needs you";
         top5.slice(0, 5).forEach(function (d, i) { renderAttentionItem(list, d, i); });
         if (total > 5) {
           var moreA = document.createElement("div");
@@ -282,6 +310,7 @@ button.linkish, a.linkish {
         }
       } else {
         usedAttention = true;
+        document.getElementById("title").textContent = "Needs you";
         list.appendChild(document.createTextNode("Nothing waiting on you right now."));
       }
     }

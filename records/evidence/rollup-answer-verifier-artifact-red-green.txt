@@ -1,0 +1,37 @@
+Lane D verifier-artifact RED/GREEN evidence
+Date: 2026-07-18
+Branch: codex/rollup-answer-wiring
+Candidate inspected: 754de932301113e81f51bbf4febe2d3fc28c01e0
+Environment: temporary test homes/stores only; no provider send, install, deploy, launchd, or live-store path
+
+Observed false green:
+- `PYTHONDONTWRITEBYTECODE=1 /bin/bash scripts/verify.sh` reached `SUITES PASS=22 FAIL=0`.
+- The post-run artifact check then found `scripts/__pycache__/mission_control_common.cpython-314.pyc` (SHA-256 `5d7c70a43207503c74f66f9229bee7087c8a2c01b56e1a9a4884994acb90374a`).
+- The candidate was therefore rejected as full-green evidence even though every declared suite passed.
+
+Root cause:
+- `scripts/morning-brief-deadman-sender.test.py::direct_env()` deliberately rebuilt child environments but omitted `PYTHONDONTWRITEBYTECODE`.
+- Its `sys.executable` subprocesses imported `mission_control_common` from the repository through `PYTHONPATH`, creating ignored bytecode after the dashboard suite's earlier artifact assertion.
+- Reusable failure class: a mid-matrix cleanliness assertion cannot prove a long verifier leaves the tree clean when later isolated subprocess environments discard inherited safeguards.
+
+RED:
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/morning-brief-deadman-sender.test.py DeadmanSenderTests.test_subprocess_environment_keeps_bytecode_out_of_runtime_tree`
+- Result before repair: FAIL at `assertFalse(.../runtime/__pycache__)`; the isolated child created bytecode.
+
+GREEN:
+- The same exact regression -> `Ran 1 test ... OK`.
+- `PYTHONDONTWRITEBYTECODE=1 /bin/bash scripts/morning-brief-deadman.test.sh` -> shell cases plus 15 sender tests, `ALL PASS`; no repository `__pycache__`, `.pyc`, or `.pyo` remained.
+- `PYTHONDONTWRITEBYTECODE=1 /bin/bash scripts/verify.sh --self-test` -> aggregator self-test passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/rollup-answer.test.py` -> 10 tests, OK.
+- Bash 3.2 syntax, strict rollup OpenSpec, `git diff --check`, and explicit source-artifact predicates -> pass.
+
+Diff summary:
+- Preserve `PYTHONDONTWRITEBYTECODE=1` in the sender test's isolated child environment.
+- Add one real-subprocess regression using a temporary copied runtime.
+- Add a final authoritative-verifier suite that fails on repository Python bytecode artifacts.
+
+Claims:
+- Confirmed: the producing path is reproduced, fixed at the environment boundary, and covered by a runnable regression.
+- Confirmed: the focused repair leaves the repository source tree artifact-free.
+- Did not verify: the authoritative full verifier after this repair; it must be rerun against the next committed candidate.
+- Did not verify: independent same-model/max audit or PR state.

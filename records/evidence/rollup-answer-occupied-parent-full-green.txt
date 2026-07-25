@@ -1,0 +1,35 @@
+Lane D records-complete authoritative verifier transcript
+Date: 2026-07-18
+Exact head: bc9014d686c477fe674987072f1ef8a5f4a96718
+Command: PYTHONDONTWRITEBYTECODE=1 /bin/bash scripts/verify.sh
+Environment: repository fixtures and temporary Mission Control homes/stores only; no provider send, live-store access, install, deploy, plist, launchd, merge, or main action
+
+Credited terminal results:
+- verify aggregator self-test: pass (the intentional self-fail negative control was retained)
+- automation status: ALL PASS
+- chat graph: ALL PASS
+- dashboard: PASS=67 FAIL=0
+- decision alert: ALL PASS
+- rollup answer: Ran 18 tests in 29.520s; OK
+- ER-134 usability: 59 passed, 0 failed
+- loose-end runner: PASS=32 FAIL=0
+- shared Mission Control policy: PASS=2 FAIL=0
+- Morning Brief, proof harvester, delivery, deadman, and sender: ALL PASS
+- outcome coverage and extractor: ALL PASS
+- usage snapshot: PASS=24 FAIL=0
+- dashboard browser: 253 assertions passed
+- unfinished-work scanner: SELF-TEST PASS
+- OpenSpec strict: 2 passed, 0 failed (morning-brief and rollup-answer)
+- Python syntax: pass
+- shell syntax: pass
+- source tree artifacts: pass
+
+Authoritative terminal line:
+SUITES PASS=23 FAIL=0
+
+Claims:
+- The exact records-complete third-audit repair head passes the full repository verifier.
+- The occupied-parent regression remains one of the 18 passing rollup-answer contracts.
+- No source bytecode artifact remained after verification.
+
+Did not verify: final fresh independent audit, hosted PR checks, merge/main, installed runtime, deployment, provider delivery, live-store behavior, plist/launchd, or the still-open live decision card.

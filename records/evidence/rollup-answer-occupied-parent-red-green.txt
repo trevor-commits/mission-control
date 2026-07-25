@@ -1,0 +1,33 @@
+Lane D occupied replacement-parent repair evidence
+Date: 2026-07-18
+Base reviewed by auditor: 16a3e516a9566ad5ce929cade29db334e7bfe08f
+Repair commit: bfaf10b4135b58215b02f02d01812c709fb87c3c
+Environment: temporary Mission Control homes/stores only; no provider, live store, install, deploy, plist, launchd, or main action
+
+AUDITOR RED
+Command shape: exact replay paused after commit; the path-visible answer-batches parent was renamed; a new private parent was created with the same canonical batch name containing INVALID-CANONICAL; replay then resumed.
+Observed:
+{"current_invalid_canonical_visible":true,"current_invalid_marker_visible":true,"old_canonical_visible":false,"old_quarantines":1,"pending_counts":{"equivalent":1,"primary":1},"returncode":1,"stderr_tail":["decide answer-rollup: answer-batches directory changed during transaction"]}
+Consequence: the command failed and preserved the exact held old-parent object, but the current canonical path still resolved to receipt-divergent bytes until a later replay.
+
+LOCAL REGRESSION RED
+Command: PYTHONDONTWRITEBYTECODE=1 python3 -m unittest scripts.rollup-answer.test.RollupAnswerTests.test_existing_batch_parent_swap_quarantines_visible_conflict
+Result: one expected failure at the new assertion that the current-parent conflict must not exist after the failed command.
+
+REPAIR
+The composer now opens/revalidates the current answer-batches parent through the pinned home descriptor, distinguishes replacement from held parent by inode, binds the current canonical name to an fd, and quarantines it only when it is not the persisted receipt-backed artifact. The exact held artifact remains preserved under its pinned old parent.
+
+TARGETED GREEN
+Command: PYTHONDONTWRITEBYTECODE=1 python3 -m unittest scripts.rollup-answer.test.RollupAnswerTests.test_existing_batch_parent_swap_quarantines_visible_conflict
+Result: Ran 1 test; OK.
+
+FOCUSED GREEN
+Command: PYTHONDONTWRITEBYTECODE=1 python3 scripts/rollup-answer.test.py
+Result: Ran 18 tests in 28.188s; OK.
+
+Claims:
+- The occupied replacement-parent counterexample is behaviorally reproduced and repaired.
+- The regression proves the held old-parent artifact is quarantined, the current invalid canonical conflict is no longer visible on failure, later exact replay rebuilds the persisted digest, and pending-event cardinality remains exactly one per target.
+- No dependency or schema migration was added.
+
+Did not verify: records-complete authoritative full gate, new fresh exact-head audit, hosted PR checks, merge/main, install/deploy, provider delivery, live-store behavior, plist/launchd, or the still-open live decision card.

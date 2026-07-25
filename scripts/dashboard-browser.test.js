@@ -70,6 +70,21 @@ function demoState() {
   return match[1].trim();
 }
 
+function homeAttentionState(tmp) {
+  const root = installedState(path.join(tmp, 'home-attention'));
+  const decisionsPath = path.join(root, 'data', 'decisions.json');
+  const decisions = JSON.parse(fs.readFileSync(decisionsPath, 'utf8'));
+  for (const row of decisions.data.pinned || []) {
+    row.answer_pending = { choice: 1, choice_label: 'Recorded choice' };
+  }
+  fs.writeFileSync(decisionsPath, JSON.stringify(decisions) + '\n');
+  fs.writeFileSync(path.join(root, 'data', 'decisions.js'),
+    `window.MC=window.MC||{feeds:{},feedErrors:{}};window.MC.feeds.decisions=${JSON.stringify(decisions)};\n`);
+  fs.writeFileSync(path.join(root, 'data', 'git.error.js'),
+    'window.MC=window.MC||{feeds:{},feedErrors:{}};window.MC.feedErrors.git="synthetic non-decision failure";\n');
+  return root;
+}
+
 function luminance(rgb) {
   let values;
   const hex = rgb.trim().match(/^#([0-9a-f]{6})$/i);
@@ -92,6 +107,7 @@ function contrast(a, b) {
   assert(fs.existsSync(CHROME), `Chrome executable missing: ${CHROME}`);
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mc-browser-'));
   const states = { installed: installedState(tmp), demo: demoState() };
+  const attentionState = homeAttentionState(tmp);
   if (ARTIFACTS) fs.mkdirSync(ARTIFACTS, { recursive: true });
   const browser = await chromium.launch({ executablePath: CHROME, headless: true });
   try {
@@ -168,6 +184,14 @@ function contrast(a, b) {
         await page.close();
       }
     }
+    const attentionPage = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+    await attentionPage.goto(
+      `${pathToFileURL(path.join(attentionState, 'index.html')).href}#home`,
+      { waitUntil: 'load' });
+    const attentionTitle = await attentionPage.locator('.mc-glance-title').innerText();
+    assert(attentionTitle === 'Needs you',
+      `home/non-decision attention: reassuring headline (${attentionTitle})`);
+    await attentionPage.close();
   } finally {
     await browser.close();
     fs.rmSync(tmp, { recursive: true, force: true });
