@@ -12,12 +12,19 @@
 # Usage:
 #   scan-unfinished-work                 # human report to stdout
 #   scan-unfinished-work --json          # machine-parseable (one JSON object)
+#   scan-unfinished-work --json --with-timeouts
+#                                        # per-repo sub-timeouts + partial JSON
 #   scan-unfinished-work --repo PATH     # scan one exact repository
 #   scan-unfinished-work --stale-days 14 # branches older than 14 days (default 21)
 #   scan-unfinished-work --self-test     # run the built-in self-test
 #
 # Exit codes: 0 = clean/no findings (or --self-test); 1 = findings present
 # present (by design, like morning-health-brief); 2 = usage error.
+#
+# Timeout knobs (JSON --with-timeouts only):
+#   SCAN_REPO_TIMEOUT_S   per-repo cap (default 45)
+#   SCAN_TOTAL_DEADLINE_S whole-scan budget before remaining repos are skipped
+#                         (default 280; leave headroom under dashboard's 300s)
 
 set -euo pipefail
 
@@ -32,17 +39,19 @@ CODING_ROOT="${CODING_ROOT:-/Users/gillettes/Coding Projects}"
 SKIP_RE="${SKIP_RE:-worktree|_deliverables|_worktrees|Archived|aca-usage-burst|_worker-handoffs|^\.}"
 SELF_TEST=0
 JSON=0
+WITH_TIMEOUTS=0
 STALE_DAYS="$STALE_DAYS_DEFAULT"
 EXACT_REPO=""
 
 usage() {
-  sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '2,22p' "$0" | sed 's/^# \{0,1\}//'
   exit 2
 }
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --json) JSON=1; shift ;;
+    --with-timeouts) WITH_TIMEOUTS=1; shift ;;
     --repo) EXACT_REPO="${2:?--repo needs a path}"; shift 2 ;;
     --self-test) SELF_TEST=1; shift ;;
     --stale-days) STALE_DAYS="${2:?--stale-days needs a number}"; shift 2 ;;
@@ -270,6 +279,114 @@ else
     printf '%s' "$short" | grep -qiE "$SKIP_RE" && continue
     is_git_repo "$d" && repos+=("$d")
   done < <(find "$CODING_ROOT" -maxdepth 1 -mindepth 1 -type d 2>/dev/null | sort)
+fi
+
+# JSON multi-repo path with per-unit timeouts: re-enter this script once per
+# repo so a hung unit cannot blank the whole feed. Partial results stay ok.
+if [ "$WITH_TIMEOUTS" = 1 ] && [ "$JSON" = 1 ] && [ -z "$EXACT_REPO" ]; then
+  REPO_TIMEOUT="${SCAN_REPO_TIMEOUT_S:-45}"
+  TOTAL_DEADLINE="${SCAN_TOTAL_DEADLINE_S:-280}"
+  case "$REPO_TIMEOUT" in *[!0-9]*|"") REPO_TIMEOUT=45 ;; esac
+  case "$TOTAL_DEADLINE" in *[!0-9]*|"") TOTAL_DEADLINE=280 ;; esac
+  LIST_FILE=$(mktemp)
+  trap 'rm -f "$LIST_FILE"' EXIT
+  : > "$LIST_FILE"
+  for repo in "${repos[@]}"; do
+    printf '%s\n' "$repo" >> "$LIST_FILE"
+  done
+  python3 - "$0" "$LIST_FILE" "$STALE_DAYS" "$REPO_TIMEOUT" "$TOTAL_DEADLINE" <<'PY'
+import datetime, json, os, subprocess, sys, time
+script, list_file, stale_days, repo_timeout_s, total_deadline_s = sys.argv[1:6]
+repo_timeout_s = max(1, int(repo_timeout_s))
+total_deadline_s = max(1, int(total_deadline_s))
+with open(list_file) as fh:
+    repos = [line.strip() for line in fh if line.strip()]
+started = time.time()
+merged = []
+findings_total = 0
+timed_out = []
+skipped = []
+for idx, path in enumerate(repos):
+    elapsed = time.time() - started
+    remaining = total_deadline_s - elapsed
+    short = os.path.basename(path)
+    if remaining <= 0:
+        for later in repos[idx:]:
+            name = os.path.basename(later)
+            skipped.append(name)
+            merged.append({
+                "repo": name, "path": later, "error": "skipped: scan deadline reached",
+                "scan_error": "deadline", "dirty": False, "dirty_files": 0,
+                "ahead": 0, "behind": 0, "detached": False, "branches": [],
+                "worktrees": [], "decision_rows": [],
+            })
+        break
+    unit_timeout = min(repo_timeout_s, max(1, int(remaining)))
+    try:
+        proc = subprocess.run(
+            [script, "--json", "--repo", path, "--stale-days", str(stale_days)],
+            capture_output=True, text=True, timeout=unit_timeout,
+            env=dict(os.environ, GIT_OPTIONAL_LOCKS="0"))
+    except subprocess.TimeoutExpired:
+        timed_out.append(short)
+        merged.append({
+            "repo": short, "path": path,
+            "error": "feeder unit timed out after %ds" % unit_timeout,
+            "scan_error": "timeout", "dirty": False, "dirty_files": 0,
+            "ahead": 0, "behind": 0, "detached": False, "branches": [],
+            "worktrees": [], "decision_rows": [],
+        })
+        findings_total += 1
+        continue
+    if proc.returncode not in (0, 1):
+        merged.append({
+            "repo": short, "path": path,
+            "error": "scan exit %d: %s" % (
+                proc.returncode, (proc.stderr or "").strip()[:160]),
+            "scan_error": "exit", "dirty": False, "dirty_files": 0,
+            "ahead": 0, "behind": 0, "detached": False, "branches": [],
+            "worktrees": [], "decision_rows": [],
+        })
+        findings_total += 1
+        continue
+    try:
+        payload = json.loads(proc.stdout or "{}")
+    except Exception as exc:
+        merged.append({
+            "repo": short, "path": path,
+            "error": "scan output not JSON: %s" % exc,
+            "scan_error": "json", "dirty": False, "dirty_files": 0,
+            "ahead": 0, "behind": 0, "detached": False, "branches": [],
+            "worktrees": [], "decision_rows": [],
+        })
+        findings_total += 1
+        continue
+    unit_repos = payload.get("repos") if isinstance(payload, dict) else None
+    if not isinstance(unit_repos, list):
+        unit_repos = []
+    for row in unit_repos:
+        if isinstance(row, dict):
+            merged.append(row)
+    try:
+        findings_total += int(payload.get("findings_total") or 0)
+    except (TypeError, ValueError):
+        pass
+out = {
+    "generated": datetime.datetime.now(datetime.timezone.utc).strftime(
+        "%Y-%m-%dT%H:%M:%SZ"),
+    "stale_days": int(stale_days),
+    "findings_total": findings_total,
+    "repos": merged,
+    "partial": bool(timed_out or skipped),
+    "timed_out_repos": timed_out,
+    "skipped_repos": skipped,
+    "repo_timeout_s": repo_timeout_s,
+    "total_deadline_s": total_deadline_s,
+}
+print(json.dumps(out, ensure_ascii=True, sort_keys=True))
+raise SystemExit(1 if findings_total > 0 or timed_out or skipped else 0)
+PY
+  exit $?
 fi
 
 findings_total=0

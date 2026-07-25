@@ -1,8 +1,10 @@
 # Lane D state — rollup-answer CLI wiring
 
-- Status: SIXTH-AUDIT REPAIR AUTHORITATIVE-GATE GREEN AT `78672c46d94041f974ca97b0d2cfe5596c6b020a` / FRESH FROZEN-HEAD AUDIT PENDING; frozen `0bf1c6905a880bf26233db777d8d35aa3985cf19` was rejected on two reproduced P1s and two P2s; exact repair `78672c4` passes targeted 4/4, rollup 29/29, browser 254, and the authoritative `SUITES PASS=23 FAIL=0` gate on macOS 26.5
+- Status: SEVENTH FROZEN-HEAD AUDIT REVIEW-CLEAN / MERGE-READY at code head `78672c46d94041f974ca97b0d2cfe5596c6b020a`; PR #11 open; main merge conflict resolved on this branch (attention-lane + answered-pending preserved). Codex Sol unavailable — Cursor independent auditor substituted. Live card `decision:a6f185b53cbc1278499b062d` remains for merge sitting only.
 - Branch: `codex/rollup-answer-wiring`
 - Review base: `53e91392dcef3d2deeedf748c14159320a8572e0`
+- Seventh frozen-head audit: Cursor `9db69b00-966c-43d3-b1eb-72181b949178` / packet `records/audit-packets/2026-07-24-rollup-answer-seventh-frozen-head.md`
+- Finish parent: Cursor finishing Codex `019f73d8` (`CURSOR-FINISH-019f73d8-20260724`)
 - Original implementation checkpoint: `754de932301113e81f51bbf4febe2d3fc28c01e0`
 - Verifier-hermeticity repair: `ed8ce3591b5fb3070b132b98a062be1125a5f991`
 - Independent-audit repair: `34687c9` (`fix(decisions): bind rollup publication to receipts`)
@@ -186,16 +188,16 @@ Receipts:
 
 - Confirmed: both first-audit P1 findings, all three second-audit findings, the third-audit occupied-parent P1, the fourth-audit persisted-view P1, both fifth-audit P1s, and all four sixth-audit findings were independently reproduced and have behavior-level regressions.
 - Confirmed: repair `bfaf10b` passed the targeted occupied-parent contract and 18/18 rollup contracts; exact records-complete `bc9014d` passed the historical authoritative `23/0` verifier; fourth repair `0ce6d3d` passed its replacement authoritative `23/0` verifier. Fifth repair `c0d0a53` passes the current authoritative `23/0` verifier, including rollup 25/25, dashboard 67/0, ER-134 59/0, usage 24/0, browser 253, OpenSpec 2/0, and final source-artifact predicate.
-- Confirmed: no schema migration, dependency, live-store write, provider send, main touch, install, deploy, release, plist, or launchd action occurred.
+- Confirmed: no schema migration, dependency, live-store write, provider send, main touch, install, deploy, release, plist, or launchd action occurred during Lane D implementation.
 - Confirmed: the sixth repair's focused matrix is targeted 4/4, rollup 29/29, browser 254, with syntax/diff/source-artifact checks green.
 - Confirmed: exact sixth-repair head `78672c46d94041f974ca97b0d2cfe5596c6b020a` passes the authoritative `SUITES PASS=23 FAIL=0` gate live on macOS 26.5 (evidence `records/evidence/rollup-answer-final-boundaries-full-green.txt`); the macOS `O_SYMLINK` gap was RED before this head and GREEN after.
-- Did not verify: a fresh independent (same-model/max) frozen-head audit at `78672c4`; the focused/full suites and authoritative gate are green, but the packet's two-attempt rule allowed one repair attempt (which succeeded), so a successor audit is out of scope for this gate and must precede any review-clean claim.
-- Did not verify: hosted PR checks or merge state; no Lane D PR exists yet.
-- Did not verify: merged-main, installed runtime, provider delivery, or live-store behavior because those actions are prohibited here.
-- Do not do: merge, install, deploy, send, write a live store, change plist/launchd, or resolve live decision `decision:a6f185b53cbc1278499b062d` from this lane.
+- Confirmed: seventh frozen-head audit is `REVIEW-CLEAN / MERGE-READY` (Cursor `9db69b00`; Codex Sol usage-limited). Parent re-ran rollup 29/29 OK before the audit.
+- Confirmed: PR https://github.com/trevor-commits/mission-control/pull/11 is open; main merge conflicts resolved with attention-lane + answered-pending preserved; post-merge focused gates green (rollup 29/29, ER-134 62/0, browser 254, attention 5/0).
+- Did not verify: merged-main install/deploy, provider delivery, or live-store behavior because those actions are prohibited here.
+- Do not do: merge to main, install, deploy, send, write a live store, change plist/launchd, or resolve live decision `decision:a6f185b53cbc1278499b062d` from this lane.
 - Merge-sitting note: the still-open/alerting live card `decision:a6f185b53cbc1278499b062d` should be resolved by the integrator at the merge sitting, not by this branch task.
 
 ## Exact resume
 
-1. Authoritative `SUITES PASS=23 FAIL=0` is green at exact repair head `78672c46d94041f974ca97b0d2cfe5596c6b020a`; commit its receipt and freeze the successor.
-2. Send the frozen successor to a new fresh `gpt-5.6-sol`/max auditor; on review-clean, append the verdict, push, open the review-ready PR with the approval citation and live-card merge-sitting note, verify hosted checks, and stop before merge/deploy.
+1. Lane D implementation + seventh audit + conflict-resolved PR are complete for branch-only review.
+2. Integrator at merge sitting: merge PR #11 after hosted checks, resolve live card `decision:a6f185b53cbc1278499b062d`, then install/deploy only with explicit Trevor authorization.

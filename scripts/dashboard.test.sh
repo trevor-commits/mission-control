@@ -98,27 +98,27 @@ write_install_stamp(bindir,"a"*40,"head",
 PY
 }
 
-# --- case 1: collect --force writes 12 files, every .json envelope-valid -------
+# --- case 1: collect --force writes dual-write files, every .json envelope-valid -------
 c1() {
   local H; H="$(newhome)"
   MISSION_CONTROL_HOME="$H" bash "$DASH" collect --force >/dev/null 2>&1
   local f miss=0
-  for f in usage git chats automation decisions brief; do
+  for f in usage git chats automation decisions attention brief; do
     [ -f "$H/data/$f.json" ] || miss=1
     [ -f "$H/data/$f.js" ] || miss=1
   done
-  if [ "$miss" != 0 ]; then no "collect --force writes 12 files (some missing)"; return; fi
+  if [ "$miss" != 0 ]; then no "collect --force writes dual-write files (some missing)"; return; fi
   if python3 - "$H/data" <<'PYEOF'
 import json, os, sys
 d = sys.argv[1]
 keys = {"schema", "feed", "generated_at", "generated_epoch", "cadence_s", "ok", "error", "data"}
-for f in ("usage", "git", "chats", "automation", "decisions", "brief"):
+for f in ("usage", "git", "chats", "automation", "decisions", "attention", "brief"):
     e = json.load(open(os.path.join(d, f + ".json")))
     assert keys <= set(e), (f, keys - set(e))
     assert e["schema"] == 1 and e["feed"] == f, f
     assert isinstance(e["generated_epoch"], int), f
 PYEOF
-  then ok "collect --force writes 12 files, all .json envelope-valid"
+  then ok "collect --force writes dual-write files, all .json envelope-valid"
   else no "collect --force .json not envelope-valid"; fi
 }
 
@@ -129,7 +129,7 @@ c2() {
   if python3 - "$H/data" <<'PYEOF'
 import json, os, sys
 d = sys.argv[1]
-for f in ("usage", "git", "chats", "automation", "decisions", "brief"):
+for f in ("usage", "git", "chats", "automation", "decisions", "attention", "brief"):
     jc = open(os.path.join(d, f + ".json")).read()
     js = open(os.path.join(d, f + ".js")).read()
     marker = "window.MC.feeds.%s = " % f
@@ -415,6 +415,7 @@ EOF
      && [ -f "$mch/data/usage.json" ] && [ -f "$mch/data/git.json" ] \
      && [ -f "$mch/data/chats.json" ] && [ -f "$mch/data/automation.json" ] \
      && [ -f "$mch/data/decisions.json" ] \
+     && [ -f "$mch/data/attention.json" ] \
      && [ -f "$mch/data/brief.json" ]; then
     ok "install: baked bin/dashboard resolves feeders headless + writes all feeds"
   else
@@ -473,12 +474,21 @@ c11() { # render layer EXECUTION coverage — runs the real renderers over fixtu
   rm -rf "$scratch"
 }
 
-c12() { # chats is slow; decisions and brief consume it and must follow in order
-  local order; order="$(grep -oE '\("(usage|git|chats|automation|decisions)"' "$DASH" | sed -E 's/[("]//g' | tr '\n' ' ')"
-  local full; full="$(grep -oE '\("(usage|git|chats|automation|decisions|brief)"' "$DASH" | sed -E 's/[("]//g' | tr '\n' ' ')"
+c12() { # chats is slow; decisions/attention/brief consume upstream and must follow
+  local full
+  full="$(python3 - "$DASH" <<'PY'
+import re,sys
+text=open(sys.argv[1]).read()
+# Only the FEEDS table tuples, not later collect argv lists.
+block=re.search(r"FEEDS = \[(.*?)\]\nFEED_CADENCE", text, re.S)
+assert block, "FEEDS table missing"
+names=re.findall(r'\("(usage|git|chats|automation|decisions|attention|brief)"', block.group(1))
+print(" ".join(names)+" ")
+PY
+)"
   case "$full" in
-    *chats\ decisions\ brief\ ) ok "feed order: chats, decisions, then brief are last ($full)" ;;
-    *) no "feed order: dependent decisions/brief do not follow slow chats ($full)" ;;
+    *chats\ decisions\ attention\ brief\ ) ok "feed order: chats, decisions, attention, then brief are last ($full)" ;;
+    *) no "feed order: dependent decisions/attention/brief do not follow slow chats ($full)" ;;
   esac
 }
 c13() { # FIX 6: the data/ dir must be 0700, not world-readable
@@ -995,7 +1005,7 @@ c25() { # install integrity is always visible and fail-closed in status
   python3 - "$mch/data" "$now" <<'PY'
 import json, os, sys
 root, now = sys.argv[1], int(sys.argv[2])
-cadences={"automation":300,"usage":1800,"git":900,"chats":1800,"decisions":300,"brief":300}
+cadences={"automation":300,"usage":1800,"git":900,"chats":1800,"decisions":300,"attention":300,"brief":300}
 for name,cadence in cadences.items():
     data={"counts":{}} if name != "automation" else {"jobs":[],"counts":{}}
     if name == "chats":
@@ -1237,12 +1247,12 @@ c31() { # the real macOS Bash 3.2 path executes embedded Python, not EOF
   local h count rc; h="$(newhome)"
   MISSION_CONTROL_HOME="$h" /bin/bash "$DASH" collect --force >/dev/null 2>&1; rc=$?
   count="$(find "$h/data" -type f \( -name '*.json' -o -name '*.js' \) 2>/dev/null | wc -l | tr -d ' ')"
-  # Six feeds emit canonical JSON + JS plus a healthy error sidecar. Keeping the
+  # Seven feeds emit canonical JSON + JS plus a healthy error sidecar. Keeping the
   # sidecar present prevents browsers from logging a missing resource on success.
-  if [ "$rc" -eq 0 ] && [ "$count" = 18 ]; then
+  if [ "$rc" -eq 0 ] && [ "$count" = 21 ]; then
     ok "bash-3.2: system /bin/bash executes the embedded Python engine"
   else
-    no "bash-3.2: dashboard returned rc=$rc with $count/18 feed files"
+    no "bash-3.2: dashboard returned rc=$rc with $count/21 feed files"
   fi
 }
 
@@ -1754,13 +1764,13 @@ c45() { # every declared healthy browser asset exists in collected and demo stat
   local mch demo out name miss=0
   mch="$(newhome)"
   MISSION_CONTROL_HOME="$mch" bash "$DASH" collect --force >/dev/null 2>&1
-  for name in usage git chats automation decisions brief; do
+  for name in usage git chats automation decisions attention brief; do
     [ -f "$mch/data/$name.error.js" ] || miss=1
   done
   out="$(DASHBOARD_NO_OPEN=1 MISSION_CONTROL_HOME="$mch" bash "$DASH" demo 2>/dev/null)"
   demo="$(printf '%s\n' "$out" | sed -n 's/^demo state: //p' | tail -1)"
   [ -n "$demo" ] && [ -f "$demo/vendor/cytoscape.min.js" ] || miss=1
-  for name in usage git chats automation decisions brief; do
+  for name in usage git chats automation decisions attention brief; do
     [ -n "$demo" ] && [ -f "$demo/data/$name.error.js" ] || miss=1
   done
   if [ "$miss" -eq 0 ]; then

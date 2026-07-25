@@ -77,12 +77,15 @@ test -x "$PANEL_TEST_BIN" && pass "mc-panel binary built in isolated test state"
 grep -q 'disableAutomaticTermination' "$ROOT/scripts/mc-panel.swift" && pass "panel disables TAL" || fail "panel disables TAL"
 grep -q 'beginActivity' "$ROOT/scripts/mc-panel.swift" && pass "panel RunningBoard activity" || fail "panel RunningBoard activity"
 grep -q 'mcDecide' "$ROOT/dashboard/panel.html" && pass "panel one-click bridge" || fail "panel one-click bridge"
-if grep -q 'd\.answer_pending' "$ROOT/dashboard/panel.html" && \
+if grep -q 'isAnswerPending\|d\.answer_pending\|answer_pending' "$ROOT/dashboard/panel.html" && \
    grep -q 'Awaiting owner consumption' "$ROOT/dashboard/panel.html"; then
   pass "panel renders answered-pending decisions read-only"
 else
   fail "panel answered-pending read-only state"
 fi
+grep -q 'data/attention.js' "$ROOT/dashboard/panel.html" && pass "panel loads attention.js" || fail "panel loads attention.js"
+grep -q 'slice(0, 5)' "$ROOT/dashboard/panel.html" && pass "panel top-5 cap" || fail "panel top-5 cap"
+grep -q 'renderFromDecisions\|attentionFresh' "$ROOT/dashboard/panel.html" && pass "panel attention fallback" || fail "panel attention fallback"
 if node - "$ROOT/dashboard/panel.html" <<'JS'
 const fs = require('fs'), vm = require('vm');
 const html = fs.readFileSync(process.argv[2], 'utf8');
@@ -106,13 +109,16 @@ const pending = n => ({ id: 'decision:' + String(n).repeat(24), question: 'Pendi
 const actionable = { id: 'decision:' + 'a'.repeat(24), question: 'ACTIONABLE-LATE',
   options: ['Ship', 'Wait'], answer_pending: null };
 const sandbox = {
-  window: { MC: { feeds: { decisions: { data: { pinned: [pending(1), pending(2), pending(3), actionable] } },
-    automation: { data: { jobs: [] } } } } },
+  window: { MC: { feeds: {
+    decisions: { ok: true, data: { pinned: [pending(1), pending(2), pending(3), actionable] } },
+    attention: { ok: false, data: null },
+    automation: { data: { jobs: [] } }
+  }, feedErrors: { attention: 'forced-miss' } } },
   document: { documentElement: makeEl(), getElementById(id) { return nodes[id]; },
     createElement() { return makeEl(); }, createTextNode(value) { const el = makeEl(); el.textContent = value; return el; } },
   localStorage: { getItem() { return null; }, setItem() {} },
   location: { reload() {}, href: '' }, navigator: { clipboard: { writeText() { return Promise.resolve(); } } },
-  setTimeout() { return 0; }, Promise, Math, JSON, Array, Object, String, Number,
+  setTimeout() { return 0; }, Date, Promise, Math, JSON, Array, Object, String, Number,
   isFinite, console
 };
 sandbox.window.window = sandbox.window;

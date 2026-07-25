@@ -50,7 +50,7 @@ function installedState(tmp) {
   fs.copyFileSync(path.join(ROOT, 'dashboard', 'vendor', 'cytoscape.min.js'),
     path.join(state, 'vendor', 'cytoscape.min.js'));
   fs.mkdirSync(path.join(state, 'data'), { recursive: true });
-  for (const name of ['usage', 'git', 'chats', 'automation', 'decisions', 'brief']) {
+  for (const name of ['usage', 'git', 'chats', 'automation', 'decisions', 'attention', 'brief']) {
     const obj = JSON.parse(fs.readFileSync(path.join(FIXTURES, `${name}.json`), 'utf8'));
     fs.writeFileSync(path.join(state, 'data', `${name}.json`), JSON.stringify(obj) + '\n');
     fs.writeFileSync(path.join(state, 'data', `${name}.js`),

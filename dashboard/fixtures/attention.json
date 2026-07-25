@@ -1,0 +1,41 @@
+{
+  "schema": 1,
+  "feed": "attention",
+  "generated_at": "2026-07-23T12:00:00Z",
+  "generated_epoch": 1784808000,
+  "cadence_s": 300,
+  "ok": true,
+  "error": null,
+  "data": {
+    "board": [
+      {
+        "id": "att:aaaaaaaaaaaa",
+        "title": "Review morning brief delivery",
+        "why": "Fixture manual item",
+        "severity": 1,
+        "source": "manual",
+        "due": "2026-07-24",
+        "created_at": 1784808000,
+        "kind": "manual"
+      }
+    ],
+    "top5": [
+      {
+        "id": "att:aaaaaaaaaaaa",
+        "title": "Review morning brief delivery",
+        "why": "Fixture manual item",
+        "severity": 1,
+        "source": "manual",
+        "due": "2026-07-24",
+        "created_at": 1784808000,
+        "kind": "manual"
+      }
+    ],
+    "counts": {
+      "manual": 1,
+      "decision": 0,
+      "automation": 0,
+      "decisions_filtered_out": 0
+    }
+  }
+}

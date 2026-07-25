@@ -80,18 +80,28 @@ Evidence: `records/evidence/rollup-answer-occupied-parent-red-green.txt`.
 
 ## Final attempt
 
-- Status: sixth-audit boundary repair `78672c46d94041f974ca97b0d2cfe5596c6b020a` is authoritative-gate green (`SUITES PASS=23 FAIL=0` live on macOS 26.5, including a live macOS `O_SYMLINK` RED→GREEN); a new frozen-head same-model/max review-clean verdict and branch-only PR closeout remain pending.
+- Status: seventh frozen-head audit **REVIEW-CLEAN / MERGE-READY** at code head `78672c46d94041f974ca97b0d2cfe5596c6b020a`. Codex Sol was usage-limited; Cursor independent auditor `9db69b00-966c-43d3-b1eb-72181b949178` substituted. PR #11 exists; main merge conflicts resolved in the finish session (attention-lane + answered-pending preserved).
 - Historical full-gate evidence: `records/evidence/rollup-answer-receipt-entry-full-green.txt` (`SUITES PASS=23 FAIL=0`, rollup 25/25).
 - Current focused evidence: `records/evidence/rollup-answer-final-boundaries-red-green.txt` (targeted 4/4, rollup 29/29, browser 254; records the live macOS `O_SYMLINK` RED and its repair).
 - Current authoritative evidence: `records/evidence/rollup-answer-final-boundaries-full-green.txt` (`SUITES PASS=23 FAIL=0` at exact repair head `78672c46d94041f974ca97b0d2cfe5596c6b020a`; rollup 29/29; browser 254; OpenSpec 2/0).
-- Did not verify: a fresh independent (same-model/max) frozen-head audit at `78672c4`; review-clean verdict, remote/PR state, merged-main behavior, install/deploy, provider delivery, or live-store behavior.
+- Seventh audit packet: `records/audit-packets/2026-07-24-rollup-answer-seventh-frozen-head.md`.
+- Post-merge focused re-gates (2026-07-24 finish): rollup 29/29, ER-134 62/0, browser 254, attention-lane 5/0.
+- Did not verify: merged-main install/deploy, provider delivery, or live-store behavior; live card `decision:a6f185b53cbc1278499b062d` remains for the merge sitting.
+
+## Attempt 7 — Cursor frozen-head successor (Codex unavailable)
+
+- Audit task: Cursor code-reviewer `f84e6b96-c741-495e-8163-d193af78bed3` / session `9db69b00-966c-43d3-b1eb-72181b949178`.
+- Reviewed range: frozen code `78672c46d94041f974ca97b0d2cfe5596c6b020a` (tip `c3af26b` docs-only).
+- Verdict: `REVIEW-CLEAN / MERGE-READY`.
+- Seven-point contract: all PASS. Prior P1/P2 classes 1–6: all REPAIRED. New merge blockers: none.
+- Evidence: parent rollup 29/29 OK; OpenSpec strict valid; packet above.
 
 ## Audited Chat
 
 - Audited chat name: Execute Phase 0 hardening backlog.
 - Audited chat repo/cwd: `/Users/gillettes/Coding Projects/global-implementations`.
-- Provider: Codex.
+- Provider: Codex (finished by Cursor).
 - Full ID: `019f73d8-e5dc-73a0-acc5-8a4916ac6819`.
 - Resolved transcript: `/Users/gillettes/.codex/sessions/2026/07/17/rollout-2026-07-17T23-10-22-019f73d8-e5dc-73a0-acc5-8a4916ac6819.jsonl`.
 
-No repository, live store, provider, install, deployment, plist, launchd, merge, or main-branch mutation was authorized or performed by the auditor.
+No live store, provider send, install, deployment, plist, launchd, or main-branch merge was performed by the auditor or finish session. Branch-only PR updates and conflict resolution only.
