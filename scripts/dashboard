@@ -1936,7 +1936,7 @@ case "$cmd" in
             --max=*)
               max_n="${1#--max=}"; shift ;;
             --sender|--chat-id|--timeout)
-              echo "decide alert-backfill: pass sender/chat/timeout via decision-alert env defaults" >&2
+              echo "decide alert-backfill: destination is fixed to the Control route; configure supported sender/timeout defaults in decision-alert" >&2
               exit 2 ;;
             -h|--help)
               echo "usage: dashboard decide alert-backfill [--max N]" >&2
