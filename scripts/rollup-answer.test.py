@@ -846,14 +846,14 @@ class RollupAnswerTests(unittest.TestCase):
         card_id = fixture["card"]["card_id"]
         marker = self.temp / "provider-send-invoked"
         sender = self.temp / "fake-sender"
-        sender.write_text("#!/bin/sh\ntouch \"$DECISION_TEST_SEND_MARKER\"\nexit 0\n")
+        sender.write_text("#!/bin/sh\ntouch \"$DECISION_TEST_SEND_MARKER\"\nprintf '%s\n' delivered\nexit 0\n")
         sender.chmod(0o700)
         no_send_env = {
             "DECISION_ALERT_AUTO": "0",
             "DECISION_ALERT_SEND_BIN": str(sender),
             "DECISION_TEST_SEND_MARKER": str(marker),
             "MORNING_BRIEF_SEND_BIN": str(sender),
-            "MORNING_BRIEF_CHAT_ID": "123",
+            "MORNING_BRIEF_INCIDENTS_CHAT_ID": "123",
         }
         self._proc(
             ["/bin/bash", str(DASHBOARD), "refresh", "decisions"],
@@ -907,14 +907,14 @@ class RollupAnswerTests(unittest.TestCase):
         card_id = fixture["card"]["card_id"]
         marker = self.temp / "provider-send-invoked"
         sender = self.temp / "fake-sender"
-        sender.write_text("#!/bin/sh\ntouch \"$DECISION_TEST_SEND_MARKER\"\nexit 0\n")
+        sender.write_text("#!/bin/sh\ntouch \"$DECISION_TEST_SEND_MARKER\"\nprintf '%s\n' delivered\nexit 0\n")
         sender.chmod(0o700)
         brief_env = {
             "DECISION_ALERT_AUTO": "0",
             "DECISION_ALERT_SEND_BIN": str(sender),
             "DECISION_TEST_SEND_MARKER": str(marker),
             "MORNING_BRIEF_SEND_BIN": str(sender),
-            "MORNING_BRIEF_CHAT_ID": "123",
+            "MORNING_BRIEF_INCIDENTS_CHAT_ID": "123",
             "MORNING_BRIEF_NOW_EPOCH": "1784368800",
         }
         self._proc(["/bin/bash", str(DASHBOARD), "refresh", "decisions"],
@@ -987,14 +987,14 @@ class RollupAnswerTests(unittest.TestCase):
         card_id = fixture["card"]["card_id"]
         marker = self.temp / "provider-send-invoked"
         sender = self.temp / "fake-sender"
-        sender.write_text("#!/bin/sh\ntouch \"$DECISION_TEST_SEND_MARKER\"\nexit 0\n")
+        sender.write_text("#!/bin/sh\ntouch \"$DECISION_TEST_SEND_MARKER\"\nprintf '%s\n' delivered\nexit 0\n")
         sender.chmod(0o700)
         brief_env = {
             "DECISION_ALERT_AUTO": "0",
             "DECISION_ALERT_SEND_BIN": str(sender),
             "DECISION_TEST_SEND_MARKER": str(marker),
             "MORNING_BRIEF_SEND_BIN": str(sender),
-            "MORNING_BRIEF_CHAT_ID": "123",
+            "MORNING_BRIEF_INCIDENTS_CHAT_ID": "123",
             "MORNING_BRIEF_NOW_EPOCH": "1784368800",
         }
         self._proc(["/bin/bash", str(DASHBOARD), "refresh", "decisions"],
@@ -1048,14 +1048,14 @@ class RollupAnswerTests(unittest.TestCase):
         card_id = fixture["card"]["card_id"]
         marker = self.temp / "provider-send-invoked"
         sender = self.temp / "fake-sender"
-        sender.write_text("#!/bin/sh\ntouch \"$DECISION_TEST_SEND_MARKER\"\nexit 0\n")
+        sender.write_text("#!/bin/sh\ntouch \"$DECISION_TEST_SEND_MARKER\"\nprintf '%s\n' delivered\nexit 0\n")
         sender.chmod(0o700)
         brief_env = {
             "DECISION_ALERT_AUTO": "0",
             "DECISION_ALERT_SEND_BIN": str(sender),
             "DECISION_TEST_SEND_MARKER": str(marker),
             "MORNING_BRIEF_SEND_BIN": str(sender),
-            "MORNING_BRIEF_CHAT_ID": "123",
+            "MORNING_BRIEF_INCIDENTS_CHAT_ID": "123",
             "MORNING_BRIEF_NOW_EPOCH": "1784368800",
         }
         self._proc(["/bin/bash", str(DASHBOARD), "refresh", "decisions"],
@@ -1103,14 +1103,14 @@ class RollupAnswerTests(unittest.TestCase):
         card_id = fixture["card"]["card_id"]
         marker = self.temp / "provider-send-invoked"
         sender = self.temp / "fake-sender"
-        sender.write_text("#!/bin/sh\ntouch \"$DECISION_TEST_SEND_MARKER\"\nexit 0\n")
+        sender.write_text("#!/bin/sh\ntouch \"$DECISION_TEST_SEND_MARKER\"\nprintf '%s\n' delivered\nexit 0\n")
         sender.chmod(0o700)
         brief_env = {
             "DECISION_ALERT_AUTO": "0",
             "DECISION_ALERT_SEND_BIN": str(sender),
             "DECISION_TEST_SEND_MARKER": str(marker),
             "MORNING_BRIEF_SEND_BIN": str(sender),
-            "MORNING_BRIEF_CHAT_ID": "123",
+            "MORNING_BRIEF_INCIDENTS_CHAT_ID": "123",
             "MORNING_BRIEF_NOW_EPOCH": "1784368800",
         }
         self._proc(["/bin/bash", str(DASHBOARD), "refresh", "decisions"],
@@ -1163,14 +1163,14 @@ class RollupAnswerTests(unittest.TestCase):
         card_id = fixture["card"]["card_id"]
         marker = self.temp / "provider-send-invoked"
         sender = self.temp / "fake-sender"
-        sender.write_text("#!/bin/sh\ntouch \"$DECISION_TEST_SEND_MARKER\"\nexit 0\n")
+        sender.write_text("#!/bin/sh\ntouch \"$DECISION_TEST_SEND_MARKER\"\nprintf '%s\n' delivered\nexit 0\n")
         sender.chmod(0o700)
         brief_env = {
             "DECISION_ALERT_AUTO": "0",
             "DECISION_ALERT_SEND_BIN": str(sender),
             "DECISION_TEST_SEND_MARKER": str(marker),
             "MORNING_BRIEF_SEND_BIN": str(sender),
-            "MORNING_BRIEF_CHAT_ID": "123",
+            "MORNING_BRIEF_INCIDENTS_CHAT_ID": "123",
             "MORNING_BRIEF_NOW_EPOCH": "1784368800",
         }
         self._proc(["/bin/bash", str(DASHBOARD), "refresh", "decisions"],
@@ -1222,14 +1222,14 @@ class RollupAnswerTests(unittest.TestCase):
         decision_id = ingested["decision"]["id"]
         marker = self.temp / "provider-send-invoked"
         sender = self.temp / "fake-sender"
-        sender.write_text("#!/bin/sh\ntouch \"$DECISION_TEST_SEND_MARKER\"\nexit 0\n")
+        sender.write_text("#!/bin/sh\ntouch \"$DECISION_TEST_SEND_MARKER\"\nprintf '%s\n' delivered\nexit 0\n")
         sender.chmod(0o700)
         brief_env = {
             "DECISION_ALERT_AUTO": "0",
             "DECISION_ALERT_SEND_BIN": str(sender),
             "DECISION_TEST_SEND_MARKER": str(marker),
             "MORNING_BRIEF_SEND_BIN": str(sender),
-            "MORNING_BRIEF_CHAT_ID": "123",
+            "MORNING_BRIEF_INCIDENTS_CHAT_ID": "123",
             "MORNING_BRIEF_NOW_EPOCH": "1784368800",
         }
         self._proc(["/bin/bash", str(DASHBOARD), "refresh", "decisions"],
@@ -1260,14 +1260,14 @@ class RollupAnswerTests(unittest.TestCase):
         card_id = fixture["card"]["card_id"]
         marker = self.temp / "provider-send-invoked"
         sender = self.temp / "fake-sender"
-        sender.write_text("#!/bin/sh\ntouch \"$DECISION_TEST_SEND_MARKER\"\nexit 0\n")
+        sender.write_text("#!/bin/sh\ntouch \"$DECISION_TEST_SEND_MARKER\"\nprintf '%s\n' delivered\nexit 0\n")
         sender.chmod(0o700)
         brief_env = {
             "DECISION_ALERT_AUTO": "0",
             "DECISION_ALERT_SEND_BIN": str(sender),
             "DECISION_TEST_SEND_MARKER": str(marker),
             "MORNING_BRIEF_SEND_BIN": str(sender),
-            "MORNING_BRIEF_CHAT_ID": "123",
+            "MORNING_BRIEF_INCIDENTS_CHAT_ID": "123",
             "MORNING_BRIEF_NOW_EPOCH": "1784368800",
         }
         self._proc(["/bin/bash", str(DASHBOARD), "refresh", "decisions"],

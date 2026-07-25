@@ -117,7 +117,7 @@ class DeadmanSenderTests(unittest.TestCase):
             "MISSION_CONTROL_HOME": self.state,
             "MOBILE_CONNECT_CONFIG": self.config,
             "PYTHONDONTWRITEBYTECODE": "1",
-            "MORNING_BRIEF_CHAT_ID": CHAT_ID,
+            "MORNING_BRIEF_INCIDENTS_CHAT_ID": CHAT_ID,
             "MORNING_BRIEF_TELEGRAM_BOT_TOKEN": TOKEN,
             "MORNING_BRIEF_TELEGRAM_API_BASE": server.base_url,
             "MORNING_BRIEF_TELEGRAM_TEST_MODE": "1",
@@ -157,6 +157,9 @@ class DeadmanSenderTests(unittest.TestCase):
         self.assertNotIn("mobile-connect/mobile-connect.sh",
                          source)
         self.assertNotIn("curl", source)
+        self.assertNotIn("ALLOWED_USER_ID", source)
+        self.assertNotIn("MORNING_BRIEF_CHAT_ID", source)
+        self.assertIn("MC_ROUTE_INCIDENTS_CHAT_ID", source)
 
     def test_explicit_sender_override_remains_a_narrow_test_seam(self):
         sender = os.path.join(self.tmp.name, "sender")
@@ -165,7 +168,7 @@ class DeadmanSenderTests(unittest.TestCase):
         completed = subprocess.CompletedProcess([], 0)
         env = {
             "HOME": self.home,
-            "MORNING_BRIEF_CHAT_ID": CHAT_ID,
+            "MORNING_BRIEF_INCIDENTS_CHAT_ID": CHAT_ID,
             "MORNING_BRIEF_SEND_BIN": sender,
             "MORNING_BRIEF_TELEGRAM_BOT_TOKEN": TOKEN,
             "TELEGRAM_BOT_TOKEN": TOKEN,
@@ -184,7 +187,7 @@ class DeadmanSenderTests(unittest.TestCase):
         fallback = "123456:FALLBACK_abcdefghijklmnopqrstuvwxyz"
         self.write_config(
             "TELEGRAM_BOT_TOKEN_KEYCHAIN_SERVICE='mobile-connect-telegram'\n"
-            "TELEGRAM_BOT_TOKEN='%s'\nALLOWED_USER_ID='%s'\n" %
+            "TELEGRAM_BOT_TOKEN='%s'\nMC_ROUTE_INCIDENTS_CHAT_ID='%s'\n" %
             (fallback, CHAT_ID))
         env = {
             "HOME": self.home,
@@ -220,7 +223,7 @@ class DeadmanSenderTests(unittest.TestCase):
         self.write_config(
             "UNRELATED=$(touch %s)\r\n"
             "TELEGRAM_BOT_TOKEN=\"%s\" # fallback\r\n"
-            "ALLOWED_USER_ID='%s'\r\n" % (marker, TOKEN, CHAT_ID))
+            "MC_ROUTE_INCIDENTS_CHAT_ID='%s'\r\n" % (marker, TOKEN, CHAT_ID))
         env = {"HOME": self.home, "MOBILE_CONNECT_CONFIG": self.config}
         captured = {}
 
@@ -239,11 +242,21 @@ class DeadmanSenderTests(unittest.TestCase):
         self.assertEqual(captured["message"],
             "Morning Brief deadman: unsent. Glance: menu-bar MC (dashboard panel) or light Home (dashboard open).")
 
+    def test_authorization_id_is_never_a_destination_fallback(self):
+        self.write_config(
+            "TELEGRAM_BOT_TOKEN='%s'\nALLOWED_USER_ID='%s'\n" %
+            (TOKEN, CHAT_ID))
+        env = {"HOME": self.home, "MOBILE_CONNECT_CONFIG": self.config}
+        with mock.patch.dict(os.environ, env, clear=True), mock.patch.object(
+                DEADMAN, "_direct_send",
+                side_effect=AssertionError("authorization id reached transport")):
+            self.assertFalse(DEADMAN._send("missing"))
+
     def test_keychain_failure_uses_fallback_but_malformed_service_fails_closed(self):
         fallback = "123456:FALLBACK_abcdefghijklmnopqrstuvwxyz"
         self.write_config(
             "TELEGRAM_BOT_TOKEN_KEYCHAIN_SERVICE='mobile-connect-telegram'\n"
-            "TELEGRAM_BOT_TOKEN='%s'\nALLOWED_USER_ID='%s'\n" %
+            "TELEGRAM_BOT_TOKEN='%s'\nMC_ROUTE_INCIDENTS_CHAT_ID='%s'\n" %
             (fallback, CHAT_ID))
         env = {"HOME": self.home, "MOBILE_CONNECT_CONFIG": self.config}
         captured = {}
@@ -261,7 +274,7 @@ class DeadmanSenderTests(unittest.TestCase):
         marker = os.path.join(self.tmp.name, "hostile-service-ran")
         self.write_config(
             "TELEGRAM_BOT_TOKEN_KEYCHAIN_SERVICE='x; touch %s'\n"
-            "TELEGRAM_BOT_TOKEN='%s'\nALLOWED_USER_ID='%s'\n" %
+            "TELEGRAM_BOT_TOKEN='%s'\nMC_ROUTE_INCIDENTS_CHAT_ID='%s'\n" %
             (marker, fallback, CHAT_ID))
         env = {"HOME": self.home, "MOBILE_CONNECT_CONFIG": self.config}
         with mock.patch.dict(os.environ, env, clear=True), mock.patch.object(
@@ -274,7 +287,7 @@ class DeadmanSenderTests(unittest.TestCase):
 
         self.write_config(
             "TELEGRAM_BOT_TOKEN_KEYCHAIN_SERVICE='mobile-connect-telegram'\n"
-            "TELEGRAM_BOT_TOKEN='%s'\nALLOWED_USER_ID='%s'\n" %
+            "TELEGRAM_BOT_TOKEN='%s'\nMC_ROUTE_INCIDENTS_CHAT_ID='%s'\n" %
             (fallback, CHAT_ID))
         malformed = subprocess.CompletedProcess([], 0, stdout=b"\xff\xfe")
         env = {"HOME": self.home, "MOBILE_CONNECT_CONFIG": self.config}
@@ -285,7 +298,7 @@ class DeadmanSenderTests(unittest.TestCase):
             self.assertFalse(DEADMAN._send("missing"))
 
     def test_invalid_explicit_credential_and_insecure_config_fail_closed(self):
-        self.write_config("TELEGRAM_BOT_TOKEN='%s'\nALLOWED_USER_ID='%s'\n" %
+        self.write_config("TELEGRAM_BOT_TOKEN='%s'\nMC_ROUTE_INCIDENTS_CHAT_ID='%s'\n" %
                           (TOKEN, CHAT_ID), mode=0o644)
         with FakeTelegram() as server:
             env = self.direct_env(server,
@@ -295,7 +308,7 @@ class DeadmanSenderTests(unittest.TestCase):
                     side_effect=AssertionError("unexpected subprocess")):
                 self.assertFalse(DEADMAN._send("missing"))
             env.pop("MORNING_BRIEF_TELEGRAM_BOT_TOKEN")
-            env.pop("MORNING_BRIEF_CHAT_ID")
+            env.pop("MORNING_BRIEF_INCIDENTS_CHAT_ID")
             with mock.patch.dict(os.environ, env, clear=True), mock.patch.object(
                     DEADMAN.subprocess, "run", return_value=subprocess.CompletedProcess([], 0)):
                 self.assertFalse(DEADMAN._send("missing"))
@@ -303,11 +316,11 @@ class DeadmanSenderTests(unittest.TestCase):
 
     def test_duplicate_and_symlink_configs_fail_closed(self):
         duplicate = ("TELEGRAM_BOT_TOKEN='%s'\nTELEGRAM_BOT_TOKEN='%s'\n"
-                     "ALLOWED_USER_ID='%s'\n") % (TOKEN, TOKEN, CHAT_ID)
+                     "MC_ROUTE_INCIDENTS_CHAT_ID='%s'\n") % (TOKEN, TOKEN, CHAT_ID)
         self.write_config(duplicate)
         with FakeTelegram() as server:
             env = self.direct_env(server)
-            env.pop("MORNING_BRIEF_CHAT_ID")
+            env.pop("MORNING_BRIEF_INCIDENTS_CHAT_ID")
             env.pop("MORNING_BRIEF_TELEGRAM_BOT_TOKEN")
             with mock.patch.dict(os.environ, env, clear=True), mock.patch.object(
                     DEADMAN.subprocess, "run",
@@ -319,7 +332,7 @@ class DeadmanSenderTests(unittest.TestCase):
         os.mkfifo(self.config, 0o600)
         with FakeTelegram() as server:
             env = self.direct_env(server)
-            env.pop("MORNING_BRIEF_CHAT_ID")
+            env.pop("MORNING_BRIEF_INCIDENTS_CHAT_ID")
             env.pop("MORNING_BRIEF_TELEGRAM_BOT_TOKEN")
             started = time.monotonic()
             with mock.patch.dict(os.environ, env, clear=True), mock.patch.object(
@@ -334,7 +347,7 @@ class DeadmanSenderTests(unittest.TestCase):
         os.symlink(target, self.config)
         with FakeTelegram() as server:
             env = self.direct_env(server)
-            env.pop("MORNING_BRIEF_CHAT_ID")
+            env.pop("MORNING_BRIEF_INCIDENTS_CHAT_ID")
             env.pop("MORNING_BRIEF_TELEGRAM_BOT_TOKEN")
             with mock.patch.dict(os.environ, env, clear=True), mock.patch.object(
                     DEADMAN.subprocess, "run",
@@ -398,7 +411,7 @@ class DeadmanSenderTests(unittest.TestCase):
             with self.subTest(base=base):
                 env = {
                     "HOME": self.home,
-                    "MORNING_BRIEF_CHAT_ID": CHAT_ID,
+                    "MORNING_BRIEF_INCIDENTS_CHAT_ID": CHAT_ID,
                     "MORNING_BRIEF_TELEGRAM_BOT_TOKEN": TOKEN,
                     "MORNING_BRIEF_TELEGRAM_API_BASE": base,
                 }
@@ -426,9 +439,9 @@ class DeadmanSenderTests(unittest.TestCase):
 
             self.write_config(
                 "TELEGRAM_BOT_TOKEN_KEYCHAIN_SERVICE='mobile-connect-telegram'\n"
-                "ALLOWED_USER_ID='%s'\n" % CHAT_ID)
+                "MC_ROUTE_INCIDENTS_CHAT_ID='%s'\n" % CHAT_ID)
             env = self.direct_env(server)
-            env.pop("MORNING_BRIEF_CHAT_ID")
+            env.pop("MORNING_BRIEF_INCIDENTS_CHAT_ID")
             env.pop("MORNING_BRIEF_TELEGRAM_BOT_TOKEN")
             keychain = subprocess.CompletedProcess([], 0,
                 stdout=(TOKEN + "\n").encode("ascii"))
