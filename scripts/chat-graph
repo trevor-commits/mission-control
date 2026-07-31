@@ -716,8 +716,8 @@ def collect_titles(con):
                     titles[r["id"]] = r["thread_name"]
     for sid, title in titles.items():
         touch_session(con, sid, title=title)
-    # carry-over fix: NEVER call the >2-min `chat-source list`. Lazily enrich a
-    # small batch of sessions missing title/repo via per-session `describe`.
+    # Carry-over fix: NEVER call the >2-min `chat-source list`. Lazily enrich a
+    # small batch of sessions missing title/repo through one metadata-only batch.
     _enrich_sessions(con)
     # 2. match title-drift patterns against the title index.
     tindex = _title_index(con)

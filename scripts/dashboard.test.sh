@@ -121,18 +121,81 @@ write_install_stamp(bindir,"a"*40,"head",
 PY
 }
 
-c0() { # synthetic/test controls must never fall back to default state home
-  local fake_home rc=0
-  fake_home="$ROOT/guard-home"
+c0() { # synthetic/test controls require a physically isolated state home
+  local fake_home candidate alias rc real_before
+  real_before="$(live_data_fingerprint)"
+
+  fake_home="$ROOT/guard-omitted-home"
   mkdir -p "$fake_home"
+  rc=0
   HOME="$fake_home" env -u MISSION_CONTROL_HOME \
     MISSION_CONTROL_NOW_EPOCH=1000 DASHBOARD_CMD_GIT="cat '$STUB/git.json'" \
-    bash "$DASH" collect --due git >"$ROOT/guard.out" 2>"$ROOT/guard.err" || rc=$?
+    bash "$DASH" collect --due git >"$ROOT/guard-omitted.out" 2>"$ROOT/guard-omitted.err" || rc=$?
   if [ "$rc" -ne 0 ] && [ ! -e "$fake_home/.mission-control" ] && \
-     grep -q 'MISSION_CONTROL_HOME.*required' "$ROOT/guard.err"; then
-    ok "synthetic controls fail before default Mission Control state writes"
+     grep -q 'MISSION_CONTROL_HOME.*required' "$ROOT/guard-omitted.err"; then
+    ok "synthetic controls reject an omitted Mission Control state home"
   else
-    no "synthetic controls reached a default Mission Control state home"
+    no "synthetic controls reached an omitted/default Mission Control state home"
+  fi
+
+  fake_home="$ROOT/guard-exact-home"
+  mkdir -p "$fake_home"
+  candidate="$fake_home/.mission-control"
+  rc=0
+  HOME="$fake_home" MISSION_CONTROL_HOME="$candidate" MISSION_CONTROL_NOW_EPOCH=1000 \
+    DASHBOARD_CMD_GIT="cat '$STUB/git.json'" bash "$DASH" collect --due git \
+    >"$ROOT/guard-exact.out" 2>"$ROOT/guard-exact.err" || rc=$?
+  if [ "$rc" -ne 0 ] && [ ! -e "$candidate" ]; then
+    ok "synthetic controls reject the exact default state home"
+  else no "synthetic controls accepted the exact default state home"; fi
+
+  fake_home="$ROOT/guard-normalized-home"
+  mkdir -p "$fake_home"
+  candidate="$fake_home/./.mission-control/../.mission-control"
+  rc=0
+  HOME="$fake_home" MISSION_CONTROL_HOME="$candidate" MISSION_CONTROL_NOW_EPOCH=1000 \
+    DASHBOARD_CMD_GIT="cat '$STUB/git.json'" bash "$DASH" collect --due git \
+    >"$ROOT/guard-normalized.out" 2>"$ROOT/guard-normalized.err" || rc=$?
+  if [ "$rc" -ne 0 ] && [ ! -e "$fake_home/.mission-control" ]; then
+    ok "synthetic controls reject a normalized default equivalent"
+  else no "synthetic controls accepted a normalized default equivalent"; fi
+
+  fake_home="$ROOT/guard-child-home"
+  mkdir -p "$fake_home"
+  candidate="$fake_home/.mission-control/nested"
+  rc=0
+  HOME="$fake_home" MISSION_CONTROL_HOME="$candidate" MISSION_CONTROL_NOW_EPOCH=1000 \
+    DASHBOARD_CMD_GIT="cat '$STUB/git.json'" bash "$DASH" collect --due git \
+    >"$ROOT/guard-child.out" 2>"$ROOT/guard-child.err" || rc=$?
+  if [ "$rc" -ne 0 ] && [ ! -e "$fake_home/.mission-control" ]; then
+    ok "synthetic controls reject a child of the default state home"
+  else no "synthetic controls accepted a child of the default state home"; fi
+
+  fake_home="$ROOT/guard-symlink-home"
+  mkdir -p "$fake_home/.mission-control"
+  alias="$ROOT/guard-default-alias"
+  ln -s "$fake_home/.mission-control" "$alias"
+  rc=0
+  HOME="$fake_home" MISSION_CONTROL_HOME="$alias" MISSION_CONTROL_NOW_EPOCH=1000 \
+    DASHBOARD_CMD_GIT="cat '$STUB/git.json'" bash "$DASH" collect --due git \
+    >"$ROOT/guard-symlink.out" 2>"$ROOT/guard-symlink.err" || rc=$?
+  if [ "$rc" -ne 0 ] && [ ! -e "$fake_home/.mission-control/data" ]; then
+    ok "synthetic controls reject a symlink alias of the default state home"
+  else no "synthetic controls accepted a symlink alias of the default state home"; fi
+
+  fake_home="$ROOT/guard-isolated-home"
+  candidate="$ROOT/guard-isolated-state"
+  mkdir -p "$fake_home"
+  rc=0
+  HOME="$fake_home" MISSION_CONTROL_HOME="$candidate" MISSION_CONTROL_NOW_EPOCH=1000 \
+    DASHBOARD_CMD_GIT="cat '$STUB/git.json'" bash "$DASH" collect --force git \
+    >"$ROOT/guard-isolated.out" 2>"$ROOT/guard-isolated.err" || rc=$?
+  if [ "$rc" -eq 0 ] && [ -f "$candidate/data/git.json" ]; then
+    ok "synthetic controls accept an explicit isolated temporary state home"
+  else no "synthetic controls rejected an isolated temporary state home"; fi
+
+  if [ "$real_before" != "$(live_data_fingerprint)" ]; then
+    no "state-home guard matrix changed live Mission Control data"
   fi
 }
 

@@ -24,19 +24,55 @@ MISSION_CONTROL_HOME_EXPLICIT=0
 if [ "${MISSION_CONTROL_HOME+x}" = x ] && [ -n "${MISSION_CONTROL_HOME:-}" ]; then
   MISSION_CONTROL_HOME_EXPLICIT=1
 fi
-if [ "$MISSION_CONTROL_HOME_EXPLICIT" -eq 0 ]; then
-  for control_name in \
-    MISSION_CONTROL_NOW_EPOCH DASHBOARD_NOW_EPOCH DASHBOARD_TESTING \
-    DASHBOARD_CMD_AUTOMATION DASHBOARD_CMD_USAGE DASHBOARD_CMD_GIT \
-    DASHBOARD_CMD_CHATS DASHBOARD_CMD_DECISIONS DASHBOARD_CMD_ATTENTION \
-    DASHBOARD_CMD_BRIEF
-  do
-    eval "control_is_set=\${$control_name+x}"
-    if [ "$control_is_set" = x ]; then
-      echo "dashboard: MISSION_CONTROL_HOME is required when synthetic/test control $control_name is set" >&2
-      exit 2
-    fi
-  done
+SYNTHETIC_CONTROL_NAME=""
+for control_name in \
+  MISSION_CONTROL_NOW_EPOCH DASHBOARD_NOW_EPOCH DASHBOARD_TESTING \
+  DASHBOARD_CMD_AUTOMATION DASHBOARD_CMD_USAGE DASHBOARD_CMD_GIT \
+  DASHBOARD_CMD_CHATS DASHBOARD_CMD_DECISIONS DASHBOARD_CMD_ATTENTION \
+  DASHBOARD_CMD_BRIEF
+do
+  eval "control_is_set=\${$control_name+x}"
+  if [ "$control_is_set" = x ]; then
+    SYNTHETIC_CONTROL_NAME="$control_name"
+    break
+  fi
+done
+if [ -n "$SYNTHETIC_CONTROL_NAME" ]; then
+  if [ "$MISSION_CONTROL_HOME_EXPLICIT" -eq 0 ]; then
+    echo "dashboard: MISSION_CONTROL_HOME is required when synthetic/test control $SYNTHETIC_CONTROL_NAME is set" >&2
+    exit 2
+  fi
+  # Do not let a test/feeder PATH shim intercept the state-boundary check. The
+  # macOS runtime provides /usr/bin/python3; the fallback keeps source checks
+  # usable in other development environments while still failing closed.
+  state_boundary_python=/usr/bin/python3
+  if [ ! -x "$state_boundary_python" ]; then
+    state_boundary_python=$(command -v python3 2>/dev/null || true)
+  fi
+  [ -n "$state_boundary_python" ] || {
+    echo "dashboard: could not verify the synthetic/test Mission Control state boundary" >&2
+    exit 2
+  }
+  state_boundary=$("$state_boundary_python" - "$MISSION_CONTROL_HOME" "$HOME/.mission-control" <<'PY'
+import os
+import sys
+
+candidate = os.path.realpath(os.path.abspath(os.path.expanduser(sys.argv[1])))
+default = os.path.realpath(os.path.abspath(os.path.expanduser(sys.argv[2])))
+try:
+    aliases_default = os.path.commonpath([candidate, default]) == default
+except ValueError:
+    aliases_default = False
+print("unsafe" if aliases_default else "isolated")
+PY
+) || {
+    echo "dashboard: could not verify the synthetic/test Mission Control state boundary" >&2
+    exit 2
+  }
+  if [ "$state_boundary" != "isolated" ]; then
+    echo "dashboard: synthetic/test control $SYNTHETIC_CONTROL_NAME requires MISSION_CONTROL_HOME outside the canonical default state tree" >&2
+    exit 2
+  fi
 fi
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"

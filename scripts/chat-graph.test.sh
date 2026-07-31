@@ -452,7 +452,7 @@ case "\$1" in
     echo call >> "$CHAT_GRAPH_HOME/METADATA_CALLS"
     shift; [ "\${1:-}" = --jsonl ] && shift
     for id in "\$@"; do
-      printf '{"request":"%s","status":"found","id":"%s","provider":"codex","title":"Enriched Title","cwd":"/tmp/myrepo","repo":"myrepo","path":"/tmp/%s.jsonl","kind":"codex-jsonl","source":"fixture"}\n' "\$id" "\$id" "\$id"
+      printf '{"request":"%s","status":"found","id":"%s","provider":"codex","title":"Enriched Title","cwd":"/tmp/myrepo","repo":"myrepo","path":"/tmp/%s.jsonl","kind":"codex-jsonl","source":"internal_scan"}\n' "\$id" "\$id" "\$id"
     done
     ;;
   resolve) echo "\$2" ;;
@@ -472,6 +472,12 @@ if [ ! -f "$CHAT_GRAPH_HOME/DESCRIBE_CALLED" ] && [ "$(wc -l < "$CHAT_GRAPH_HOME
 else fail "enrichment did not use exactly one metadata batch"; fi
 ok "Enriched Title" "$(q "SELECT title FROM sessions WHERE id='bbbbbbbb-5555-6666-7777-888888888888'")" \
    "metadata batch cached title onto real-shaped worker session"
+ok "1" "$(q "SELECT CASE WHEN
+  (SELECT value FROM meta WHERE key='metadata_enrichment_status')='ok' AND
+  (SELECT value FROM meta WHERE key='metadata_enrichment_found')=
+  (SELECT value FROM meta WHERE key='metadata_enrichment_requested')
+  THEN 1 ELSE 0 END")" \
+   "successful internal fallback metadata resolves in the same ingest"
 # FIX 4: synthetic id skipped (enriched_at stamped, no title fetched), so a 2nd
 # ingest does NOT keep retrying it and does NOT report chat-source degraded.
 D19OUT="$("$CG" ingest 2>&1)"

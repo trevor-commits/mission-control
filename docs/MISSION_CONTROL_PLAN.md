@@ -103,7 +103,10 @@ export. Dashboard failure sidecars persist `consecutive_failures`,
 `attempted_at`, and `next_retry_epoch`; `collect --due` honors that bounded
 feed-local backoff while sibling feeds continue, `--force` bypasses it, success
 clears it, and status remains red/degraded until a successful refresh. The
-implementation and synthetic proof do not activate or mutate the LaunchAgent.
+dashboard resolves physical state paths before any write: synthetic clocks,
+test seams, and feeder overrides reject omitted, exact-default, normalized,
+descendant, and symlink-alias homes while accepting an isolated temporary home.
+The implementation and synthetic proof do not activate or mutate the LaunchAgent.
 
 Ground truth that changed assumptions: corpus = 5,373 Claude + 687 Codex JSONL ≈ 6,060 files / 2.3 GB, largest file 19 MB → **full-history first scan runs in ~2–8 minutes at <100 MB memory** (stdlib line-iterate + substring prefilter). Live specimens found: `audit:` lowercase/no-space in a real mailbox message (title drift is already real); usage history rows carrying `confidence:"stale"` and `resets_in_min:-15`; a currently-dead job (`morning-health-brief` exit 1) as a Phase-3 test specimen; repo names with apostrophes/spaces; `chat-source` is a symlink into another repo; resume-fork duplicate session files (2 pairs in one project dir).
 
