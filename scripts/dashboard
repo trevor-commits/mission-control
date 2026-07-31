@@ -1182,7 +1182,12 @@ def cmd_collect(argv):
             if name == "chats" and isinstance(env, dict):
                 data = env.get("data")
                 stale = data.get("stale_providers", []) if isinstance(data, dict) else []
-                if isinstance(stale, list) and stale:
+                # Cosmetic chat-source metadata degradation is visible on
+                # `status` but must not keep launchd exit-1 forever: the
+                # scheduled chats lane only runs catch-up ingest, which skips
+                # enrichment and therefore cannot clear a sticky degraded flag.
+                if isinstance(stale, list) and any(
+                        str(item) != "chat-source" for item in stale):
                     scheduled_degraded = True
                 if _chats_nested_ingest_state(env, cadence) in ("stale", "unknown"):
                     scheduled_degraded = True

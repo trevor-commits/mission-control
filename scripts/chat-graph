@@ -555,10 +555,15 @@ _STALE_PROVIDERS = set()
 _CATCHUP_INGEST = False
 
 def _metadata_timeout_s():
+    # Live `chat-source metadata --jsonl` pays a large fixed CCI startup cost
+    # (~60-70s) before per-id rows arrive. The old 20s default timed out every
+    # unbounded enrich (requested>0, found=0), stamped metadata_enrichment_status
+    # =degraded, and left the five-minute catch-up lane re-exporting that sticky
+    # health forever because catch-up never re-enriches.
     try:
-        return max(0.1, float(os.environ.get("CHAT_GRAPH_METADATA_TIMEOUT_S", "20")))
+        return max(0.1, float(os.environ.get("CHAT_GRAPH_METADATA_TIMEOUT_S", "180")))
     except (TypeError, ValueError):
-        return 20.0
+        return 180.0
 
 def _stop_metadata_group(proc):
     """Bounded cleanup for the metadata command's independently owned group."""

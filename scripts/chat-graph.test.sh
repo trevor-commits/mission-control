@@ -641,9 +641,9 @@ ok "Late Title" "$(q "SELECT title FROM sessions WHERE id='bbbbbbbb-5555-6666-77
    "deferred enrichment lands on the next unbounded ingest"
 
 # --- 19f. an ABSENT metadata subcommand degrades but never fails the feed ----
-# Live shape today: the installed chat-source has no `metadata` command, so it
-# prints usage and exits 2. That must stay a health degradation, never a failed
-# feed — a failed feed stays due and relaunches on every launchd tick.
+# Compatibility shape: a chat-source without `metadata` prints usage and exits
+# 2. That must stay a health degradation, never a failed feed — a failed feed
+# stays due and relaunches on every launchd tick.
 new_env
 STUB19F="$(mktemp -d)/chat-source"
 cat > "$STUB19F" <<'SH'
@@ -668,6 +668,26 @@ then pass "absent metadata subcommand is reported as degraded health in the expo
 else fail "absent metadata subcommand did not surface degraded health"; fi
 ok "1" "$(q "SELECT CASE WHEN enriched_at IS NOT NULL THEN 1 ELSE 0 END FROM sessions WHERE id='bbbbbbbb-5555-6666-7777-888888888888'")" \
    "absent metadata subcommand still stamps the attempt out of the retry pool"
+
+# --- 19g. default metadata timeout covers live CCI batch cost ----------------
+# A five-id live metadata batch measured ~70s fixed startup on 2026-08-06. The
+# previous 20s default timed out every unbounded enrich and left catch-up
+# re-exporting sticky degraded health. Keep the default high enough that a
+# normal batch can finish; tests that need a fast fail still override via env.
+new_env
+if python3 - "$CG" <<'PY'
+import importlib.machinery, importlib.util, os, sys
+tool = sys.argv[1]
+os.environ.pop("CHAT_GRAPH_METADATA_TIMEOUT_S", None)
+sys.path.insert(0, os.path.dirname(tool))
+loader = importlib.machinery.SourceFileLoader("chat_graph_timeout_default", tool)
+spec = importlib.util.spec_from_loader(loader.name, loader)
+cg = importlib.util.module_from_spec(spec)
+loader.exec_module(cg)
+assert cg._metadata_timeout_s() >= 180, cg._metadata_timeout_s()
+PY
+then pass "default metadata timeout covers live CCI batch cost (>=180s)"
+else fail "default metadata timeout too low for live chat-source metadata batches"; fi
 
 # --- 19e. timeout cleanup never falls through to unbounded communicate -------
 new_env

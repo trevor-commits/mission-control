@@ -577,6 +577,21 @@ PY
   if [ "$rc" -ne 0 ] && printf '%s\n' "$out" | grep -Eq 'chats.*degraded: chat-source'; then
     ok "status surfaces persisted chat metadata degradation"
   else no "status hid chat metadata degradation"; fi
+
+  # Cosmetic chat-source stale must stay visible on status, but the scheduled
+  # launchd entry point must not exit 1 forever — catch-up cannot clear it.
+  H="$(newhome)"
+  MISSION_CONTROL_HOME="$H" DASHBOARD_CMD_CHATS="cat '$ROOT/chats-degraded.json'" \
+    bash "$DASH" collect --force chats >/dev/null 2>&1
+  scheduled_rc=0
+  MISSION_CONTROL_HOME="$H" bash "$DASH" collect --due chats >/dev/null 2>&1 || scheduled_rc=$?
+  out="$(MISSION_CONTROL_HOME="$H" bash "$DASH" status 2>&1)"; status_rc=$?
+  if [ "$scheduled_rc" -eq 0 ] && [ "$status_rc" -ne 0 ] && \
+     printf '%s\n' "$out" | grep -Eq 'chats.*degraded: chat-source'; then
+    ok "scheduled --due exits 0 on chat-source-only cosmetic degradation"
+  else
+    no "scheduled --due mishandled chat-source-only degradation (due=$scheduled_rc status=$status_rc)"
+  fi
 }
 
 # --- case 5: status exit 0 all-green; nonzero on automation red job ------------
