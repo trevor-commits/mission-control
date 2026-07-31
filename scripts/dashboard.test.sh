@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # scripts/dashboard.test.sh — feeders stubbed via env, mktemp state dirs only.
-# Never touches real $HOME. One PASS:/FAIL: line per case; exit 0 iff all pass.
+# Never writes real $HOME. One PASS:/FAIL: line per case; exit 0 iff all pass.
 # Optional flag: --require-shell makes the shell-contract checks mandatory.
 set -uo pipefail
 export PYTHONDONTWRITEBYTECODE=1
@@ -23,8 +23,31 @@ no() { echo "FAIL: $1"; FAIL=$((FAIL + 1)); }
 
 ROOT="$(mktemp -d "${TMPDIR:-/tmp}/mc-test.XXXXXX")"
 trap 'rm -rf "$ROOT"' EXIT
+export MISSION_CONTROL_HOME="$ROOT/default-mission-control-home"
 STUB="$ROOT/stubs"
 mkdir -p "$STUB/bin"
+
+live_data_fingerprint() {
+  python3 - "$HOME/.mission-control/data" <<'PY'
+import hashlib, json, os, stat, sys
+root = sys.argv[1]
+rows = []
+if os.path.isdir(root):
+    for name in sorted(os.listdir(root)):
+        path = os.path.join(root, name)
+        st = os.lstat(path)
+        digest = None
+        if stat.S_ISREG(st.st_mode):
+            h = hashlib.sha256()
+            with open(path, "rb") as handle:
+                for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                    h.update(chunk)
+            digest = h.hexdigest()
+        rows.append([name, st.st_ino, st.st_mode, st.st_size, st.st_mtime_ns, digest])
+print(json.dumps(rows, separators=(",", ":")))
+PY
+}
+LIVE_DATA_BEFORE="$(live_data_fingerprint)"
 
 # --- stub feeder payloads, written via python so unicode/hostile text is safe -
 python3 - "$STUB" <<'PYEOF'
@@ -96,6 +119,21 @@ for rel in REQUIRED_INSTALL_ASSETS:
 write_install_stamp(bindir,"a"*40,"head",
   list(REQUIRED_INSTALL_RUNTIMES),1783674000,assets=assets)
 PY
+}
+
+c0() { # synthetic/test controls must never fall back to default state home
+  local fake_home rc=0
+  fake_home="$ROOT/guard-home"
+  mkdir -p "$fake_home"
+  HOME="$fake_home" env -u MISSION_CONTROL_HOME \
+    MISSION_CONTROL_NOW_EPOCH=1000 DASHBOARD_CMD_GIT="cat '$STUB/git.json'" \
+    bash "$DASH" collect --due git >"$ROOT/guard.out" 2>"$ROOT/guard.err" || rc=$?
+  if [ "$rc" -ne 0 ] && [ ! -e "$fake_home/.mission-control" ] && \
+     grep -q 'MISSION_CONTROL_HOME.*required' "$ROOT/guard.err"; then
+    ok "synthetic controls fail before default Mission Control state writes"
+  else
+    no "synthetic controls reached a default Mission Control state home"
+  fi
 }
 
 # --- case 1: collect --force writes dual-write files, every .json envelope-valid -------
@@ -193,6 +231,81 @@ assert usage["generated_epoch"] == ub, "fresh usage WAS re-collected"
 PYEOF
   then ok "--due re-collects stale feed, skips fresh feed"
   else no "--due cadence gating wrong"; fi
+}
+
+# --- case 4b: persistent feed backoff is local, force-bypassable, and honest --
+c4b() {
+  local H now next before after marker_git marker_auto rc out
+  H="$(newhome)"; now=1000
+  MISSION_CONTROL_HOME="$H" MISSION_CONTROL_NOW_EPOCH="$now" \
+    bash "$DASH" collect --force git automation >/dev/null 2>&1
+  before="$(cat "$H/data/git.json")"
+
+  MISSION_CONTROL_HOME="$H" MISSION_CONTROL_NOW_EPOCH="$now" DASHBOARD_CMD_GIT="false" \
+    bash "$DASH" collect --force git >/dev/null 2>&1
+  after="$(cat "$H/data/git.json")"
+  next="$(python3 - "$H/data/git.error.json" <<'PY'
+import json,sys
+e=json.load(open(sys.argv[1]))
+assert e["consecutive_failures"] == 1, e
+assert e["attempted_at"] == 1000, e
+assert e["next_retry_epoch"] > e["attempted_at"], e
+print(e["next_retry_epoch"])
+PY
+)" || { no "feed backoff sidecar missing required first-failure fields"; return; }
+  [ "$before" = "$after" ] || { no "feed failure advanced/clobbered last-good"; return; }
+
+  marker_git="$ROOT/backoff-git-called"; marker_auto="$ROOT/backoff-auto-called"
+  cat > "$ROOT/backoff-git" <<EOF
+#!/bin/sh
+echo called > "$marker_git"
+cat '$STUB/git2.json'
+EOF
+  cat > "$ROOT/backoff-auto" <<EOF
+#!/bin/sh
+echo called > "$marker_auto"
+cat '$STUB/automation.json'
+EOF
+  chmod +x "$ROOT/backoff-git" "$ROOT/backoff-auto"
+  rm -f "$marker_git" "$marker_auto"
+  scheduled_rc=0
+  MISSION_CONTROL_HOME="$H" MISSION_CONTROL_NOW_EPOCH="$((next - 1))" \
+    DASHBOARD_CMD_GIT="$ROOT/backoff-git" DASHBOARD_CMD_AUTOMATION="$ROOT/backoff-auto" \
+    bash "$DASH" collect --due >/dev/null 2>&1 || scheduled_rc=$?
+  out="$(MISSION_CONTROL_HOME="$H" MISSION_CONTROL_NOW_EPOCH="$((next - 1))" bash "$DASH" status 2>&1)"; rc=$?
+  status_rc=$rc
+  if [ ! -e "$marker_git" ] && [ -e "$marker_auto" ] && [ "$(cat "$H/data/git.json")" = "$before" ] && \
+     [ "$scheduled_rc" -ne 0 ] && [ "$status_rc" -ne 0 ] && \
+     printf '%s\n' "$out" | grep -Eq 'git.*(error|backoff|degraded)'; then
+    ok "scheduled --due exposes backoff while sibling feeds continue"
+  else
+    no "scheduled backoff blocked sibling, retried early, hid top-level status, or changed last-good"
+  fi
+
+  rm -f "$marker_git"
+  MISSION_CONTROL_HOME="$H" MISSION_CONTROL_NOW_EPOCH="$((next - 1))" \
+    DASHBOARD_CMD_GIT="$ROOT/backoff-git" bash "$DASH" collect --force git >/dev/null 2>&1
+  if [ -e "$marker_git" ] && [ ! -e "$H/data/git.error.json" ] && \
+     python3 - "$H/data/git.json" "$((next - 1))" <<'PY'
+import json,sys
+assert json.load(open(sys.argv[1]))["generated_epoch"] == int(sys.argv[2])
+PY
+  then ok "--force bypasses backoff and success clears failure state"
+  else no "--force did not bypass/clear feed backoff"; fi
+
+  H="$(newhome)"
+  python3 - "$STUB/chats.json" "$ROOT/chats-degraded.json" <<'PY'
+import json,sys
+d=json.load(open(sys.argv[1]))
+d["data"]["stale_providers"]=["chat-source"]
+json.dump(d,open(sys.argv[2],"w"))
+PY
+  MISSION_CONTROL_HOME="$H" DASHBOARD_CMD_CHATS="cat '$ROOT/chats-degraded.json'" \
+    bash "$DASH" collect --force chats >/dev/null 2>&1
+  out="$(MISSION_CONTROL_HOME="$H" bash "$DASH" status 2>&1)"; rc=$?
+  if [ "$rc" -ne 0 ] && printf '%s\n' "$out" | grep -Eq 'chats.*degraded: chat-source'; then
+    ok "status surfaces persisted chat metadata degradation"
+  else no "status hid chat metadata degradation"; fi
 }
 
 # --- case 5: status exit 0 all-green; nonzero on automation red job ------------
@@ -2037,8 +2150,13 @@ PYEOF
   fi
 }
 
-c1; c2; c3; c4; c5; c6; c7; c8; c8a; c8b; c9; c10; c11; c12; c13; c14; c14a; c15; c16; c17; c18; c19; c20; c21; c22; c23; c24; c25; c26; c27; c28; c29; c30; c31; c32; c33; c34; c35; c36; c37; c38; c39; c40; c41; c42; c42a; c43; c44; c45; c46; c47; c48; c49; c50; c51
+c0; c1; c2; c3; c4; c4b; c5; c6; c7; c8; c8a; c8b; c9; c10; c11; c12; c13; c14; c14a; c15; c16; c17; c18; c19; c20; c21; c22; c23; c24; c25; c26; c27; c28; c29; c30; c31; c32; c33; c34; c35; c36; c37; c38; c39; c40; c41; c42; c42a; c43; c44; c45; c46; c47; c48; c49; c50; c51
 shell_contract
+if [ "$LIVE_DATA_BEFORE" = "$(live_data_fingerprint)" ]; then
+  ok "dashboard suite leaves live Mission Control data byte/stat unchanged"
+else
+  no "dashboard suite mutated live Mission Control data"
+fi
 echo "----"
 echo "PASS=$PASS FAIL=$FAIL"
 [ "$FAIL" -eq 0 ] && exit 0 || exit 1

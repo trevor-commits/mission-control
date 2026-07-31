@@ -16,6 +16,29 @@
 
 set -uo pipefail
 
+# Synthetic clocks, test seams, and feeder overrides must never inherit the
+# default live state home. Require an explicit state boundary before resolving
+# MISSION_CONTROL_HOME so an omitted env assignment fails before any mkdir,
+# lock, sidecar, or feed write.
+MISSION_CONTROL_HOME_EXPLICIT=0
+if [ "${MISSION_CONTROL_HOME+x}" = x ] && [ -n "${MISSION_CONTROL_HOME:-}" ]; then
+  MISSION_CONTROL_HOME_EXPLICIT=1
+fi
+if [ "$MISSION_CONTROL_HOME_EXPLICIT" -eq 0 ]; then
+  for control_name in \
+    MISSION_CONTROL_NOW_EPOCH DASHBOARD_NOW_EPOCH DASHBOARD_TESTING \
+    DASHBOARD_CMD_AUTOMATION DASHBOARD_CMD_USAGE DASHBOARD_CMD_GIT \
+    DASHBOARD_CMD_CHATS DASHBOARD_CMD_DECISIONS DASHBOARD_CMD_ATTENTION \
+    DASHBOARD_CMD_BRIEF
+  do
+    eval "control_is_set=\${$control_name+x}"
+    if [ "$control_is_set" = x ]; then
+      echo "dashboard: MISSION_CONTROL_HOME is required when synthetic/test control $control_name is set" >&2
+      exit 2
+    fi
+  done
+fi
+
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 # install bakes the resolved repo root into the copied runtime (bin/dashboard),
 # whose SCRIPT_DIR is ~/.mission-control/bin — dirname of that is NOT the repo.
@@ -190,6 +213,22 @@ def _write_feed(name, env):
 def _write_error(name, cadence, msg):
     """Record a feeder failure WITHOUT clobbering the last-good .json/.js."""
     now = _now()
+    previous_failures = 0
+    prior = os.path.join(DATA, name + ".error.json")
+    try:
+        with open(prior) as f:
+            old = json.load(f)
+        value = old.get("consecutive_failures") if isinstance(old, dict) else None
+        if type(value) is int and value > 0:
+            previous_failures = value
+    except (OSError, ValueError):
+        pass
+    consecutive_failures = previous_failures + 1
+    # Feed-local bounded exponential retry. This changes retry timing only; it
+    # never advances or overwrites the last-good snapshot.
+    base_delay = max(60, cadence)
+    retry_delay = min(base_delay * (2 ** min(consecutive_failures - 1, 6)),
+                      max(3600, cadence * 8))
     counters = EgressCounters() if EgressCounters else None
     if sanitize_text:
         result = sanitize_text(msg, ERROR, counters=counters)
@@ -201,6 +240,9 @@ def _write_error(name, cadence, msg):
     env = {"schema": 1, "feed": name, "generated_at": _iso(now),
            "generated_epoch": now, "cadence_s": cadence,
            "ok": False, "error": safe_error, "data": None,
+           "attempted_at": now,
+           "consecutive_failures": consecutive_failures,
+           "next_retry_epoch": now + retry_delay,
            "egress_counters": counters.snapshot() if counters else {
                "dropped_fields": 1, "policy_unavailable": 1}}
     canon = _dumps(env)
@@ -913,6 +955,15 @@ def _collect_one(name, cadence, defcmd, envvar, timeout_s):
 
 
 def _is_due(name, cadence):
+    error = _load_error(name)
+    if error:
+        retry_epoch = _wire_epoch(error.get("next_retry_epoch"))
+        if retry_epoch is not None:
+            if _now() < retry_epoch:
+                return False
+            # Once the retry window opens, retry even when the preserved
+            # last-good snapshot would otherwise look fresh.
+            return True
     p = os.path.join(DATA, name + ".json")
     if not os.path.exists(p):
         return True
@@ -953,10 +1004,26 @@ def cmd_collect(argv):
         if name == "git":
             git_attempt_status = status
         failed = failed or status != "ok"
-    # Normal collection preserves feed independence. Explicit operator
-    # round-trips can request strict status so a lock/error is never reported
-    # as a successful user-visible refresh.
-    return 1 if strict and failed else 0
+    # Normal explicit collection preserves feed independence. The scheduled
+    # `collect --due` entry point additionally reflects persisted degradation
+    # after every sibling had its chance to run, so launchd cannot report a
+    # healthy top-level cycle while a feed is failed or held in backoff.
+    scheduled_degraded = failed
+    if due and not force:
+        for name, cadence, _, _, _ in FEEDS:
+            if only and name not in only:
+                continue
+            env = _current_status_env(name)
+            if isinstance(env, dict) and env.get("ok") is False:
+                scheduled_degraded = True
+            if name == "chats" and isinstance(env, dict):
+                data = env.get("data")
+                stale = data.get("stale_providers", []) if isinstance(data, dict) else []
+                if isinstance(stale, list) and stale:
+                    scheduled_degraded = True
+                if _chats_nested_ingest_state(env, cadence) in ("stale", "unknown"):
+                    scheduled_degraded = True
+    return 1 if (strict and failed) or (due and not force and scheduled_degraded) else 0
 
 
 def _load(name):
@@ -1031,6 +1098,10 @@ def cmd_status(argv):
     for name, cadence, _, _, _ in FEEDS:
         env = _current_status_env(name)
         verdict, is_red = _verdict(env, cadence)
+        if env and env.get("ok") is False:
+            retry_epoch = _wire_epoch(env.get("next_retry_epoch"))
+            if retry_epoch is not None and retry_epoch > now:
+                verdict += " (backoff %ds)" % (retry_epoch - now)
         if name == "automation" and _automation_red(env):
             is_red = True
             verdict += " (red job)"
@@ -1042,6 +1113,13 @@ def cmd_status(argv):
             elif nested == "unknown":
                 is_red = True
                 verdict += " (unknown full ingest)"
+            data = env.get("data") if isinstance(env, dict) else None
+            stale = (data.get("stale_providers", [])
+                     if isinstance(data, dict) else [])
+            if isinstance(stale, list) and stale:
+                providers = ",".join(str(item) for item in stale[:5])
+                is_red = True
+                verdict += " (degraded: %s)" % providers
         if env is None:
             age, oks = "-", "-"
         else:

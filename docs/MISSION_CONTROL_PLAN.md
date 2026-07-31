@@ -94,6 +94,17 @@ Collectors: mkdir-lock + `timeout` + write-to-tmp-then-`mv` (reload mid-write al
 
 ### Hardening addenda (live-data red-team, 2026-07-02 — measured, not guessed)
 
+**ER-277 producer repair (2026-07-31):** session enrichment uses one bounded
+`chat-source metadata --jsonl` subprocess group for the selected batch, never a
+per-session `describe` loop. The group has a hard timeout with TERM/KILL
+descendant cleanup; partial or unavailable metadata stamps attempted rows and
+persists `metadata_enrichment_status=degraded` without failing core ingest or
+export. Dashboard failure sidecars persist `consecutive_failures`,
+`attempted_at`, and `next_retry_epoch`; `collect --due` honors that bounded
+feed-local backoff while sibling feeds continue, `--force` bypasses it, success
+clears it, and status remains red/degraded until a successful refresh. The
+implementation and synthetic proof do not activate or mutate the LaunchAgent.
+
 Ground truth that changed assumptions: corpus = 5,373 Claude + 687 Codex JSONL ≈ 6,060 files / 2.3 GB, largest file 19 MB → **full-history first scan runs in ~2–8 minutes at <100 MB memory** (stdlib line-iterate + substring prefilter). Live specimens found: `audit:` lowercase/no-space in a real mailbox message (title drift is already real); usage history rows carrying `confidence:"stale"` and `resets_in_min:-15`; a currently-dead job (`morning-health-brief` exit 1) as a Phase-3 test specimen; repo names with apostrophes/spaces; `chat-source` is a symlink into another repo; resume-fork duplicate session files (2 pairs in one project dir).
 
 **First-scan design (locked: full history):** foreground with progress, NOT backgrounded (backgrounding a 5-minute pass is gold-plating). Enumerate first (paths+sizes, newest-first so freshest data lands earliest if interrupted); stderr progress every 2s (`[scan] 812/6060 · 34% · ETA 1m52s · errors 3`; `\r` on TTY, plain lines when piped). Per-line `JSONDecodeError` → counter + `~/.chat-graph/logs/scan-errors.log` (path:lineno); per-file `OSError/UnicodeDecodeError` → skip+log; **never abort the pass**; exit 1 only if >20% of files fail. One DB transaction per file (edges+topics+open_ends+cursor together) → Ctrl-C-safe, resumes where it stopped. Files >200 MB skipped+warned. Smoke first: `chat-graph ingest --full --limit-files 25 && chat-graph stats`. Structured collectors run before the scan so `stats` shows real edges within the first minute.

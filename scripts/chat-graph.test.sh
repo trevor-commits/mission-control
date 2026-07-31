@@ -40,15 +40,22 @@ new_env() {
   export CHAT_GRAPH_GIT_FEED="$(mktemp -d)/git.json"
   export CHAT_GRAPH_REGISTER="$(mktemp -d)/register.md"; : > "$CHAT_GRAPH_REGISTER"
   unset MISSION_CONTROL_FULL_INGEST_SLA_S
-  # stub chat-source: 'present' checks pass; describe returns provider only (no
-  # title) so untitled-fallback cases survive enrichment; list writes a marker so
-  # the carry-over test can prove it is NEVER invoked.
+  # stub chat-source: metadata returns one structured row per request (no title)
+  # so untitled-fallback cases survive enrichment; list/describe write markers
+  # so the carry-over test can prove neither legacy path is invoked.
   local stub="$(mktemp -d)/chat-source"
   cat > "$stub" <<SH
 #!/usr/bin/env bash
 case "\$1" in
   list) echo called > "$CHAT_GRAPH_HOME/LIST_CALLED" ;;
-  describe) echo "provider: claude" ;;
+  describe) echo called > "$CHAT_GRAPH_HOME/DESCRIBE_CALLED" ;;
+  metadata)
+    shift
+    [ "\${1:-}" = --jsonl ] && shift
+    for id in "\$@"; do
+      printf '{"request":"%s","status":"found","id":"%s","provider":"claude","title":"","cwd":"","repo":"","path":"/tmp/%s.jsonl","kind":"claude-code-jsonl","source":"fixture"}\n' "\$id" "\$id" "\$id"
+    done
+    ;;
   resolve) echo "\$2" ;;
 esac
 exit 0
@@ -432,16 +439,22 @@ ok 5 "$(q "SELECT COUNT(*) FROM file_cursors")" "bounded ingest eventually cover
 if [ ! -f "$CHAT_GRAPH_HOME/last-ingest" ]; then pass "--limit-files writes NO completion marker"
 else fail "--limit-files wrote a completion marker"; fi
 
-# --- 19. carry-over: describe enriches title, list NEVER invoked ------------
+# --- 19. one metadata batch enriches sessions; legacy calls stay unused ------
 new_env
-# richer stub: describe prints the real `=== id ===` + indented block shape and
-# a title; list writes a marker so we can prove it is never called.
+# richer stub: one metadata invocation returns ordered per-ID rows.
 STUB19="$(mktemp -d)/chat-source"
 cat > "$STUB19" <<SH
 #!/usr/bin/env bash
 case "\$1" in
   list) echo called > "$CHAT_GRAPH_HOME/LIST_CALLED" ;;
-  describe) echo "=== \$2 ==="; echo "  provider: codex"; echo "  title: Enriched Title"; echo "  repo: myrepo" ;;
+  describe) echo called > "$CHAT_GRAPH_HOME/DESCRIBE_CALLED"; exit 99 ;;
+  metadata)
+    echo call >> "$CHAT_GRAPH_HOME/METADATA_CALLS"
+    shift; [ "\${1:-}" = --jsonl ] && shift
+    for id in "\$@"; do
+      printf '{"request":"%s","status":"found","id":"%s","provider":"codex","title":"Enriched Title","cwd":"/tmp/myrepo","repo":"myrepo","path":"/tmp/%s.jsonl","kind":"codex-jsonl","source":"fixture"}\n' "\$id" "\$id" "\$id"
+    done
+    ;;
   resolve) echo "\$2" ;;
 esac
 exit 0
@@ -454,8 +467,11 @@ mk_delegation d19b cccccccc-9999-0000-1111-222222222222 agent-synthetic-xyz yes
 "$CG" ingest >/dev/null 2>&1
 if [ ! -f "$CHAT_GRAPH_HOME/LIST_CALLED" ]; then pass "ingest never invokes chat-source list"
 else fail "chat-source list was invoked"; fi
+if [ ! -f "$CHAT_GRAPH_HOME/DESCRIBE_CALLED" ] && [ "$(wc -l < "$CHAT_GRAPH_HOME/METADATA_CALLS" | tr -d ' ')" = 1 ]; then
+  pass "enrichment invokes one metadata batch and zero describe calls"
+else fail "enrichment did not use exactly one metadata batch"; fi
 ok "Enriched Title" "$(q "SELECT title FROM sessions WHERE id='bbbbbbbb-5555-6666-7777-888888888888'")" \
-   "describe enrichment cached title onto real-shaped worker session"
+   "metadata batch cached title onto real-shaped worker session"
 # FIX 4: synthetic id skipped (enriched_at stamped, no title fetched), so a 2nd
 # ingest does NOT keep retrying it and does NOT report chat-source degraded.
 D19OUT="$("$CG" ingest 2>&1)"
@@ -464,6 +480,67 @@ if printf '%s' "$D19OUT" | grep -qi "degraded.*chat-source"; then
 else pass "synthetic id skipped — no chat-source degraded on steady-state ingest"; fi
 ok "1" "$(q "SELECT CASE WHEN enriched_at IS NOT NULL THEN 1 ELSE 0 END FROM sessions WHERE id='agent-synthetic-xyz'")" \
    "synthetic id stamped enriched (leaves the retry pool)"
+
+# --- 19b. partial/absent metadata degrades health but never blocks export ----
+new_env
+STUB19B="$(mktemp -d)/chat-source"
+cat > "$STUB19B" <<SH
+#!/usr/bin/env bash
+case "\$1" in
+  metadata)
+    shift; [ "\${1:-}" = --jsonl ] && shift
+    first=1
+    for id in "\$@"; do
+      if [ "\$first" = 1 ]; then
+        printf '{"request":"%s","status":"found","id":"%s","provider":"codex","title":"Partial Title","cwd":"/tmp/partial","repo":"partial","path":"/tmp/%s.jsonl","kind":"codex-jsonl","source":"fixture"}\n' "\$id" "\$id" "\$id"
+        first=0
+      else
+        printf '{"request":"%s","status":"missing","source":"fixture"}\n' "\$id"
+      fi
+    done ;;
+  describe) echo called > "$CHAT_GRAPH_HOME/DESCRIBE_CALLED"; exit 99 ;;
+esac
+SH
+chmod +x "$STUB19B"; export CHAT_GRAPH_CHAT_SOURCE="$STUB19B"
+mk_delegation d19c aaaaaaaa-1111-2222-3333-444444444444 bbbbbbbb-5555-6666-7777-888888888888 yes
+"$CG" ingest >/dev/null 2>&1; RC19B=$?
+"$CG" export --json >/dev/null 2>&1; EX19B=$?
+if [ "$RC19B" -eq 0 ] && [ "$EX19B" -eq 0 ] && [ ! -f "$CHAT_GRAPH_HOME/DESCRIBE_CALLED" ] && \
+   python3 - "$CHAT_GRAPH_HOME/export/graph.json" <<'PY'
+import json,sys
+d=json.load(open(sys.argv[1]))
+assert "chat-source" in d["data"]["stale_providers"], d["data"]
+assert d["data"]["counts"]["metadata_enrichment_status"] == "degraded"
+assert any(n["title"] == "Partial Title" for n in d["data"]["nodes"])
+PY
+then pass "partial metadata preserves core export and persists degraded health"
+else fail "partial metadata failed export, health persistence, or compatibility boundary"; fi
+ok "1" "$(q "SELECT CASE WHEN enriched_at IS NOT NULL THEN 1 ELSE 0 END FROM sessions WHERE id='bbbbbbbb-5555-6666-7777-888888888888'")" \
+   "unresolved metadata attempt is stamped out of the immediate retry pool"
+
+# --- 19c. metadata timeout reaps its process group and ingest lock ------------
+new_env
+STUB19C="$(mktemp -d)/chat-source"
+cat > "$STUB19C" <<'SH'
+#!/bin/sh
+if [ "$1" = metadata ]; then
+  (
+    trap '' TERM INT
+    while :; do sleep 1; done
+  ) &
+  echo $! > "$CHAT_GRAPH_HOME/metadata-child.pid"
+  wait
+fi
+SH
+chmod +x "$STUB19C"; export CHAT_GRAPH_CHAT_SOURCE="$STUB19C"
+mk_delegation d19d aaaaaaaa-1111-2222-3333-444444444444 bbbbbbbb-5555-6666-7777-888888888888 yes
+CHAT_GRAPH_METADATA_TIMEOUT_S=1 "$CG" ingest --collector titles >/dev/null 2>&1; RC19C=$?
+CHILD19C="$(cat "$CHAT_GRAPH_HOME/metadata-child.pid" 2>/dev/null || true)"; ALIVE19C=0
+for _ in $(seq 1 100); do [ -z "$CHILD19C" ] || ! kill -0 "$CHILD19C" 2>/dev/null && break; sleep 0.02; done
+if [ -n "$CHILD19C" ] && kill -0 "$CHILD19C" 2>/dev/null; then ALIVE19C=1; kill -KILL "$CHILD19C" 2>/dev/null || true; fi
+if [ "$RC19C" -eq 0 ] && [ "$ALIVE19C" -eq 0 ] && [ ! -d "$CHAT_GRAPH_HOME/ingest.lock" ]; then
+  pass "metadata timeout reaps descendants and releases ingest lock"
+else fail "metadata timeout left a descendant or ingest lock (rc=$RC19C alive=$ALIVE19C)"; fi
 
 # --- 20. closeout open-end created, then auto-resolved when block removed ----
 new_env
