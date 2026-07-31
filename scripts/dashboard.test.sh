@@ -183,6 +183,44 @@ c0() { # synthetic/test controls require a physically isolated state home
     ok "synthetic controls reject a symlink alias of the default state home"
   else no "synthetic controls accepted a symlink alias of the default state home"; fi
 
+  fake_home="$ROOT/guard-casefold-home"
+  mkdir -p "$fake_home/.mission-control"
+  candidate="$fake_home/.MISSION-CONTROL"
+  if ! python3 - "$candidate" "$fake_home/.mission-control" <<'PY'
+import os, sys
+assert os.path.samefile(sys.argv[1], sys.argv[2])
+PY
+  then
+    no "case-fold guard fixture does not resolve both spellings to one directory"
+  else
+    rc=0
+    HOME="$fake_home" MISSION_CONTROL_HOME="$candidate" MISSION_CONTROL_NOW_EPOCH=1000 \
+      DASHBOARD_CMD_GIT="cat '$STUB/git.json'" bash "$DASH" collect --due git \
+      >"$ROOT/guard-casefold.out" 2>"$ROOT/guard-casefold.err" || rc=$?
+    if [ "$rc" -ne 0 ] && [ ! -e "$fake_home/.mission-control/data" ]; then
+      ok "synthetic controls reject a case-fold alias of the default state home"
+    else no "synthetic controls accepted a case-fold alias of the default state home"; fi
+  fi
+
+  fake_home="$ROOT/guard-casefold-child-home"
+  mkdir -p "$fake_home/.mission-control"
+  candidate="$fake_home/.MISSION-CONTROL/nested"
+  if ! python3 - "$(dirname "$candidate")" "$fake_home/.mission-control" <<'PY'
+import os, sys
+assert os.path.samefile(sys.argv[1], sys.argv[2])
+PY
+  then
+    no "case-fold child guard fixture does not expose the aliased existing ancestor"
+  else
+    rc=0
+    HOME="$fake_home" MISSION_CONTROL_HOME="$candidate" MISSION_CONTROL_NOW_EPOCH=1000 \
+      DASHBOARD_CMD_GIT="cat '$STUB/git.json'" bash "$DASH" collect --due git \
+      >"$ROOT/guard-casefold-child.out" 2>"$ROOT/guard-casefold-child.err" || rc=$?
+    if [ "$rc" -ne 0 ] && [ ! -e "$fake_home/.mission-control/nested" ]; then
+      ok "synthetic controls reject a descendant below a case-fold default alias"
+    else no "synthetic controls accepted a descendant below a case-fold default alias"; fi
+  fi
+
   fake_home="$ROOT/guard-isolated-home"
   candidate="$ROOT/guard-isolated-state"
   mkdir -p "$fake_home"

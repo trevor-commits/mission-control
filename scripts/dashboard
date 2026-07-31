@@ -59,10 +59,34 @@ import sys
 
 candidate = os.path.realpath(os.path.abspath(os.path.expanduser(sys.argv[1])))
 default = os.path.realpath(os.path.abspath(os.path.expanduser(sys.argv[2])))
-try:
-    aliases_default = os.path.commonpath([candidate, default]) == default
-except ValueError:
-    aliases_default = False
+
+
+def has_existing_default_ancestor(path, default_path):
+    """Compare filesystem identity without creating the candidate path."""
+    # realpath preserves the caller's case on case-insensitive APFS. Walking
+    # upward also catches a missing child below an existing case-fold alias.
+    try:
+        default_stat = os.stat(default_path)
+    except FileNotFoundError:
+        return False
+
+    probe = path
+    while True:
+        try:
+            if os.path.samestat(os.stat(probe), default_stat):
+                return True
+        except (FileNotFoundError, NotADirectoryError):
+            pass
+        parent = os.path.dirname(probe)
+        if parent == probe:
+            return False
+        probe = parent
+
+
+aliases_default = (
+    os.path.commonpath([candidate, default]) == default
+    or has_existing_default_ancestor(candidate, default)
+)
 print("unsafe" if aliases_default else "isolated")
 PY
 ) || {
