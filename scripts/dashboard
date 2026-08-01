@@ -467,6 +467,35 @@ def _terminate_feeder(proc):
     return owned_unreaped and group_stopped and proc.returncode is not None
 
 
+def _register_test_owned_group(proc, argv):
+    """Publish one test-only receipt for the private feeder session."""
+    raw_fd = os.environ.get("DASHBOARD_TEST_OWNED_GROUP_FD")
+    if raw_fd is None:
+        return True
+    try:
+        fd = int(raw_fd, 10)
+        if fd <= 2 or fd > 1024:
+            return False
+        descriptor = os.fstat(fd)
+        flags = fcntl.fcntl(fd, fcntl.F_GETFL)
+        if (not stat.S_ISREG(descriptor.st_mode) or
+                descriptor.st_uid != os.getuid() or
+                not (flags & os.O_APPEND)):
+            return False
+        pgid = os.getpgid(proc.pid)
+        if pgid != proc.pid or pgid <= 1 or pgid == os.getpgrp():
+            return False
+        expected = os.fspath(argv[0])
+        if not expected or any(ch in expected for ch in "\t\r\n"):
+            return False
+        receipt = ("%d\t%d\t%s\n" % (proc.pid, pgid, expected)).encode("utf-8")
+        if len(receipt) > 4096:
+            return False
+        return os.write(fd, receipt) == len(receipt)
+    except (OSError, TypeError, ValueError, IndexError):
+        return False
+
+
 def _chat_graph_timeout_cleanup(graph_home, token):
     def cleanup(proc):
         lock = os.path.join(graph_home, "ingest.lock")
@@ -496,6 +525,9 @@ def _run_argv(argv, timeout_s, env=None, timeout_cleanup=None):
                                 env=env, start_new_session=True)
     except OSError:
         return None, "cannot start feeder"
+    if not _register_test_owned_group(proc, argv):
+        _terminate_feeder(proc)
+        return None, "cannot register test feeder ownership"
     try:
         stdout, stderr = proc.communicate(timeout=timeout_s)
         return subprocess.CompletedProcess(argv, proc.returncode, stdout, stderr), None
