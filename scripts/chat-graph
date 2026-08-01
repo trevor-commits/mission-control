@@ -554,7 +554,12 @@ def _metadata_timeout_s():
         return 20.0
 
 def _stop_metadata_group(proc):
-    """Reap the metadata command and every descendant in its owned process group."""
+    """Bounded cleanup for the metadata command's independently owned group."""
+    # Do not poll/wait the session leader before the final group signal. Reaping
+    # it first releases the PID that names the group and permits an unrelated
+    # process to reuse that identity between cleanup operations.
+    if proc.returncode is not None:
+        return
     try:
         os.killpg(proc.pid, signal.SIGTERM)
     except ProcessLookupError:
@@ -562,25 +567,36 @@ def _stop_metadata_group(proc):
     except OSError:
         pass
     try:
-        proc.wait(timeout=0.25)
-    except subprocess.TimeoutExpired:
+        time.sleep(0.25)
+    except BaseException:
         pass
-    # The session leader may exit while a non-cooperative descendant remains.
-    # Always address the original, still-owned process group before returning.
     try:
         os.killpg(proc.pid, signal.SIGKILL)
     except ProcessLookupError:
         pass
     except OSError:
         pass
+
+    # An escaped descendant can keep inherited stdout/stderr descriptors open
+    # after leaving the process group. Close our read ends before waiting so it
+    # cannot turn timeout cleanup into an unbounded communicate().
+    for pipe in (proc.stdout, proc.stderr):
+        if pipe is not None:
+            try:
+                pipe.close()
+            except OSError:
+                pass
     try:
-        proc.communicate(timeout=1)
+        proc.wait(timeout=1)
     except subprocess.TimeoutExpired:
         try:
             proc.kill()
         except OSError:
             pass
-        proc.communicate()
+        try:
+            proc.wait(timeout=1)
+        except subprocess.TimeoutExpired:
+            pass
 
 def _metadata_batch(ids):
     """Return ordered metadata rows and a degradation reason.

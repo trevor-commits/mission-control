@@ -122,7 +122,7 @@ PY
 }
 
 c0() { # synthetic/test controls require a physically isolated state home
-  local fake_home candidate alias rc real_before
+  local fake_home candidate alias rc real_before swap_old swap_stub swap_pid i
   real_before="$(live_data_fingerprint)"
 
   fake_home="$ROOT/guard-omitted-home"
@@ -171,6 +171,16 @@ c0() { # synthetic/test controls require a physically isolated state home
     ok "synthetic controls reject a child of the default state home"
   else no "synthetic controls accepted a child of the default state home"; fi
 
+  fake_home="$ROOT/guard-ancestor-home"
+  mkdir -p "$fake_home/.mission-control"
+  rc=0
+  HOME="$fake_home" MISSION_CONTROL_HOME="$fake_home" MISSION_CONTROL_NOW_EPOCH=1000 \
+    DASHBOARD_CMD_GIT="cat '$STUB/git.json'" bash "$DASH" collect --force git \
+    >"$ROOT/guard-ancestor.out" 2>"$ROOT/guard-ancestor.err" || rc=$?
+  if [ "$rc" -ne 0 ] && [ ! -e "$fake_home/data" ]; then
+    ok "synthetic controls reject an ancestor of the default state home"
+  else no "synthetic controls accepted an ancestor of the default state home"; fi
+
   fake_home="$ROOT/guard-symlink-home"
   mkdir -p "$fake_home/.mission-control"
   alias="$ROOT/guard-default-alias"
@@ -183,43 +193,40 @@ c0() { # synthetic/test controls require a physically isolated state home
     ok "synthetic controls reject a symlink alias of the default state home"
   else no "synthetic controls accepted a symlink alias of the default state home"; fi
 
+  # Reserve the canonical spelling case-insensitively even before the default
+  # exists. This is deterministic on both case-sensitive and insensitive APFS.
+  fake_home="$ROOT/guard-casefold-missing-home"
+  mkdir -p "$fake_home"
+  candidate="$fake_home/.MISSION-CONTROL"
+  rc=0
+  HOME="$fake_home" MISSION_CONTROL_HOME="$candidate" MISSION_CONTROL_NOW_EPOCH=1000 \
+    DASHBOARD_CMD_GIT="cat '$STUB/git.json'" bash "$DASH" collect --force git \
+    >"$ROOT/guard-casefold-missing.out" 2>"$ROOT/guard-casefold-missing.err" || rc=$?
+  if [ "$rc" -ne 0 ] && [ ! -e "$candidate" ] && [ ! -e "$fake_home/.mission-control" ]; then
+    ok "synthetic controls reserve the absent default spelling across case modes"
+  else no "synthetic controls created an alternate-case default state home"; fi
+
   fake_home="$ROOT/guard-casefold-home"
   mkdir -p "$fake_home/.mission-control"
   candidate="$fake_home/.MISSION-CONTROL"
-  if ! python3 - "$candidate" "$fake_home/.mission-control" <<'PY'
-import os, sys
-assert os.path.samefile(sys.argv[1], sys.argv[2])
-PY
-  then
-    no "case-fold guard fixture does not resolve both spellings to one directory"
-  else
-    rc=0
-    HOME="$fake_home" MISSION_CONTROL_HOME="$candidate" MISSION_CONTROL_NOW_EPOCH=1000 \
-      DASHBOARD_CMD_GIT="cat '$STUB/git.json'" bash "$DASH" collect --due git \
-      >"$ROOT/guard-casefold.out" 2>"$ROOT/guard-casefold.err" || rc=$?
-    if [ "$rc" -ne 0 ] && [ ! -e "$fake_home/.mission-control/data" ]; then
-      ok "synthetic controls reject a case-fold alias of the default state home"
-    else no "synthetic controls accepted a case-fold alias of the default state home"; fi
-  fi
+  rc=0
+  HOME="$fake_home" MISSION_CONTROL_HOME="$candidate" MISSION_CONTROL_NOW_EPOCH=1000 \
+    DASHBOARD_CMD_GIT="cat '$STUB/git.json'" bash "$DASH" collect --due git \
+    >"$ROOT/guard-casefold.out" 2>"$ROOT/guard-casefold.err" || rc=$?
+  if [ "$rc" -ne 0 ] && [ ! -e "$fake_home/.mission-control/data" ]; then
+    ok "synthetic controls reject the reserved alternate-case default spelling"
+  else no "synthetic controls accepted the reserved alternate-case default spelling"; fi
 
   fake_home="$ROOT/guard-casefold-child-home"
   mkdir -p "$fake_home/.mission-control"
   candidate="$fake_home/.MISSION-CONTROL/nested"
-  if ! python3 - "$(dirname "$candidate")" "$fake_home/.mission-control" <<'PY'
-import os, sys
-assert os.path.samefile(sys.argv[1], sys.argv[2])
-PY
-  then
-    no "case-fold child guard fixture does not expose the aliased existing ancestor"
-  else
-    rc=0
-    HOME="$fake_home" MISSION_CONTROL_HOME="$candidate" MISSION_CONTROL_NOW_EPOCH=1000 \
-      DASHBOARD_CMD_GIT="cat '$STUB/git.json'" bash "$DASH" collect --due git \
-      >"$ROOT/guard-casefold-child.out" 2>"$ROOT/guard-casefold-child.err" || rc=$?
-    if [ "$rc" -ne 0 ] && [ ! -e "$fake_home/.mission-control/nested" ]; then
-      ok "synthetic controls reject a descendant below a case-fold default alias"
-    else no "synthetic controls accepted a descendant below a case-fold default alias"; fi
-  fi
+  rc=0
+  HOME="$fake_home" MISSION_CONTROL_HOME="$candidate" MISSION_CONTROL_NOW_EPOCH=1000 \
+    DASHBOARD_CMD_GIT="cat '$STUB/git.json'" bash "$DASH" collect --due git \
+    >"$ROOT/guard-casefold-child.out" 2>"$ROOT/guard-casefold-child.err" || rc=$?
+  if [ "$rc" -ne 0 ] && [ ! -e "$fake_home/.mission-control/nested" ]; then
+    ok "synthetic controls reject a descendant below a reserved case-fold default"
+  else no "synthetic controls accepted a descendant below a reserved case-fold default"; fi
 
   fake_home="$ROOT/guard-isolated-home"
   candidate="$ROOT/guard-isolated-state"
@@ -231,6 +238,45 @@ PY
   if [ "$rc" -eq 0 ] && [ -f "$candidate/data/git.json" ]; then
     ok "synthetic controls accept an explicit isolated temporary state home"
   else no "synthetic controls rejected an isolated temporary state home"; fi
+
+  # Deterministic check/use swap: once the dashboard reaches its feeder, rename
+  # the accepted state directory and replace its pathname with a default-state
+  # symlink. Writes must remain attached to the originally accepted directory.
+  fake_home="$ROOT/guard-swap-home"
+  candidate="$ROOT/guard-swap-state"
+  swap_old="$ROOT/guard-swap-state-old"
+  swap_stub="$ROOT/guard-swap-feeder"
+  mkdir -p "$fake_home/.mission-control/data" "$candidate"
+  cat > "$swap_stub" <<EOF
+#!/bin/sh
+: > '$ROOT/guard-swap-ready'
+while [ ! -e '$ROOT/guard-swap-continue' ]; do sleep 0.01; done
+cat '$STUB/git.json'
+EOF
+  chmod +x "$swap_stub"
+  HOME="$fake_home" MISSION_CONTROL_HOME="$candidate" MISSION_CONTROL_NOW_EPOCH=1000 \
+    DASHBOARD_CMD_GIT="$swap_stub" bash "$DASH" collect --force git \
+    >"$ROOT/guard-swap.out" 2>"$ROOT/guard-swap.err" &
+  swap_pid=$!
+  i=0
+  while [ ! -e "$ROOT/guard-swap-ready" ] && [ "$i" -lt 500 ]; do
+    sleep 0.01; i=$((i + 1))
+  done
+  rc=0
+  if [ ! -e "$ROOT/guard-swap-ready" ]; then
+    kill "$swap_pid" 2>/dev/null || true
+    wait "$swap_pid" 2>/dev/null || true
+    rc=124
+  else
+    mv "$candidate" "$swap_old"
+    ln -s "$fake_home/.mission-control" "$candidate"
+    : > "$ROOT/guard-swap-continue"
+    wait "$swap_pid" || rc=$?
+  fi
+  if [ "$rc" -eq 0 ] && [ -f "$swap_old/data/git.json" ] && \
+     [ ! -e "$fake_home/.mission-control/data/git.json" ]; then
+    ok "synthetic state writes stay pinned across a pathname swap"
+  else no "synthetic state writes followed a replaced pathname (rc=$rc)"; fi
 
   if [ "$real_before" != "$(live_data_fingerprint)" ]; then
     no "state-home guard matrix changed live Mission Control data"
@@ -714,7 +760,7 @@ c13() { # FIX 6: the data/ dir must be 0700, not world-readable
 }
 
 c14() { # isolated install wires composer/deadman/common + all three plists
-  local h mch sbin; h="$(mktemp -d)"; mch="$h/state"; sbin="$(mktemp -d)"
+  local h mch physical_mch sbin; h="$(mktemp -d)"; mch="$h/state"; sbin="$(mktemp -d)"
   cat > "$sbin/launchctl" <<'EOF'
 #!/bin/sh
 case "$1" in
@@ -727,6 +773,7 @@ EOF
   HOME="$h" PATH="$sbin:$PATH" REPO_ROOT="$REPO" MISSION_CONTROL_HOME="$mch" LAUNCH_CAPTURE="$h/bootstrapped" \
     DASHBOARD_INSTALL_ACTIVATE_GATED=1 \
     bash "$DASH" install >/dev/null 2>&1
+  physical_mch="$(cd "$mch" && pwd -P)"
   local miss=0 p
   [ -x "$mch/bin/morning-brief" ] || miss=1
   [ -x "$mch/bin/morning-brief-deadman" ] || miss=1
@@ -741,6 +788,8 @@ EOF
   grep -qx 'com.gillettes.outcome-extractor.plist' "$h/bootstrapped" || miss=1
   grep -q '<string>extract-outcomes</string>' \
     "$h/Library/LaunchAgents/com.gillettes.outcome-extractor.plist" || miss=1
+  grep -Fq "<string>$physical_mch/bin/dashboard</string>" \
+    "$h/Library/LaunchAgents/com.gillettes.mission-control.plist" || miss=1
   if [ "$miss" = 0 ]; then ok "install: composer, decisions, deadman, common policy, and plists wire in isolation"
   else no "install: Morning Brief runtime/plist wiring incomplete"; fi
 }

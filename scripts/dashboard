@@ -16,6 +16,18 @@
 
 set -uo pipefail
 
+# Resolve code/config roots before a synthetic state home can pin this process's
+# working directory. Relative REPO_ROOT overrides keep their caller-relative
+# meaning after that pin.
+ORIGINAL_WORKING_DIRECTORY="$(pwd -P)"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+if [ "${REPO_ROOT+x}" = x ] && [ -n "${REPO_ROOT:-}" ]; then
+  case "$REPO_ROOT" in
+    /*) ;;
+    *) REPO_ROOT="$ORIGINAL_WORKING_DIRECTORY/$REPO_ROOT" ;;
+  esac
+fi
+
 # Synthetic clocks, test seams, and feeder overrides must never inherit the
 # default live state home. Require an explicit state boundary before resolving
 # MISSION_CONTROL_HOME so an omitted env assignment fails before any mkdir,
@@ -53,61 +65,152 @@ if [ -n "$SYNTHETIC_CONTROL_NAME" ]; then
     echo "dashboard: could not verify the synthetic/test Mission Control state boundary" >&2
     exit 2
   }
-  state_boundary=$("$state_boundary_python" - "$MISSION_CONTROL_HOME" "$HOME/.mission-control" <<'PY'
+  requested_state_home="$MISSION_CONTROL_HOME"
+  state_boundary=$("$state_boundary_python" - "$requested_state_home" "$HOME/.mission-control" <<'PY'
 import os
 import sys
 
-candidate = os.path.realpath(os.path.abspath(os.path.expanduser(sys.argv[1])))
-default = os.path.realpath(os.path.abspath(os.path.expanduser(sys.argv[2])))
+candidate = os.path.normpath(os.path.abspath(os.path.expanduser(sys.argv[1])))
+default = os.path.normpath(os.path.abspath(os.path.expanduser(sys.argv[2])))
+directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
 
 
-def has_existing_default_ancestor(path, default_path):
-    """Compare filesystem identity without creating the candidate path."""
-    # realpath preserves the caller's case on case-insensitive APFS. Walking
-    # upward also catches a missing child below an existing case-fold alias.
+def folded_within(path, root):
+    path = os.path.normpath(path).casefold()
+    root = os.path.normpath(root).casefold()
+    return path == root or path.startswith(root.rstrip(os.sep) + os.sep)
+
+
+def fd_is_at_or_below(start_fd, target_stat):
+    """Walk pinned directory identities without reopening caller pathnames."""
+    current = os.dup(start_fd)
     try:
-        default_stat = os.stat(default_path)
-    except FileNotFoundError:
-        return False
-
-    probe = path
-    while True:
-        try:
-            if os.path.samestat(os.stat(probe), default_stat):
+        while True:
+            current_stat = os.fstat(current)
+            if os.path.samestat(current_stat, target_stat):
                 return True
-        except (FileNotFoundError, NotADirectoryError):
-            pass
-        parent = os.path.dirname(probe)
-        if parent == probe:
-            return False
-        probe = parent
+            parent = os.open("..", directory_flags, dir_fd=current)
+            parent_stat = os.fstat(parent)
+            if os.path.samestat(current_stat, parent_stat):
+                os.close(parent)
+                return False
+            os.close(current)
+            current = parent
+    finally:
+        os.close(current)
 
 
-aliases_default = (
-    os.path.commonpath([candidate, default]) == default
-    or has_existing_default_ancestor(candidate, default)
-)
-print("unsafe" if aliases_default else "isolated")
+def reject():
+    print("unsafe")
+    raise SystemExit(0)
+
+
+# Reserve the canonical namespace case-insensitively on every APFS mode. This
+# also closes the absent-default hole where samefile/stat evidence does not yet
+# exist, and rejects both descendants and ancestors.
+if (folded_within(candidate, default) or folded_within(default, candidate)):
+    reject()
+real_candidate = os.path.realpath(candidate)
+real_default = os.path.realpath(default)
+if (folded_within(real_candidate, real_default) or
+        folded_within(real_default, real_candidate)):
+    reject()
+
+default_fd = None
+try:
+    default_fd = os.open(real_default, directory_flags)
+except FileNotFoundError:
+    pass
+except OSError:
+    reject()
+
+candidate_fd = None
+try:
+    try:
+        candidate_fd = os.open(candidate, directory_flags)
+    except FileNotFoundError:
+        parent, leaf = os.path.dirname(candidate), os.path.basename(candidate)
+        if not leaf or leaf in (".", ".."):
+            reject()
+        try:
+            parent_fd = os.open(parent, directory_flags)
+        except OSError:
+            reject()
+        try:
+            if default_fd is not None and fd_is_at_or_below(
+                    parent_fd, os.fstat(default_fd)):
+                reject()
+            try:
+                os.mkdir(leaf, 0o700, dir_fd=parent_fd)
+            except FileExistsError:
+                pass
+            candidate_fd = os.open(leaf, directory_flags, dir_fd=parent_fd)
+        finally:
+            os.close(parent_fd)
+    candidate_stat = os.fstat(candidate_fd)
+    if default_fd is not None:
+        default_stat = os.fstat(default_fd)
+        if (fd_is_at_or_below(candidate_fd, default_stat) or
+                fd_is_at_or_below(default_fd, candidate_stat)):
+            reject()
+    print("isolated:%s:%s" % (candidate_stat.st_dev, candidate_stat.st_ino))
+except (OSError, ValueError):
+    reject()
+finally:
+    if candidate_fd is not None:
+        os.close(candidate_fd)
+    if default_fd is not None:
+        os.close(default_fd)
 PY
 ) || {
     echo "dashboard: could not verify the synthetic/test Mission Control state boundary" >&2
     exit 2
   }
-  if [ "$state_boundary" != "isolated" ]; then
-    echo "dashboard: synthetic/test control $SYNTHETIC_CONTROL_NAME requires MISSION_CONTROL_HOME outside the canonical default state tree" >&2
+  case "$state_boundary" in
+    isolated:*) ;;
+    unsafe)
+      echo "dashboard: synthetic/test control $SYNTHETIC_CONTROL_NAME requires MISSION_CONTROL_HOME outside the canonical default state tree" >&2
+      exit 2
+      ;;
+    *)
+      echo "dashboard: could not verify the synthetic/test Mission Control state boundary" >&2
+      exit 2
+      ;;
+  esac
+  state_identity="${state_boundary#isolated:}"
+  if ! cd -P "$requested_state_home"; then
+    echo "dashboard: accepted synthetic/test Mission Control state home disappeared before pinning" >&2
     exit 2
   fi
+  pinned_state=$("$state_boundary_python" - "$state_identity" <<'PY'
+import os,sys
+try:
+    dev, ino = (int(value) for value in sys.argv[1].split(":"))
+    current = os.stat(".")
+    print("pinned" if (current.st_dev, current.st_ino) == (dev, ino) else "changed")
+except (OSError, TypeError, ValueError):
+    print("changed")
+PY
+)
+  if [ "$pinned_state" != "pinned" ]; then
+    echo "dashboard: synthetic/test Mission Control state home changed before pinning" >&2
+    exit 2
+  fi
+  MISSION_CONTROL_HOME_CANONICAL="$(pwd -P)"
+  MISSION_CONTROL_HOME="."
+  MISSION_CONTROL_STATE_PINNED=1
+  export MISSION_CONTROL_HOME_CANONICAL MISSION_CONTROL_STATE_PINNED
 fi
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 # install bakes the resolved repo root into the copied runtime (bin/dashboard),
 # whose SCRIPT_DIR is ~/.mission-control/bin — dirname of that is NOT the repo.
 # Empty in the committed source, so the repo copy falls back to dirname(SCRIPT_DIR).
 REPO_ROOT_DEFAULT=""
 REPO_ROOT="${REPO_ROOT:-${REPO_ROOT_DEFAULT:-$(dirname "$SCRIPT_DIR")}}"  # pre-set respected (tests point it at a fixture repo)
 MISSION_CONTROL_HOME="${MISSION_CONTROL_HOME:-$HOME/.mission-control}"
+MISSION_CONTROL_PERSISTED_HOME="${MISSION_CONTROL_HOME_CANONICAL:-$MISSION_CONTROL_HOME}"
 MISSION_CONTROL_RUNTIME_DIR="$SCRIPT_DIR"
-export MISSION_CONTROL_HOME REPO_ROOT MISSION_CONTROL_RUNTIME_DIR
+export MISSION_CONTROL_HOME MISSION_CONTROL_PERSISTED_HOME REPO_ROOT MISSION_CONTROL_RUNTIME_DIR
 
 # --- python3 engine (collect/status/demo/freshness) -------------------------
 # Code read from stdin (`python3 -`) so the body may use any quoting freely and
@@ -1326,13 +1429,13 @@ PYEOF
 _mc_panel_autoload_allowed() {
   [ "${DASHBOARD_NO_OPEN:-}" = "1" ] && return 1
   [ "${DASHBOARD_INSTALL_NO_LAUNCHD:-0}" = "1" ] && return 1
-  case "$MISSION_CONTROL_HOME" in
+  case "$MISSION_CONTROL_PERSISTED_HOME" in
     /tmp/*|/private/tmp/*|/var/folders/*)
       return 1
       ;;
   esac
   if [ -n "${TMPDIR:-}" ]; then
-    case "$MISSION_CONTROL_HOME" in
+    case "$MISSION_CONTROL_PERSISTED_HOME" in
       "${TMPDIR%/}"/*) return 1 ;;
     esac
   fi
@@ -1360,7 +1463,7 @@ _ensure_mc_panel_autoload() {
     return 1
   fi
   rendered="$(mktemp "${TMPDIR:-/tmp}/mc-panel-plist.XXXXXX")" || return 1
-  if ! python3 - "$tmpl" "$rendered" "$MISSION_CONTROL_HOME" "$HOME" "$REPO_ROOT" <<'PYEOF'
+  if ! python3 - "$tmpl" "$rendered" "$MISSION_CONTROL_PERSISTED_HOME" "$HOME" "$REPO_ROOT" <<'PYEOF'
 import sys
 source, dest, mc_home, home, repo = sys.argv[1:]
 text = open(source).read()
@@ -1926,7 +2029,7 @@ PYEOF
       echo "install: required plist missing from worktree: launchd/$plist.template" >&2
       rm -f "$source_tmp" "$rendered"; return 1
     fi
-    if ! python3 - "$source_tmp" "$rendered" "$MISSION_CONTROL_HOME" "$HOME" "$REPO_ROOT" <<'PYEOF'
+    if ! python3 - "$source_tmp" "$rendered" "$MISSION_CONTROL_PERSISTED_HOME" "$HOME" "$REPO_ROOT" <<'PYEOF'
 import sys
 source, dest, mc_home, home, repo = sys.argv[1:]
 text = open(source).read()

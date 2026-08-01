@@ -548,6 +548,145 @@ if [ "$RC19C" -eq 0 ] && [ "$ALIVE19C" -eq 0 ] && [ ! -d "$CHAT_GRAPH_HOME/inges
   pass "metadata timeout reaps descendants and releases ingest lock"
 else fail "metadata timeout left a descendant or ingest lock (rc=$RC19C alive=$ALIVE19C)"; fi
 
+# --- 19d. group identity remains pinned until the final group signal --------
+new_env
+if python3 - "$CG" <<'PY'
+import importlib.machinery, importlib.util, os, signal, sys
+
+tool = sys.argv[1]
+sys.path.insert(0, os.path.dirname(tool))
+loader = importlib.machinery.SourceFileLoader("chat_graph_metadata_order", tool)
+spec = importlib.util.spec_from_loader(loader.name, loader)
+cg = importlib.util.module_from_spec(spec)
+loader.exec_module(cg)
+
+events = []
+
+class Pipe:
+    def close(self):
+        events.append("close")
+
+class Proc:
+    pid = 424242
+    returncode = None
+    stdout = Pipe()
+    stderr = Pipe()
+
+    def wait(self, timeout=None):
+        events.append(("wait", timeout))
+        self.returncode = -signal.SIGKILL
+        return self.returncode
+
+    def kill(self):
+        events.append("kill-direct")
+
+    def communicate(self, timeout=None):
+        events.append(("communicate", timeout))
+        return "", ""
+
+proc = Proc()
+cg.os.killpg = lambda pid, sig: events.append(("killpg", sig))
+cg.time.sleep = lambda delay: events.append(("sleep", delay))
+cg._stop_metadata_group(proc)
+kill_term = events.index(("killpg", signal.SIGTERM))
+kill_kill = events.index(("killpg", signal.SIGKILL))
+first_wait = next(i for i, event in enumerate(events) if isinstance(event, tuple) and event[0] == "wait")
+assert kill_term < kill_kill < first_wait, events
+assert not any(isinstance(event, tuple) and event[0] == "communicate" and event[1] is None
+               for event in events), events
+PY
+then pass "metadata cleanup keeps the leader unreaped through final group kill"
+else fail "metadata cleanup reaped ownership before final group kill"; fi
+
+# --- 19e. timeout cleanup never falls through to unbounded communicate -------
+new_env
+if python3 - "$CG" <<'PY'
+import importlib.machinery, importlib.util, os, signal, subprocess, sys
+
+tool = sys.argv[1]
+sys.path.insert(0, os.path.dirname(tool))
+loader = importlib.machinery.SourceFileLoader("chat_graph_metadata_bound", tool)
+spec = importlib.util.spec_from_loader(loader.name, loader)
+cg = importlib.util.module_from_spec(spec)
+loader.exec_module(cg)
+
+events = []
+
+class Pipe:
+    def close(self):
+        events.append("close")
+
+class Proc:
+    pid = 434343
+    returncode = None
+    stdout = Pipe()
+    stderr = Pipe()
+
+    def wait(self, timeout=None):
+        events.append(("wait", timeout))
+        self.returncode = -signal.SIGKILL
+        return self.returncode
+
+    def kill(self):
+        events.append("kill-direct")
+
+    def communicate(self, timeout=None):
+        events.append(("communicate", timeout))
+        if timeout is not None:
+            raise subprocess.TimeoutExpired("metadata", timeout)
+        return "", ""
+
+proc = Proc()
+cg.os.killpg = lambda pid, sig: events.append(("killpg", sig))
+cg.time.sleep = lambda delay: events.append(("sleep", delay))
+cg._stop_metadata_group(proc)
+assert not any(isinstance(event, tuple) and event[0] == "communicate" and event[1] is None
+               for event in events), events
+PY
+then pass "metadata cleanup has no unbounded communicate fallback"
+else fail "metadata cleanup can wait forever on an escaped pipe holder"; fi
+
+# --- 19f. escaped pipe holder cannot turn timeout cleanup into an unbounded wait
+new_env
+STUB19F="$(mktemp -d)/chat-source"
+cat > "$STUB19F" <<'SH'
+#!/bin/sh
+if [ "$1" = metadata ]; then
+  python3 - <<'PY'
+import os,signal,time
+if os.fork() != 0:
+    os._exit(0)
+os.setsid()
+signal.signal(signal.SIGHUP, signal.SIG_IGN)
+signal.signal(signal.SIGTERM, signal.SIG_IGN)
+signal.signal(signal.SIGINT, signal.SIG_IGN)
+with open(os.path.join(os.environ["CHAT_GRAPH_HOME"], "metadata-escaped.pid"), "w") as handle:
+    handle.write(str(os.getpid()))
+    handle.flush()
+time.sleep(6)
+PY
+  while [ ! -s "$CHAT_GRAPH_HOME/metadata-escaped.pid" ]; do sleep 0.01; done
+  while :; do sleep 1; done
+fi
+SH
+chmod +x "$STUB19F"; export CHAT_GRAPH_CHAT_SOURCE="$STUB19F"
+mk_delegation d19f aaaaaaaa-1111-2222-3333-444444444444 bbbbbbbb-5555-6666-7777-888888888888 yes
+START19F="$(python3 -c 'import time; print(time.monotonic())')"
+CHAT_GRAPH_METADATA_TIMEOUT_S=1 "$CG" ingest --collector titles >/dev/null 2>&1; RC19F=$?
+END19F="$(python3 -c 'import time; print(time.monotonic())')"
+BOUNDED19F="$(python3 - "$START19F" "$END19F" <<'PY'
+import sys
+print(1 if float(sys.argv[2]) - float(sys.argv[1]) < 3.5 else 0)
+PY
+)"
+ESCAPED19F="$(cat "$CHAT_GRAPH_HOME/metadata-escaped.pid" 2>/dev/null || true)"
+if [ -n "$ESCAPED19F" ] && kill -0 "$ESCAPED19F" 2>/dev/null; then
+  kill -KILL "$ESCAPED19F" 2>/dev/null || true
+fi
+if [ "$RC19F" -eq 0 ] && [ "$BOUNDED19F" = 1 ] && [ ! -d "$CHAT_GRAPH_HOME/ingest.lock" ]; then
+  pass "metadata timeout closes inherited pipes and returns within its bound"
+else fail "metadata timeout waited on an escaped pipe holder (rc=$RC19F bounded=$BOUNDED19F)"; fi
+
 # --- 20. closeout open-end created, then auto-resolved when block removed ----
 new_env
 mkdir -p "$(cl_root)"
