@@ -10,14 +10,58 @@ export PYTHONDONTWRITEBYTECODE=1
 # while a dashboard child is blocked in a synchronous feeder collection.
 DASHBOARD_TEST_BASH=/bin/bash
 run_pinned_bash() {
-  local child rc=0
-  command "$DASHBOARD_TEST_BASH" "$@" &
+  local child rc=0 separator=0
+  local -a env_args
+  while [ "$#" -gt 0 ]; do
+    if [ "$1" = --dashboard-command ]; then separator=1; shift; break; fi
+    env_args[${#env_args[@]}]="$1"
+    shift
+  done
+  [ "$separator" = 1 ] && [ "$#" -gt 0 ] || return 64
+  if [ "${#env_args[@]}" -gt 0 ]; then
+    /usr/bin/env "${env_args[@]}" "$DASHBOARD_TEST_BASH" "$@" &
+  else
+    /usr/bin/env "$DASHBOARD_TEST_BASH" "$@" &
+  fi
   child=$!
   register_owned_process "$child" 2>/dev/null || true
   wait "$child" || rc=$?
   return "$rc"
 }
-bash() { run_pinned_bash "$@"; }
+bash() { run_pinned_bash --dashboard-command "$@"; }
+
+# `/usr/bin/env ... bash dashboard` cannot invoke a shell function itself.
+# Route that exact test pattern back through the one interruptible launcher;
+# preserve every other env invocation byte-for-byte through the system tool.
+env() {
+  local candidate
+  local -a original env_args
+  original=("$@")
+  while [ "$#" -gt 0 ]; do
+    if [ "$1" = bash ]; then
+      shift
+      candidate="${1:-}"
+      case "$candidate" in
+        "${DASH:-}"|*/scripts/dashboard|*/bin/dashboard)
+          if [ "${#env_args[@]}" -gt 0 ]; then
+            run_pinned_bash "${env_args[@]}" --dashboard-command "$@"
+          else
+            run_pinned_bash --dashboard-command "$@"
+          fi
+          return $?
+          ;;
+      esac
+      break
+    fi
+    env_args[${#env_args[@]}]="$1"
+    shift
+  done
+  if [ "${#original[@]}" -gt 0 ]; then
+    command /usr/bin/env "${original[@]}"
+  else
+    command /usr/bin/env
+  fi
+}
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 REPO="$(dirname "$HERE")"
@@ -280,6 +324,7 @@ if [ -n "${DASHBOARD_TEST_INTERRUPT_PROBE_READY:-}" ]; then
   case "$probe_kind" in
     c0) probe_script="$probe_dir/guard-swap-feeder" ;;
     c4b) probe_script="$probe_dir/backoff-git" ;;
+    env) probe_script="$probe_dir/env-scrubbed-git" ;;
     *) exit 64 ;;
   esac
   if [ "$probe_kind" = c0 ]; then
@@ -344,11 +389,20 @@ PY
     wait "$probe_runner"
     exit $?
   fi
-  FIXTURE_PROBE_READY="$DASHBOARD_TEST_INTERRUPT_PROBE_READY" \
-    FIXTURE_PROBE_ROOT="$ROOT" MISSION_CONTROL_HOME="$probe_home" \
-    DASHBOARD_CMD_GIT="$probe_script" run_pinned_bash "$DASH" collect --force git \
-    >"$DASHBOARD_TEST_INTERRUPT_PROBE_READY.dashboard.out" \
-    2>"$DASHBOARD_TEST_INTERRUPT_PROBE_READY.dashboard.err"
+  if [ "$probe_kind" = env ]; then
+    PATH=/usr/bin:/bin env -u DASHBOARD_CMD_USAGE \
+      FIXTURE_PROBE_READY="$DASHBOARD_TEST_INTERRUPT_PROBE_READY" \
+      FIXTURE_PROBE_ROOT="$ROOT" MISSION_CONTROL_HOME="$probe_home" \
+      DASHBOARD_CMD_GIT="$probe_script" bash "$DASH" collect --force git \
+      >"$DASHBOARD_TEST_INTERRUPT_PROBE_READY.dashboard.out" \
+      2>"$DASHBOARD_TEST_INTERRUPT_PROBE_READY.dashboard.err"
+  else
+    FIXTURE_PROBE_READY="$DASHBOARD_TEST_INTERRUPT_PROBE_READY" \
+      FIXTURE_PROBE_ROOT="$ROOT" MISSION_CONTROL_HOME="$probe_home" \
+      DASHBOARD_CMD_GIT="$probe_script" run_pinned_bash --dashboard-command "$DASH" collect --force git \
+      >"$DASHBOARD_TEST_INTERRUPT_PROBE_READY.dashboard.out" \
+      2>"$DASHBOARD_TEST_INTERRUPT_PROBE_READY.dashboard.err"
+  fi
   exit $?
 fi
 export MISSION_CONTROL_HOME="$ROOT/default-mission-control-home"
@@ -1838,7 +1892,7 @@ EOF
 
 c31() { # the real macOS Bash 3.2 path executes embedded Python, not EOF
   local h count rc; h="$(newhome)"
-  MISSION_CONTROL_HOME="$h" /bin/bash "$DASH" collect --force >/dev/null 2>&1; rc=$?
+  MISSION_CONTROL_HOME="$h" bash "$DASH" collect --force >/dev/null 2>&1; rc=$?
   count="$(find "$h/data" -type f \( -name '*.json' -o -name '*.js' \) 2>/dev/null | wc -l | tr -d ' ')"
   # Seven feeds emit canonical JSON + JS plus a healthy error sidecar. Keeping the
   # sidecar present prevents browsers from logging a missing resource on success.
@@ -2183,7 +2237,7 @@ c39a() { # external interruption reaps background and synchronous feeder groups
   local kind probe_tmp ready harness harness_identity completed leader pgid identity descendant descendant_identity
   local fixture_root canary_script canary_ready canary canary_pgid canary_identity bounded group_alive canary_alive
   local leader_alive descendant_alive
-  for kind in c0 c4b; do
+  for kind in c0 c4b env; do
     probe_tmp="$(mktemp -d)"; ready="$probe_tmp/$kind.ready"
     canary_script="$probe_tmp/unrelated-canary"; canary_ready="$probe_tmp/canary.ready"
     cat > "$canary_script" <<'EOF'
