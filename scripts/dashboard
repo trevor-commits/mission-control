@@ -1725,6 +1725,13 @@ PYEOF
     echo "panel: app staging failed closed" >&2
     return 1
   fi
+  # Re-seal after replacing the bundle's executable: modern macOS SIGKILLs the
+  # app ("Launch Constraint Violation" / Code Signature Invalid) when a bundle's
+  # Mach-O changes under a stale seal. Ad-hoc is sufficient for a local
+  # accessory app; without this the panel dies within seconds of kickstart.
+  if ! /usr/bin/codesign --force --deep -s - "$app_dir" 2>/dev/null; then
+    echo "panel: warning: ad-hoc codesign of staged app failed; launchd may kill it on launch" >&2
+  fi
   pkill -f '[m]c-panel' 2>/dev/null || true
   pkill -f 'Mission Control Panel' 2>/dev/null || true
   if [ "${DASHBOARD_NO_OPEN:-}" != "1" ]; then
