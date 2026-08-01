@@ -68,12 +68,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
       self?.pushHeadroom()
       self?.updateStatusTitle()
     }
-    if UserDefaults.standard.bool(forKey: "mcPinVisible") {
+    let pinWanted = UserDefaults.standard.bool(forKey: "mcPinVisible")
+    plog("launch pinWanted=\(pinWanted) bundle=\(Bundle.main.bundleIdentifier ?? "none")")
+    if pinWanted {
       showPinPanel()
     }
   }
 
   // MARK: - AI Headroom (feed read, live injection, pinned corner card)
+
+  // Plain file log: NSLog goes to the unified log where scripted reads are
+  // unreliable; ops debugging needs a greppable file next to launchd's logs.
+  func plog(_ msg: String) {
+    let url = FileManager.default.homeDirectoryForCurrentUser
+      .appendingPathComponent(".mission-control/logs/mc-panel-debug.log")
+    let stamp = ISO8601DateFormatter().string(from: Date())
+    guard let data = "\(stamp) \(msg)\n".data(using: .utf8) else { return }
+    if let handle = try? FileHandle(forWritingTo: url) {
+      handle.seekToEndOfFile()
+      handle.write(data)
+      try? handle.close()
+    } else {
+      try? data.write(to: url)
+    }
+  }
 
   func headroomFeedJSON() -> String? {
     let url = FileManager.default.homeDirectoryForCurrentUser
@@ -150,7 +168,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
 
     if let saved = UserDefaults.standard.string(forKey: "mcPinFrame"), !saved.isEmpty {
       panel.setFrame(NSRectFromString(saved), display: false)
-    } else if let screen = NSScreen.main {
+    } else if let screen = NSScreen.main ?? NSScreen.screens.first {
       let v = screen.visibleFrame
       panel.setFrameOrigin(NSPoint(x: v.maxX - 336 - 12, y: v.minY + 12))
     }
@@ -158,6 +176,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
     panel.orderFrontRegardless()
     pinPanel = panel
     UserDefaults.standard.set(true, forKey: "mcPinVisible")
+    plog("pin panel shown frame=\(NSStringFromRect(panel.frame)) visible=\(panel.isVisible) screens=\(NSScreen.screens.map { NSStringFromRect($0.frame) })")
   }
 
   func loadPin(into web: WKWebView) {
