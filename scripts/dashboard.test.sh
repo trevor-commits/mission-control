@@ -22,7 +22,124 @@ ok() { echo "PASS: $1"; PASS=$((PASS + 1)); }
 no() { echo "FAIL: $1"; FAIL=$((FAIL + 1)); }
 
 ROOT="$(mktemp -d "${TMPDIR:-/tmp}/mc-test.XXXXXX")"
-trap 'rm -rf "$ROOT"' EXIT
+OWNED_PROCESS_REGISTRY="$ROOT/owned-processes.tsv"
+: > "$OWNED_PROCESS_REGISTRY"
+
+fixture_process_identity() {
+  /bin/ps -p "$1" -o lstart= 2>/dev/null | /usr/bin/awk '{$1=$1; print}'
+}
+
+register_owned_process() {
+  local pid="${1:-}" identity
+  case "$pid" in ''|*[!0-9]*) return 1 ;; esac
+  identity="$(fixture_process_identity "$pid")"
+  [ -n "$identity" ] || return 1
+  printf '%s\t%s\n' "$pid" "$identity" >> "$OWNED_PROCESS_REGISTRY"
+}
+
+register_owned_pidfiles() {
+  local pidfile pid command_line
+  while IFS= read -r pidfile; do
+    pid="$(/usr/bin/sed -n '1{s/[^0-9].*$//;p;}' "$pidfile" 2>/dev/null)"
+    case "$pid" in ''|*[!0-9]*) continue ;; esac
+    command_line="$(/bin/ps -p "$pid" -o command= 2>/dev/null)"
+    case "$command_line" in
+      *"$ROOT"*) register_owned_process "$pid" 2>/dev/null || true ;;
+    esac
+  done < <(/usr/bin/find "$ROOT" -type f -name '*.pid' -print 2>/dev/null)
+}
+
+fixture_process_matches() {
+  local current
+  current="$(fixture_process_identity "$1")"
+  [ -n "$current" ] && [ "$current" = "$2" ]
+}
+
+cleanup_owned_processes() {
+  local pid identity i alive
+  register_owned_pidfiles
+  while IFS="$(printf '\t')" read -r pid identity; do
+    fixture_process_matches "$pid" "$identity" || continue
+    kill -TERM "$pid" 2>/dev/null || true
+  done < "$OWNED_PROCESS_REGISTRY"
+  i=0
+  while [ "$i" -lt 50 ]; do
+    alive=0
+    while IFS="$(printf '\t')" read -r pid identity; do
+      if fixture_process_matches "$pid" "$identity"; then alive=1; break; fi
+    done < "$OWNED_PROCESS_REGISTRY"
+    [ "$alive" = 1 ] || break
+    sleep 0.01
+    i=$((i + 1))
+  done
+  while IFS="$(printf '\t')" read -r pid identity; do
+    fixture_process_matches "$pid" "$identity" || continue
+    kill -KILL "$pid" 2>/dev/null || true
+  done < "$OWNED_PROCESS_REGISTRY"
+}
+
+SUITE_CLEANED=0
+cleanup_suite() {
+  [ "$SUITE_CLEANED" = 0 ] || return
+  SUITE_CLEANED=1
+  cleanup_owned_processes
+  rm -rf "$ROOT"
+}
+
+suite_signal() {
+  local code="$1"
+  trap - EXIT INT TERM HUP
+  cleanup_suite
+  exit "$code"
+}
+
+trap 'rc=$?; trap - EXIT INT TERM HUP; cleanup_suite; exit "$rc"' EXIT
+trap 'suite_signal 130' INT
+trap 'suite_signal 143' TERM
+trap 'suite_signal 129' HUP
+
+# Keep every anonymous synthetic root under the one suite-owned root. Explicit
+# templates retain their caller-selected path.
+mktemp() {
+  if [ "$#" -eq 0 ]; then
+    /usr/bin/mktemp "$ROOT/tmp.XXXXXX"
+  elif [ "$#" -eq 1 ] && [ "$1" = "-d" ]; then
+    /usr/bin/mktemp -d "$ROOT/tmp.XXXXXX"
+  else
+    /usr/bin/mktemp "$@"
+  fi
+}
+
+# Hidden probe used only by c39a. It reproduces an interrupted outer runner
+# with a TERM/INT-ignoring synthetic grandchild whose command is rooted below
+# this suite's unique temporary directory.
+if [ -n "${DASHBOARD_TEST_INTERRUPT_PROBE_READY:-}" ]; then
+  probe_dir="$(mktemp -d)"
+  probe_script="$probe_dir/stubborn-feeder"
+  probe_launcher="$probe_dir/launcher"
+  cat > "$probe_script" <<'EOF'
+#!/bin/sh
+trap '' TERM INT
+printf '%s\n' "$$" > "$FIXTURE_PROBE_PIDFILE"
+while :; do sleep 1; done
+EOF
+  chmod +x "$probe_script"
+  cat > "$probe_launcher" <<'EOF'
+#!/bin/sh
+FIXTURE_PROBE_PIDFILE="$FIXTURE_PROBE_PIDFILE" /bin/sh "$FIXTURE_PROBE_SCRIPT" &
+wait
+EOF
+  chmod +x "$probe_launcher"
+  FIXTURE_PROBE_PIDFILE="$probe_dir/feeder.pid" FIXTURE_PROBE_SCRIPT="$probe_script" \
+    /bin/sh "$probe_launcher" &
+  probe_runner=$!
+  register_owned_process "$probe_runner"
+  for _ in $(seq 1 100); do [ -f "$probe_dir/feeder.pid" ] && break; sleep 0.01; done
+  probe_feeder="$(sed -n '1p' "$probe_dir/feeder.pid" 2>/dev/null || true)"
+  printf '%s\n%s\n' "$probe_feeder" "$ROOT" > "$DASHBOARD_TEST_INTERRUPT_PROBE_READY"
+  wait "$probe_runner"
+  exit $?
+fi
 export MISSION_CONTROL_HOME="$ROOT/default-mission-control-home"
 STUB="$ROOT/stubs"
 mkdir -p "$STUB/bin"
@@ -258,6 +375,7 @@ EOF
     DASHBOARD_CMD_GIT="$swap_stub" bash "$DASH" collect --force git \
     >"$ROOT/guard-swap.out" 2>"$ROOT/guard-swap.err" &
   swap_pid=$!
+  register_owned_process "$swap_pid"
   i=0
   while [ ! -e "$ROOT/guard-swap-ready" ] && [ "$i" -lt 500 ]; do
     sleep 0.01; i=$((i + 1))
@@ -946,6 +1064,7 @@ finally:
     os.close(fd)
 PY
   lock_pid=$!
+  register_owned_process "$lock_pid"
   local lock_wait=0
   while [ ! -e "$lock_ready" ] && [ "$lock_wait" -lt 50 ]; do
     sleep 0.02
@@ -1564,6 +1683,7 @@ EOF
     REPO_ROOT="$ga" MISSION_CONTROL_HOME="$mch" DASHBOARD_INSTALL_NO_LAUNCHD=1 \
     bash "$ga/scripts/dashboard" install >/dev/null 2>&1 &
   apid=$!
+  register_owned_process "$apid"
   loops=0
   while [ ! -e "$ready" ] && [ "$loops" -lt 200 ]; do sleep 0.05; loops=$((loops+1)); done
   [ -e "$ready" ] || fails=1
@@ -1764,6 +1884,7 @@ PY
     CHAT_GRAPH_HOME="$cgh" bash "$gr/scripts/dashboard" collect --force chats \
     >/dev/null 2>&1 &
   runner=$!
+  register_owned_process "$runner"
   for _ in $(seq 1 160); do
     if ! kill -0 "$runner" 2>/dev/null; then completed=1; break; fi
     sleep 0.05
@@ -1823,6 +1944,7 @@ signal.signal(signal.SIGINT, signal.SIG_DFL)
 os.execv("/bin/bash", ["/bin/bash", sys.argv[1], "collect", "--force", "chats"])
 PY
   runner=$!
+  register_owned_process "$runner"
   for _ in $(seq 1 100); do [ -f "$cgh/engine.pid" ] && break; sleep 0.05; done
   engine="$(cat "$cgh/engine.pid" 2>/dev/null || true)"
   feeder="$(cat "$cgh/feeder.pid" 2>/dev/null || true)"
@@ -1843,6 +1965,38 @@ PY
     rm -f "$cgh/ingest.lock/owner.json" 2>/dev/null || true
     rmdir "$cgh/ingest.lock" 2>/dev/null || true
     no "interrupt: engine interruption left residue (done=$completed rc=$rc feeder_alive=$alive lock=$([ -d "$cgh/ingest.lock" ] && echo yes || echo no))"
+  fi
+}
+
+c39a() { # interrupting the outer suite reaps its stubborn synthetic descendant
+  local probe_tmp ready harness feeder fixture_root completed=0 alive=0
+  probe_tmp="$(mktemp -d)"
+  ready="$probe_tmp/ready"
+  TMPDIR="$probe_tmp" DASHBOARD_TEST_INTERRUPT_PROBE_READY="$ready" \
+    bash "$REPO/scripts/dashboard.test.sh" >/dev/null 2>&1 &
+  harness=$!
+  register_owned_process "$harness"
+  for _ in $(seq 1 100); do
+    if [ -f "$ready" ]; then completed=1; break; fi
+    if ! kill -0 "$harness" 2>/dev/null; then break; fi
+    sleep 0.02
+  done
+  if [ "$completed" = 0 ]; then
+    kill -TERM "$harness" 2>/dev/null || true
+    wait "$harness" 2>/dev/null || true
+    no "fixture lifecycle: interruption probe did not become ready"
+    return
+  fi
+  feeder="$(sed -n '1p' "$ready")"
+  fixture_root="$(sed -n '2p' "$ready")"
+  kill -TERM "$harness" 2>/dev/null || true
+  wait "$harness" 2>/dev/null || true
+  if [ -n "$feeder" ] && kill -0 "$feeder" 2>/dev/null; then alive=1; fi
+  [ "$alive" = 0 ] || kill -KILL "$feeder" 2>/dev/null || true
+  if [ "$alive" = 0 ] && [ -n "$fixture_root" ] && [ ! -e "$fixture_root" ]; then
+    ok "fixture lifecycle: outer interruption reaps the exact stubborn descendant and temp root"
+  else
+    no "fixture lifecycle: outer interruption left residue (feeder_alive=$alive root=$fixture_root)"
   fi
 }
 
@@ -1967,6 +2121,7 @@ EOF
     DASHBOARD_CMD_USAGE="$stub" MISSION_CONTROL_HOME="$mch" \
     bash "$DASH" collect --force usage >/dev/null 2>&1 &
   runner=$!
+  register_owned_process "$runner"
   for _ in $(seq 1 100); do [ -f "$mch/engine.pid" ] && break; sleep 0.05; done
   engine="$(cat "$mch/engine.pid" 2>/dev/null || true)"
   feeder="$(cat "$mch/feeder.pid" 2>/dev/null || true)"
@@ -2101,8 +2256,10 @@ c47() { # concurrent answers publish one internally consistent choice
       bash "$DASH" collect --force decisions >/dev/null 2>&1
     ( env -u DASHBOARD_CMD_DECISIONS MC_DECISION_ANSWER_LOCK_HELD=1 REPO_ROOT="$REPO" MISSION_CONTROL_HOME="$mch" \
         bash "$DASH" decide answer "$did" 1 >"$mch/one-$i.out" 2>&1; echo $? >"$mch/one-$i.rc" ) & p1=$!
+    register_owned_process "$p1"
     ( env -u DASHBOARD_CMD_DECISIONS MC_DECISION_ANSWER_LOCK_HELD=1 REPO_ROOT="$REPO" MISSION_CONTROL_HOME="$mch" \
         bash "$DASH" decide answer "$did" 2 >"$mch/two-$i.out" 2>&1; echo $? >"$mch/two-$i.rc" ) & p2=$!
+    register_owned_process "$p2"
     wait "$p1" || true; wait "$p2" || true
     MISSION_CONTROL_HOME="$mch" "$REPO/scripts/decision-alert" history "$did" --json >"$mch/history-$i.json" || miss=1
     python3 - "$mch/one-$i.rc" "$mch/two-$i.rc" \
@@ -2236,6 +2393,7 @@ c50() { # renamed transaction directories fail before resolution or publication
       REPO_ROOT="$REPO" MISSION_CONTROL_HOME="$mch" \
       bash "$DASH" decide answer "$did" 1 >"$mch/$kind-swap.out" 2>"$mch/$kind-swap.err" &
     pid=$!
+    register_owned_process "$pid"
     i=0
     while [ ! -f "$mch/.decision-answer-test-ready" ] && [ "$i" -lt 500 ]; do
       sleep 0.01; i=$((i + 1))
@@ -2300,7 +2458,11 @@ PYEOF
   fi
 }
 
-c0; c1; c2; c3; c4; c4b; c5; c6; c7; c8; c8a; c8b; c9; c10; c11; c12; c13; c14; c14a; c15; c16; c17; c18; c19; c20; c21; c22; c23; c24; c25; c26; c27; c28; c29; c30; c31; c32; c33; c34; c35; c36; c37; c38; c39; c40; c41; c42; c42a; c43; c44; c45; c46; c47; c48; c49; c50; c51
+if [ "${DASHBOARD_TEST_CASE:-}" = "fixture-reaper" ]; then
+  c39a
+else
+  c0; c1; c2; c3; c4; c4b; c5; c6; c7; c8; c8a; c8b; c9; c10; c11; c12; c13; c14; c14a; c15; c16; c17; c18; c19; c20; c21; c22; c23; c24; c25; c26; c27; c28; c29; c30; c31; c32; c33; c34; c35; c36; c37; c38; c39; c39a; c40; c41; c42; c42a; c43; c44; c45; c46; c47; c48; c49; c50; c51
+fi
 shell_contract
 if [ "$LIVE_DATA_BEFORE" = "$(live_data_fingerprint)" ]; then
   ok "dashboard suite leaves live Mission Control data byte/stat unchanged"

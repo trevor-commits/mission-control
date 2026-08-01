@@ -77,6 +77,23 @@ Preserve a durable completion trail for verified work instead of deleting it fro
 
 ## Work Record Log
 
+### 2026-07-31 — Interrupted dashboard fixture reaper
+- Problem: an externally interrupted `scripts/dashboard.test.sh` left c39's TERM/INT-ignoring synthetic `chat-graph export` feeder alive under `PPID 1` for about 47 minutes, along with temp roots outside the suite's only `EXIT` cleanup root.
+- Reasoning: each synthetic process must remain attributable to one suite instance after its direct parent disappears. PID-only or name-based cleanup could kill a reused or unrelated process, so the outer harness needs a suite-private process registry plus a birth-identity check and must discover descendant PID files only when their current command is rooted inside the same unique fixture tree.
+- Diagnosis inputs: orphan PID 54749 command/cwd/PPID evidence from ER-277 terminal cleanup; exact byte match to c39's feeder fixture; the pre-fix outer `trap 'rm -rf "$ROOT"' EXIT`; all background spawn and `mktemp -d` call sites in `scripts/dashboard.test.sh`.
+- Implementation inputs: `scripts/dashboard.test.sh` only; macOS `/bin/ps`, `/usr/bin/find`, `/usr/bin/mktemp`, and Bash 3.2-compatible traps/functions.
+- Fix: replaced the delete-only EXIT trap with idempotent EXIT/INT/TERM/HUP cleanup; records every direct synthetic child as exact PID plus launch timestamp, admits descendant PID files only when the live command is rooted below the suite's unique temp root, sends bounded TERM then exact-identity KILL, and confines anonymous fixture temp files/directories beneath that root. Added c39a, which interrupts a nested outer harness around a stubborn synthetic descendant and proves both process and root are gone.
+- Self-audit:
+  - method: observed the new c39a fail before implementation because no interruption probe became ready; reran it green after the guard; inspected every background spawn/PID-file/temp-root call site; ran Bash syntax, whitespace, exact survivor checks, and live-service negative readback. Reviewed the diff for PID reuse, broad-name kills, signal recursion, unbounded waits, and real-home access.
+  - outcome: c39a and shell/static boundaries pass (`PASS=7 FAIL=0`); no task-owned dashboard/test process remains. The complete dashboard suite was attempted once with Apple `/bin/bash`, then interrupted after the degraded host made unrelated c0/c1 collectors exceed their existing fixture deadlines; the exact suite/collector PIDs and an already-completed worktree hook group were retired and verified absent.
+  - did not verify: a clean full dashboard matrix on this boot because persistent `syspolicyd` crashes were concurrently delaying direct script execution; no installed runtime, live collection, LaunchAgent execution, or dashboard state was exercised.
+- Ripple Check: this is test-harness-only; `scripts/dashboard`, installed assets, schemas, launchd files, README, and product behavior do not depend on it. The existing dashboard release gate automatically includes c39a on the next healthy full run.
+- Confirmed-process repair: failure class was child lifecycle ownership ending at the normal case cleanup rather than at the outer test-runner boundary. It accumulated when an external interruption bypassed c39's local post-wait kill and the only outer trap deleted a different root. Earlier detection is the c39a signal regression plus post-suite exact process/root checks. Bounded analogous review covered every background spawn, PID-file fixture, and anonymous `mktemp` call in this owning suite; no other repo or live runtime was scanned.
+- by: Codex child `/root/repair_mission_fixture_reaper`, spawned by task `019fb8ef-18c1-7cf2-bfaa-335220d8609e`; `binding_verified=yes`.
+- triggered by: ER-277 terminal cleanup of the exact orphan fixture process.
+- led to: branch `codex/er277-mission-fixture-reaper`; no follow-up work remains beyond a healthy-host full-suite rerun already required by the normal release gate.
+- linear: self-contained: test-harness reliability repair; Mission Control remains repo-only.
+
 ### 2026-07-31 — ER-277 Packet D collector backoff and batch metadata
 - Problem: Chats enrichment ran up to 50 sequential `chat-source describe` subprocesses; timeout rolled back metadata, left last-good stale, and immediately made the five-minute collection due again. Feed errors lacked persistent attempt/backoff truth.
 - Reasoning: one bounded metadata batch process group removes repeated scans, while feed-local persistent backoff prevents a failed producer from grinding without blocking healthy siblings. Core graph export must stay available even when metadata enrichment is absent or partial.
@@ -693,6 +710,26 @@ Keep materially new suggestions here so they survive beyond the current chat.
 - 2026-07-05 | recommendation: do not adopt the GitHub Copilot enterprise-observability stack (OpenTelemetry Collector, Prometheus, Grafana, OpenObserve, Superset, Metabase, Airbyte, Meltano, dbt-core, Great Expectations, TensorZero, Helicone, OpenLIT, traceAI, TraceRoot, Pull Request Analytics Action); treat `records/2026-07-04-dashboard-coding-tracker-search-audit.md` as the real same-niche repo map; if a chart is ever justified, prefer vendorable zero-dependency `leeoniya/uPlot` over Chart.js/ECharts/CDN — but not for V1. | why: Copilot recommended from the repo description alone (it said so); every headline pick runs as a background service, framework, or separate warehouse and collides with the explicit non-goals of offline single-file, single-user, no-server. Full evaluation in Feedback Decision Log 2026-07-05. | by: Claude Code (Opus 4.8) session `a9724039-6595-4205-a25b-bf361020250a`. | linear: self-contained until Linear is configured.
 
 ## Active Branch Ledger
+### `codex/er277-mission-fixture-reaper`
+- status: implementation and focused RED/GREEN complete; commit, push, exact review, and canonical landing in progress
+- created: 2026-07-31
+- base: `origin/main@b29726e6551759a04789e4dcdd4987db7be798c0`
+- worktree: `/Users/gillettes/Coding Projects/mission-control-worktrees/er277-mission-fixture-reaper`
+- source chat: Codex child `/root/repair_mission_fixture_reaper`, spawned by `019fb8ef-18c1-7cf2-bfaa-335220d8609e`; `binding_verified=yes`
+- last refreshed by chat: 2026-07-31 by the source child after focused verification and process cleanup
+- purpose: make outer dashboard-test interruption reap exact synthetic children and all suite-owned temp roots without touching live Mission Control state
+- linked issue: self-contained ER-277 follow-up; Linear repo-only mode
+- plugin mirror: none
+- merge expectation: push, self-review exact diff, then fast-forward-safe land to `main`
+- merge target: `main`
+- review surface: `scripts/dashboard.test.sh` lifecycle guard, c39/c39a process ownership, and this work/test record
+- exit checklist: RED/GREEN, syntax/whitespace, exact process cleanup, disabled/unloaded readback, commit/push, origin/main containment, rollback note
+- pre-existing dirt at start: none in the fresh isolated worktree
+- usable invocation path: `DASHBOARD_TEST_CASE=fixture-reaper /bin/bash scripts/dashboard.test.sh`; normal full suite includes c39a
+- delete when: parent confirms durable-record integration and origin/main containment
+- retain reason: canonical landing and parent integration are still in progress
+- cleanup command: parent-owned after landing; do not remove this externally coordinated worktree in this packet
+
 ### `codex/er277-collector-019fb8ef`
 - status: four accepted `042b659` review blockers repaired and owning suites green at `ee54328`; fresh exact-SHA re-review pending
 - created: 2026-07-31
@@ -858,6 +895,8 @@ If it's not here, it isn't remembered.
 - When a verification run closes or updates an audit finding, cross-reference the matching audit record entry and the chat or commit that performed the work.
 
 ## Test Evidence Log
+
+- 2026-07-31 | commands: expected RED then GREEN `DASHBOARD_TEST_CASE=fixture-reaper /bin/bash scripts/dashboard.test.sh`; `/bin/bash -n scripts/dashboard.test.sh`; `/usr/bin/git diff --check`; exact `ps` survivor checks; read-only `launchctl print-disabled` and `launchctl print` | result: RED failed because the interruption probe never became ready; GREEN c39a plus shell/static/live-data guard is `PASS=7 FAIL=0`, proving the stubborn descendant and nested root are gone. One full `REPO_ROOT="$PWD" /bin/bash scripts/dashboard.test.sh --require-shell` attempt was not green: persistent host execution delays caused unrelated c0/c1 deadlines, so it was interrupted. A separate focused c39+c39a run later hit c39's existing completion deadline while c39a still passed. Exact owned PIDs 64853/63308 and stale worktree-add hook PGID 54485 were retired and verified absent. No live install, state mutation, collection, or service activation occurred. | log/PR reference: Work Record `2026-07-31 — Interrupted dashboard fixture reaper`; branch `codex/er277-mission-fixture-reaper` | by: Codex child `/root/repair_mission_fixture_reaper` (`binding_verified=yes`) | linear: self-contained ER-277 follow-up; repo-only.
 
 - 2026-07-31 | commands: deterministic expected-RED additions in `scripts/dashboard.test.sh` and `scripts/chat-graph.test.sh`; GREEN `/bin/bash scripts/chat-graph.test.sh`; GREEN `REPO_ROOT="$PWD" /bin/bash scripts/dashboard.test.sh --require-shell`; `/bin/bash -n scripts/dashboard scripts/dashboard.test.sh scripts/chat-graph.test.sh`; Python source compile for `scripts/chat-graph`; `git diff --check` | result: reviewed `042b659` failed dashboard `79/3` on canonical-default ancestor, absent alternate-case spelling, and pathname swap; chat-graph failed exactly on pre-final-kill reaping and unbounded escaped-pipe cleanup. Repair `ee54328` is graph ALL PASS and dashboard `82/0`, including a real escaped-pipe-holder bound and live-data byte/stat non-mutation. No broad verifier ran by explicit bounded-host instruction, so earlier `21/21` evidence is not attributed to this SHA. | log/PR reference: Audit Record `2026-07-31 | exact-SHA implementation review and accepted-finding repair`; branch `codex/er277-collector-019fb8ef`; temporary RED/GREEN logs retired after evidence extraction | by: Codex child `/root/review_mission_casefold`, spawned marker `review_mission_casefold-019fb8ef` (`binding_verified=yes`) | linear: self-contained accepted ER-277 repair; repo-only.
 - 2026-07-31 | commands: expected-RED then GREEN `REPO_ROOT="$PWD" /bin/bash scripts/dashboard.test.sh --require-shell`; `/bin/bash scripts/verify.sh`; `/bin/bash -n scripts/dashboard scripts/dashboard.test.sh`; `git diff --check`; before/after recursive SHA-256 plus device/inode/mode/size/mtime snapshots for live `~/.mission-control/data`, installed dashboard, and installed index; read-only `launchctl print-disabled`/`print` | result: reviewed tip `9a0320b` produced the intended two RED failures (`PASS=77 FAIL=2`) for an existing case-fold default alias and a missing descendant below its aliased nearest existing ancestor; repaired matrix `PASS=79 FAIL=0`; authoritative verifier `SUITES PASS=21 FAIL=0`, browser 253; live-data tree snapshot unchanged at `8700a929294c2d98aced399cc1270074c6119e59423db00622406af75fc70113`; installed dashboard/index snapshots unchanged; collector label remained disabled and unloaded; no live install/state/service mutation | log/PR reference: Work/Audit Record `2026-07-31 — ER-277 Packet D collector backoff and batch metadata`; branch `codex/er277-collector-019fb8ef` | by: Codex child `/root/repair_mission_case_alias`, thread `019fba6f-4df3-7851-a132-fb114c8a4d9b`, spawned marker `repair_mission_case_alias-019fb8ef` (`binding_verified=yes`) | linear: self-contained accepted ER-277 repair; repo-only.
