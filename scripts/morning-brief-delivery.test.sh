@@ -8,7 +8,7 @@ pass(){ printf 'PASS: %s\n' "$1"; }
 fail(){ printf 'FAIL: %s\n' "$1"; FAIL=$((FAIL+1)); }
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT
 export HOME="$T/home" MISSION_CONTROL_HOME="$T/state" MORNING_BRIEF_NOW_EPOCH=1783674000
-export MORNING_BRIEF_CHAT_ID=12345 MORNING_BRIEF_CHUNK_BYTES=240
+export MORNING_BRIEF_CHUNK_BYTES=240
 mkdir -p "$MISSION_CONTROL_HOME/data" "$HOME"
 
 python3 - "$MISSION_CONTROL_HOME/data" <<'PY'
@@ -59,6 +59,7 @@ stamp=capture+".failed"
 if not os.environ.get("MORNING_BRIEF_SENDER_DISABLE_FAIL") and n==2 and not os.path.exists(stamp):
     open(stamp,"w").write("1")
     sys.exit(1)
+print(os.environ.get("MORNING_BRIEF_SENDER_STATUS", "delivered"))
 sys.exit(0)
 PY
 chmod +x "$SENDER"
@@ -123,12 +124,36 @@ import json,re,sys
 calls=json.load(open(sys.argv[1]))
 assert calls
 for args in calls:
-    assert len(args)==3 and args[0]=="send" and args[1]=="12345", args
-    assert re.search(r"Morning Brief .* chunk \d+/\d+ · [0-9a-f]{12}",args[2]),args[2][:100]
-    assert "sk-abcdefghijklmnopqrstuvwxyz123456" not in args[2]
+    assert args[:10]==["emit","--route","briefs","--source",
+        "mission-control-morning-brief","--event","delivery-chunk",
+        "--severity","info","--batch"], args
+    assert args[11]=="--part" and args[13]=="--text", args
+    assert re.fullmatch(r"\d+/\d+",args[12]),args
+    assert len(args)==15
+    assert re.search(r"Morning Brief .* chunk \d+/\d+ · [0-9a-f]{12}",args[14]),args[14][:100]
+    assert "sk-abcdefghijklmnopqrstuvwxyz123456" not in args[14]
 PY
-then pass "sender receives fixed argv plus identified, hashed, scrubbed chunks"
-else fail "sender receives fixed argv plus identified, hashed, scrubbed chunks"; fi
+then pass "sender receives bounded Briefs batch argv plus identified, hashed, scrubbed chunks"
+else fail "sender receives bounded Briefs batch argv plus identified, hashed, scrubbed chunks"; fi
+
+# A zero exit with a burst-suppressed status is not a delivery confirmation.
+export MORNING_BRIEF_SENDER_DISABLE_FAIL=1 MORNING_BRIEF_SENDER_STATUS=suppressed
+rm -f "$RECEIPT" "$MISSION_CONTROL_HOME/morning-brief/delivery-cursor.json"
+"$BRIEF" --send >/dev/null 2>&1; SUPPRESSED_RC=$?
+if [ "$SUPPRESSED_RC" -ne 0 ] && python3 - "$RECEIPT" <<'PY'
+import json,sys
+r=json.load(open(sys.argv[1]))
+assert r["state"] == "failed"
+assert r["confirmed_chunks"] == 0
+assert r["chunks"][0]["state"] == "failed"
+PY
+then pass "burst-suppressed chunk never becomes a confirmed delivery"
+else fail "burst-suppressed chunk became a confirmed delivery"; fi
+unset MORNING_BRIEF_SENDER_STATUS
+
+if ! grep -Eq 'MORNING_BRIEF_CHAT_ID|ALLOWED_USER_ID' "$BRIEF"; then
+  pass "Morning Brief source has no destination-ID fallback"
+else fail "Morning Brief source has destination-ID fallback"; fi
 
 MODE="$(stat -f '%Lp' "$RECEIPT" 2>/dev/null || stat -c '%a' "$RECEIPT" 2>/dev/null)"
 if [ "$MODE" = 600 ]; then pass "delivery receipt is mode 600"; else fail "delivery receipt mode is $MODE"; fi

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # scripts/dashboard.test.sh — feeders stubbed via env, mktemp state dirs only.
-# Never touches real $HOME. One PASS:/FAIL: line per case; exit 0 iff all pass.
+# Never writes real $HOME. One PASS:/FAIL: line per case; exit 0 iff all pass.
 # Optional flag: --require-shell makes the shell-contract checks mandatory.
 set -uo pipefail
 export PYTHONDONTWRITEBYTECODE=1
@@ -22,9 +22,149 @@ ok() { echo "PASS: $1"; PASS=$((PASS + 1)); }
 no() { echo "FAIL: $1"; FAIL=$((FAIL + 1)); }
 
 ROOT="$(mktemp -d "${TMPDIR:-/tmp}/mc-test.XXXXXX")"
-trap 'rm -rf "$ROOT"' EXIT
+OWNED_PROCESS_REGISTRY="$ROOT/owned-processes.tsv"
+: > "$OWNED_PROCESS_REGISTRY"
+
+fixture_process_identity() {
+  /bin/ps -p "$1" -o lstart= 2>/dev/null | /usr/bin/awk '{$1=$1; print}'
+}
+
+register_owned_process() {
+  local pid="${1:-}" identity
+  case "$pid" in ''|*[!0-9]*) return 1 ;; esac
+  identity="$(fixture_process_identity "$pid")"
+  [ -n "$identity" ] || return 1
+  printf '%s\t%s\n' "$pid" "$identity" >> "$OWNED_PROCESS_REGISTRY"
+}
+
+register_owned_pidfiles() {
+  local pidfile pid command_line
+  while IFS= read -r pidfile; do
+    pid="$(/usr/bin/sed -n '1{s/[^0-9].*$//;p;}' "$pidfile" 2>/dev/null)"
+    case "$pid" in ''|*[!0-9]*) continue ;; esac
+    command_line="$(/bin/ps -p "$pid" -o command= 2>/dev/null)"
+    case "$command_line" in
+      *"$ROOT"*) register_owned_process "$pid" 2>/dev/null || true ;;
+    esac
+  done < <(/usr/bin/find "$ROOT" -type f -name '*.pid' -print 2>/dev/null)
+}
+
+fixture_process_matches() {
+  local current
+  current="$(fixture_process_identity "$1")"
+  [ -n "$current" ] && [ "$current" = "$2" ]
+}
+
+cleanup_owned_processes() {
+  local pid identity i alive
+  register_owned_pidfiles
+  while IFS="$(printf '\t')" read -r pid identity; do
+    fixture_process_matches "$pid" "$identity" || continue
+    kill -TERM "$pid" 2>/dev/null || true
+  done < "$OWNED_PROCESS_REGISTRY"
+  i=0
+  while [ "$i" -lt 50 ]; do
+    alive=0
+    while IFS="$(printf '\t')" read -r pid identity; do
+      if fixture_process_matches "$pid" "$identity"; then alive=1; break; fi
+    done < "$OWNED_PROCESS_REGISTRY"
+    [ "$alive" = 1 ] || break
+    sleep 0.01
+    i=$((i + 1))
+  done
+  while IFS="$(printf '\t')" read -r pid identity; do
+    fixture_process_matches "$pid" "$identity" || continue
+    kill -KILL "$pid" 2>/dev/null || true
+  done < "$OWNED_PROCESS_REGISTRY"
+}
+
+SUITE_CLEANED=0
+cleanup_suite() {
+  [ "$SUITE_CLEANED" = 0 ] || return
+  SUITE_CLEANED=1
+  cleanup_owned_processes
+  rm -rf "$ROOT"
+}
+
+suite_signal() {
+  local code="$1"
+  trap - EXIT INT TERM HUP
+  cleanup_suite
+  exit "$code"
+}
+
+trap 'rc=$?; trap - EXIT INT TERM HUP; cleanup_suite; exit "$rc"' EXIT
+trap 'suite_signal 130' INT
+trap 'suite_signal 143' TERM
+trap 'suite_signal 129' HUP
+
+# Keep every anonymous synthetic root under the one suite-owned root. Explicit
+# templates retain their caller-selected path.
+mktemp() {
+  if [ "$#" -eq 0 ]; then
+    /usr/bin/mktemp "$ROOT/tmp.XXXXXX"
+  elif [ "$#" -eq 1 ] && [ "$1" = "-d" ]; then
+    /usr/bin/mktemp -d "$ROOT/tmp.XXXXXX"
+  else
+    /usr/bin/mktemp "$@"
+  fi
+}
+
+# Hidden probe used only by c39a. It reproduces an interrupted outer runner
+# with a TERM/INT-ignoring synthetic grandchild whose command is rooted below
+# this suite's unique temporary directory.
+if [ -n "${DASHBOARD_TEST_INTERRUPT_PROBE_READY:-}" ]; then
+  probe_dir="$(mktemp -d)"
+  probe_script="$probe_dir/stubborn-feeder"
+  probe_launcher="$probe_dir/launcher"
+  cat > "$probe_script" <<'EOF'
+#!/bin/sh
+trap '' TERM INT
+printf '%s\n' "$$" > "$FIXTURE_PROBE_PIDFILE"
+while :; do sleep 1; done
+EOF
+  chmod +x "$probe_script"
+  cat > "$probe_launcher" <<'EOF'
+#!/bin/sh
+FIXTURE_PROBE_PIDFILE="$FIXTURE_PROBE_PIDFILE" /bin/sh "$FIXTURE_PROBE_SCRIPT" &
+wait
+EOF
+  chmod +x "$probe_launcher"
+  FIXTURE_PROBE_PIDFILE="$probe_dir/feeder.pid" FIXTURE_PROBE_SCRIPT="$probe_script" \
+    /bin/sh "$probe_launcher" &
+  probe_runner=$!
+  register_owned_process "$probe_runner"
+  for _ in $(seq 1 100); do [ -f "$probe_dir/feeder.pid" ] && break; sleep 0.01; done
+  probe_feeder="$(sed -n '1p' "$probe_dir/feeder.pid" 2>/dev/null || true)"
+  printf '%s\n%s\n' "$probe_feeder" "$ROOT" > "$DASHBOARD_TEST_INTERRUPT_PROBE_READY"
+  wait "$probe_runner"
+  exit $?
+fi
+export MISSION_CONTROL_HOME="$ROOT/default-mission-control-home"
 STUB="$ROOT/stubs"
 mkdir -p "$STUB/bin"
+
+live_data_fingerprint() {
+  python3 - "$HOME/.mission-control/data" <<'PY'
+import hashlib, json, os, stat, sys
+root = sys.argv[1]
+rows = []
+if os.path.isdir(root):
+    for name in sorted(os.listdir(root)):
+        path = os.path.join(root, name)
+        st = os.lstat(path)
+        digest = None
+        if stat.S_ISREG(st.st_mode):
+            h = hashlib.sha256()
+            with open(path, "rb") as handle:
+                for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                    h.update(chunk)
+            digest = h.hexdigest()
+        rows.append([name, st.st_ino, st.st_mode, st.st_size, st.st_mtime_ns, digest])
+print(json.dumps(rows, separators=(",", ":")))
+PY
+}
+LIVE_DATA_BEFORE="$(live_data_fingerprint)"
 
 # --- stub feeder payloads, written via python so unicode/hostile text is safe -
 python3 - "$STUB" <<'PYEOF'
@@ -96,6 +236,169 @@ for rel in REQUIRED_INSTALL_ASSETS:
 write_install_stamp(bindir,"a"*40,"head",
   list(REQUIRED_INSTALL_RUNTIMES),1783674000,assets=assets)
 PY
+}
+
+c0() { # synthetic/test controls require a physically isolated state home
+  local fake_home candidate alias rc real_before swap_old swap_stub swap_pid i
+  real_before="$(live_data_fingerprint)"
+
+  fake_home="$ROOT/guard-omitted-home"
+  mkdir -p "$fake_home"
+  rc=0
+  HOME="$fake_home" env -u MISSION_CONTROL_HOME \
+    MISSION_CONTROL_NOW_EPOCH=1000 DASHBOARD_CMD_GIT="cat '$STUB/git.json'" \
+    bash "$DASH" collect --due git >"$ROOT/guard-omitted.out" 2>"$ROOT/guard-omitted.err" || rc=$?
+  if [ "$rc" -ne 0 ] && [ ! -e "$fake_home/.mission-control" ] && \
+     grep -q 'MISSION_CONTROL_HOME.*required' "$ROOT/guard-omitted.err"; then
+    ok "synthetic controls reject an omitted Mission Control state home"
+  else
+    no "synthetic controls reached an omitted/default Mission Control state home"
+  fi
+
+  fake_home="$ROOT/guard-exact-home"
+  mkdir -p "$fake_home"
+  candidate="$fake_home/.mission-control"
+  rc=0
+  HOME="$fake_home" MISSION_CONTROL_HOME="$candidate" MISSION_CONTROL_NOW_EPOCH=1000 \
+    DASHBOARD_CMD_GIT="cat '$STUB/git.json'" bash "$DASH" collect --due git \
+    >"$ROOT/guard-exact.out" 2>"$ROOT/guard-exact.err" || rc=$?
+  if [ "$rc" -ne 0 ] && [ ! -e "$candidate" ]; then
+    ok "synthetic controls reject the exact default state home"
+  else no "synthetic controls accepted the exact default state home"; fi
+
+  fake_home="$ROOT/guard-normalized-home"
+  mkdir -p "$fake_home"
+  candidate="$fake_home/./.mission-control/../.mission-control"
+  rc=0
+  HOME="$fake_home" MISSION_CONTROL_HOME="$candidate" MISSION_CONTROL_NOW_EPOCH=1000 \
+    DASHBOARD_CMD_GIT="cat '$STUB/git.json'" bash "$DASH" collect --due git \
+    >"$ROOT/guard-normalized.out" 2>"$ROOT/guard-normalized.err" || rc=$?
+  if [ "$rc" -ne 0 ] && [ ! -e "$fake_home/.mission-control" ]; then
+    ok "synthetic controls reject a normalized default equivalent"
+  else no "synthetic controls accepted a normalized default equivalent"; fi
+
+  fake_home="$ROOT/guard-child-home"
+  mkdir -p "$fake_home"
+  candidate="$fake_home/.mission-control/nested"
+  rc=0
+  HOME="$fake_home" MISSION_CONTROL_HOME="$candidate" MISSION_CONTROL_NOW_EPOCH=1000 \
+    DASHBOARD_CMD_GIT="cat '$STUB/git.json'" bash "$DASH" collect --due git \
+    >"$ROOT/guard-child.out" 2>"$ROOT/guard-child.err" || rc=$?
+  if [ "$rc" -ne 0 ] && [ ! -e "$fake_home/.mission-control" ]; then
+    ok "synthetic controls reject a child of the default state home"
+  else no "synthetic controls accepted a child of the default state home"; fi
+
+  fake_home="$ROOT/guard-ancestor-home"
+  mkdir -p "$fake_home/.mission-control"
+  rc=0
+  HOME="$fake_home" MISSION_CONTROL_HOME="$fake_home" MISSION_CONTROL_NOW_EPOCH=1000 \
+    DASHBOARD_CMD_GIT="cat '$STUB/git.json'" bash "$DASH" collect --force git \
+    >"$ROOT/guard-ancestor.out" 2>"$ROOT/guard-ancestor.err" || rc=$?
+  if [ "$rc" -ne 0 ] && [ ! -e "$fake_home/data" ]; then
+    ok "synthetic controls reject an ancestor of the default state home"
+  else no "synthetic controls accepted an ancestor of the default state home"; fi
+
+  fake_home="$ROOT/guard-symlink-home"
+  mkdir -p "$fake_home/.mission-control"
+  alias="$ROOT/guard-default-alias"
+  ln -s "$fake_home/.mission-control" "$alias"
+  rc=0
+  HOME="$fake_home" MISSION_CONTROL_HOME="$alias" MISSION_CONTROL_NOW_EPOCH=1000 \
+    DASHBOARD_CMD_GIT="cat '$STUB/git.json'" bash "$DASH" collect --due git \
+    >"$ROOT/guard-symlink.out" 2>"$ROOT/guard-symlink.err" || rc=$?
+  if [ "$rc" -ne 0 ] && [ ! -e "$fake_home/.mission-control/data" ]; then
+    ok "synthetic controls reject a symlink alias of the default state home"
+  else no "synthetic controls accepted a symlink alias of the default state home"; fi
+
+  # Reserve the canonical spelling case-insensitively even before the default
+  # exists. This is deterministic on both case-sensitive and insensitive APFS.
+  fake_home="$ROOT/guard-casefold-missing-home"
+  mkdir -p "$fake_home"
+  candidate="$fake_home/.MISSION-CONTROL"
+  rc=0
+  HOME="$fake_home" MISSION_CONTROL_HOME="$candidate" MISSION_CONTROL_NOW_EPOCH=1000 \
+    DASHBOARD_CMD_GIT="cat '$STUB/git.json'" bash "$DASH" collect --force git \
+    >"$ROOT/guard-casefold-missing.out" 2>"$ROOT/guard-casefold-missing.err" || rc=$?
+  if [ "$rc" -ne 0 ] && [ ! -e "$candidate" ] && [ ! -e "$fake_home/.mission-control" ]; then
+    ok "synthetic controls reserve the absent default spelling across case modes"
+  else no "synthetic controls created an alternate-case default state home"; fi
+
+  fake_home="$ROOT/guard-casefold-home"
+  mkdir -p "$fake_home/.mission-control"
+  candidate="$fake_home/.MISSION-CONTROL"
+  rc=0
+  HOME="$fake_home" MISSION_CONTROL_HOME="$candidate" MISSION_CONTROL_NOW_EPOCH=1000 \
+    DASHBOARD_CMD_GIT="cat '$STUB/git.json'" bash "$DASH" collect --due git \
+    >"$ROOT/guard-casefold.out" 2>"$ROOT/guard-casefold.err" || rc=$?
+  if [ "$rc" -ne 0 ] && [ ! -e "$fake_home/.mission-control/data" ]; then
+    ok "synthetic controls reject the reserved alternate-case default spelling"
+  else no "synthetic controls accepted the reserved alternate-case default spelling"; fi
+
+  fake_home="$ROOT/guard-casefold-child-home"
+  mkdir -p "$fake_home/.mission-control"
+  candidate="$fake_home/.MISSION-CONTROL/nested"
+  rc=0
+  HOME="$fake_home" MISSION_CONTROL_HOME="$candidate" MISSION_CONTROL_NOW_EPOCH=1000 \
+    DASHBOARD_CMD_GIT="cat '$STUB/git.json'" bash "$DASH" collect --due git \
+    >"$ROOT/guard-casefold-child.out" 2>"$ROOT/guard-casefold-child.err" || rc=$?
+  if [ "$rc" -ne 0 ] && [ ! -e "$fake_home/.mission-control/nested" ]; then
+    ok "synthetic controls reject a descendant below a reserved case-fold default"
+  else no "synthetic controls accepted a descendant below a reserved case-fold default"; fi
+
+  fake_home="$ROOT/guard-isolated-home"
+  candidate="$ROOT/guard-isolated-state"
+  mkdir -p "$fake_home"
+  rc=0
+  HOME="$fake_home" MISSION_CONTROL_HOME="$candidate" MISSION_CONTROL_NOW_EPOCH=1000 \
+    DASHBOARD_CMD_GIT="cat '$STUB/git.json'" bash "$DASH" collect --force git \
+    >"$ROOT/guard-isolated.out" 2>"$ROOT/guard-isolated.err" || rc=$?
+  if [ "$rc" -eq 0 ] && [ -f "$candidate/data/git.json" ]; then
+    ok "synthetic controls accept an explicit isolated temporary state home"
+  else no "synthetic controls rejected an isolated temporary state home"; fi
+
+  # Deterministic check/use swap: once the dashboard reaches its feeder, rename
+  # the accepted state directory and replace its pathname with a default-state
+  # symlink. Writes must remain attached to the originally accepted directory.
+  fake_home="$ROOT/guard-swap-home"
+  candidate="$ROOT/guard-swap-state"
+  swap_old="$ROOT/guard-swap-state-old"
+  swap_stub="$ROOT/guard-swap-feeder"
+  mkdir -p "$fake_home/.mission-control/data" "$candidate"
+  cat > "$swap_stub" <<EOF
+#!/bin/sh
+: > '$ROOT/guard-swap-ready'
+while [ ! -e '$ROOT/guard-swap-continue' ]; do sleep 0.01; done
+cat '$STUB/git.json'
+EOF
+  chmod +x "$swap_stub"
+  HOME="$fake_home" MISSION_CONTROL_HOME="$candidate" MISSION_CONTROL_NOW_EPOCH=1000 \
+    DASHBOARD_CMD_GIT="$swap_stub" bash "$DASH" collect --force git \
+    >"$ROOT/guard-swap.out" 2>"$ROOT/guard-swap.err" &
+  swap_pid=$!
+  register_owned_process "$swap_pid"
+  i=0
+  while [ ! -e "$ROOT/guard-swap-ready" ] && [ "$i" -lt 500 ]; do
+    sleep 0.01; i=$((i + 1))
+  done
+  rc=0
+  if [ ! -e "$ROOT/guard-swap-ready" ]; then
+    kill "$swap_pid" 2>/dev/null || true
+    wait "$swap_pid" 2>/dev/null || true
+    rc=124
+  else
+    mv "$candidate" "$swap_old"
+    ln -s "$fake_home/.mission-control" "$candidate"
+    : > "$ROOT/guard-swap-continue"
+    wait "$swap_pid" || rc=$?
+  fi
+  if [ "$rc" -eq 0 ] && [ -f "$swap_old/data/git.json" ] && \
+     [ ! -e "$fake_home/.mission-control/data/git.json" ]; then
+    ok "synthetic state writes stay pinned across a pathname swap"
+  else no "synthetic state writes followed a replaced pathname (rc=$rc)"; fi
+
+  if [ "$real_before" != "$(live_data_fingerprint)" ]; then
+    no "state-home guard matrix changed live Mission Control data"
+  fi
 }
 
 # --- case 1: collect --force writes dual-write files, every .json envelope-valid -------
@@ -193,6 +496,81 @@ assert usage["generated_epoch"] == ub, "fresh usage WAS re-collected"
 PYEOF
   then ok "--due re-collects stale feed, skips fresh feed"
   else no "--due cadence gating wrong"; fi
+}
+
+# --- case 4b: persistent feed backoff is local, force-bypassable, and honest --
+c4b() {
+  local H now next before after marker_git marker_auto rc out
+  H="$(newhome)"; now=1000
+  MISSION_CONTROL_HOME="$H" MISSION_CONTROL_NOW_EPOCH="$now" \
+    bash "$DASH" collect --force git automation >/dev/null 2>&1
+  before="$(cat "$H/data/git.json")"
+
+  MISSION_CONTROL_HOME="$H" MISSION_CONTROL_NOW_EPOCH="$now" DASHBOARD_CMD_GIT="false" \
+    bash "$DASH" collect --force git >/dev/null 2>&1
+  after="$(cat "$H/data/git.json")"
+  next="$(python3 - "$H/data/git.error.json" <<'PY'
+import json,sys
+e=json.load(open(sys.argv[1]))
+assert e["consecutive_failures"] == 1, e
+assert e["attempted_at"] == 1000, e
+assert e["next_retry_epoch"] > e["attempted_at"], e
+print(e["next_retry_epoch"])
+PY
+)" || { no "feed backoff sidecar missing required first-failure fields"; return; }
+  [ "$before" = "$after" ] || { no "feed failure advanced/clobbered last-good"; return; }
+
+  marker_git="$ROOT/backoff-git-called"; marker_auto="$ROOT/backoff-auto-called"
+  cat > "$ROOT/backoff-git" <<EOF
+#!/bin/sh
+echo called > "$marker_git"
+cat '$STUB/git2.json'
+EOF
+  cat > "$ROOT/backoff-auto" <<EOF
+#!/bin/sh
+echo called > "$marker_auto"
+cat '$STUB/automation.json'
+EOF
+  chmod +x "$ROOT/backoff-git" "$ROOT/backoff-auto"
+  rm -f "$marker_git" "$marker_auto"
+  scheduled_rc=0
+  MISSION_CONTROL_HOME="$H" MISSION_CONTROL_NOW_EPOCH="$((next - 1))" \
+    DASHBOARD_CMD_GIT="$ROOT/backoff-git" DASHBOARD_CMD_AUTOMATION="$ROOT/backoff-auto" \
+    bash "$DASH" collect --due >/dev/null 2>&1 || scheduled_rc=$?
+  out="$(MISSION_CONTROL_HOME="$H" MISSION_CONTROL_NOW_EPOCH="$((next - 1))" bash "$DASH" status 2>&1)"; rc=$?
+  status_rc=$rc
+  if [ ! -e "$marker_git" ] && [ -e "$marker_auto" ] && [ "$(cat "$H/data/git.json")" = "$before" ] && \
+     [ "$scheduled_rc" -ne 0 ] && [ "$status_rc" -ne 0 ] && \
+     printf '%s\n' "$out" | grep -Eq 'git.*(error|backoff|degraded)'; then
+    ok "scheduled --due exposes backoff while sibling feeds continue"
+  else
+    no "scheduled backoff blocked sibling, retried early, hid top-level status, or changed last-good"
+  fi
+
+  rm -f "$marker_git"
+  MISSION_CONTROL_HOME="$H" MISSION_CONTROL_NOW_EPOCH="$((next - 1))" \
+    DASHBOARD_CMD_GIT="$ROOT/backoff-git" bash "$DASH" collect --force git >/dev/null 2>&1
+  if [ -e "$marker_git" ] && [ ! -e "$H/data/git.error.json" ] && \
+     python3 - "$H/data/git.json" "$((next - 1))" <<'PY'
+import json,sys
+assert json.load(open(sys.argv[1]))["generated_epoch"] == int(sys.argv[2])
+PY
+  then ok "--force bypasses backoff and success clears failure state"
+  else no "--force did not bypass/clear feed backoff"; fi
+
+  H="$(newhome)"
+  python3 - "$STUB/chats.json" "$ROOT/chats-degraded.json" <<'PY'
+import json,sys
+d=json.load(open(sys.argv[1]))
+d["data"]["stale_providers"]=["chat-source"]
+json.dump(d,open(sys.argv[2],"w"))
+PY
+  MISSION_CONTROL_HOME="$H" DASHBOARD_CMD_CHATS="cat '$ROOT/chats-degraded.json'" \
+    bash "$DASH" collect --force chats >/dev/null 2>&1
+  out="$(MISSION_CONTROL_HOME="$H" bash "$DASH" status 2>&1)"; rc=$?
+  if [ "$rc" -ne 0 ] && printf '%s\n' "$out" | grep -Eq 'chats.*degraded: chat-source'; then
+    ok "status surfaces persisted chat metadata degradation"
+  else no "status hid chat metadata degradation"; fi
 }
 
 # --- case 5: status exit 0 all-green; nonzero on automation red job ------------
@@ -500,7 +878,7 @@ c13() { # FIX 6: the data/ dir must be 0700, not world-readable
 }
 
 c14() { # isolated install wires composer/deadman/common + all three plists
-  local h mch sbin; h="$(mktemp -d)"; mch="$h/state"; sbin="$(mktemp -d)"
+  local h mch physical_mch sbin; h="$(mktemp -d)"; mch="$h/state"; sbin="$(mktemp -d)"
   cat > "$sbin/launchctl" <<'EOF'
 #!/bin/sh
 case "$1" in
@@ -513,6 +891,7 @@ EOF
   HOME="$h" PATH="$sbin:$PATH" REPO_ROOT="$REPO" MISSION_CONTROL_HOME="$mch" LAUNCH_CAPTURE="$h/bootstrapped" \
     DASHBOARD_INSTALL_ACTIVATE_GATED=1 \
     bash "$DASH" install >/dev/null 2>&1
+  physical_mch="$(cd "$mch" && pwd -P)"
   local miss=0 p
   [ -x "$mch/bin/morning-brief" ] || miss=1
   [ -x "$mch/bin/morning-brief-deadman" ] || miss=1
@@ -527,6 +906,8 @@ EOF
   grep -qx 'com.gillettes.outcome-extractor.plist' "$h/bootstrapped" || miss=1
   grep -q '<string>extract-outcomes</string>' \
     "$h/Library/LaunchAgents/com.gillettes.outcome-extractor.plist" || miss=1
+  grep -Fq "<string>$physical_mch/bin/dashboard</string>" \
+    "$h/Library/LaunchAgents/com.gillettes.mission-control.plist" || miss=1
   if [ "$miss" = 0 ]; then ok "install: composer, decisions, deadman, common policy, and plists wire in isolation"
   else no "install: Morning Brief runtime/plist wiring incomplete"; fi
 }
@@ -683,6 +1064,7 @@ finally:
     os.close(fd)
 PY
   lock_pid=$!
+  register_owned_process "$lock_pid"
   local lock_wait=0
   while [ ! -e "$lock_ready" ] && [ "$lock_wait" -lt 50 ]; do
     sleep 0.02
@@ -894,7 +1276,7 @@ PY
     no "brief-migrate: exact validity horizon did not become stale"
   fi
   send_out="$(MISSION_CONTROL_HOME="$H" MORNING_BRIEF_NOW_EPOCH="$NOW" \
-    MORNING_BRIEF_CHAT_ID=1 MORNING_BRIEF_SEND_BIN=/usr/bin/false \
+    MORNING_BRIEF_SEND_BIN=/usr/bin/false \
     "$BRIEF" --send 2>&1)" || { no "brief-migrate: delivered no-resend check failed"; return; }
   if printf '%s\n' "$send_out" | grep -q 'delivery already complete'; then
     ok "brief-migrate delivered receipt prevents re-send"
@@ -1301,6 +1683,7 @@ EOF
     REPO_ROOT="$ga" MISSION_CONTROL_HOME="$mch" DASHBOARD_INSTALL_NO_LAUNCHD=1 \
     bash "$ga/scripts/dashboard" install >/dev/null 2>&1 &
   apid=$!
+  register_owned_process "$apid"
   loops=0
   while [ ! -e "$ready" ] && [ "$loops" -lt 200 ]; do sleep 0.05; loops=$((loops+1)); done
   [ -e "$ready" ] || fails=1
@@ -1501,6 +1884,7 @@ PY
     CHAT_GRAPH_HOME="$cgh" bash "$gr/scripts/dashboard" collect --force chats \
     >/dev/null 2>&1 &
   runner=$!
+  register_owned_process "$runner"
   for _ in $(seq 1 160); do
     if ! kill -0 "$runner" 2>/dev/null; then completed=1; break; fi
     sleep 0.05
@@ -1560,6 +1944,7 @@ signal.signal(signal.SIGINT, signal.SIG_DFL)
 os.execv("/bin/bash", ["/bin/bash", sys.argv[1], "collect", "--force", "chats"])
 PY
   runner=$!
+  register_owned_process "$runner"
   for _ in $(seq 1 100); do [ -f "$cgh/engine.pid" ] && break; sleep 0.05; done
   engine="$(cat "$cgh/engine.pid" 2>/dev/null || true)"
   feeder="$(cat "$cgh/feeder.pid" 2>/dev/null || true)"
@@ -1580,6 +1965,38 @@ PY
     rm -f "$cgh/ingest.lock/owner.json" 2>/dev/null || true
     rmdir "$cgh/ingest.lock" 2>/dev/null || true
     no "interrupt: engine interruption left residue (done=$completed rc=$rc feeder_alive=$alive lock=$([ -d "$cgh/ingest.lock" ] && echo yes || echo no))"
+  fi
+}
+
+c39a() { # interrupting the outer suite reaps its stubborn synthetic descendant
+  local probe_tmp ready harness feeder fixture_root completed=0 alive=0
+  probe_tmp="$(mktemp -d)"
+  ready="$probe_tmp/ready"
+  TMPDIR="$probe_tmp" DASHBOARD_TEST_INTERRUPT_PROBE_READY="$ready" \
+    bash "$REPO/scripts/dashboard.test.sh" >/dev/null 2>&1 &
+  harness=$!
+  register_owned_process "$harness"
+  for _ in $(seq 1 100); do
+    if [ -f "$ready" ]; then completed=1; break; fi
+    if ! kill -0 "$harness" 2>/dev/null; then break; fi
+    sleep 0.02
+  done
+  if [ "$completed" = 0 ]; then
+    kill -TERM "$harness" 2>/dev/null || true
+    wait "$harness" 2>/dev/null || true
+    no "fixture lifecycle: interruption probe did not become ready"
+    return
+  fi
+  feeder="$(sed -n '1p' "$ready")"
+  fixture_root="$(sed -n '2p' "$ready")"
+  kill -TERM "$harness" 2>/dev/null || true
+  wait "$harness" 2>/dev/null || true
+  if [ -n "$feeder" ] && kill -0 "$feeder" 2>/dev/null; then alive=1; fi
+  [ "$alive" = 0 ] || kill -KILL "$feeder" 2>/dev/null || true
+  if [ "$alive" = 0 ] && [ -n "$fixture_root" ] && [ ! -e "$fixture_root" ]; then
+    ok "fixture lifecycle: outer interruption reaps the exact stubborn descendant and temp root"
+  else
+    no "fixture lifecycle: outer interruption left residue (feeder_alive=$alive root=$fixture_root)"
   fi
 }
 
@@ -1662,7 +2079,15 @@ PY
        bash "$DASH" decide alert-backfill --max 26 >/dev/null 2>&1; then
     no "dashboard alert-backfill accepted max above ceiling"; return
   fi
-  out="$(DECISION_ALERT_SEND_BIN="$sender" DECISION_ALERT_CHAT_ID=12345 \
+  diag="$(env -u DASHBOARD_CMD_DECISIONS REPO_ROOT="$REPO" MISSION_CONTROL_HOME="$mch" \
+    bash "$DASH" decide alert-backfill --chat-id ignored 2>&1 || true)"
+  if printf '%s' "$diag" | grep -qi 'fixed to the Control route' &&
+     ! printf '%s' "$diag" | grep -Eqi 'chat.*env|destination.*env'; then
+    :
+  else
+    no "dashboard alert-backfill advertises removed destination override"; return
+  fi
+  out="$(DECISION_ALERT_SEND_BIN="$sender" \
     DECISION_SEND_CAPTURE="$capture" \
     env -u DASHBOARD_CMD_DECISIONS REPO_ROOT="$REPO" MISSION_CONTROL_HOME="$mch" \
     bash "$DASH" decide alert-backfill --max 2)" || { no "dashboard alert-backfill send failed"; return; }
@@ -1696,6 +2121,7 @@ EOF
     DASHBOARD_CMD_USAGE="$stub" MISSION_CONTROL_HOME="$mch" \
     bash "$DASH" collect --force usage >/dev/null 2>&1 &
   runner=$!
+  register_owned_process "$runner"
   for _ in $(seq 1 100); do [ -f "$mch/engine.pid" ] && break; sleep 0.05; done
   engine="$(cat "$mch/engine.pid" 2>/dev/null || true)"
   feeder="$(cat "$mch/feeder.pid" 2>/dev/null || true)"
@@ -1830,8 +2256,10 @@ c47() { # concurrent answers publish one internally consistent choice
       bash "$DASH" collect --force decisions >/dev/null 2>&1
     ( env -u DASHBOARD_CMD_DECISIONS MC_DECISION_ANSWER_LOCK_HELD=1 REPO_ROOT="$REPO" MISSION_CONTROL_HOME="$mch" \
         bash "$DASH" decide answer "$did" 1 >"$mch/one-$i.out" 2>&1; echo $? >"$mch/one-$i.rc" ) & p1=$!
+    register_owned_process "$p1"
     ( env -u DASHBOARD_CMD_DECISIONS MC_DECISION_ANSWER_LOCK_HELD=1 REPO_ROOT="$REPO" MISSION_CONTROL_HOME="$mch" \
         bash "$DASH" decide answer "$did" 2 >"$mch/two-$i.out" 2>&1; echo $? >"$mch/two-$i.rc" ) & p2=$!
+    register_owned_process "$p2"
     wait "$p1" || true; wait "$p2" || true
     MISSION_CONTROL_HOME="$mch" "$REPO/scripts/decision-alert" history "$did" --json >"$mch/history-$i.json" || miss=1
     python3 - "$mch/one-$i.rc" "$mch/two-$i.rc" \
@@ -1965,6 +2393,7 @@ c50() { # renamed transaction directories fail before resolution or publication
       REPO_ROOT="$REPO" MISSION_CONTROL_HOME="$mch" \
       bash "$DASH" decide answer "$did" 1 >"$mch/$kind-swap.out" 2>"$mch/$kind-swap.err" &
     pid=$!
+    register_owned_process "$pid"
     i=0
     while [ ! -f "$mch/.decision-answer-test-ready" ] && [ "$i" -lt 500 ]; do
       sleep 0.01; i=$((i + 1))
@@ -2029,8 +2458,17 @@ PYEOF
   fi
 }
 
-c1; c2; c3; c4; c5; c6; c7; c8; c8a; c8b; c9; c10; c11; c12; c13; c14; c14a; c15; c16; c17; c18; c19; c20; c21; c22; c23; c24; c25; c26; c27; c28; c29; c30; c31; c32; c33; c34; c35; c36; c37; c38; c39; c40; c41; c42; c42a; c43; c44; c45; c46; c47; c48; c49; c50; c51
+if [ "${DASHBOARD_TEST_CASE:-}" = "fixture-reaper" ]; then
+  c39a
+else
+  c0; c1; c2; c3; c4; c4b; c5; c6; c7; c8; c8a; c8b; c9; c10; c11; c12; c13; c14; c14a; c15; c16; c17; c18; c19; c20; c21; c22; c23; c24; c25; c26; c27; c28; c29; c30; c31; c32; c33; c34; c35; c36; c37; c38; c39; c39a; c40; c41; c42; c42a; c43; c44; c45; c46; c47; c48; c49; c50; c51
+fi
 shell_contract
+if [ "$LIVE_DATA_BEFORE" = "$(live_data_fingerprint)" ]; then
+  ok "dashboard suite leaves live Mission Control data byte/stat unchanged"
+else
+  no "dashboard suite mutated live Mission Control data"
+fi
 echo "----"
 echo "PASS=$PASS FAIL=$FAIL"
 [ "$FAIL" -eq 0 ] && exit 0 || exit 1

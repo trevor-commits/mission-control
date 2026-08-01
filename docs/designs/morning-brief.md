@@ -58,6 +58,25 @@ Safe runner ── recompute Git facts ── dry-run/log only until reviewed
 
 New modules: shared field-aware egress policy, session-outcome schema/extractor, transactional decision queue, Morning Brief composer, delivery deadman, conservative loose-end runner, and their tests/plists.
 
+### Telegram route contract
+
+- Decision alerts use mobile-connect's route-aware `decision-send --route
+  control` form so interactive buttons remain available without Mission
+  Control reading a destination ID.
+- Normal Morning Brief chunks use the fixed-argument event API with route
+  `briefs`, source `mission-control-morning-brief`, event `delivery-chunk`, and
+  severity `info`. Every chunk also carries the brief ID as its bounded batch
+  identity and `index/total` as its part identity. One admitted brief consumes
+  one central burst slot; only `delivered` or a proven `deduplicated` result
+  advances the delivery receipt. `suppressed` remains a retryable failure.
+- The deadman remains an independent direct Bot API sender. It safely parses
+  only `MC_ROUTE_INCIDENTS_CHAT_ID` plus its token/keychain settings from the
+  private mobile-connect config; `ALLOWED_USER_ID` is authorization and is
+  never a delivery fallback.
+- Source and stubbed verification can land before Telegram group binding.
+  Runtime activation and live canaries remain gated on canonical landed
+  mobile-connect bytes and valid route bindings.
+
 Extended modules: `chat-graph`, `automation-status`, `scan-unfinished-work`, `dashboard`, Home/Automation renderers, job registry, durable records, and installed runtime.
 
 Left untouched except for named repair: nightly-review, delegation-audit, provider authentication, and unrelated Telegram surfaces.
