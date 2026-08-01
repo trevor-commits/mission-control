@@ -6,12 +6,16 @@ import WebKit
 // Loads ~/.mission-control/panel.html (or argv override).
 // Disables AppKit Automatic Termination — idle accessory apps otherwise exit silently.
 
-final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler {
+final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler, NSWindowDelegate {
   var statusItem: NSStatusItem!
   var popover: NSPopover!
   var webView: WKWebView!
   var timer: Timer?
   var hoverTimer: Timer?
+  // AI Headroom: pinned always-on-top corner card + 15 s live data injection.
+  var pinPanel: NSPanel?
+  var pinWebView: WKWebView?
+  var headroomTimer: Timer?
   // Retained RunningBoard activity — anonymous menu-bar binaries otherwise get
   // Control Center "after-life.interrupted" / workspace invalidation and exit.
   var stayAliveActivity: NSObjectProtocol?
@@ -41,6 +45,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
     let config = WKWebViewConfiguration()
     config.userContentController.add(self, name: "mcDecide")
     config.userContentController.add(self, name: "mcOpenFull")
+    config.userContentController.add(self, name: "mcPin")
     let web = WKWebView(frame: NSRect(x: 0, y: 0, width: 400, height: 560), configuration: config)
     web.setValue(false, forKey: "drawsBackground")
     webView = web
@@ -57,6 +62,141 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
     timer = Timer.scheduledTimer(withTimeInterval: 120, repeats: true) { [weak self] _ in
       self?.reload()
       self?.updateStatusTitle()
+    }
+    // Live headroom: inject fresh collector data every 15 s (no page reloads).
+    headroomTimer = Timer.scheduledTimer(withTimeInterval: 15, repeats: true) { [weak self] _ in
+      self?.pushHeadroom()
+      self?.updateStatusTitle()
+    }
+    if UserDefaults.standard.bool(forKey: "mcPinVisible") {
+      showPinPanel()
+    }
+  }
+
+  // MARK: - AI Headroom (feed read, live injection, pinned corner card)
+
+  func headroomFeedJSON() -> String? {
+    let url = FileManager.default.homeDirectoryForCurrentUser
+      .appendingPathComponent(".mission-control/data/headroom.json")
+    guard let data = try? Data(contentsOf: url),
+          let str = String(data: data, encoding: .utf8), !str.isEmpty else { return nil }
+    return str
+  }
+
+  func headroomLowest() -> (pct: Int, band: String)? {
+    let url = FileManager.default.homeDirectoryForCurrentUser
+      .appendingPathComponent(".mission-control/data/headroom.json")
+    guard let data = try? Data(contentsOf: url),
+          let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+          let feedData = obj["data"] as? [String: Any],
+          let summary = feedData["summary"] as? [String: Any],
+          let low = summary["lowest_quota"] as? [String: Any],
+          let pct = low["remaining_pct"] as? Double
+    else { return nil }
+    // Stale collector data must not render a healthy number in the menu bar.
+    if let epoch = obj["generated_epoch"] as? TimeInterval,
+       Date().timeIntervalSince1970 - epoch > 600 { return nil }
+    return (Int(pct.rounded()), (low["band"] as? String) ?? "cash")
+  }
+
+  func pushHeadroom() {
+    guard let json = headroomFeedJSON() else { return }
+    let js = "window.MC_updateHeadroom && window.MC_updateHeadroom(\(json));"
+    webView?.evaluateJavaScript(js, completionHandler: nil)
+    pinWebView?.evaluateJavaScript(js, completionHandler: nil)
+  }
+
+  func bandColor(_ band: String) -> NSColor {
+    switch band {
+    case "green": return .systemGreen
+    case "yellow": return .systemYellow
+    case "orange": return .systemOrange
+    case "red": return .systemRed
+    default: return .secondaryLabelColor
+    }
+  }
+
+  func showPinPanel() {
+    if let panel = pinPanel {
+      panel.orderFrontRegardless()
+      UserDefaults.standard.set(true, forKey: "mcPinVisible")
+      return
+    }
+    let config = WKWebViewConfiguration()
+    config.userContentController.add(self, name: "mcDecide")
+    config.userContentController.add(self, name: "mcOpenFull")
+    config.userContentController.add(self, name: "mcPin")
+    // Belt and suspenders: force pin mode even if the file URL query is dropped.
+    config.userContentController.addUserScript(WKUserScript(
+      source: "document.body.classList.add('pin');",
+      injectionTime: .atDocumentEnd, forMainFrameOnly: true))
+    let web = WKWebView(frame: NSRect(x: 0, y: 0, width: 336, height: 460), configuration: config)
+    pinWebView = web
+
+    let panel = NSPanel(
+      contentRect: NSRect(x: 0, y: 0, width: 336, height: 460),
+      styleMask: [.titled, .closable, .fullSizeContentView, .nonactivatingPanel, .utilityWindow],
+      backing: .buffered, defer: false)
+    panel.title = "AI Headroom"
+    panel.titleVisibility = .hidden
+    panel.titlebarAppearsTransparent = true
+    panel.isMovableByWindowBackground = true
+    panel.level = .floating
+    panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+    panel.isReleasedWhenClosed = false
+    panel.hidesOnDeactivate = false
+    panel.delegate = self
+    panel.contentView = web
+
+    if let saved = UserDefaults.standard.string(forKey: "mcPinFrame"), !saved.isEmpty {
+      panel.setFrame(NSRectFromString(saved), display: false)
+    } else if let screen = NSScreen.main {
+      let v = screen.visibleFrame
+      panel.setFrameOrigin(NSPoint(x: v.maxX - 336 - 12, y: v.minY + 12))
+    }
+    loadPin(into: web)
+    panel.orderFrontRegardless()
+    pinPanel = panel
+    UserDefaults.standard.set(true, forKey: "mcPinVisible")
+  }
+
+  func loadPin(into web: WKWebView) {
+    let args = CommandLine.arguments
+    let override = args.count > 1 ? args[1] : nil
+    let base = override.map { URL(fileURLWithPath: $0) }
+      ?? FileManager.default.homeDirectoryForCurrentUser
+        .appendingPathComponent(".mission-control/panel.html")
+    guard FileManager.default.fileExists(atPath: base.path) else { return }
+    var comps = URLComponents(url: base, resolvingAgainstBaseURL: false)
+    comps?.query = "mode=pin"
+    let url = comps?.url ?? base
+    web.loadFileURL(url, allowingReadAccessTo: base.deletingLastPathComponent())
+  }
+
+  func togglePinPanel() {
+    if let panel = pinPanel, panel.isVisible {
+      UserDefaults.standard.set(NSStringFromRect(panel.frame), forKey: "mcPinFrame")
+      panel.orderOut(nil)
+      UserDefaults.standard.set(false, forKey: "mcPinVisible")
+    } else {
+      showPinPanel()
+      pushHeadroom()
+    }
+  }
+
+  func windowShouldClose(_ sender: NSWindow) -> Bool {
+    if sender === pinPanel {
+      UserDefaults.standard.set(NSStringFromRect(sender.frame), forKey: "mcPinFrame")
+      UserDefaults.standard.set(false, forKey: "mcPinVisible")
+      sender.orderOut(nil)
+      return false
+    }
+    return true
+  }
+
+  func windowDidMove(_ notification: Notification) {
+    if let panel = notification.object as? NSPanel, panel === pinPanel {
+      UserDefaults.standard.set(NSStringFromRect(panel.frame), forKey: "mcPinFrame")
     }
   }
 
@@ -103,20 +243,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
   func updateStatusTitle() {
     guard let button = statusItem?.button else { return }
     let s = needsSummary()
+    let title = NSMutableAttributedString()
     if s.count > 0 {
-      button.attributedTitle = NSAttributedString(
-        string: "MC \(s.count)", attributes: [.foregroundColor: NSColor.systemRed])
+      title.append(NSAttributedString(
+        string: "MC \(s.count)", attributes: [.foregroundColor: NSColor.systemRed]))
     } else if s.redJobs > 0 {
-      button.attributedTitle = NSAttributedString(
-        string: "MC !", attributes: [.foregroundColor: NSColor.systemOrange])
+      title.append(NSAttributedString(
+        string: "MC !", attributes: [.foregroundColor: NSColor.systemOrange]))
     } else {
-      button.attributedTitle = NSAttributedString(
-        string: "MC", attributes: [.foregroundColor: NSColor.labelColor])
+      title.append(NSAttributedString(
+        string: "MC", attributes: [.foregroundColor: NSColor.labelColor]))
     }
+    var lowTip = ""
+    if let low = headroomLowest() {
+      title.append(NSAttributedString(
+        string: " ·\(low.pct)%",
+        attributes: [.foregroundColor: bandColor(low.band)]))
+      lowTip = " · lowest AI headroom \(low.pct)%"
+    }
+    button.attributedTitle = title
     var tip = "Mission Control"
     if s.count > 0 { tip += " — \(s.count) need\(s.count == 1 ? "s" : "") you" }
     else if s.redJobs > 0 { tip += " — \(s.redJobs) red job\(s.redJobs == 1 ? "" : "s")" }
     else { tip += " — all clear" }
+    tip += lowTip
     if let age = s.ageSeconds {
       if age < 60 { tip += " · updated \(age)s ago" }
       else if age < 3600 { tip += " · updated \(age / 60)m ago" }
@@ -197,6 +347,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
 
   func userContentController(_ userContentController: WKUserContentController,
                              didReceive message: WKScriptMessage) {
+    if message.name == "mcPin" {
+      DispatchQueue.main.async { [weak self] in self?.togglePinPanel() }
+      return
+    }
     if message.name == "mcOpenFull" {
       DispatchQueue.main.async { [weak self] in self?.openFullMissionControl() }
       return

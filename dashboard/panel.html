@@ -7,9 +7,11 @@
 <script src="data/attention.js"></script>
 <script src="data/decisions.js"></script>
 <script src="data/automation.js"></script>
+<script src="data/headroom.js"></script>
 <script src="data/attention.error.js"></script>
 <script src="data/decisions.error.js"></script>
 <script src="data/automation.error.js"></script>
+<script src="data/headroom.error.js"></script>
 <style>
 :root {
   --bg: #f4f5f7; --card: #ffffff; --card-2: #fafbfc; --fg: #171a21; --muted: #68707e;
@@ -159,6 +161,90 @@ h1 { font-size: 14.5px; margin: 0; font-weight: 700; letter-spacing: -.01em; }
 .empty .t { font-size: 14px; font-weight: 700; }
 .empty .s { color: var(--muted); font-size: 12px; margin-top: 2px; }
 
+/* ── AI Headroom ────────────────────────────────────────── */
+:root {
+  --hr-green: #0f8a5f; --hr-yellow: #c99a06; --hr-orange: #d97706; --hr-red: #bd353f;
+  --hr-cash: #3b5bdb;
+}
+html[data-theme="dark"] {
+  --hr-green: #3fc794; --hr-yellow: #e3c04b; --hr-orange: #f0a35e; --hr-red: #f0767c;
+  --hr-cash: #8b9dff;
+}
+.hr-head { display: flex; align-items: center; gap: 6px; padding: 14px 18px 6px; }
+.hr-head .t {
+  color: var(--faint); font-size: 10.5px; font-weight: 700;
+  letter-spacing: .08em; text-transform: uppercase;
+}
+.hr-tabs {
+  display: flex; gap: 2px; margin-left: auto;
+  background: var(--card-2); border: 1px solid var(--border-soft);
+  border-radius: 7px; padding: 2px;
+}
+.hr-tab {
+  border: 0; background: transparent; color: var(--muted);
+  font: inherit; font-size: 10.5px; font-weight: 650;
+  padding: 2.5px 7px; border-radius: 5px; cursor: pointer;
+}
+.hr-tab.on { background: var(--card); color: var(--fg); box-shadow: var(--shadow); }
+.hr-pin {
+  border: 0; background: transparent; color: var(--muted); cursor: pointer;
+  font-size: 13px; padding: 2px 5px; border-radius: 5px;
+}
+.hr-pin:hover { color: var(--accent-fg); background: var(--accent-soft); }
+.hr-pin.off { opacity: .35; }
+#hr-list { padding: 0 16px 4px; }
+.hr-row {
+  background: var(--card); border: 1px solid var(--border-soft);
+  border-radius: 11px; padding: 9px 11px; margin-bottom: 7px;
+  box-shadow: var(--shadow); cursor: pointer;
+}
+.hr-row.stale { border-style: dashed; }
+.hr-top { display: flex; align-items: baseline; gap: 6px; }
+.hr-name { font-size: 12.5px; font-weight: 700; letter-spacing: -.01em; }
+.hr-win { color: var(--muted); font-size: 10.5px; }
+.hr-flag {
+  font-size: 9px; font-weight: 750; letter-spacing: .05em; text-transform: uppercase;
+  padding: 1.5px 5px; border-radius: 5px;
+}
+.hr-flag.stale { color: var(--amber); background: var(--amber-soft); }
+.hr-flag.down { color: var(--red); background: var(--red-soft); }
+.hr-flag.auth { color: var(--muted); background: var(--card-2); border: 1px solid var(--border-soft); }
+.hr-flag.live { color: var(--green); background: var(--green-soft); }
+.hr-val {
+  margin-left: auto; font-size: 14.5px; font-weight: 750;
+  font-variant-numeric: tabular-nums; letter-spacing: -.02em;
+}
+.hr-val .unit { font-size: 10px; font-weight: 650; color: var(--muted); margin-left: 2px; }
+.hr-barwrap { position: relative; height: 17px; margin-top: 4px; }
+.hr-track {
+  position: absolute; left: 0; right: 0; bottom: 3px; height: 6px;
+  border-radius: 3px; background: var(--border-soft); overflow: hidden;
+}
+.hr-fill { height: 100%; border-radius: 3px; transition: width .6s ease; }
+.hr-fill.cash { opacity: .3; }
+.hr-fill.pulse { animation: hr-pulse 1.6s ease-in-out infinite; }
+@keyframes hr-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .55; } }
+.hr-bricks { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+.hr-sub { display: flex; align-items: baseline; gap: 8px; margin-top: 3px; color: var(--faint); font-size: 10.5px; }
+.hr-sub .sp { flex: 1; }
+.hr-pace { font-weight: 650; }
+.hr-pace.unusual { color: var(--red); }
+.hr-pace.fast { color: var(--amber); }
+.hr-detail {
+  display: none; margin-top: 7px; padding-top: 7px;
+  border-top: 1px solid var(--border-soft); font-size: 11px; color: var(--muted);
+}
+.hr-row.open .hr-detail { display: grid; grid-template-columns: auto 1fr; gap: 2px 10px; }
+.hr-detail b { color: var(--fg); font-weight: 650; }
+.hr-note { padding: 2px 16px 8px; color: var(--faint); font-size: 11px; text-align: center; }
+body.pin .topbar, body.pin .stats, body.pin .section-head,
+body.pin #list, body.pin .toolbar { display: none; }
+body.pin .hr-head { padding-top: 10px; }
+@media (prefers-reduced-motion: reduce) {
+  .hr-fill { transition: none; }
+  .hr-fill.pulse { animation: none; }
+}
+
 /* ── Footer ─────────────────────────────────────────────── */
 .toolbar {
   position: sticky; bottom: 0; z-index: 5;
@@ -191,11 +277,20 @@ h1 { font-size: 14.5px; margin: 0; font-weight: 700; letter-spacing: -.01em; }
   <span class="pill ok" id="status-pill"><span class="pdot"></span><span id="status-text">Checking</span></span>
 </header>
 
-<section class="stats" id="stats">
+<section class="stats" id="stats" style="grid-template-columns: repeat(4, 1fr);">
   <div class="stat"><div class="num" id="stat-needs">–</div><div class="lbl">Needs you</div></div>
   <div class="stat"><div class="num" id="stat-jobs">–</div><div class="lbl" id="stat-jobs-lbl">Jobs healthy</div></div>
   <div class="stat"><div class="num" id="stat-feeds">–</div><div class="lbl">Feed age</div></div>
+  <div class="stat"><div class="num" id="stat-ai">–</div><div class="lbl">AI headroom</div></div>
 </section>
+
+<div class="hr-head">
+  <span class="t">AI Headroom</span>
+  <div class="hr-tabs" id="hr-tabs"></div>
+  <button class="hr-pin" type="button" id="hr-motion" title="Toggle burn animation">≋</button>
+  <button class="hr-pin" type="button" id="hr-pin" title="Pin as always-on-top corner card">⇱</button>
+</div>
+<div id="hr-list"></div>
 
 <div class="section-head"><span>Needs you</span><span class="count" id="needs-count"></span></div>
 <div id="list"></div>
@@ -508,6 +603,273 @@ h1 { font-size: 14.5px; margin: 0; font-weight: 700; letter-spacing: -.01em; }
       needsTotal > 0 ? (needsTotal + " open") : "";
   }
   render();
+
+  /* ── AI Headroom section ─────────────────────────────── */
+  // Motion default is ON despite prefers-reduced-motion: the burn animation is
+  // the explicitly requested core of this feature and this is a personal tool;
+  // the header toggle (persisted) turns it off in one click.
+  var HR = {
+    view: (function () { try { return localStorage.getItem("mc-hr-view") || "active"; } catch (e) { return "active"; } })(),
+    motion: (function () { try { return localStorage.getItem("mc-hr-motion") || "on"; } catch (e) { return "on"; } })(),
+    anims: [], raf: null, lastT: 0
+  };
+  Object.defineProperty(HR, "reduced", { get: function () { return HR.motion !== "on"; } });
+  var HR_VIEWS = [["active", "Active"], ["lowest", "Low"], ["5h", "5h"],
+                  ["week", "Wk"], ["month", "Mo"], ["all", "All"]];
+  var HR_BAND = { green: "--hr-green", yellow: "--hr-yellow", orange: "--hr-orange",
+                  red: "--hr-red", cash: "--hr-cash", none: "--hr-cash" };
+
+  if (/[?&]mode=pin/.test(location.search)) document.body.classList.add("pin");
+
+  function hrColor(band) {
+    return getComputedStyle(document.documentElement)
+      .getPropertyValue(HR_BAND[band] || "--hr-cash").trim() || "#3b5bdb";
+  }
+  function hrFeed() { return feeds().headroom || null; }
+  function hrCountdown(epoch, monthly) {
+    if (typeof epoch !== "number" || !isFinite(epoch) || epoch <= 0) return null;
+    var s = Math.round(epoch - Date.now() / 1000);
+    if (s <= 0) return monthly ? "renewing…" : "resetting…";
+    var d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600), m = Math.floor((s % 3600) / 60);
+    var txt = d > 0 ? d + "d " + h + "h" : h > 0 ? h + "h " + m + "m" : m + "m";
+    return (monthly ? "renews in " : "resets in ") + txt;
+  }
+  function hrSorted(rows) {
+    var vis = rows.filter(function (r) { return r.health !== "hidden"; });
+    var quota = vis.filter(function (r) { return r.kind === "quota" && r.remaining_pct != null; });
+    var rest = vis.filter(function (r) { return !(r.kind === "quota" && r.remaining_pct != null); });
+    quota.sort(function (a, b) { return a.remaining_pct - b.remaining_pct; });
+    rest.sort(function (a, b) { return (a.runway_hours || 1e9) - (b.runway_hours || 1e9); });
+    return quota.concat(rest);
+  }
+  function hrFilter(rows) {
+    var sorted = hrSorted(rows), v = HR.view;
+    if (v === "all") return { rows: sorted, note: null };
+    if (v === "5h" || v === "week" || v === "month") {
+      var f = sorted.filter(function (r) { return r.window_class === v; });
+      return { rows: f, note: f.length ? null : "No " + (v === "5h" ? "5-hour" : v === "week" ? "weekly" : "monthly") + " windows right now." };
+    }
+    if (v === "lowest") return { rows: sorted, note: null };
+    var act = sorted.filter(function (r) { return r.active; });
+    if (act.length) return { rows: act, note: null };
+    return { rows: sorted, note: "Nothing is running — showing lowest headroom instead." };
+  }
+
+  function hrRow(r) {
+    var row = el("div", "hr-row" + (r.confidence === "stale" ? " stale" : ""));
+    var top = el("div", "hr-top");
+    top.appendChild(el("span", "hr-name", r.label));
+    if (r.window_label && r.window_label !== "-") top.appendChild(el("span", "hr-win", r.window_label));
+    if (r.active) top.appendChild(el("span", "hr-flag live", "In use"));
+    if (r.confidence === "stale") top.appendChild(el("span", "hr-flag stale", "Stale"));
+    if (r.health === "down") top.appendChild(el("span", "hr-flag down", "Source down"));
+    if (r.health === "auth") top.appendChild(el("span", "hr-flag auth", "Token wait"));
+    var val = el("span", "hr-val");
+    if (r.kind === "quota" && r.remaining_pct != null) {
+      val.style.color = hrColor(r.band);
+      val.appendChild(document.createTextNode(Math.round(r.remaining_pct) + "%"));
+      val.appendChild(el("span", "unit", "left"));
+    } else if (r.balance_usd != null) {
+      val.style.color = hrColor(r.band === "cash" ? "cash" : r.band);
+      val.appendChild(document.createTextNode("$" + Number(r.balance_usd).toFixed(2)));
+    } else {
+      val.appendChild(document.createTextNode("–"));
+    }
+    top.appendChild(val);
+    row.appendChild(top);
+
+    if (r.remaining_pct != null || r.balance_usd != null) {
+      var wrap = el("div", "hr-barwrap");
+      var track = el("div", "hr-track");
+      var fill = el("div", "hr-fill");
+      var color = hrColor(r.kind === "balance" ? (r.band === "cash" ? "cash" : r.band) : r.band);
+      fill.style.background = color;
+      if (r.kind === "quota") {
+        fill.style.width = Math.max(0, Math.min(100, r.remaining_pct)) + "%";
+      } else {
+        fill.style.width = "100%";
+        if (r.band === "cash") fill.className += " cash";
+      }
+      if (r.active && !(r.burn_per_hour > 0) && !HR.reduced) fill.className += " pulse";
+      track.appendChild(fill);
+      wrap.appendChild(track);
+      if (!HR.reduced) {
+        var canvas = el("canvas", "hr-bricks");
+        wrap.appendChild(canvas);
+        HR.anims.push({ canvas: canvas, row: r, color: color, parts: [], acc: 0 });
+      }
+      row.appendChild(wrap);
+    }
+
+    var sub = el("div", "hr-sub");
+    var cd = hrCountdown(r.resets_epoch, r.window_class === "month");
+    if (cd) sub.appendChild(el("span", null, cd));
+    if (r.age_s != null && r.age_s > 180) sub.appendChild(el("span", null, "updated " + (r.age_s < 3600 ? Math.round(r.age_s / 60) + "m" : Math.round(r.age_s / 3600) + "h") + " ago"));
+    sub.appendChild(el("span", "sp"));
+    if (r.burn_per_hour != null && r.burn_per_hour > 0) {
+      sub.appendChild(el("span", null, (r.kind === "quota" ? r.burn_per_hour.toFixed(1) + "%/h" : "$" + r.burn_per_hour.toFixed(2) + "/h")));
+    }
+    if (r.pace && r.pace !== "learning") {
+      var pc = el("span", "hr-pace " + r.pace, r.pace === "unusual" ? "Unusually fast" : r.pace.charAt(0).toUpperCase() + r.pace.slice(1));
+      sub.appendChild(pc);
+    } else if (r.active && r.pace === "learning") {
+      sub.appendChild(el("span", "hr-pace", "Learning normal pace"));
+    }
+    if (sub.children.length > 1) row.appendChild(sub);
+
+    var det = el("div", "hr-detail");
+    function drow(k, v) {
+      if (v == null || v === "") return;
+      det.appendChild(el("span", null, k));
+      var b = el("b"); b.textContent = String(v); det.appendChild(b);
+    }
+    drow("Source", r.source || "–");
+    if (r.note) drow("Note", r.note);
+    if (r.forecast_exhaust_epoch) {
+      var hLeft = Math.max(0, (r.forecast_exhaust_epoch - Date.now() / 1000) / 3600);
+      drow("Forecast", "empty in ~" + hLeft.toFixed(1) + "h — before reset");
+    }
+    if (r.baseline_median != null) drow("Normal burn", (r.kind === "quota" ? r.baseline_median + "%/h" : "$" + r.baseline_median + "/h"));
+    if (r.runway_hours != null) drow("Runway", (r.runway_hours / 24).toFixed(1) + " days at current burn");
+    var d = r.detail || {};
+    if (d.membership) drow("Plan", d.membership);
+    if (d.plan) drow("Plan", d.plan + (d.tier ? " (tier " + d.tier + ")" : ""));
+    if (d.included != null) drow("Included", d.included + " + " + (d.bonus || 0) + " bonus");
+    if (d.auto_pct_used != null) drow("Auto models", d.auto_pct_used + "% used");
+    if (d.local_estimate) {
+      var le = d.local_estimate;
+      if (le.tokens_used != null) drow("Local estimate", le.tokens_used.toLocaleString() + " tokens this block" + (le.burn_tpm ? " · " + le.burn_tpm + " tok/min" : ""));
+    }
+    if (d.voucher != null && d.voucher > 0) drow("Voucher", "$" + d.voucher);
+    if (d.granted != null && d.granted > 0) drow("Granted", "$" + d.granted);
+    row.appendChild(det);
+    row.onclick = function (e) {
+      if (e.target.closest("button")) return;
+      row.classList.toggle("open");
+    };
+    return row;
+  }
+
+  function hrTick(t) {
+    HR.raf = null;
+    var dt = Math.min(0.1, (t - (HR.lastT || t)) / 1000);
+    HR.lastT = t;
+    var alive = false;
+    HR.anims.forEach(function (a) {
+      var c = a.canvas, r = a.row;
+      if (!c.isConnected) return;
+      var dpr = window.devicePixelRatio || 1;
+      var w = c.clientWidth, h = c.clientHeight;
+      if (!w || !h) return;
+      if (c.width !== w * dpr) { c.width = w * dpr; c.height = h * dpr; }
+      var ctx = c.getContext("2d");
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, w, h);
+      var burn = r.burn_per_hour;
+      var rate = (r.active && burn > 0)
+        ? Math.max(2, Math.min(14, r.kind === "quota" ? 2 + burn * 0.8 : 2 + burn * 4)) : 0;
+      if (rate > 0) {
+        a.acc += rate * dt;
+        var edgeX = r.kind === "quota" ? (w * Math.max(0, Math.min(100, r.remaining_pct)) / 100) : w * 0.55;
+        while (a.acc >= 1) {
+          a.acc -= 1;
+          a.parts.push({ x: edgeX, y: h - 6, vx: 22 + Math.random() * 34,
+                         vy: -(16 + Math.random() * 26), life: 0.85 });
+        }
+      }
+      a.parts = a.parts.filter(function (p) { return p.life > 0; });
+      a.parts.forEach(function (p) {
+        p.life -= dt; p.vy += 95 * dt; p.x += p.vx * dt; p.y += p.vy * dt;
+        ctx.globalAlpha = Math.max(0, p.life / 0.85) * 0.9;
+        ctx.fillStyle = a.color;
+        ctx.fillRect(p.x, p.y, 2.5, 2);
+      });
+      ctx.globalAlpha = 1;
+      if (a.parts.length || rate > 0) alive = true;
+    });
+    if (alive && !document.hidden) HR.raf = requestAnimationFrame(hrTick);
+  }
+  function hrKick() {
+    if (!HR.reduced && !HR.raf && HR.anims.length) HR.raf = requestAnimationFrame(hrTick);
+  }
+
+  function renderHeadroom() {
+    var tabs = document.getElementById("hr-tabs");
+    var list = document.getElementById("hr-list");
+    if (!tabs || !list) return;
+    tabs.textContent = "";
+    HR_VIEWS.forEach(function (v) {
+      var b = el("button", "hr-tab" + (HR.view === v[0] ? " on" : ""), v[1]);
+      b.type = "button";
+      b.onclick = function () {
+        HR.view = v[0];
+        try { localStorage.setItem("mc-hr-view", v[0]); } catch (e) {}
+        renderHeadroom();
+      };
+      tabs.appendChild(b);
+    });
+    var motion = document.getElementById("hr-motion");
+    motion.classList.toggle("off", HR.motion !== "on");
+    motion.title = HR.motion === "on" ? "Burn animation on — click to turn off" : "Burn animation off — click to turn on";
+    motion.onclick = function () {
+      HR.motion = HR.motion === "on" ? "off" : "on";
+      try { localStorage.setItem("mc-hr-motion", HR.motion); } catch (e) {}
+      renderHeadroom();
+    };
+    var pin = document.getElementById("hr-pin");
+    var inPanel = !!(window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.mcPin);
+    pin.style.display = inPanel ? "" : "none";
+    pin.onclick = function () { window.webkit.messageHandlers.mcPin.postMessage({}); };
+
+    HR.anims = [];
+    list.textContent = "";
+    var feed = hrFeed();
+    var statAi = document.getElementById("stat-ai");
+    if (!feed || !feed.data || !Array.isArray(feed.data.rows)) {
+      list.appendChild(el("div", "hr-note",
+        "Headroom collector not running — scripts/install-ai-headroom in global-implementations sets it up."));
+      if (statAi) { statAi.textContent = "–"; statAi.className = "num"; }
+      return;
+    }
+    var res = hrFilter(feed.data.rows);
+    if (!res.rows.length) {
+      list.appendChild(el("div", "hr-note", res.note || "No usage rows."));
+    } else {
+      res.rows.forEach(function (r) { list.appendChild(hrRow(r)); });
+      if (res.note) list.appendChild(el("div", "hr-note", res.note));
+      if (HR.view === "all") {
+        feed.data.rows.filter(function (r) { return r.health === "hidden"; }).forEach(function (r) {
+          list.appendChild(el("div", "hr-note", r.label + ": " + (r.note || "not configured")));
+        });
+      }
+    }
+    var low = feed.data.summary && feed.data.summary.lowest_quota;
+    if (statAi) {
+      if (low && low.remaining_pct != null) {
+        statAi.textContent = Math.round(low.remaining_pct) + "%";
+        statAi.style.color = hrColor(low.band);
+        statAi.className = "num";
+        statAi.title = low.label + " " + low.window_label;
+      } else {
+        statAi.textContent = "–"; statAi.className = "num"; statAi.style.color = "";
+      }
+    }
+    var age = Date.now() / 1000 - (feed.generated_epoch || 0);
+    if (feed.generated_epoch && age > 300) {
+      list.appendChild(el("div", "hr-note", "Collector data is " + Math.round(age / 60) + " min old."));
+    }
+    hrKick();
+  }
+
+  window.MC_updateHeadroom = function (feed) {
+    if (!feed || typeof feed !== "object") return;
+    window.MC = window.MC || { feeds: {} };
+    window.MC.feeds = window.MC.feeds || {};
+    window.MC.feeds.headroom = feed;
+    renderHeadroom();
+  };
+  document.addEventListener("visibilitychange", hrKick);
+  renderHeadroom();
 })();
 </script>
 </body>
