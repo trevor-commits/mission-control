@@ -39,6 +39,7 @@ Mirror every configured Linear issue here with the repo-side home that explains 
 ## Completed
 If it's not here, it isn't remembered.
 Preserve a durable completion trail for verified work instead of deleting it from active planning.
+- 2026-07-31 | ER-277 interrupted dashboard fixture reaper — outer signal cleanup now confines anonymous fixture roots and retires exact PID/launch-identity children; c39a RED/GREEN landed on `origin/main` as `57ff825`; Mission Control stayed disabled/unloaded and live data stayed unchanged; full healthy-host matrix remains the normal release gate, not a new follow-up.
 - 2026-07-31 | ER-277 Packet D producer repair — replaced per-session `chat-source describe` calls with one bounded metadata-batch process group; partial/unavailable metadata now stamps attempts and persists degraded export health without failing core ingest/export; dashboard error sidecars now drive bounded feed-local backoff while sibling feeds continue, `--force` bypasses, success clears, and the exact scheduled command exposes degradation. A fresh review of `042b659` found four remaining blockers: ancestor/default-namespace escape, case-mode-dependent protection, state-path check/use swapping, and metadata cleanup reaping/pipe-wait ordering. Repair `ee54328` pins synthetic writes to the accepted directory identity, reserves the default namespace case-insensitively, preserves absolute persisted LaunchAgent paths, sends the final process-group kill before reaping, and removes unbounded cleanup waits. Current owning suites are graph ALL PASS and dashboard 82/0; the earlier offline verifier 21/21/browser 253 evidence predates this follow-up and is not claimed for `ee54328`. Service remains disabled/unloaded; no install, activation, or outbound alert was performed. | linear: self-contained accepted ER-277 repair; repo-only.
 - 2026-07-23 | Attention lane (top-5 needs-attention board) — `dashboard attention` CLI + `attention` feed + stale-decision demotion (>14d archived) + panel top-5 from attention with decisions fallback + Attention tab + git `--with-timeouts` partial results (whole-feed 300s). Evidence: `docs/evidence/2026-07-23-attention-lane.md`. Branch `cursor/attention-lane` (not installed). | linear: self-contained.
 - 2026-07-17 | Phase 0.3 queue repair + 0.2 answer return path LIVE — admission classification as advisory-only metadata (NoOp/WorkOrder/OperatorDecision; authority-envelope fields carried as data, AST-scan-enforced no-execution invariant), rollup presentation with the strict supersession contract (same action + owner + target, fails closed), lane views from the domain field, security-severity bypass with non-duplicating alerts, group-level re-ask suppression (7-day window, severity escalation recorded), one-shot `admission-backfill`, schema-presence steady-state stamping, `--source` provenance and resume-chat/provider return-path metadata on answers. Live-fire on the real store: 113/113 open rows exactly one class (noop 5 / operator 96 / workorder 12), rollup 91 cards for 113 rows, lanes business 12 / faith 2 / infra 82 / personal 17, backfill idempotent (second run stamped 0), deployed-stack dismiss with `dismissed|{"source":"telegram"}` event on a cloned store. Merges `f554f96` + backfill merge installed and stamped; five suites green throughout (decision-alert / dashboard 67 / er134 57 / queue_admission 24 / common). Foreign checkout dirt preserved verbatim on `preserve/primary-dirt-20260717` (`cd26fd7`). Deferred with reasons: rollup-answer CLI wiring (belongs to the answer flow), WorkOrder writes into the autonomous loop's ready-packets directory (Phase 1.1 — loop authority unproven per plan §9).
@@ -91,7 +92,7 @@ Preserve a durable completion trail for verified work instead of deleting it fro
 - Confirmed-process repair: failure class was child lifecycle ownership ending at the normal case cleanup rather than at the outer test-runner boundary. It accumulated when an external interruption bypassed c39's local post-wait kill and the only outer trap deleted a different root. Earlier detection is the c39a signal regression plus post-suite exact process/root checks. Bounded analogous review covered every background spawn, PID-file fixture, and anonymous `mktemp` call in this owning suite; no other repo or live runtime was scanned.
 - by: Codex child `/root/repair_mission_fixture_reaper`, spawned by task `019fb8ef-18c1-7cf2-bfaa-335220d8609e`; `binding_verified=yes`.
 - triggered by: ER-277 terminal cleanup of the exact orphan fixture process.
-- led to: branch `codex/er277-mission-fixture-reaper`; no follow-up work remains beyond a healthy-host full-suite rerun already required by the normal release gate.
+- led to: `origin/main@57ff825bc9ea026f420bb30a3d837fc403253969`; no follow-up work remains beyond a healthy-host full-suite rerun already required by the normal release gate.
 - linear: self-contained: test-harness reliability repair; Mission Control remains repo-only.
 
 ### 2026-07-31 — ER-277 Packet D collector backoff and batch metadata
@@ -710,26 +711,6 @@ Keep materially new suggestions here so they survive beyond the current chat.
 - 2026-07-05 | recommendation: do not adopt the GitHub Copilot enterprise-observability stack (OpenTelemetry Collector, Prometheus, Grafana, OpenObserve, Superset, Metabase, Airbyte, Meltano, dbt-core, Great Expectations, TensorZero, Helicone, OpenLIT, traceAI, TraceRoot, Pull Request Analytics Action); treat `records/2026-07-04-dashboard-coding-tracker-search-audit.md` as the real same-niche repo map; if a chart is ever justified, prefer vendorable zero-dependency `leeoniya/uPlot` over Chart.js/ECharts/CDN — but not for V1. | why: Copilot recommended from the repo description alone (it said so); every headline pick runs as a background service, framework, or separate warehouse and collides with the explicit non-goals of offline single-file, single-user, no-server. Full evaluation in Feedback Decision Log 2026-07-05. | by: Claude Code (Opus 4.8) session `a9724039-6595-4205-a25b-bf361020250a`. | linear: self-contained until Linear is configured.
 
 ## Active Branch Ledger
-### `codex/er277-mission-fixture-reaper`
-- status: implementation and focused RED/GREEN complete; commit, push, exact review, and canonical landing in progress
-- created: 2026-07-31
-- base: `origin/main@b29726e6551759a04789e4dcdd4987db7be798c0`
-- worktree: `/Users/gillettes/Coding Projects/mission-control-worktrees/er277-mission-fixture-reaper`
-- source chat: Codex child `/root/repair_mission_fixture_reaper`, spawned by `019fb8ef-18c1-7cf2-bfaa-335220d8609e`; `binding_verified=yes`
-- last refreshed by chat: 2026-07-31 by the source child after focused verification and process cleanup
-- purpose: make outer dashboard-test interruption reap exact synthetic children and all suite-owned temp roots without touching live Mission Control state
-- linked issue: self-contained ER-277 follow-up; Linear repo-only mode
-- plugin mirror: none
-- merge expectation: push, self-review exact diff, then fast-forward-safe land to `main`
-- merge target: `main`
-- review surface: `scripts/dashboard.test.sh` lifecycle guard, c39/c39a process ownership, and this work/test record
-- exit checklist: RED/GREEN, syntax/whitespace, exact process cleanup, disabled/unloaded readback, commit/push, origin/main containment, rollback note
-- pre-existing dirt at start: none in the fresh isolated worktree
-- usable invocation path: `DASHBOARD_TEST_CASE=fixture-reaper /bin/bash scripts/dashboard.test.sh`; normal full suite includes c39a
-- delete when: parent confirms durable-record integration and origin/main containment
-- retain reason: canonical landing and parent integration are still in progress
-- cleanup command: parent-owned after landing; do not remove this externally coordinated worktree in this packet
-
 ### `codex/er277-collector-019fb8ef`
 - status: four accepted `042b659` review blockers repaired and owning suites green at `ee54328`; fresh exact-SHA re-review pending
 - created: 2026-07-31
@@ -821,6 +802,7 @@ Each active branch entry should include:
 
 ## Branch History
 
+- 2026-07-31 | `codex/er277-mission-fixture-reaper` | test-harness lifecycle repair fast-forwarded from `b29726e` to `origin/main@57ff825`; expected RED and focused GREEN `PASS=7 FAIL=0`, exact process cleanup, and disabled/unloaded live-service readback recorded above | linked issue: self-contained ER-277 follow-up; plugin mirror: none (repo-only) | cleanup disposition: local/remote task branch and owned worktree removed after final closeout record landed; rollback: `git revert 57ff825bc9ea026f420bb30a3d837fc403253969` | source: Codex child `/root/repair_mission_fixture_reaper` (`binding_verified=yes`).
 - 2026-07-13 | `codex/full-repo-audit-20260712` | reviewed head `60c9ece` merged through PR #9 as `c44e5c9`; repeated full verifier `21/21`, dashboard `66/0`, ER-134 `50/0`, browser `253`, independent `REVIEW-CLEAN`, CodeRabbit approval, GitGuardian pass, exact install/live proof | cleanup disposition: audit/detached baseline and redundant ER-134 worktrees removed; audit plus all patch-contained ER-134/panel/CTA local and remote branches deleted; Trevor-owned dirty ER-103 checkout preserved with explicit superseded disposition | record: `records/2026-07-12-full-repo-convergence-audit.md`.
 - 2026-07-11 | direct `main` full-ingest-health repair | implementation `245fb31`, independent-audit skew repair `dcf11c2`, and hermetic test follow-up `9843607` are on `origin/main`; no feature branch/worktree was created because the bounded logic repair matched the current checkout purpose and had mechanical rollback/tests | cleanup disposition: none required | source: Codex `019f51c1-5817-7872-a6ce-8b65428277ed`; record: Work Record `2026-07-11 — Chat-graph full-ingest health truth repair`.
 - 2026-07-11 | `codex/chat-graph-fresh-git-feed` | implementation `e2f5d60`, backup-health registration `4de0aef`, and live closeout `9191ebe` are contained by `origin/main` | cleanup disposition: local/remote branch and `/Users/gillettes/Coding Projects/mission-control-worktrees/chat-graph-fresh-git-feed` deleted after exact origin containment and canonical install/live proof | source: Codex `019f51c1-5817-7872-a6ce-8b65428277ed`; records: Chat truth-layer and Nightly repository-bundle Work Records above.
