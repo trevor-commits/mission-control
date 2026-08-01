@@ -149,8 +149,14 @@ live_data_fingerprint() {
 import hashlib, json, os, stat, sys
 root = sys.argv[1]
 rows = []
+# headroom.* is written every ~60s by the external com.gillettes.ai-headroom
+# collector (global-implementations); it is expected to change during a suite
+# run and is not evidence that THIS suite mutated live data.
+EXTERNAL_LIVE_FEEDS = ("headroom.json", "headroom.js", "headroom.error.js")
 if os.path.isdir(root):
     for name in sorted(os.listdir(root)):
+        if name in EXTERNAL_LIVE_FEEDS:
+            continue
         path = os.path.join(root, name)
         st = os.lstat(path)
         digest = None
