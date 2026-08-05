@@ -99,7 +99,19 @@ Collectors: mkdir-lock + `timeout` + write-to-tmp-then-`mv` (reload mid-write al
 per-session `describe` loop. The group has a hard timeout with TERM/KILL
 descendant cleanup; partial or unavailable metadata stamps attempted rows and
 persists `metadata_enrichment_status=degraded` without failing core ingest or
-export. Dashboard failure sidecars persist `consecutive_failures`,
+export.
+
+**Catch-up containment (2026-08-05):** enrichment is skipped entirely during a
+bounded `--limit-files` catch-up — the lane the five-minute collector drives
+through `export --catchup-limit`. Titles and repos are cosmetic, so the
+scheduled tick performs zero external metadata calls no matter how the callee
+resolves ids, and a deferred title lands on the next unbounded ingest. The lane
+is selected by the same `limit is None` predicate that gates the completion
+marker. Note that the installed `chat-source` currently has no `metadata`
+subcommand and exits 2; that stays a health degradation and never a failed feed,
+because a failed feed stays due and relaunches on the next launchd tick.
+
+Dashboard failure sidecars persist `consecutive_failures`,
 `attempted_at`, and `next_retry_epoch`; `collect --due` honors that bounded
 feed-local backoff while sibling feeds continue, `--force` bypasses it, success
 clears it, and status remains red/degraded until a successful refresh. The
