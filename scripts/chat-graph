@@ -547,6 +547,13 @@ def journal_replay(con):
 # ---- chat-source bridge (best-effort, degraded never fatal) ---------------
 _STALE_PROVIDERS = set()
 
+# True while a BOUNDED (`--limit-files`) catch-up ingest is running, i.e. the
+# lane the five-minute launchd collector drives through `export --catchup-limit`.
+# Cosmetic metadata enrichment is skipped in that lane so a scheduled tick makes
+# ZERO external metadata-store calls regardless of how the callee is implemented.
+# Unbounded ingest (nightly/manual) still enriches.
+_CATCHUP_INGEST = False
+
 def _metadata_timeout_s():
     try:
         return max(0.1, float(os.environ.get("CHAT_GRAPH_METADATA_TIMEOUT_S", "20")))
@@ -790,7 +797,16 @@ def _looks_resolvable(sid):
     return bool(sid and _RESOLVABLE_ID_RE.match(sid))
 
 def _enrich_sessions(con, limit=50):
-    """Enrich at most `limit` sessions with one metadata-only chat-source call."""
+    """Enrich at most `limit` sessions with one metadata-only chat-source call.
+
+    Skipped entirely during a bounded catch-up ingest. Titles/repos here are
+    cosmetic: the graph, its edges, and the export are all complete without
+    them, and the next unbounded ingest fills them in. The scheduled collector
+    therefore performs zero metadata-store traversals per run, so a stale feed
+    can never turn the five-minute launchd tick into repeated store-wide scans.
+    """
+    if _CATCHUP_INGEST:
+        return
     now = int(time.time())
     week_ago = now - 7 * 24 * 3600
     rows = con.execute(
@@ -2626,11 +2642,15 @@ def _acquire_ingest_lock():
         return False
 
 def cmd_ingest(args):
-    global _INGEST_SKIPPED
+    global _INGEST_SKIPPED, _CATCHUP_INGEST
     _INGEST_SKIPPED = False
     only = args[args.index("--collector") + 1] if "--collector" in args else None
     full = "--full" in args
     limit = int(args[args.index("--limit-files") + 1]) if "--limit-files" in args else None
+    # Same predicate that gates the completion marker below: a bounded pass is a
+    # catch-up, an unbounded pass is the authoritative ingest. Reused here so the
+    # two lanes can never disagree about which run is the scheduled one.
+    _CATCHUP_INGEST = limit is not None
     ensure_dir(HOME_DIR())
     ensure_dir(os.path.dirname(journal_path()))  # healthy home always has journal/ + logs/
     ensure_dir(os.path.dirname(scanlog_path()))

@@ -598,6 +598,77 @@ PY
 then pass "metadata cleanup keeps the leader unreaped through final group kill"
 else fail "metadata cleanup reaped ownership before final group kill"; fi
 
+# --- 19e. scheduled catch-up performs ZERO metadata-store traversals ---------
+# The five-minute launchd collector runs `export --catchup-limit N`, which drives
+# a BOUNDED `ingest --limit-files N`. Cosmetic enrichment must not run in that
+# lane, so a scheduled tick can never fan out store-wide metadata lookups no
+# matter how the callee resolves ids. Unbounded ingest must still enrich.
+new_env
+STUB19E="$(mktemp -d)/chat-source"
+cat > "$STUB19E" <<SH
+#!/usr/bin/env bash
+echo "\$@" >> "$CHAT_GRAPH_HOME/ALL_CALLS"
+case "\$1" in
+  metadata)
+    shift; [ "\${1:-}" = --jsonl ] && shift
+    for id in "\$@"; do
+      printf '{"request":"%s","status":"found","id":"%s","provider":"codex","title":"Late Title","cwd":"/tmp/r","repo":"r","path":"/tmp/%s.jsonl","kind":"codex-jsonl","source":"fixture"}\n' "\$id" "\$id" "\$id"
+    done ;;
+esac
+exit 0
+SH
+chmod +x "$STUB19E"; export CHAT_GRAPH_CHAT_SOURCE="$STUB19E"
+mk_delegation d19e aaaaaaaa-1111-2222-3333-444444444444 bbbbbbbb-5555-6666-7777-888888888888 yes
+# a) direct bounded catch-up ingest
+"$CG" ingest --limit-files 5 >/dev/null 2>&1; RC19E=$?
+CALLS19E="$(wc -l < "$CHAT_GRAPH_HOME/ALL_CALLS" 2>/dev/null | tr -d ' ')"; CALLS19E="${CALLS19E:-0}"
+if [ "$RC19E" -eq 0 ] && [ "$CALLS19E" = 0 ]; then
+  pass "bounded catch-up ingest makes zero chat-source metadata-store calls"
+else fail "bounded catch-up ingest called chat-source (rc=$RC19E calls=$CALLS19E)"; fi
+# b) the real scheduled shape: a stale export drives its own bounded catch-up
+"$CG" export --json --catchup-limit 5 >/dev/null 2>&1; EX19E=$?
+CALLS19E2="$(wc -l < "$CHAT_GRAPH_HOME/ALL_CALLS" 2>/dev/null | tr -d ' ')"; CALLS19E2="${CALLS19E2:-0}"
+if [ "$EX19E" -eq 0 ] && [ "$CALLS19E2" = 0 ] && [ -f "$CHAT_GRAPH_HOME/export/graph.json" ]; then
+  pass "export --catchup-limit exports without any metadata-store traversal"
+else fail "scheduled export traversed the metadata store (rc=$EX19E calls=$CALLS19E2)"; fi
+ok "" "$(q "SELECT COALESCE(title,'') FROM sessions WHERE id='bbbbbbbb-5555-6666-7777-888888888888'")" \
+   "catch-up leaves cosmetic title unset instead of fanning out to fetch it"
+# c) the authoritative unbounded ingest still enriches — exactly one batch
+"$CG" ingest >/dev/null 2>&1
+CALLS19E3="$(wc -l < "$CHAT_GRAPH_HOME/ALL_CALLS" 2>/dev/null | tr -d ' ')"; CALLS19E3="${CALLS19E3:-0}"
+ok "1" "$CALLS19E3" "unbounded ingest still enriches with exactly one metadata batch"
+ok "Late Title" "$(q "SELECT title FROM sessions WHERE id='bbbbbbbb-5555-6666-7777-888888888888'")" \
+   "deferred enrichment lands on the next unbounded ingest"
+
+# --- 19f. an ABSENT metadata subcommand degrades but never fails the feed ----
+# Live shape today: the installed chat-source has no `metadata` command, so it
+# prints usage and exits 2. That must stay a health degradation, never a failed
+# feed — a failed feed stays due and relaunches on every launchd tick.
+new_env
+STUB19F="$(mktemp -d)/chat-source"
+cat > "$STUB19F" <<'SH'
+#!/usr/bin/env bash
+echo "chat-source: unknown command: $1" >&2
+exit 2
+SH
+chmod +x "$STUB19F"; export CHAT_GRAPH_CHAT_SOURCE="$STUB19F"
+mk_delegation d19f aaaaaaaa-1111-2222-3333-444444444444 bbbbbbbb-5555-6666-7777-888888888888 yes
+"$CG" ingest >/dev/null 2>&1; RC19F=$?
+"$CG" export --json >/dev/null 2>&1; EX19F=$?
+if [ "$RC19F" -eq 0 ] && [ "$EX19F" -eq 0 ]; then
+  pass "absent metadata subcommand keeps ingest and export at exit 0"
+else fail "absent metadata subcommand failed the feed (ingest=$RC19F export=$EX19F)"; fi
+if python3 - "$CHAT_GRAPH_HOME/export/graph.json" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1]))
+assert d["data"]["counts"]["metadata_enrichment_status"] == "degraded", d["data"]["counts"]
+assert "chat-source" in d["data"]["stale_providers"], d["data"]["stale_providers"]
+PY
+then pass "absent metadata subcommand is reported as degraded health in the export"
+else fail "absent metadata subcommand did not surface degraded health"; fi
+ok "1" "$(q "SELECT CASE WHEN enriched_at IS NOT NULL THEN 1 ELSE 0 END FROM sessions WHERE id='bbbbbbbb-5555-6666-7777-888888888888'")" \
+   "absent metadata subcommand still stamps the attempt out of the retry pool"
+
 # --- 19e. timeout cleanup never falls through to unbounded communicate -------
 new_env
 if python3 - "$CG" <<'PY'
