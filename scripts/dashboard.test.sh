@@ -592,6 +592,26 @@ PY
   else
     no "scheduled --due mishandled chat-source-only degradation (due=$scheduled_rc status=$status_rc)"
   fi
+
+  # A real (non-cosmetic) degraded cycle must name its reason on stderr so
+  # launchd.err.log answers "why red" without archaeology (2026-08-06: hours of
+  # silent exit-1 runs had no logged cause).
+  H="$(newhome)"
+  python3 - "$ROOT/chats-degraded.json" "$ROOT/chats-degraded-real.json" <<'PY'
+import json, sys
+env = json.load(open(sys.argv[1]))
+env["data"]["stale_providers"] = ["cursor"]
+json.dump(env, open(sys.argv[2], "w"))
+PY
+  MISSION_CONTROL_HOME="$H" DASHBOARD_CMD_CHATS="cat '$ROOT/chats-degraded-real.json'" \
+    bash "$DASH" collect --force chats >/dev/null 2>&1
+  reason_rc=0
+  reason_err="$(MISSION_CONTROL_HOME="$H" bash "$DASH" collect --due chats 2>&1 >/dev/null)" || reason_rc=$?
+  if [ "$reason_rc" -eq 1 ] && printf '%s\n' "$reason_err" | grep -q 'degraded cycle: chats: stale providers cursor'; then
+    ok "degraded scheduled cycle names its reason on stderr"
+  else
+    no "degraded cycle exit stayed silent (rc=$reason_rc err=${reason_err:0:160})"
+  fi
 }
 
 # --- case 5: status exit 0 all-green; nonzero on automation red job ------------

@@ -1146,6 +1146,7 @@ def cmd_collect(argv):
     strict = "--strict" in argv
     only = [a for a in argv if not a.startswith("--")]
     failed = False
+    failed_feeds = []
     git_attempt_status = None
     for name, cadence, defcmd, envvar, tmo in FEEDS:
         if only and name not in only:
@@ -1166,12 +1167,15 @@ def cmd_collect(argv):
                     os.environ["CHAT_GRAPH_SKIP_REPO_SCAN"] = prior_skip
         if name == "git":
             git_attempt_status = status
+        if status != "ok":
+            failed_feeds.append("%s: collection status %s" % (name, status))
         failed = failed or status != "ok"
     # Normal explicit collection preserves feed independence. The scheduled
     # `collect --due` entry point additionally reflects persisted degradation
     # after every sibling had its chance to run, so launchd cannot report a
     # healthy top-level cycle while a feed is failed or held in backoff.
     scheduled_degraded = failed
+    reasons = list(failed_feeds)
     if due and not force:
         for name, cadence, _, _, _ in FEEDS:
             if only and name not in only:
@@ -1179,6 +1183,8 @@ def cmd_collect(argv):
             env = _current_status_env(name)
             if isinstance(env, dict) and env.get("ok") is False:
                 scheduled_degraded = True
+                reasons.append("%s: persisted feed ok=false (%s)"
+                               % (name, str(env.get("error") or "no error text")[:120]))
             if name == "chats" and isinstance(env, dict):
                 data = env.get("data")
                 stale = data.get("stale_providers", []) if isinstance(data, dict) else []
@@ -1189,9 +1195,19 @@ def cmd_collect(argv):
                 if isinstance(stale, list) and any(
                         str(item) != "chat-source" for item in stale):
                     scheduled_degraded = True
-                if _chats_nested_ingest_state(env, cadence) in ("stale", "unknown"):
+                    reasons.append("chats: stale providers %s"
+                                   % ",".join(str(s) for s in stale[:5]))
+                nested = _chats_nested_ingest_state(env, cadence)
+                if nested in ("stale", "unknown"):
                     scheduled_degraded = True
-    return 1 if (strict and failed) or (due and not force and scheduled_degraded) else 0
+                    reasons.append("chats: full ingest %s" % nested)
+    rc = 1 if (strict and failed) or (due and not force and scheduled_degraded) else 0
+    if rc == 1 and reasons:
+        # 2026-08-06: hours of silent launchd exit-1 runs needed archaeology to
+        # explain. A degraded/failed cycle must name its reason on stderr so
+        # launchd.err.log answers "why red" in one line.
+        print("collect: degraded cycle: " + "; ".join(reasons), file=sys.stderr)
+    return rc
 
 
 def _load(name):
