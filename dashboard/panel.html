@@ -199,6 +199,11 @@ html[data-theme="dark"] {
   box-shadow: var(--shadow); cursor: pointer;
 }
 .hr-row.stale { border-style: dashed; }
+.hr-provider {
+  font-size: 10.5px; font-weight: 750; letter-spacing: .07em; text-transform: uppercase;
+  color: var(--faint); margin: 9px 2px 4px;
+}
+.hr-row.grouped { margin-left: 10px; }
 .hr-top { display: flex; align-items: baseline; gap: 6px; }
 .hr-name { font-size: 12.5px; font-weight: 700; letter-spacing: -.01em; }
 .hr-win { color: var(--muted); font-size: 10.5px; }
@@ -655,11 +660,17 @@ body.pin .hr-head { padding-top: 10px; }
     return { rows: sorted, note: "Nothing is running — showing lowest headroom instead." };
   }
 
-  function hrRow(r) {
-    var row = el("div", "hr-row" + (r.confidence === "stale" ? " stale" : ""));
+  function hrRow(r, grouped) {
+    var row = el("div", "hr-row" + (grouped ? " grouped" : "") + (r.confidence === "stale" ? " stale" : ""));
     var top = el("div", "hr-top");
-    top.appendChild(el("span", "hr-name", r.label));
-    if (r.window_label && r.window_label !== "-") top.appendChild(el("span", "hr-win", r.window_label));
+    if (grouped) {
+      // provider name already printed once as the group header — show only
+      // which window this line is
+      top.appendChild(el("span", "hr-name", (r.window_label && r.window_label !== "-") ? r.window_label : r.label));
+    } else {
+      top.appendChild(el("span", "hr-name", r.label));
+      if (r.window_label && r.window_label !== "-") top.appendChild(el("span", "hr-win", r.window_label));
+    }
     if (r.active) top.appendChild(el("span", "hr-flag live", "In use"));
     if (r.confidence === "stale") top.appendChild(el("span", "hr-flag stale", "Stale"));
     if (r.health === "down") top.appendChild(el("span", "hr-flag down", "Source down"));
@@ -835,7 +846,20 @@ body.pin .hr-head { padding-top: 10px; }
     if (!res.rows.length) {
       list.appendChild(el("div", "hr-note", res.note || "No usage rows."));
     } else {
-      res.rows.forEach(function (r) { list.appendChild(hrRow(r)); });
+      // one provider header, labeled windows under it (single-window providers
+      // keep the compact one-line form)
+      var groups = [], byProv = {};
+      res.rows.forEach(function (r) {
+        var key = r.provider || r.label || "?";
+        var grp = byProv[key];
+        if (!grp) { grp = { label: r.label || key, rows: [] }; byProv[key] = grp; groups.push(grp); }
+        grp.rows.push(r);
+      });
+      groups.forEach(function (grp) {
+        var grouped = grp.rows.length > 1;
+        if (grouped) list.appendChild(el("div", "hr-provider", grp.label));
+        grp.rows.forEach(function (r) { list.appendChild(hrRow(r, grouped)); });
+      });
       if (res.note) list.appendChild(el("div", "hr-note", res.note));
       if (HR.view === "all") {
         feed.data.rows.filter(function (r) { return r.health === "hidden"; }).forEach(function (r) {

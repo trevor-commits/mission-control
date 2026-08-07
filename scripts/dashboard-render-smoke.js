@@ -96,7 +96,7 @@ const PRIVACY_CASES = JSON.parse(fs.readFileSync(
 // --- fixtures as window.MC.feeds -------------------------------------------
 const FIX = path.join(REPO, 'dashboard', 'fixtures');
 const feeds = {};
-for (const name of ['usage', 'git', 'chats', 'automation', 'decisions', 'attention', 'brief']) {
+for (const name of ['usage', 'headroom', 'git', 'chats', 'automation', 'decisions', 'attention', 'brief']) {
   const p = path.join(FIX, name + '.json');
   if (!fs.existsSync(p)) { console.error('FAIL: missing fixture ' + p); process.exit(1); }
   feeds[name] = JSON.parse(fs.readFileSync(p, 'utf8'));
@@ -171,7 +171,12 @@ const markers = {
   map: newestChatTitle(feeds.chats),
   chats: firstStr(feeds.chats, ['nodes']),
   git: firstStr(feeds.git, ['repos', 'repositories']),
-  usage: firstStr(feeds.usage, ['providers']),
+  // the usage tab renders provider LABELS ("Codex"), while the snapshot feed
+  // carries lowercase provider ids ("codex") — mirror the page's label map
+  usage: (m => ({ claude: 'Claude', codex: 'Codex', cursor: 'Cursor', copilot: 'Copilot',
+                  hermes: 'Hermes', chatgpt: 'ChatGPT', nous: 'Nous', moonshot: 'Moonshot',
+                  deepseek: 'DeepSeek', kimi_code: 'Kimi Code', x_api: 'X API' }[m] || m))(
+    firstStr(feeds.usage, ['providers'])),
   automation: firstStr(feeds.automation, ['jobs']),
   attention: 'Attention',
 };
@@ -308,6 +313,21 @@ for (const tab of TABS) {
        txt.indexOf('after merge to main and remote branch cleanup') === -1)) {
     console.error('FAIL: #git is missing branch lifecycle labels, owner/source, purpose, or close conditions');
     fails++; continue;
+  }
+  if (tab === 'usage') {
+    // Trevor's contract: no GLM anywhere on the usage surface, hidden rows stay
+    // hidden, one card per provider with labeled windows inside, live headroom
+    // rows merged with snapshot-only providers.
+    if (/glm/i.test(txt)) { console.error('FAIL: #usage still shows GLM'); fails++; continue; }
+    if (/Kimi/.test(txt)) { console.error('FAIL: #usage shows a hidden (unconfigured) provider'); fails++; continue; }
+    for (const need of ['Weekly - GPT-5.3-Codex-Spark', 'Monthly reads', 'X API', 'Copilot', 'Local estimate']) {
+      if (txt.indexOf(need) === -1) { console.error('FAIL: #usage missing grouped-usage content "' + need + '"'); fails++; break; }
+    }
+    const codexMentions = (txt.match(/Codex/g) || []).length;
+    if (codexMentions > 2) { // 1 grouped live card + 1 held-credit card; per-window cards would exceed this
+      console.error('FAIL: #usage declares Codex ' + codexMentions + ' times — provider grouping regressed');
+      fails++; continue;
+    }
   }
   if (tab === 'usage' && txt.indexOf('Decision cards') === -1) {
     console.error('FAIL: #usage is missing the decision-card section');

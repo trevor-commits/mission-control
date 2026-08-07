@@ -9,6 +9,7 @@
      Every declared path is materialized by collect/demo/install; renderers still
      guard malformed or unavailable payloads. -->
 <script src="data/usage.js"></script>
+<script src="data/headroom.js"></script>
 <script src="data/git.js"></script>
 <script src="data/chats.js"></script>
 <script src="data/automation.js"></script>
@@ -16,6 +17,7 @@
 <script src="data/attention.js"></script>
 <script src="data/brief.js"></script>
 <script src="data/usage.error.js"></script>
+<script src="data/headroom.error.js"></script>
 <script src="data/git.error.js"></script>
 <script src="data/chats.error.js"></script>
 <script src="data/automation.error.js"></script>
@@ -458,6 +460,8 @@ body {
 .mc-pace { color: var(--mc-amber); font-size: var(--mc-fs-2); }
 .mc-countdown { font-family: var(--mc-mono); font-size: var(--mc-fs-1); color: var(--mc-fg-muted); }
 .mc-decision-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(255px, 1fr)); gap: var(--mc-sp-3); }
+.mc-hr-window { border-top: 1px solid var(--mc-border); margin-top: var(--mc-sp-3); padding-top: var(--mc-sp-3); }
+.mc-hr-window-name { font-weight: 650; }
 .mc-decision-top { display: flex; align-items: flex-start; gap: var(--mc-sp-2); }
 .mc-decision-title { font-size: var(--mc-fs-3); font-weight: 650; letter-spacing: -0.01em; }
 .mc-decision-state { margin-left: auto; white-space: nowrap; }
@@ -677,7 +681,7 @@ html[data-theme="dark"] .mc-heat-l4 { background: #35b98a; }
   }
 
   // --- per-feed guard: schema/staleness/skew ---------------------------------
-  var EXPECTED_CADENCE = { automation: 300, usage: 1800, git: 900,
+  var EXPECTED_CADENCE = { automation: 300, usage: 1800, headroom: 60, git: 900,
                            chats: 1800, decisions: 300, brief: 300 };
   function guard(name) {
     var env = MC.feeds[name];
@@ -834,7 +838,6 @@ html[data-theme="dark"] .mc-heat-l4 { background: #35b98a; }
     if (key.indexOf("rollout-rate_limits") === 0) return "local rate-limit log";
     if (key.indexOf("ccusage-blocks") === 0) return "Claude local block estimate";
     if (key.indexOf("ccusage-weekly") === 0) return "Claude weekly estimate";
-    if (key.indexOf("claude-glm-doctor") === 0) return "GLM doctor health check";
     if (key.indexOf("session-store") === 0) return "local Copilot store";
     if (key.indexOf("binary") === 0) return "local binary check";
     if (key.indexOf("credits.json") === 0) return "held credits file";
@@ -1168,7 +1171,10 @@ html[data-theme="dark"] .mc-heat-l4 { background: #35b98a; }
     return "no numeric read";
   }
   function usageItems(data) {
-    return ((data && data.providers) || []).map(function (pr) {
+    // GLM is a routing fallback, not a surface Trevor watches — never render it.
+    return ((data && data.providers) || []).filter(function (pr) {
+      return String((pr && pr.provider) || "").toLowerCase() !== "glm";
+    }).map(function (pr) {
       if (pr.name != null || pr.pct != null) {
         return { title: pr.name || "provider", pct: pr.pct, confidence: pr.confidence || "unknown",
                  source: pr.source || "local", used: pr.used, unit: pr.unit, resets_in_min: pr.resets_in_min,
@@ -1253,6 +1259,7 @@ html[data-theme="dark"] .mc-heat-l4 { background: #35b98a; }
   function normUsageProviders(data) {
     var rows = [], credits = [], no_data = [];
     ((data && data.providers) || []).forEach(function (pr) {
+      if (String((pr && pr.provider) || "").toLowerCase() === "glm") return;
       if (pr.name != null || pr.pct != null) { rows.push(pr); return; }
       var win = String(pr.window || "");
       if (win.indexOf("credit") === 0) {
@@ -2592,6 +2599,65 @@ html[data-theme="dark"] .mc-heat-l4 { background: #35b98a; }
   // ===========================================================================
   var countdowns = []; // {el, targetEpoch}
 
+  // --- live headroom groups: one card per provider, labeled windows inside ---
+  function bandToState(r) {
+    if (r.health === "down") return "red";
+    if (r.health === "auth") return "amber";
+    if (r.band === "red") return "red";
+    if (r.band === "orange" || r.band === "yellow") return "amber";
+    if (r.confidence === "stale") return "amber";
+    return "green";
+  }
+  function renderHeadroomGroupCard(grp) {
+    var order = { red: 0, amber: 1, green: 2 };
+    var worst = grp.rows.map(bandToState).sort(function (a, b) { return order[a] - order[b]; })[0] || "green";
+    var chip = { red: "Wait", amber: "Watch", green: "Can use" }[worst];
+    var card = h("div", { class: "mc-card" });
+    card.appendChild(h("div", { class: "mc-decision-top" },
+      h("div", null,
+        h("div", { class: "mc-decision-title" }, grp.label),
+        h("div", { class: "mc-card-foot" }, "Live reading — updates every minute")),
+      h("span", { class: "mc-chip mc-decision-state " + (worst === "green" ? "mc-badge-live" : "") }, chip)));
+    grp.rows.forEach(function (r) {
+      var st = bandToState(r);
+      var sub = h("div", { class: "mc-hr-window" });
+      var valTxt = r.remaining_pct != null ? Math.round(r.remaining_pct) + "% left"
+                 : r.balance_usd != null ? "$" + Number(r.balance_usd).toFixed(2) + " left" : "no reading yet";
+      sub.appendChild(h("div", { class: "mc-decision-top" },
+        h("span", { class: "mc-hr-window-name" }, (r.window_label && r.window_label !== "-") ? r.window_label : "Status"),
+        h("span", { class: "mc-num " + (STATE_CLASS[st] || "") }, valTxt)));
+      if (r.remaining_pct != null) {
+        sub.appendChild(h("div", { class: "mc-bar-track" },
+          h("div", { class: "mc-bar-fill " + (STATE_CLASS[st] || ""), style: "--mc-w:" + Math.max(0, Math.min(100, r.remaining_pct)) + "%" })));
+      }
+      var chips = [{ label: "Trust", value: confidenceLabel(r.confidence) }];
+      if (r.active) chips.push({ label: "Now", value: "in use" });
+      if (r.health === "auth") chips.push({ label: "Flag", value: "token wait" });
+      if (r.health === "down") chips.push({ label: "Flag", value: "source down" });
+      if (r.burn_per_hour != null && r.burn_per_hour > 0) {
+        chips.push({ label: "Burn", value: (r.kind === "balance" ? "$" + r.burn_per_hour.toFixed(2) : r.burn_per_hour.toFixed(1) + "%") + "/h" });
+      }
+      sub.appendChild(chipsLine(chips));
+      if (r.resets_epoch) {
+        var cd = h("span", { class: "mc-countdown" });
+        countdowns.push({ el: cd, target: +r.resets_epoch });
+        sub.appendChild(cd);
+      }
+      var d = r.detail || {};
+      if (d.local_estimate && d.local_estimate.tokens_used != null) {
+        sub.appendChild(h("div", { class: "mc-card-secondary" },
+          "Local estimate: " + Number(d.local_estimate.tokens_used).toLocaleString() + " tokens this block" +
+          (d.local_estimate.burn_tpm ? " · " + Number(d.local_estimate.burn_tpm).toLocaleString() + " tok/min" : "")));
+      }
+      if (d.project_usage != null && d.project_cap != null) {
+        sub.appendChild(h("div", { class: "mc-card-secondary" },
+          Number(d.project_usage).toLocaleString() + " of " + Number(d.project_cap).toLocaleString() + " posts read this month"));
+      }
+      if (r.note) sub.appendChild(h("div", { class: "mc-card-secondary mc-ellipsis", title: r.note }, r.note));
+      card.appendChild(sub);
+    });
+    return card;
+  }
   function renderUsage(main) {
     countdowns = [];
     var g = guard("usage");
@@ -2602,10 +2668,39 @@ html[data-theme="dark"] .mc-heat-l4 { background: #35b98a; }
     var data = g.data || {};
     var nu = normUsageProviders(data);
     p.body.appendChild(h("div", { class: "mc-section-head" }, h("h2", { text: "Decision cards" })));
-    p.body.appendChild(h("div", { class: "mc-card-foot" }, "Each card answers whether you can use that source now, how trustworthy the reading is, and what to do next."));
+    p.body.appendChild(h("div", { class: "mc-card-foot" }, "One card per provider — every window that provider reports is a labeled line inside its card."));
     var grid = h("div", { class: "mc-decision-grid" });
-    usageItems(data).forEach(function (item) { grid.appendChild(renderUsageDecisionCard(item, g.epoch)); });
+    // Live rows from the 60-second headroom collector come first; the 30-minute
+    // usage snapshot only contributes providers the collector does not cover.
+    var hg = guard("headroom");
+    var hrRows = (hg.ok && hg.data && Array.isArray(hg.data.rows))
+      ? hg.data.rows.filter(function (r) { return r.health !== "hidden"; }) : [];
+    var covered = {};
+    if (hrRows.length) {
+      var hrGroups = [], byProv = {};
+      hrRows.forEach(function (r) {
+        var key = String(r.provider || r.label || "?").toLowerCase();
+        covered[key] = true;
+        var grp = byProv[key];
+        if (!grp) { grp = { label: r.label || key, rows: [] }; byProv[key] = grp; hrGroups.push(grp); }
+        grp.rows.push(r);
+      });
+      hrGroups.forEach(function (grp) { grid.appendChild(renderHeadroomGroupCard(grp)); });
+    }
+    usageItems(data).forEach(function (item) {
+      // held credits are extra info the live collector does not carry — keep them
+      if (!isCreditWindow(item) && item.provider && covered[String(item.provider).toLowerCase()]) return;
+      grid.appendChild(renderUsageDecisionCard(item, g.epoch));
+    });
     p.body.appendChild(grid);
+    if (hrRows.length && hg.flag) {
+      p.body.appendChild(h("div", { class: "mc-banner mc-banner-amber" },
+        "Live usage data is " + fmtAge(hg.epoch) + " old — the collector may be stopped (launchctl kickstart gui/501/com.gillettes.ai-headroom)"));
+    }
+    if (!hrRows.length) {
+      p.body.appendChild(h("div", { class: "mc-card-foot" },
+        "Live collector feed unavailable — showing 30-minute snapshot cards only. scripts/install-ai-headroom in global-implementations sets it up."));
+    }
 
     // waste table
     if ((nu.waste || []).length) {

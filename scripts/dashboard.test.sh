@@ -2470,8 +2470,27 @@ else
   c0; c1; c2; c3; c4; c4b; c5; c6; c7; c8; c8a; c8b; c9; c10; c11; c12; c13; c14; c14a; c15; c16; c17; c18; c19; c20; c21; c22; c23; c24; c25; c26; c27; c28; c29; c30; c31; c32; c33; c34; c35; c36; c37; c38; c39; c39a; c40; c41; c42; c42a; c43; c44; c45; c46; c47; c48; c49; c50; c51
 fi
 shell_contract
-if [ "$LIVE_DATA_BEFORE" = "$(live_data_fingerprint)" ]; then
+LIVE_DATA_AFTER="$(live_data_fingerprint)"
+if [ "$LIVE_DATA_BEFORE" = "$LIVE_DATA_AFTER" ]; then
   ok "dashboard suite leaves live Mission Control data byte/stat unchanged"
+# The live com.gillettes.mission-control refresher legitimately rewrites its own
+# feed outputs mid-suite (5-min collect ticks). Attribute: pass only when every
+# changed path is a refresher-owned feed artifact AND the refresher is actually
+# loaded; anything else is a real suite leak and still fails.
+elif LIVE_BEFORE_JSON="$LIVE_DATA_BEFORE" LIVE_AFTER_JSON="$LIVE_DATA_AFTER" python3 - <<'PY' \
+    && launchctl list 2>/dev/null | grep -q com.gillettes.mission-control
+import json, os, re, sys
+before = {r[0]: r for r in json.loads(os.environ["LIVE_BEFORE_JSON"])}
+after = {r[0]: r for r in json.loads(os.environ["LIVE_AFTER_JSON"])}
+allowed = re.compile(
+    r"^((usage|git|chats|automation|decisions|attention|brief)"
+    r"\.(json|js|error\.js|error\.json)"
+    r"|job-history\.json|\.[a-z-]+\.lockfile)$")
+changed = sorted(n for n in set(before) | set(after) if before.get(n) != after.get(n))
+sys.exit(0 if changed and all(allowed.match(n) for n in changed) else 1)
+PY
+then
+  ok "dashboard suite left live data untouched (only the live refresher's own mid-suite feed writes changed)"
 else
   no "dashboard suite mutated live Mission Control data"
 fi

@@ -1800,6 +1800,34 @@ do_install() {
     echo "install: could not secure runtime directories" >&2
     return 1
   fi
+  # The AI Headroom feed is written by an EXTERNAL collector (global-implementations
+  # scripts/ai-headroom, its own LaunchAgent). index.html declares data/headroom.js,
+  # so materialize an honest "not running yet" placeholder on first install;
+  # never overwrite a real collector-written feed.
+  if [ ! -e "$MISSION_CONTROL_HOME/data/headroom.js" ]; then
+    python3 - "$MISSION_CONTROL_HOME/data" <<'PYEOF'
+import json, os, sys, time
+data = sys.argv[1]
+now = int(time.time())
+env = {"ok": False, "schema": 1, "feed": "headroom", "cadence_s": 60,
+       "generated_epoch": now,
+       "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now)),
+       "error": "headroom collector has not run yet - scripts/install-ai-headroom in global-implementations sets it up",
+       "data": None}
+canon = json.dumps(env, sort_keys=True)
+def w(p, t):
+    tmp = "%s.tmp.%d" % (p, os.getpid())
+    with open(tmp, "w") as f:
+        f.write(t)
+    os.rename(tmp, p)
+w(os.path.join(data, "headroom.json"), canon + "\n")
+w(os.path.join(data, "headroom.js"),
+  "window.MC = window.MC||{feeds:{}}; window.MC.feeds = window.MC.feeds||{}; "
+  "window.MC.feeds.headroom = %s;\n" % canon)
+w(os.path.join(data, "headroom.error.js"),
+  "window.MC = window.MC||{feeds:{}}; window.MC.feedErrors = window.MC.feedErrors||{};\n")
+PYEOF
+  fi
   local install_failed=0
   local stamp_path="$MISSION_CONTROL_HOME/bin/install-stamp.json"
   # Keep this Bash 3.2 install loop aligned with the canonical verifier manifest
