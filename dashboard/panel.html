@@ -538,8 +538,9 @@ body.pin .hr-head { padding-top: 10px; }
     var seen = {}, deduped = [];
     pinned.forEach(function (d) {
       var key = String(d.question || d.title || d.id || "").replace(/\s+/g, " ").trim().toLowerCase().slice(0, 160);
-      if (seen[key]) { seen[key].dupCount = (seen[key].dupCount || 1) + 1; return; }
+      if (seen[key]) { seen[key].dupCount += 1; return; }
       seen[key] = d;
+      d.dupCount = 1;
       deduped.push(d);
     });
     deduped.slice(0, 5).forEach(function (d, i) { renderDecisionItem(list, d, i); });
@@ -559,10 +560,21 @@ body.pin .hr-head { padding-top: 10px; }
     if (attentionFresh(attn)) {
       var top5 = ((attn.data || {}).top5) || [];
       var board = ((attn.data || {}).board) || [];
-      var total = board.length || top5.length;
       usedAttention = true;
-      if (top5.length) {
-        top5.slice(0, 5).forEach(function (d, i) { renderAttentionItem(list, d, i); });
+      // The same ask captured from several chats is ONE card with a count,
+      // not identical repeats (the triple Safe-Mode card, live 2026-08-07).
+      var seenA = {}, dedupA = [];
+      (board.length ? board : top5).forEach(function (d) {
+        var key = String(d.question || d.title || d.text || d.id || "")
+          .replace(/\s+/g, " ").trim().toLowerCase().slice(0, 200);
+        if (seenA[key]) { seenA[key].dupCount += 1; return; }
+        seenA[key] = d;
+        d.dupCount = 1;
+        dedupA.push(d);
+      });
+      var total = dedupA.length;
+      if (dedupA.length) {
+        dedupA.slice(0, 5).forEach(function (d, i) { renderAttentionItem(list, d, i); });
         if (total > 5) {
           list.appendChild(el("div", "more", "+" + (total - 5) + " more in full Mission Control"));
         }
