@@ -122,6 +122,21 @@
     "tokens_used": null,
     "used_pct": null,
     "window": "monthly"
+   },
+   {
+    "burn_tpm": null,
+    "confidence": "manual",
+    "est_cost_usd": null,
+    "health": "held",
+    "models": "",
+    "notes": "count=2; expires 2026-08-01",
+    "provider": "codex",
+    "resets_at": "2026-08-02T06:59:02Z",
+    "resets_in_min": -6795,
+    "source": "credits.json",
+    "tokens_used": null,
+    "used_pct": null,
+    "window": "credit:weekly-reset"
    }
   ],
   "waste": [

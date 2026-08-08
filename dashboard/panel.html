@@ -195,15 +195,18 @@ html[data-theme="dark"] {
 #hr-list { padding: 0 16px 4px; }
 .hr-row {
   background: var(--card); border: 1px solid var(--border-soft);
-  border-radius: 11px; padding: 9px 11px; margin-bottom: 7px;
+  border-radius: 11px; padding: 8px 10px; margin-bottom: 5px;
   box-shadow: var(--shadow); cursor: pointer;
 }
 .hr-row.stale { border-style: dashed; }
-.hr-provider {
-  font-size: 10.5px; font-weight: 750; letter-spacing: .07em; text-transform: uppercase;
-  color: var(--faint); margin: 9px 2px 4px;
-}
-.hr-row.grouped { margin-left: 10px; }
+.hr-wline { display: flex; align-items: center; gap: 7px; margin-top: 5px; }
+.hr-wline.stale { opacity: .75; }
+.hr-wname { color: var(--muted); font-size: 10.5px; min-width: 74px; }
+.hr-wbarwrap { position: relative; flex: 1; height: 11px; }
+.hr-wbarwrap .hr-track { bottom: 2px; height: 5px; }
+.hr-wval { font-size: 11.5px; font-weight: 750; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.hr-wcd { color: var(--faint); font-size: 9.5px; white-space: nowrap; }
+.hr-note-line { color: var(--muted); font-size: 10.5px; margin-top: 4px; }
 .hr-top { display: flex; align-items: baseline; gap: 6px; }
 .hr-name { font-size: 12.5px; font-weight: 700; letter-spacing: -.01em; }
 .hr-win { color: var(--muted); font-size: 10.5px; }
@@ -422,6 +425,7 @@ body.pin .hr-head { padding-top: 10px; }
     var item = el("div", "item");
     var head = el("div", "item-head");
     head.appendChild(el("span", "badge decision", "Decision"));
+    if (d.dupCount > 1) head.appendChild(el("span", "badge", "asked in " + d.dupCount + " chats"));
     head.appendChild(sevChip(1));
     item.appendChild(head);
     var qd = el("div", "q", parsed.q);
@@ -529,11 +533,20 @@ body.pin .hr-head { padding-top: 10px; }
       renderEmpty(list);
       return 0;
     }
-    pinned.slice(0, 5).forEach(function (d, i) { renderDecisionItem(list, d, i); });
-    if (pinned.length > 5) {
-      list.appendChild(el("div", "more", "+" + (pinned.length - 5) + " more in full Mission Control"));
+    // The same question captured from several chats is ONE ask — show it once
+    // with a count instead of three identical cards (seen live 2026-08-07).
+    var seen = {}, deduped = [];
+    pinned.forEach(function (d) {
+      var key = String(d.question || d.title || d.id || "").replace(/\s+/g, " ").trim().toLowerCase().slice(0, 160);
+      if (seen[key]) { seen[key].dupCount = (seen[key].dupCount || 1) + 1; return; }
+      seen[key] = d;
+      deduped.push(d);
+    });
+    deduped.slice(0, 5).forEach(function (d, i) { renderDecisionItem(list, d, i); });
+    if (deduped.length > 5) {
+      list.appendChild(el("div", "more", "+" + (deduped.length - 5) + " more in full Mission Control"));
     }
-    return pinned.length;
+    return deduped.length;
   }
 
   function render() {
@@ -660,105 +673,128 @@ body.pin .hr-head { padding-top: 10px; }
     return { rows: sorted, note: "Nothing is running — showing lowest headroom instead." };
   }
 
-  function hrRow(r, grouped) {
-    var row = el("div", "hr-row" + (grouped ? " grouped" : "") + (r.confidence === "stale" ? " stale" : ""));
-    var top = el("div", "hr-top");
-    if (grouped) {
-      // provider name already printed once as the group header — show only
-      // which window this line is
-      top.appendChild(el("span", "hr-name", (r.window_label && r.window_label !== "-") ? r.window_label : r.label));
-    } else {
-      top.appendChild(el("span", "hr-name", r.label));
-      if (r.window_label && r.window_label !== "-") top.appendChild(el("span", "hr-win", r.window_label));
-    }
-    if (r.active) top.appendChild(el("span", "hr-flag live", "In use"));
-    if (r.confidence === "stale") top.appendChild(el("span", "hr-flag stale", "Stale"));
-    if (r.health === "down") top.appendChild(el("span", "hr-flag down", "Source down"));
-    if (r.health === "auth") top.appendChild(el("span", "hr-flag auth", "Token wait"));
-    var val = el("span", "hr-val");
+  function hrValText(r) {
+    if (r.value_label) return r.value_label;
+    if (r.kind === "quota" && r.remaining_pct != null) return Math.round(r.remaining_pct) + "%";
+    if (r.balance_usd != null) return "$" + Number(r.balance_usd).toFixed(2);
+    return "\u2013";
+  }
+  function hrRowColor(r) {
+    return hrColor(r.kind === "balance" ? (r.band === "cash" ? "cash" : r.band) : r.band);
+  }
+  function hrHeadlineRow(rows) {
+    var quota = rows.filter(function (r) { return r.kind === "quota" && r.remaining_pct != null; });
+    if (quota.length) return quota.reduce(function (a, b) { return a.remaining_pct <= b.remaining_pct ? a : b; });
+    return rows[0];
+  }
+  function hrWindowLine(r, showName) {
+    var line = el("div", "hr-wline" + (r.confidence === "stale" ? " stale" : ""));
+    if (showName) line.appendChild(el("span", "hr-wname",
+      (r.window_label && r.window_label !== "-") ? r.window_label : "Status"));
+    var wrap = el("div", "hr-wbarwrap");
+    var track = el("div", "hr-track");
+    var fill = el("div", "hr-fill");
+    var color = hrRowColor(r);
+    fill.style.background = color;
     if (r.kind === "quota" && r.remaining_pct != null) {
-      val.style.color = hrColor(r.band);
-      val.appendChild(document.createTextNode(Math.round(r.remaining_pct) + "%"));
-      val.appendChild(el("span", "unit", "left"));
-    } else if (r.balance_usd != null) {
-      val.style.color = hrColor(r.band === "cash" ? "cash" : r.band);
-      val.appendChild(document.createTextNode("$" + Number(r.balance_usd).toFixed(2)));
+      fill.style.width = Math.max(0, Math.min(100, r.remaining_pct)) + "%";
     } else {
-      val.appendChild(document.createTextNode("–"));
+      fill.style.width = "100%";
+      if (r.band === "cash") fill.className += " cash";
+    }
+    if (r.active && !(r.burn_per_hour > 0) && !HR.reduced) fill.className += " pulse";
+    track.appendChild(fill);
+    wrap.appendChild(track);
+    if (!HR.reduced) {
+      var canvas = el("canvas", "hr-bricks");
+      wrap.appendChild(canvas);
+      HR.anims.push({ canvas: canvas, row: r, color: color, parts: [], acc: 0 });
+    }
+    line.appendChild(wrap);
+    var right = el("span", "hr-wval", hrValText(r));
+    right.style.color = color;
+    line.appendChild(right);
+    var cd = hrCountdown(r.resets_epoch, r.window_class === "month");
+    if (cd) line.appendChild(el("span", "hr-wcd", cd.replace("resets in ", "").replace("renews in ", "")));
+    return line;
+  }
+  function hrProviderCard(grp) {
+    var rows = grp.rows;
+    var head = hrHeadlineRow(rows);
+    var anyStale = rows.some(function (r) { return r.confidence === "stale"; });
+    var card = el("div", "hr-row hr-card" + (anyStale ? " stale" : ""));
+    var top = el("div", "hr-top");
+    top.appendChild(el("span", "hr-name", grp.label));
+    if (rows.length === 1 && rows[0].window_label && rows[0].window_label !== "-") {
+      top.appendChild(el("span", "hr-win", rows[0].window_label));
+    }
+    if (rows.some(function (r) { return r.active; })) top.appendChild(el("span", "hr-flag live", "In use"));
+    if (anyStale) top.appendChild(el("span", "hr-flag stale", "Stale"));
+    if (rows.some(function (r) { return r.health === "down"; })) top.appendChild(el("span", "hr-flag down", "Source down"));
+    if (rows.some(function (r) { return r.health === "auth"; })) top.appendChild(el("span", "hr-flag auth", "Token wait"));
+    var val = el("span", "hr-val", hrValText(head));
+    val.style.color = hrRowColor(head);
+    if (head.kind === "quota" && head.remaining_pct != null && !head.value_label) {
+      val.appendChild(el("span", "unit", "left"));
     }
     top.appendChild(val);
-    row.appendChild(top);
-
-    if (r.remaining_pct != null || r.balance_usd != null) {
-      var wrap = el("div", "hr-barwrap");
-      var track = el("div", "hr-track");
-      var fill = el("div", "hr-fill");
-      var color = hrColor(r.kind === "balance" ? (r.band === "cash" ? "cash" : r.band) : r.band);
-      fill.style.background = color;
-      if (r.kind === "quota") {
-        fill.style.width = Math.max(0, Math.min(100, r.remaining_pct)) + "%";
-      } else {
-        fill.style.width = "100%";
-        if (r.band === "cash") fill.className += " cash";
+    card.appendChild(top);
+    rows.forEach(function (r) {
+      if (r.remaining_pct != null || r.balance_usd != null || r.value_label) {
+        card.appendChild(hrWindowLine(r, rows.length > 1));
       }
-      if (r.active && !(r.burn_per_hour > 0) && !HR.reduced) fill.className += " pulse";
-      track.appendChild(fill);
-      wrap.appendChild(track);
-      if (!HR.reduced) {
-        var canvas = el("canvas", "hr-bricks");
-        wrap.appendChild(canvas);
-        HR.anims.push({ canvas: canvas, row: r, color: color, parts: [], acc: 0 });
+    });
+    rows.forEach(function (r) {
+      var le = (r.detail || {}).local_estimate;
+      if (le && le.tokens_used != null) {
+        card.appendChild(el("div", "hr-note-line",
+          Number(le.tokens_used).toLocaleString() + " tokens this block" +
+          (le.burn_tpm ? " \u00b7 " + Number(le.burn_tpm).toLocaleString() + " tok/min (local estimate)" : "")));
+      } else if (r.health !== "ok" && r.note && !(r.remaining_pct != null || r.balance_usd != null || r.value_label)) {
+        card.appendChild(el("div", "hr-note-line", r.note));
       }
-      row.appendChild(wrap);
-    }
-
+    });
     var sub = el("div", "hr-sub");
-    var cd = hrCountdown(r.resets_epoch, r.window_class === "month");
-    if (cd) sub.appendChild(el("span", null, cd));
-    if (r.age_s != null && r.age_s > 180) sub.appendChild(el("span", null, "updated " + (r.age_s < 3600 ? Math.round(r.age_s / 60) + "m" : Math.round(r.age_s / 3600) + "h") + " ago"));
+    var ages = rows.map(function (r) { return r.age_s || 0; });
+    var oldest = Math.max.apply(null, ages);
+    if (oldest > 600) sub.appendChild(el("span", null, "updated " + (oldest < 3600 ? Math.round(oldest / 60) + "m" : Math.round(oldest / 3600) + "h") + " ago"));
     sub.appendChild(el("span", "sp"));
-    if (r.burn_per_hour != null && r.burn_per_hour > 0) {
-      sub.appendChild(el("span", null, (r.kind === "quota" ? r.burn_per_hour.toFixed(1) + "%/h" : "$" + r.burn_per_hour.toFixed(2) + "/h")));
+    if (head.burn_per_hour != null && head.burn_per_hour > 0) {
+      sub.appendChild(el("span", null, (head.kind === "quota" ? head.burn_per_hour.toFixed(1) + "%/h" : "$" + head.burn_per_hour.toFixed(2) + "/h")));
     }
-    if (r.pace && r.pace !== "learning") {
-      var pc = el("span", "hr-pace " + r.pace, r.pace === "unusual" ? "Unusually fast" : r.pace.charAt(0).toUpperCase() + r.pace.slice(1));
-      sub.appendChild(pc);
-    } else if (r.active && r.pace === "learning") {
-      sub.appendChild(el("span", "hr-pace", "Learning normal pace"));
-    }
-    if (sub.children.length > 1) row.appendChild(sub);
-
+    if (head.pace === "unusual") sub.appendChild(el("span", "hr-pace unusual", "Unusually fast"));
+    if (sub.children.length > 1) card.appendChild(sub);
     var det = el("div", "hr-detail");
     function drow(k, v) {
       if (v == null || v === "") return;
       det.appendChild(el("span", null, k));
       var b = el("b"); b.textContent = String(v); det.appendChild(b);
     }
-    drow("Source", r.source || "–");
-    if (r.note) drow("Note", r.note);
-    if (r.forecast_exhaust_epoch) {
-      var hLeft = Math.max(0, (r.forecast_exhaust_epoch - Date.now() / 1000) / 3600);
-      drow("Forecast", "empty in ~" + hLeft.toFixed(1) + "h — before reset");
-    }
-    if (r.baseline_median != null) drow("Normal burn", (r.kind === "quota" ? r.baseline_median + "%/h" : "$" + r.baseline_median + "/h"));
-    if (r.runway_hours != null) drow("Runway", (r.runway_hours / 24).toFixed(1) + " days at current burn");
-    var d = r.detail || {};
-    if (d.membership) drow("Plan", d.membership);
-    if (d.plan) drow("Plan", d.plan + (d.tier ? " (tier " + d.tier + ")" : ""));
-    if (d.included != null) drow("Included", d.included + " + " + (d.bonus || 0) + " bonus");
-    if (d.auto_pct_used != null) drow("Auto models", d.auto_pct_used + "% used");
-    if (d.local_estimate) {
-      var le = d.local_estimate;
-      if (le.tokens_used != null) drow("Local estimate", le.tokens_used.toLocaleString() + " tokens this block" + (le.burn_tpm ? " · " + le.burn_tpm + " tok/min" : ""));
-    }
-    if (d.voucher != null && d.voucher > 0) drow("Voucher", "$" + d.voucher);
-    if (d.granted != null && d.granted > 0) drow("Granted", "$" + d.granted);
-    row.appendChild(det);
-    row.onclick = function (e) {
+    rows.forEach(function (r) {
+      var prefix = rows.length > 1 && r.window_label && r.window_label !== "-" ? r.window_label + " \u2014 " : "";
+      drow(prefix + "Source", r.source || "\u2013");
+      if (r.note) drow(prefix + "Note", r.note);
+      if (r.forecast_exhaust_epoch) {
+        var hLeft = Math.max(0, (r.forecast_exhaust_epoch - Date.now() / 1000) / 3600);
+        drow(prefix + "Forecast", "empty in ~" + hLeft.toFixed(1) + "h \u2014 before reset");
+      }
+      if (r.baseline_median != null) drow(prefix + "Normal burn", (r.kind === "quota" ? r.baseline_median + "%/h" : "$" + r.baseline_median + "/h"));
+      if (r.runway_hours != null) drow(prefix + "Runway", (r.runway_hours / 24).toFixed(1) + " days at current burn");
+      var d = r.detail || {};
+      if (d.membership) drow(prefix + "Plan", d.membership);
+      if (d.plan) drow(prefix + "Plan", d.plan + (d.tier ? " (tier " + d.tier + ")" : ""));
+      if (d.included != null) drow(prefix + "Included", d.included + " + " + (d.bonus || 0) + " bonus");
+      if (d.auto_pct_used != null) drow(prefix + "Auto models", d.auto_pct_used + "% used");
+      if (d.project_cap != null) drow(prefix + "Monthly cap", Number(d.project_cap).toLocaleString() + " reads");
+      if (d.voucher != null && d.voucher > 0) drow(prefix + "Voucher", "$" + d.voucher);
+      if (d.granted != null && d.granted > 0) drow(prefix + "Granted", "$" + d.granted);
+    });
+    card.appendChild(det);
+    card.onclick = function (e) {
       if (e.target.closest("button")) return;
-      row.classList.toggle("open");
+      card.classList.toggle("open");
     };
-    return row;
+    return card;
   }
 
   function hrTick(t) {
@@ -846,8 +882,7 @@ body.pin .hr-head { padding-top: 10px; }
     if (!res.rows.length) {
       list.appendChild(el("div", "hr-note", res.note || "No usage rows."));
     } else {
-      // one provider header, labeled windows under it (single-window providers
-      // keep the compact one-line form)
+      // ONE white card per provider; every window is a compact line inside it
       var groups = [], byProv = {};
       res.rows.forEach(function (r) {
         var key = r.provider || r.label || "?";
@@ -855,11 +890,7 @@ body.pin .hr-head { padding-top: 10px; }
         if (!grp) { grp = { label: r.label || key, rows: [] }; byProv[key] = grp; groups.push(grp); }
         grp.rows.push(r);
       });
-      groups.forEach(function (grp) {
-        var grouped = grp.rows.length > 1;
-        if (grouped) list.appendChild(el("div", "hr-provider", grp.label));
-        grp.rows.forEach(function (r) { list.appendChild(hrRow(r, grouped)); });
-      });
+      groups.forEach(function (grp) { list.appendChild(hrProviderCard(grp)); });
       if (res.note) list.appendChild(el("div", "hr-note", res.note));
       if (HR.view === "all") {
         feed.data.rows.filter(function (r) { return r.health === "hidden"; }).forEach(function (r) {

@@ -315,22 +315,26 @@ for (const tab of TABS) {
     fails++; continue;
   }
   if (tab === 'usage') {
-    // Trevor's contract: no GLM anywhere on the usage surface, hidden rows stay
-    // hidden, one card per provider with labeled windows inside, live headroom
-    // rows merged with snapshot-only providers.
-    if (/glm/i.test(txt)) { console.error('FAIL: #usage still shows GLM'); fails++; continue; }
+    // Trevor's contract (2026-08-07): GLM shows as a LIVE card with real quota
+    // numbers; the old snapshot's numberless glm health row still never renders;
+    // hidden rows stay hidden; ONE card per provider with labeled windows and
+    // held credits folded inside; X API leads with its reads count.
+    if (txt.indexOf('GLM') === -1) { console.error('FAIL: #usage is missing the live GLM card'); fails++; continue; }
+    if (/GLM doctor|live provider probe disabled/i.test(txt)) {
+      console.error('FAIL: #usage renders the old numberless glm health row'); fails++; continue;
+    }
     if (/Kimi/.test(txt)) { console.error('FAIL: #usage shows a hidden (unconfigured) provider'); fails++; continue; }
-    for (const need of ['Weekly - GPT-5.3-Codex-Spark', 'Monthly reads', 'X API', 'Copilot', 'Local estimate']) {
+    for (const need of ['Weekly - GPT-5.3-Codex-Spark', '12,300 reads', 'X API', 'Copilot', 'Local estimate', 'Held credit']) {
       if (txt.indexOf(need) === -1) { console.error('FAIL: #usage missing grouped-usage content "' + need + '"'); fails++; break; }
     }
     const codexMentions = (txt.match(/Codex/g) || []).length;
-    if (codexMentions > 2) { // 1 grouped live card + 1 held-credit card; per-window cards would exceed this
+    if (codexMentions > 2) { // 1 grouped live card (credit folded in) + the Spark window label
       console.error('FAIL: #usage declares Codex ' + codexMentions + ' times — provider grouping regressed');
       fails++; continue;
     }
   }
-  if (tab === 'usage' && txt.indexOf('Decision cards') === -1) {
-    console.error('FAIL: #usage is missing the decision-card section');
+  if (tab === 'usage' && txt.indexOf('Providers') === -1) {
+    console.error('FAIL: #usage is missing the provider-card section');
     fails++; continue;
   }
   if (tab === 'automation' &&

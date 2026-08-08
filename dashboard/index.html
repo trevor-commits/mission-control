@@ -460,7 +460,7 @@ body {
 .mc-pace { color: var(--mc-amber); font-size: var(--mc-fs-2); }
 .mc-countdown { font-family: var(--mc-mono); font-size: var(--mc-fs-1); color: var(--mc-fg-muted); }
 .mc-decision-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(255px, 1fr)); gap: var(--mc-sp-3); }
-.mc-hr-window { border-top: 1px solid var(--mc-border); margin-top: var(--mc-sp-3); padding-top: var(--mc-sp-3); }
+.mc-hr-window { border-top: 1px solid var(--mc-border); margin-top: 6px; padding-top: 6px; }
 .mc-hr-window-name { font-weight: 650; }
 .mc-decision-top { display: flex; align-items: flex-start; gap: var(--mc-sp-2); }
 .mc-decision-title { font-size: var(--mc-fs-3); font-weight: 650; letter-spacing: -0.01em; }
@@ -2608,25 +2608,24 @@ html[data-theme="dark"] .mc-heat-l4 { background: #35b98a; }
     if (r.confidence === "stale") return "amber";
     return "green";
   }
-  function renderHeadroomGroupCard(grp) {
+  function renderHeadroomGroupCard(grp, credits) {
     var order = { red: 0, amber: 1, green: 2 };
     var worst = grp.rows.map(bandToState).sort(function (a, b) { return order[a] - order[b]; })[0] || "green";
     var chip = { red: "Wait", amber: "Watch", green: "Can use" }[worst];
     var card = h("div", { class: "mc-card" });
     card.appendChild(h("div", { class: "mc-decision-top" },
-      h("div", null,
-        h("div", { class: "mc-decision-title" }, grp.label),
-        h("div", { class: "mc-card-foot" }, "Live reading — updates every minute")),
+      h("div", { class: "mc-decision-title" }, grp.label),
       h("span", { class: "mc-chip mc-decision-state " + (worst === "green" ? "mc-badge-live" : "") }, chip)));
     grp.rows.forEach(function (r) {
       var st = bandToState(r);
       var sub = h("div", { class: "mc-hr-window" });
-      var valTxt = r.remaining_pct != null ? Math.round(r.remaining_pct) + "% left"
+      var valTxt = r.value_label ? r.value_label
+                 : r.remaining_pct != null ? Math.round(r.remaining_pct) + "% left"
                  : r.balance_usd != null ? "$" + Number(r.balance_usd).toFixed(2) + " left" : "no reading yet";
       sub.appendChild(h("div", { class: "mc-decision-top" },
         h("span", { class: "mc-hr-window-name" }, (r.window_label && r.window_label !== "-") ? r.window_label : "Status"),
         h("span", { class: "mc-num " + (STATE_CLASS[st] || "") }, valTxt)));
-      if (r.remaining_pct != null) {
+      if (r.remaining_pct != null && !r.value_label) {
         sub.appendChild(h("div", { class: "mc-bar-track" },
           h("div", { class: "mc-bar-fill " + (STATE_CLASS[st] || ""), style: "--mc-w:" + Math.max(0, Math.min(100, r.remaining_pct)) + "%" })));
       }
@@ -2656,6 +2655,14 @@ html[data-theme="dark"] .mc-heat-l4 { background: #35b98a; }
       if (r.note) sub.appendChild(h("div", { class: "mc-card-secondary mc-ellipsis", title: r.note }, r.note));
       card.appendChild(sub);
     });
+    (credits || []).forEach(function (item) {
+      var sub = h("div", { class: "mc-hr-window" });
+      sub.appendChild(h("div", { class: "mc-decision-top" },
+        h("span", { class: "mc-hr-window-name" }, "Held credit"),
+        h("span", { class: "mc-num" }, String(item.window || "").replace(/^credit:?/, "") || "credit")));
+      if (item.notes) sub.appendChild(h("div", { class: "mc-card-secondary mc-ellipsis", title: item.notes }, item.notes));
+      card.appendChild(sub);
+    });
     return card;
   }
   function renderUsage(main) {
@@ -2667,8 +2674,8 @@ html[data-theme="dark"] .mc-heat-l4 { background: #35b98a; }
     appendPanelProvenance(p.body, "usage", g);
     var data = g.data || {};
     var nu = normUsageProviders(data);
-    p.body.appendChild(h("div", { class: "mc-section-head" }, h("h2", { text: "Decision cards" })));
-    p.body.appendChild(h("div", { class: "mc-card-foot" }, "One card per provider — every window that provider reports is a labeled line inside its card."));
+    p.body.appendChild(h("div", { class: "mc-section-head" }, h("h2", { text: "Providers" })));
+    p.body.appendChild(h("div", { class: "mc-card-foot" }, "One card per provider; live cards refresh every minute and include held credits."));
     var grid = h("div", { class: "mc-decision-grid" });
     // Live rows from the 60-second headroom collector come first; the 30-minute
     // usage snapshot only contributes providers the collector does not cover.
@@ -2676,20 +2683,29 @@ html[data-theme="dark"] .mc-heat-l4 { background: #35b98a; }
     var hrRows = (hg.ok && hg.data && Array.isArray(hg.data.rows))
       ? hg.data.rows.filter(function (r) { return r.health !== "hidden"; }) : [];
     var covered = {};
+    var creditsByProv = {};
+    usageItems(data).forEach(function (item) {
+      if (isCreditWindow(item) && item.provider) {
+        var ck = String(item.provider).toLowerCase();
+        (creditsByProv[ck] = creditsByProv[ck] || []).push(item);
+      }
+    });
     if (hrRows.length) {
       var hrGroups = [], byProv = {};
       hrRows.forEach(function (r) {
         var key = String(r.provider || r.label || "?").toLowerCase();
         covered[key] = true;
         var grp = byProv[key];
-        if (!grp) { grp = { label: r.label || key, rows: [] }; byProv[key] = grp; hrGroups.push(grp); }
+        if (!grp) { grp = { label: r.label || key, key: key, rows: [] }; byProv[key] = grp; hrGroups.push(grp); }
         grp.rows.push(r);
       });
-      hrGroups.forEach(function (grp) { grid.appendChild(renderHeadroomGroupCard(grp)); });
+      hrGroups.forEach(function (grp) { grid.appendChild(renderHeadroomGroupCard(grp, creditsByProv[grp.key])); });
     }
     usageItems(data).forEach(function (item) {
-      // held credits are extra info the live collector does not carry — keep them
-      if (!isCreditWindow(item) && item.provider && covered[String(item.provider).toLowerCase()]) return;
+      var provKey = String(item.provider || "").toLowerCase();
+      // credits whose provider has a live card were folded into it above
+      if (isCreditWindow(item) && covered[provKey]) return;
+      if (!isCreditWindow(item) && item.provider && covered[provKey]) return;
       grid.appendChild(renderUsageDecisionCard(item, g.epoch));
     });
     p.body.appendChild(grid);
