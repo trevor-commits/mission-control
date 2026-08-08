@@ -101,20 +101,103 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
     return str
   }
 
+  func finiteJSONNumber(_ value: Any?) -> Double? {
+    guard let number = value as? NSNumber,
+          CFGetTypeID(number) != CFBooleanGetTypeID(),
+          number.doubleValue.isFinite
+    else { return nil }
+    return number.doubleValue
+  }
+
+  func exactJSONInt(_ value: Any?) -> Int? {
+    guard let number = finiteJSONNumber(value),
+          number.rounded(.towardZero) == number,
+          number >= Double(Int.min), number < Double(Int.max)
+    else { return nil }
+    return Int(number)
+  }
+
+  func exactJSONBool(_ value: Any?) -> Bool? {
+    guard let number = value as? NSNumber,
+          CFGetTypeID(number) == CFBooleanGetTypeID()
+    else { return nil }
+    return number.boolValue
+  }
+
+  func hasIncompleteMarker(_ value: [String: Any]) -> Bool {
+    return exactJSONBool(value["partial"]) == true ||
+      exactJSONBool(value["incomplete"]) == true ||
+      exactJSONBool(value["complete"]) == false
+  }
+
+  func hasClearError(_ value: Any?) -> Bool {
+    guard let value = value else { return true }
+    if value is NSNull { return true }
+    return (value as? String) == ""
+  }
+
   func headroomLowest() -> (pct: Int, band: String)? {
     let url = FileManager.default.homeDirectoryForCurrentUser
       .appendingPathComponent(".mission-control/data/headroom.json")
     guard let data = try? Data(contentsOf: url),
           let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+          exactJSONInt(obj["schema"]) == 1,
+          (obj["feed"] as? String) == "headroom",
+          exactJSONBool(obj["ok"]) == true,
+          obj.keys.contains("error"),
+          hasClearError(obj["error"]),
+          exactJSONInt(obj["cadence_s"]) == 60,
+          let generatedEpoch = exactJSONInt(obj["generated_epoch"]), generatedEpoch > 0,
+          !hasIncompleteMarker(obj),
           let feedData = obj["data"] as? [String: Any],
+          !hasIncompleteMarker(feedData),
           let summary = feedData["summary"] as? [String: Any],
           let low = summary["lowest_quota"] as? [String: Any],
-          let pct = low["remaining_pct"] as? Double
+          let lowID = low["id"] as? String, !lowID.isEmpty,
+          let rows = feedData["rows"] as? [[String: Any]]
     else { return nil }
-    // Stale collector data must not render a healthy number in the menu bar.
-    if let epoch = obj["generated_epoch"] as? TimeInterval,
-       Date().timeIntervalSince1970 - epoch > 600 { return nil }
-    return (Int(pct.rounded()), (low["band"] as? String) ?? "cash")
+
+    let matchingRows = rows.filter { ($0["id"] as? String) == lowID }
+    let now = Date().timeIntervalSince1970
+    let maxAge: TimeInterval = 300
+    func isFresh(_ value: Any?) -> Bool {
+      guard let epoch = finiteJSONNumber(value), epoch > 0 else { return false }
+      let age = now - epoch
+      return age >= 0 && age <= maxAge
+    }
+
+    func trustedQuota(_ candidate: [String: Any]) -> Double? {
+      guard (candidate["kind"] as? String) == "quota",
+            (candidate["health"] as? String) == "ok",
+            (candidate["confidence"] as? String) == "live",
+            let pct = finiteJSONNumber(candidate["remaining_pct"]),
+            (0...100).contains(pct),
+            isFresh(candidate["fetched_epoch"])
+      else { return nil }
+      if let rawAge = candidate["age_s"], !(rawAge is NSNull) {
+        guard let age = finiteJSONNumber(rawAge), age >= 0, age <= maxAge else { return nil }
+      }
+      return pct
+    }
+
+    guard matchingRows.count == 1,
+          let row = matchingRows.first,
+          isFresh(generatedEpoch),
+          let summaryPct = finiteJSONNumber(low["remaining_pct"]),
+          let rowPct = trustedQuota(row),
+          (0...100).contains(summaryPct),
+          abs(summaryPct - rowPct) <= 0.01,
+          let summaryBand = low["band"] as? String,
+          let rowBand = row["band"] as? String,
+          summaryBand == rowBand
+    else { return nil }
+
+    if rows.contains(where: { candidate in
+      guard let candidatePct = trustedQuota(candidate) else { return false }
+      return candidatePct < rowPct - 0.01
+    }) { return nil }
+
+    return (Int(rowPct.rounded()), rowBand)
   }
 
   func pushHeadroom() {
@@ -222,41 +305,87 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
   // MARK: - Menu-bar title (live "needs you" count)
 
   // Reads the small local feed JSONs the collector already writes; never blocks.
-  func needsSummary() -> (count: Int, redJobs: Int, ageSeconds: Int?) {
+  func needsSummary() -> (count: Int, redJobs: Int, ageSeconds: Int?, failedFeeds: [String]) {
     let home = FileManager.default.homeDirectoryForCurrentUser
     var count = 0
     var redJobs = 0
-    var newest: TimeInterval = 0
+    var feedAges: [Int] = []
+    var failedFeeds: [String] = []
+    let now = Date().timeIntervalSince1970
+    let expectedCadence = 300
+    let knownAutomationStates: Set<String> = [
+      "green", "yellow", "red", "degraded", "never", "retired",
+      "offline-media", "awaiting-activation",
+    ]
 
-    func loadJSON(_ rel: String) -> [String: Any]? {
-      let url = home.appendingPathComponent(rel)
+    func loadCoreFeed(_ name: String) -> (data: [String: Any], age: Int)? {
+      let url = home.appendingPathComponent(".mission-control/data/\(name).json")
       guard let data = try? Data(contentsOf: url),
-            let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+            let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            exactJSONInt(obj["schema"]) == 1,
+            (obj["feed"] as? String) == name,
+            exactJSONBool(obj["ok"]) == true,
+            obj.keys.contains("error"),
+            hasClearError(obj["error"]),
+            exactJSONInt(obj["cadence_s"]) == expectedCadence,
+            !hasIncompleteMarker(obj),
+            let generatedEpoch = exactJSONInt(obj["generated_epoch"]), generatedEpoch > 0,
+            let payload = obj["data"] as? [String: Any],
+            !hasIncompleteMarker(payload)
       else { return nil }
-      if let e = obj["generated_epoch"] as? TimeInterval, e > newest { newest = e }
-      return obj
+      let rawAge = now - Double(generatedEpoch)
+      guard rawAge >= 0, rawAge <= Double(expectedCadence * 3) else { return nil }
+
+      if name == "attention" {
+        guard let board = payload["board"] as? [[String: Any]],
+              let top5 = payload["top5"] as? [[String: Any]],
+              board.count >= top5.count
+        else { return nil }
+      } else if name == "decisions" {
+        guard payload["pinned"] is [[String: Any]] else { return nil }
+        if let syncValue = payload["sync"], !(syncValue is NSNull) {
+          guard let sync = syncValue as? [String: Any],
+                let dropped = finiteJSONNumber(sync["dropped"]), dropped >= 0
+          else { return nil }
+          if dropped > 0 { return nil }
+        }
+      } else if name == "automation" {
+        guard let jobs = payload["jobs"] as? [[String: Any]],
+              jobs.allSatisfy({ job in
+                guard let state = job["state"] as? String else { return false }
+                return knownAutomationStates.contains(state)
+              })
+        else { return nil }
+        if let unregistered = payload["unregistered"] {
+          if !(unregistered is NSNull) {
+            guard let labels = unregistered as? [Any], labels.isEmpty else { return nil }
+          }
+        }
+        if let note = payload["launchctl_note"],
+           !(note is NSNull), !String(describing: note).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+          return nil
+        }
+      }
+      return (payload, Int(rawAge))
     }
 
-    var counted = false
-    if let attn = loadJSON(".mission-control/data/attention.json"),
-       (attn["ok"] as? Bool) == true,
-       let d = attn["data"] as? [String: Any] {
-      if let board = d["board"] as? [Any] { count = board.count; counted = true }
-      else if let top = d["top5"] as? [Any] { count = top.count; counted = true }
+    let attention = loadCoreFeed("attention")
+    let decisions = loadCoreFeed("decisions")
+    let automation = loadCoreFeed("automation")
+    for (name, state) in [("attention", attention), ("decisions", decisions), ("automation", automation)] {
+      if let state = state { feedAges.append(state.age) }
+      else { failedFeeds.append(name) }
     }
-    if !counted,
-       let dec = loadJSON(".mission-control/data/decisions.json"),
-       let d = dec["data"] as? [String: Any],
-       let pinned = d["pinned"] as? [Any] {
+
+    if let board = attention?.data["board"] as? [[String: Any]], !board.isEmpty {
+      count = board.count
+    } else if let pinned = decisions?.data["pinned"] as? [[String: Any]] {
       count = pinned.count
     }
-    if let auto = loadJSON(".mission-control/data/automation.json"),
-       let d = auto["data"] as? [String: Any],
-       let jobs = d["jobs"] as? [[String: Any]] {
+    if let jobs = automation?.data["jobs"] as? [[String: Any]] {
       redJobs = jobs.filter { ($0["state"] as? String) == "red" }.count
     }
-    let age = newest > 0 ? Int(Date().timeIntervalSince1970 - newest) : nil
-    return (count, redJobs, age)
+    return (count, redJobs, feedAges.max(), failedFeeds)
   }
 
   func updateStatusTitle() {
@@ -266,7 +395,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
     if s.count > 0 {
       title.append(NSAttributedString(
         string: "MC \(s.count)", attributes: [.foregroundColor: NSColor.systemRed]))
-    } else if s.redJobs > 0 {
+    } else if s.redJobs > 0 || !s.failedFeeds.isEmpty {
       title.append(NSAttributedString(
         string: "MC !", attributes: [.foregroundColor: NSColor.systemOrange]))
     } else {
@@ -284,12 +413,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
     var tip = "Mission Control"
     if s.count > 0 { tip += " — \(s.count) need\(s.count == 1 ? "s" : "") you" }
     else if s.redJobs > 0 { tip += " — \(s.redJobs) red job\(s.redJobs == 1 ? "" : "s")" }
+    else if !s.failedFeeds.isEmpty { tip += " — feed data unavailable" }
     else { tip += " — all clear" }
+    if !s.failedFeeds.isEmpty { tip += " · check \(s.failedFeeds.joined(separator: ", "))" }
     tip += lowTip
     if let age = s.ageSeconds {
-      if age < 60 { tip += " · updated \(age)s ago" }
-      else if age < 3600 { tip += " · updated \(age / 60)m ago" }
-      else { tip += " · updated \(age / 3600)h ago" }
+      if age < 60 { tip += " · oldest core feed \(age)s ago" }
+      else if age < 3600 { tip += " · oldest core feed \(age / 60)m ago" }
+      else { tip += " · oldest core feed \(age / 3600)h ago" }
     }
     button.toolTip = tip
   }

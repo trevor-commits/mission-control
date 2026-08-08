@@ -208,6 +208,10 @@ body {
 .mc-mono { font-family: var(--mc-mono); }
 .mc-card, .mc-table, .mc-strip, .mc-bar-track, .mc-svc { font-variant-numeric: tabular-nums; }
 :focus-visible { outline: 2px solid var(--mc-accent); outline-offset: 2px; border-radius: var(--mc-r-1); }
+.mc-sr-only {
+  position: absolute !important; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+}
 
 /* --- global status strip --- */
 .mc-strip {
@@ -365,7 +369,7 @@ body {
   display: inline-flex; align-items: center; gap: var(--mc-sp-1);
   background: var(--mc-surface-2); border: 1px solid var(--mc-border);
   border-radius: var(--mc-r-pill); padding: 3px var(--mc-sp-3); font-size: var(--mc-fs-1);
-  color: var(--mc-fg-muted);
+  color: var(--mc-fg-muted); font-family: inherit; line-height: inherit;
 }
 .mc-chip-btn { cursor: pointer; transition: background var(--mc-dur) var(--mc-ease), border-color var(--mc-dur) var(--mc-ease), color var(--mc-dur) var(--mc-ease); }
 .mc-chip-btn:hover { border-color: var(--mc-accent-bd); color: var(--mc-fg); }
@@ -404,7 +408,8 @@ body {
 .mc-action-verb { color: var(--mc-amber); font-size: var(--mc-fs-1); font-weight: 600; white-space: nowrap; }
 .mc-collapse {
   cursor: pointer; color: var(--mc-fg-muted); font-size: var(--mc-fs-2);
-  padding: var(--mc-sp-3) 0; user-select: none;
+  display: block; width: 100%; padding: var(--mc-sp-3) 0; user-select: none;
+  border: 0; background: transparent; text-align: left; font-family: inherit;
   transition: color var(--mc-dur) var(--mc-ease);
 }
 .mc-collapse:hover { color: var(--mc-fg); }
@@ -515,7 +520,10 @@ html[data-theme="dark"] .mc-heat-l4 { background: #35b98a; }
   background: var(--mc-red-bg); border-radius: var(--mc-r-1); padding: var(--mc-sp-2);
 }
 
-.mc-row-click { cursor: pointer; }
+.mc-row-click {
+  cursor: pointer; width: 100%; color: inherit; font: inherit; text-align: left;
+  appearance: none; -webkit-appearance: none;
+}
 /* --- connection map (cytoscape) --- */
 .mc-map-legend { display: flex; flex-wrap: wrap; gap: var(--mc-sp-3); margin: var(--mc-sp-3) 0; }
 .mc-legend-item { display: inline-flex; align-items: center; gap: var(--mc-sp-2); font-size: var(--mc-fs-1); color: var(--mc-fg-muted); }
@@ -524,6 +532,27 @@ html[data-theme="dark"] .mc-heat-l4 { background: #35b98a; }
 @media (max-width: 860px) { .mc-map-wrap { grid-template-columns: 1fr; } }
 @media (max-width: 600px) {
   .mc-copy { min-width: 44px; min-height: 44px; }
+  .mc-git-mobile-table {
+    border: 0; padding: 0; background: transparent; box-shadow: none;
+    overflow: visible;
+  }
+  .mc-git-mobile-table tr:first-child { display: none; }
+  .mc-git-mobile-table tr:not(:first-child) {
+    display: block; margin-bottom: var(--mc-sp-3); padding: var(--mc-sp-2) var(--mc-sp-3);
+    background: var(--mc-surface-1); border: 1px solid var(--mc-border);
+    border-radius: var(--mc-r-3); box-shadow: var(--mc-shadow);
+  }
+  .mc-git-mobile-table td {
+    display: grid; grid-template-columns: minmax(80px, 0.38fr) minmax(0, 1fr);
+    gap: var(--mc-sp-2); padding: 7px 0; border-bottom: 1px solid var(--mc-border);
+    max-width: none !important; white-space: normal; overflow: visible;
+    overflow-wrap: anywhere; text-overflow: clip;
+  }
+  .mc-git-mobile-table td:last-child { border-bottom: 0; }
+  .mc-git-mobile-table td::before {
+    content: attr(data-label); color: var(--mc-fg-dim); font-size: 10.5px;
+    font-weight: 650; letter-spacing: .05em; text-transform: uppercase;
+  }
 }
 .mc-graph {
   height: 68vh; min-height: 460px;
@@ -547,10 +576,15 @@ html[data-theme="dark"] .mc-heat-l4 { background: #35b98a; }
 .mc-side-title { font-size: var(--mc-fs-3); font-weight: 700; letter-spacing: -0.01em; margin-bottom: var(--mc-sp-1); }
 .mc-side-meta { color: var(--mc-fg-muted); font-size: var(--mc-fs-1); margin-bottom: var(--mc-sp-3); }
 .mc-side-section { font-size: 10.5px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--mc-fg-dim); margin: var(--mc-sp-3) 0 var(--mc-sp-1); }
-.mc-side-conn { display: flex; align-items: flex-start; gap: var(--mc-sp-2); font-size: var(--mc-fs-2); padding: var(--mc-sp-1) 0; color: var(--mc-fg-muted); cursor: pointer; }
+.mc-side-conn { display: flex; width: 100%; align-items: flex-start; gap: var(--mc-sp-2); font-size: var(--mc-fs-2); padding: var(--mc-sp-1) 0; color: var(--mc-fg-muted); cursor: pointer; border: 0; background: transparent; text-align: left; font-family: inherit; }
 .mc-side-conn:hover { color: var(--mc-fg); }
-.mc-side-conn-body { min-width: 0; flex: 1 1 auto; }
+.mc-side-conn-body { display: block; min-width: 0; flex: 1 1 auto; }
 .mc-side-conn-meta { display: flex; flex-wrap: wrap; gap: var(--mc-sp-1); margin-top: 2px; }
+.mc-search {
+  min-width: min(320px, 100%); min-height: 32px; padding: 5px 11px;
+  border: 1px solid var(--mc-border); border-radius: var(--mc-r-pill);
+  background: var(--mc-surface-1); color: var(--mc-fg); font: inherit;
+}
 .mc-btn {
   display: inline-flex; align-items: center; gap: var(--mc-sp-1); cursor: pointer;
   background: var(--mc-surface-2); border: 1px solid var(--mc-border); color: var(--mc-fg);
@@ -571,7 +605,8 @@ html[data-theme="dark"] .mc-heat-l4 { background: #35b98a; }
 
 <body>
 <div class="mc-strip" id="mc-strip"></div>
-<nav class="mc-nav" id="mc-nav"></nav>
+<nav class="mc-nav" id="mc-nav" aria-label="Dashboard sections"></nav>
+<div class="mc-sr-only" id="mc-tab-status" role="status" aria-live="polite" aria-atomic="true"></div>
 <main class="mc-main" id="mc-main"></main>
 
 <script>
@@ -584,6 +619,61 @@ html[data-theme="dark"] .mc-heat-l4 { background: #35b98a; }
 
   var LOAD_EPOCH = Math.floor(Date.now() / 1000);
   function nowS() { return Math.floor(Date.now() / 1000); }
+  var OPERATOR_STATE_KEY = "mc-operator-state-v1";
+  function loadOperatorState() {
+    try {
+      var raw = sessionStorage.getItem(OPERATOR_STATE_KEY);
+      var parsed = raw ? JSON.parse(raw) : {};
+      return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+    } catch (e) { return {}; }
+  }
+  var OPERATOR_STATE = loadOperatorState();
+  var DISCLOSURES = OPERATOR_STATE.disclosures && typeof OPERATOR_STATE.disclosures === "object"
+    ? OPERATOR_STATE.disclosures : {};
+  var PENDING_SCROLL = OPERATOR_STATE.scroll && typeof OPERATOR_STATE.scroll === "object"
+    ? OPERATOR_STATE.scroll : null;
+  function saveOperatorState() {
+    try { sessionStorage.setItem(OPERATOR_STATE_KEY, JSON.stringify(OPERATOR_STATE)); } catch (e) {}
+  }
+  function setOperatorState(key, value) {
+    OPERATOR_STATE[key] = value;
+    saveOperatorState();
+  }
+  function disclosureOpen(key) { return DISCLOSURES[key] === true; }
+  function setDisclosureOpen(key, open) {
+    DISCLOSURES[key] = open === true;
+    setOperatorState("disclosures", DISCLOSURES);
+  }
+  var SEARCH_RENDER_TIMER = null;
+  var SEARCH_FOCUS = null;
+  function scheduleSearchRender(input) {
+    SEARCH_FOCUS = { id: input.id, start: input.selectionStart, end: input.selectionEnd };
+    if (SEARCH_RENDER_TIMER) clearTimeout(SEARCH_RENDER_TIMER);
+    SEARCH_RENDER_TIMER = setTimeout(function () { SEARCH_RENDER_TIMER = null; rerender(); }, 100);
+  }
+  function restoreSearchFocus() {
+    if (!SEARCH_FOCUS) return;
+    var saved = SEARCH_FOCUS;
+    SEARCH_FOCUS = null;
+    setTimeout(function () {
+      var input = document.getElementById(saved.id);
+      if (!input || typeof input.focus !== "function") return;
+      input.focus();
+      if (typeof input.setSelectionRange === "function" && saved.start != null) {
+        input.setSelectionRange(saved.start, saved.end == null ? saved.start : saved.end);
+      }
+    }, 0);
+  }
+  function normalizedQuery(value) { return String(value || "").trim().toLowerCase(); }
+  function textMatchesQuery(values, query) {
+    var q = normalizedQuery(query);
+    if (!q) return true;
+    return (values || []).some(function (value) { return String(value || "").toLowerCase().indexOf(q) >= 0; });
+  }
+  function searchCountText(matches, total, cap, noun) {
+    if (matches > cap) return "Showing " + cap + " of " + matches + " matches across " + total + " " + noun;
+    return matches + " match" + (matches === 1 ? "" : "es") + " across " + total + " " + noun;
+  }
   // Epoch of 00:00 local on the day AFTER `sec`'s local day — a daily product's
   // validity horizon. new Date(y, mon, day+1) normalizes the rollover and picks
   // the right local/DST offset, mirroring Python next_local_midnight (mktime).
@@ -952,7 +1042,7 @@ html[data-theme="dark"] .mc-heat-l4 { background: #35b98a; }
       map: "chat-graph export",
       chats: "chat-graph export",
       git: "scan-unfinished-work + watcher notes",
-      usage: "usage snapshot + local adapters",
+      usage: "1-minute live headroom + 30-minute snapshots",
       automation: "automation-status + launchctl evidence",
       decisions: "transactional decision queue",
       brief: "deterministic Morning Brief sidecar"
@@ -1014,6 +1104,17 @@ html[data-theme="dark"] .mc-heat-l4 { background: #35b98a; }
   function appendPanelProvenance(container, name, g, extra) {
     if (!container) return;
     var epoch = g && g.ok ? g.epoch : 0;
+    if (name === "usage") {
+      var live = guard("headroom");
+      container.appendChild(chipsLine([
+        { label: "Sources", value: panelSourceName(name) },
+        { label: "Trust", value: panelTrustText(name, g) },
+        { label: "Live checked", value: live.ok && live.epoch ? fmtAge(live.epoch) : "not available" },
+        { label: "Snapshot checked", value: epoch ? fmtAge(epoch) : "no data" },
+        { label: "Status", value: extra || panelStatusText(name, g) }
+      ]));
+      return;
+    }
     var items = [
       { label: "Source", value: panelSourceName(name) },
       { label: "Trust", value: panelTrustText(name, g) },
@@ -1160,6 +1261,48 @@ html[data-theme="dark"] .mc-heat-l4 { background: #35b98a; }
     if (value == null || value === "") return NaN;
     return +value;
   }
+  function readingAgeSeconds(row, fallbackEpoch) {
+    if (row && typeof row.fetched_epoch === "number" && isFinite(row.fetched_epoch)) {
+      return nowS() - row.fetched_epoch;
+    }
+    if (row && typeof row.age_s === "number" && isFinite(row.age_s)) {
+      return Math.max(0, row.age_s + (fallbackEpoch ? nowS() - fallbackEpoch : 0));
+    }
+    return fallbackEpoch ? nowS() - fallbackEpoch : null;
+  }
+  function readingAgeText(row, fallbackEpoch) {
+    var seconds = readingAgeSeconds(row, fallbackEpoch);
+    return seconds == null ? "age unavailable" : seconds < 0 ? "clock skew" : fmtAgeS(seconds);
+  }
+  function dailyReadsSummary(detail) {
+    var byDate = {};
+    ((detail && detail.daily_reads) || []).forEach(function (row) {
+      if (!row || typeof row.date !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(row.date)) return;
+      if (!Number.isSafeInteger(row.reads) || row.reads < 0) return;
+      var parsed = new Date(row.date + "T00:00:00Z");
+      if (!isFinite(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== row.date) return;
+      byDate[row.date] = row.reads;
+    });
+    var today = new Date();
+    var todayEpoch = Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate());
+    var earliestEpoch = todayEpoch - 6 * 86400000;
+    var dates = Object.keys(byDate).filter(function (date) {
+      var epoch = Date.parse(date + "T00:00:00Z");
+      return epoch >= earliestEpoch && epoch <= todayEpoch;
+    }).sort();
+    if (!dates.length) return null;
+    var total = dates.reduce(function (sum, date) { return sum + byDate[date]; }, 0);
+    if (!Number.isSafeInteger(total)) return null;
+    var latest = dates[dates.length - 1];
+    return "7-day activity: " + Number(total).toLocaleString() + " read" + (total === 1 ? "" : "s") +
+      " total · latest " + latest + ": " + Number(byDate[latest]).toLocaleString();
+  }
+  var ACTION_STATE_RANK = { red: 0, amber: 1, blue: 2, green: 3, grey: 4 };
+  function actionStateRank(state) { return ACTION_STATE_RANK[state] != null ? ACTION_STATE_RANK[state] : 4; }
+  function usageRemaining(item) {
+    var pct = numericPct(item && item.pct);
+    return isFinite(pct) ? 100 - pct : null;
+  }
   function isCreditWindow(item) {
     return String(item && item.window || "").indexOf("credit") === 0;
   }
@@ -1240,7 +1383,9 @@ html[data-theme="dark"] .mc-heat-l4 { background: #35b98a; }
     var meta = h("div", { class: "mc-mini-stack" });
     meta.appendChild(chipsLine([
       { label: "Trust", value: confidenceLabel(item.confidence) },
-      { label: "Source", value: sourceLabel(item.source) }
+      { label: "Source", value: sourceLabel(item.source) },
+      { label: "Reading", value: readingAgeText(item, epoch) },
+      { label: "Cadence", value: "snapshot · every 30 min" }
     ]));
     if (item.resets_in_min != null) {
       var cd = h("span", { class: "mc-countdown" });
@@ -1800,12 +1945,13 @@ html[data-theme="dark"] .mc-heat-l4 { background: #35b98a; }
       var shown = exc.slice(0, 7);
       shown.forEach(function (e) {
         var goTo = function () {
-          if (e.tab === "map" && e.focus) FOCUS_CHAT = e.focus;
-          if (e.openId) FOCUS_OPEN_END = e.openId;
+          if (e.tab === "map" && e.focus) setMapFocus(e.focus);
+          if (e.openId) { FOCUS_OPEN_END = e.openId; persistChatState(); }
           location.hash = "#" + e.tab;
           if (e.focus || e.openId) rerender();
         };
-        var row = h("div", { class: "mc-row mc-row-click", onclick: goTo },
+        var row = h("button", { class: "mc-row mc-row-click", type: "button", onclick: goTo,
+          "aria-label": e.problem + ". " + (e.openId ? "Show item" : (e.focus ? "Show chat" : "Open tab")) },
           glyphSpan(e.state),
           h("div", { class: "mc-row-body" },
             h("div", { class: "mc-row-problem mc-ellipsis" }, e.problem),
@@ -2060,9 +2206,20 @@ html[data-theme="dark"] .mc-heat-l4 { background: #35b98a; }
   // ===========================================================================
   //  MAP TAB — the connection diagram (chats = dots, lines = how they connect)
   // ===========================================================================
-  var FOCUS_CHAT = null;                 // set by a "go" deep-link; focuses one chat's neighbourhood
-  var mapRepo = "";                      // repo filter
+  var savedMapState = OPERATOR_STATE.map && typeof OPERATOR_STATE.map === "object" ? OPERATOR_STATE.map : {};
+  var FOCUS_CHAT = savedMapState.focus || null; // set by a "go" deep-link; focuses one chat's neighbourhood
+  var mapRepo = String(savedMapState.repo || "");
+  var mapQuery = String(savedMapState.query || "");
   var _cy = null;
+
+  function persistMapState() {
+    setOperatorState("map", { focus: FOCUS_CHAT || null, repo: mapRepo || "", query: mapQuery || "" });
+  }
+  function setMapFocus(key) { FOCUS_CHAT = key || null; persistMapState(); }
+  function mapNodeMatches(n, query) {
+    var openText = (n.open_ends || []).map(function (item) { return (item && item.text) || ""; });
+    return textMatchesQuery([titleLabel(n.title, n.id), n.id, n.repo, providerLabel(n.provider)].concat(openText), query);
+  }
 
   var PROVIDER_COLOR = { claude: "#7c8cff", codex: "#35b98a", cursor: "#e0a534",
     copilot: "#5aa9d6", hermes: "#b07cff", chatgpt: "#9aa0ab" };
@@ -2096,8 +2253,8 @@ html[data-theme="dark"] .mc-heat-l4 { background: #35b98a; }
         h("span", { class: "mc-chatrow-title mc-ellipsis", title: titleLabel(n.title, n.id) }, titleLabel(n.title, n.id)),
         h("span", { class: "mc-provider" }, "AI: " + providerLabel(n.provider)),
         n.repo ? h("span", { class: "mc-repo" }, "Repo: " + n.repo) : null,
-        h("span", { class: "mc-chip mc-chip-btn", onclick: function () {
-          FOCUS_CHAT = n.key; rerender();
+        h("button", { class: "mc-chip mc-chip-btn", type: "button", onclick: function () {
+          setMapFocus(n.key); rerender();
         } }, "Show connections")));
     });
     main.appendChild(list);
@@ -2150,16 +2307,35 @@ html[data-theme="dark"] .mc-heat-l4 { background: #35b98a; }
     // controls: repo filter + reset-focus
     var repos = uniq(nodes.map(function (n) { return n.repo; }).filter(Boolean)).sort();
     var controls = h("div", { class: "mc-filters" });
-    var sel = h("select", { class: "mc-chip", onchange: function () { mapRepo = sel.value; FOCUS_CHAT = null; rerender(); } });
+    controls.appendChild(h("label", { class: "mc-sr-only", for: "mc-map-search" }, "Search map chats"));
+    var search = h("input", { class: "mc-search", id: "mc-map-search", type: "search",
+      value: mapQuery, placeholder: "Search every connected chat", autocomplete: "off",
+      oninput: function () {
+        mapQuery = search.value; FOCUS_CHAT = null; persistMapState(); scheduleSearchRender(search);
+      }, onkeydown: function (event) {
+        if (event.key !== "Enter") return;
+        if (SEARCH_RENDER_TIMER) { clearTimeout(SEARCH_RENDER_TIMER); SEARCH_RENDER_TIMER = null; }
+        mapQuery = search.value;
+        var matches = nodes.filter(function (n) { return (!mapRepo || n.repo === mapRepo) && mapNodeMatches(n, mapQuery); });
+        if (matches.length) setMapFocus(matches[0].key);
+        if (typeof event.preventDefault === "function") event.preventDefault();
+        rerender();
+      } });
+    controls.appendChild(search);
+    controls.appendChild(h("label", { class: "mc-sr-only", for: "mc-map-repo-filter" }, "Filter map by repo"));
+    var sel = h("select", { class: "mc-chip", id: "mc-map-repo-filter", onchange: function () {
+      mapRepo = sel.value; FOCUS_CHAT = null; persistMapState(); rerender();
+    } });
     sel.appendChild(h("option", { value: "" }, "All repos"));
     repos.forEach(function (r) { var o = h("option", { value: r }, r); if (r === mapRepo) o.selected = true; sel.appendChild(o); });
     controls.appendChild(sel);
-    if (FOCUS_CHAT) controls.appendChild(h("span", { class: "mc-chip mc-chip-btn mc-chip-on",
-      onclick: function () { FOCUS_CHAT = null; rerender(); } }, "showing one chat's connections — show all ✕"));
+    if (FOCUS_CHAT) controls.appendChild(h("button", { class: "mc-chip mc-chip-btn mc-chip-on", type: "button",
+      onclick: function () { setMapFocus(null); rerender(); } }, "showing one chat's connections — show all ✕"));
     main.appendChild(controls);
 
     // scope the graph (perf: never dump 7,500 nodes into the engine)
     var scoped = scopeGraph(nodes, edges, byKey);
+    main.appendChild(h("output", { id: "mc-map-search-status", class: "mc-card-foot", role: "status", "aria-live": "polite" }, scoped.searchStatus));
     var wrap = h("div", { class: "mc-map-wrap" });
     var cont = h("div", { class: "mc-graph", id: "mc-graph" });
     var side = h("div", { class: "mc-map-side", id: "mc-map-side" },
@@ -2182,6 +2358,13 @@ html[data-theme="dark"] .mc-heat-l4 { background: #35b98a; }
       (adj[e.src] = adj[e.src] || []).push(e.dst);
       (adj[e.dst] = adj[e.dst] || []).push(e.src);
     });
+    var connectedKeys = Object.keys(adj).filter(inRepo);
+    var matchingKeys = normalizedQuery(mapQuery) ? connectedKeys.filter(function (k) {
+      return byKey[k] && mapNodeMatches(byKey[k], mapQuery);
+    }) : [];
+    var searchStatus = normalizedQuery(mapQuery)
+      ? searchCountText(matchingKeys.length, connectedKeys.length, 260, "connected chats")
+      : "Showing up to 260 of " + connectedKeys.length + " connected chats";
     var keep = {};
     if (FOCUS_CHAT && byKey[FOCUS_CHAT]) {
       // breadth-first neighbourhood, depth 2, capped
@@ -2193,18 +2376,36 @@ html[data-theme="dark"] .mc-heat-l4 { background: #35b98a; }
         frontier = next; depth++;
       }
       keep = seen;
-      return { keys: keep, note: "Showing this chat and what it connects to. Pick a repo or click another dot to explore." };
+      return { keys: keep, matchKeys: matchingKeys, searchStatus: searchStatus,
+        note: "Showing this chat and what it connects to. Pick a repo or click another dot to explore." };
     }
     // default: the most-connected chats in scope, capped for readability
     var CAP = 260;
-    var deg = Object.keys(adj).filter(inRepo).map(function (k) { return { k: k, d: adj[k].length }; })
+    if (normalizedQuery(mapQuery)) {
+      matchingKeys.slice(0, CAP).forEach(function (k) { keep[k] = true; });
+      // Keep nearby context after every matching record has had first claim on
+      // the cap. A uniquely named old chat therefore remains reachable even if
+      // it was outside the default most-connected set.
+      matchingKeys.slice(0, CAP).forEach(function (k) {
+        (adj[k] || []).some(function (neighbor) {
+          if (Object.keys(keep).length >= CAP) return true;
+          if (inRepo(neighbor)) keep[neighbor] = true;
+          return false;
+        });
+      });
+      return { keys: keep, matchKeys: matchingKeys, searchStatus: searchStatus,
+        note: matchingKeys.length
+          ? "Search found " + matchingKeys.length + " connected chat" + (matchingKeys.length === 1 ? "" : "s") + ". Press Enter to focus the first match."
+          : "No connected chats match this search." };
+    }
+    var deg = connectedKeys.map(function (k) { return { k: k, d: adj[k].length }; })
       .sort(function (a, b) { return b.d - a.d; });
     deg.slice(0, CAP).forEach(function (x) { keep[x.k] = true; });
     var total = deg.length;
     var note = total > CAP
       ? "Showing the " + CAP + " most-connected chats" + (mapRepo ? " in " + mapRepo : "") + " of " + total + " with connections — filter by repo or click a chat to focus its connections."
       : (total ? "Showing all " + total + " connected chats" + (mapRepo ? " in " + mapRepo : "") + "." : "No connections to show" + (mapRepo ? " in " + mapRepo : "") + " yet.");
-    return { keys: keep, note: note };
+    return { keys: keep, matchKeys: matchingKeys, searchStatus: searchStatus, note: note };
   }
 
   function buildCy(container, scoped, byKey, side, edges, data) {
@@ -2319,11 +2520,11 @@ html[data-theme="dark"] .mc-heat-l4 { background: #35b98a; }
         groupEdges.slice(0, GROUP_ROW_CAP).forEach(function (e) {
           var otherKey = e.src === key ? e.dst : e.src;
           var other = byKey[otherKey];
-          var row = h("div", { class: "mc-side-conn", onclick: function () { FOCUS_CHAT = otherKey; rerender(); } },
+          var row = h("button", { class: "mc-side-conn", type: "button", onclick: function () { setMapFocus(otherKey); rerender(); } },
             h("span", { class: "mc-dot", style: "background:" + provColor(other && other.provider) }),
-            h("div", { class: "mc-side-conn-body" },
-              h("div", { class: "mc-ellipsis", title: other ? titleLabel(other.title, other.id) : otherKey }, other ? titleLabel(other.title, other.id) : otherKey),
-              h("div", { class: "mc-side-conn-meta" },
+            h("span", { class: "mc-side-conn-body" },
+              h("span", { class: "mc-ellipsis", title: other ? titleLabel(other.title, other.id) : otherKey }, other ? titleLabel(other.title, other.id) : otherKey),
+              h("span", { class: "mc-side-conn-meta" },
                 h("span", { class: "mc-chip" }, "source: " + sourceLabel(e.source)),
                 h("span", { class: "mc-chip" }, "confidence: " + Math.round((+e.confidence || 0) * 100) + "%"))));
           side.appendChild(row);
@@ -2332,11 +2533,11 @@ html[data-theme="dark"] .mc-heat-l4 { background: #35b98a; }
       });
     }
     side.appendChild(h("div", { class: "mc-side-section" }, ""));
-    side.appendChild(h("span", { class: "mc-chip mc-chip-btn", onclick: function () { FOCUS_CHAT = key; rerender(); } }, "Show only this chat's connections"));
+    side.appendChild(h("button", { class: "mc-chip mc-chip-btn", type: "button", onclick: function () { setMapFocus(key); rerender(); } }, "Show only this chat's connections"));
   }
 
   function cmdBtn(label, cmd, primary) {
-    return h("button", { class: "mc-btn" + (primary ? " mc-btn-primary" : ""),
+    return h("button", { class: "mc-btn" + (primary ? " mc-btn-primary" : ""), type: "button",
       title: cmd, onclick: function (ev) {
         var b = ev.target; var old = b.textContent; b.disabled = true;
         clipboardWrite(cmd).then(function () {
@@ -2354,8 +2555,26 @@ html[data-theme="dark"] .mc-heat-l4 { background: #35b98a; }
   // ===========================================================================
   //  CHATS TAB
   // ===========================================================================
-  var chatFilter = { repo: "", openOnly: false, providers: {} };
-  var FOCUS_OPEN_END = null;
+  var savedChatState = OPERATOR_STATE.chats && typeof OPERATOR_STATE.chats === "object" ? OPERATOR_STATE.chats : {};
+  var chatFilter = { repo: String(savedChatState.repo || ""), openOnly: savedChatState.openOnly === true, providers: {} };
+  if (savedChatState.providers && typeof savedChatState.providers === "object") {
+    Object.keys(savedChatState.providers).forEach(function (key) { chatFilter.providers[key] = savedChatState.providers[key] === true; });
+  }
+  var chatQuery = String(savedChatState.query || "");
+  var FOCUS_OPEN_END = savedChatState.focusOpen || null;
+
+  function persistChatState() {
+    setOperatorState("chats", { repo: chatFilter.repo || "", openOnly: chatFilter.openOnly === true,
+      providers: chatFilter.providers, query: chatQuery || "", focusOpen: FOCUS_OPEN_END || null });
+  }
+  function chatNodeMatches(n, query) {
+    var openText = (n.open_ends || []).map(function (item) { return (item && item.text) || ""; });
+    return textMatchesQuery([titleLabel(n.title, n.id), n.id, n.repo, providerLabel(n.provider)].concat(openText), query);
+  }
+  function openItemMatches(item, node, query) {
+    return textMatchesQuery([item.title, item.text, item.action_hint, item.kind, item.repo,
+      node && titleLabel(node.title, node.id), node && node.id], query);
+  }
 
   function renderChats(main) {
     var g = guard("chats");
@@ -2377,21 +2596,31 @@ html[data-theme="dark"] .mc-heat-l4 { background: #35b98a; }
     var repos = uniq(nodes.map(function (n) { return n.repo; }).filter(Boolean)).sort();
     var providers = uniq(nodes.map(function (n) { return providerGroup(n.provider); }).filter(Boolean)).sort();
     var filters = h("div", { class: "mc-filters" });
-    var sel = h("select", { class: "mc-chip", onchange: function () { chatFilter.repo = sel.value; rerender(); } });
+    filters.appendChild(h("label", { class: "mc-sr-only", for: "mc-chat-search" }, "Search chats and open work"));
+    var search = h("input", { class: "mc-search", id: "mc-chat-search", type: "search",
+      value: chatQuery, placeholder: "Search every chat and open item", autocomplete: "off",
+      oninput: function () { chatQuery = search.value; persistChatState(); scheduleSearchRender(search); } });
+    filters.appendChild(search);
+    filters.appendChild(h("label", { class: "mc-sr-only", for: "mc-chat-repo-filter" }, "Filter chats by repo"));
+    var sel = h("select", { class: "mc-chip", id: "mc-chat-repo-filter", onchange: function () {
+      chatFilter.repo = sel.value; persistChatState(); rerender();
+    } });
     sel.appendChild(h("option", { value: "" }, "All repos"));
     repos.forEach(function (r) { var o = h("option", { value: r }, r); if (r === chatFilter.repo) o.selected = true; sel.appendChild(o); });
     filters.appendChild(sel);
-    filters.appendChild(h("span", { class: "mc-chip mc-chip-btn" + (chatFilter.openOnly ? " mc-chip-on" : ""),
-      onclick: function () { chatFilter.openOnly = !chatFilter.openOnly; rerender(); } }, "Only chats with unfinished work"));
+    filters.appendChild(h("button", { class: "mc-chip mc-chip-btn" + (chatFilter.openOnly ? " mc-chip-on" : ""),
+      type: "button", "aria-pressed": chatFilter.openOnly ? "true" : "false",
+      onclick: function () { chatFilter.openOnly = !chatFilter.openOnly; persistChatState(); rerender(); } }, "Only chats with unfinished work"));
     providers.forEach(function (pr) {
       var on = !chatFilter.providers[pr];
-      filters.appendChild(h("span", { class: "mc-chip mc-chip-btn" + (on ? " mc-chip-on" : ""),
-        onclick: function () { chatFilter.providers[pr] = !chatFilter.providers[pr]; rerender(); } }, providerLabel(pr)));
+      filters.appendChild(h("button", { class: "mc-chip mc-chip-btn" + (on ? " mc-chip-on" : ""),
+        type: "button", "aria-pressed": on ? "true" : "false",
+        onclick: function () { chatFilter.providers[pr] = !chatFilter.providers[pr]; persistChatState(); rerender(); } }, providerLabel(pr)));
     });
     p.body.appendChild(filters);
 
-    if (FOCUS_OPEN_END) p.body.appendChild(h("span", { class: "mc-chip mc-chip-btn mc-chip-on",
-      onclick: function () { FOCUS_OPEN_END = null; rerender(); } }, "showing one open item — show all"));
+    if (FOCUS_OPEN_END) p.body.appendChild(h("button", { class: "mc-chip mc-chip-btn mc-chip-on", type: "button",
+      onclick: function () { FOCUS_OPEN_END = null; persistChatState(); rerender(); } }, "showing one open item — show all"));
 
     renderOpenWork(p.body, openItems, nodes, edges);
 
@@ -2399,6 +2628,7 @@ html[data-theme="dark"] .mc-heat-l4 { background: #35b98a; }
       if (chatFilter.repo && n.repo !== chatFilter.repo) return false;
       if (chatFilter.openOnly && !openCountByNode[n.key] && !(n.open_ends || []).length) return false;
       if (chatFilter.providers[providerGroup(n.provider)]) return false; // toggled off
+      if (!chatNodeMatches(n, chatQuery)) return false;
       return true;
     });
 
@@ -2410,6 +2640,10 @@ html[data-theme="dark"] .mc-heat-l4 { background: #35b98a; }
     var ROW_CAP = 100;
     visible.sort(function (a, b) { return String(b.last_activity || "") < String(a.last_activity || "") ? -1 : 1; });
     p.body.appendChild(h("div", { class: "mc-section-head" }, h("h2", { text: "Recent chats" })));
+    p.body.appendChild(h("output", { id: "mc-chat-search-status", class: "mc-card-foot", role: "status", "aria-live": "polite" },
+      normalizedQuery(chatQuery)
+        ? searchCountText(visible.length, nodes.length, 100, "chats")
+        : "Showing " + Math.min(100, visible.length) + " of " + visible.length + " chats after filters"));
     var list = h("div", { class: "mc-list" });
     var byId = {}; nodes.forEach(function (n) { byId[n.key] = n; });
     visible.slice(0, ROW_CAP).forEach(function (n) { list.appendChild(chatRow(n, edges, byId)); });
@@ -2425,6 +2659,7 @@ html[data-theme="dark"] .mc-heat-l4 { background: #35b98a; }
       var n = byKey[o.source_node || ""];
       if (chatFilter.repo && (o.repo || (n && n.repo) || "") !== chatFilter.repo) return false;
       if (n && chatFilter.providers[providerGroup(n.provider)]) return false;
+      if (!openItemMatches(o, n, chatQuery)) return false;
       return true;
     }).sort(function (a, b) {
       if (FOCUS_OPEN_END && a.id === FOCUS_OPEN_END) return -1;
@@ -2436,6 +2671,10 @@ html[data-theme="dark"] .mc-heat-l4 { background: #35b98a; }
     });
     parent.appendChild(h("div", { class: "mc-section-head" }, h("h2", { text: "Open work" })));
     parent.appendChild(h("div", { class: "mc-card-foot" }, "One list of unfinished items from chats, repo todo files, nightly notes, Git state, and the request register."));
+    parent.appendChild(h("output", { id: "mc-open-search-status", class: "mc-card-foot", role: "status", "aria-live": "polite" },
+      normalizedQuery(chatQuery)
+        ? searchCountText(items.length, (openItems || []).length, 50, "open work items")
+        : "Showing " + Math.min(50, items.length) + " of " + items.length + " open work items after filters"));
     var list = h("div", { class: "mc-list" });
     if (!items.length) list.appendChild(h("div", { class: "mc-card-foot" }, "No open work found in the chat graph."));
     items.slice(0, 50).forEach(function (item) { list.appendChild(openWorkRow(item, byKey, edges)); });
@@ -2453,8 +2692,8 @@ html[data-theme="dark"] .mc-heat-l4 { background: #35b98a; }
         h("div", { class: "mc-row-action mc-ellipsis", title: item.text || "" }, item.action_hint || openEndHuman(item)),
         h("div", { class: "mc-row-meta mc-ellipsis" },
           (item.repo ? "Repo: " + item.repo + " · " : "") + ((item.age_days || 0) ? item.age_days + "d old" : "new"))));
-    if (item.source_node && n) row.appendChild(h("span", { class: "mc-chip mc-chip-btn", onclick: function () {
-      FOCUS_CHAT = item.source_node; location.hash = "#map"; rerender();
+    if (item.source_node && n) row.appendChild(h("button", { class: "mc-chip mc-chip-btn", type: "button", onclick: function () {
+      setMapFocus(item.source_node); location.hash = "#map"; rerender();
     } }, "Show chat"));
     if (item.resolve_cmd) row.appendChild(copyable(item.resolve_cmd, "Hide until refresh"));
     return row;
@@ -2517,18 +2756,18 @@ html[data-theme="dark"] .mc-heat-l4 { background: #35b98a; }
     // scan-unfinished-work table (unfinished repos only; clean collapse)
     var bad = acts.filter(function (x) { return x.a.state !== "green"; });
     var clean = acts.filter(function (x) { return x.a.state === "green"; });
-    var table = h("table", { class: "mc-table" });
+    var table = h("table", { class: "mc-table mc-git-mobile-table" });
     table.appendChild(h("tr", null,
       h("th", null, "Project"), h("th", null, "Branch"), h("th", null, "GitHub"),
       h("th", null, "Problem"), h("th", null, "Next action")));
     bad.forEach(function (x) {
       var relCls = REL_CLASS[x.a.rel] || "mc-state-grey";
       table.appendChild(h("tr", null,
-        h("td", { class: "mc-ellipsis", title: x.r.repo, style: "max-width:220px" }, x.r.repo),
-        h("td", { class: relCls }, x.r.branch || "?"),
-        h("td", { class: relCls }, relSymbol(x.a.rel) + " " + (REL_TEXT[x.a.rel] || x.a.rel)),
-        h("td", null, glyphSpan(x.a.state), " ", x.a.summary),
-        h("td", { class: "mc-action-verb" }, x.a.verb)));
+        h("td", { class: "mc-ellipsis", title: x.r.repo, style: "max-width:220px", "data-label": "Project" }, x.r.repo),
+        h("td", { class: relCls, "data-label": "Branch" }, x.r.branch || "?"),
+        h("td", { class: relCls, "data-label": "GitHub" }, relSymbol(x.a.rel) + " " + (REL_TEXT[x.a.rel] || x.a.rel)),
+        h("td", { "data-label": "Problem" }, glyphSpan(x.a.state), " ", x.a.summary),
+        h("td", { class: "mc-action-verb", "data-label": "Next action" }, x.a.verb)));
     });
     p.body.appendChild(table);
 
@@ -2536,9 +2775,9 @@ html[data-theme="dark"] .mc-heat-l4 { background: #35b98a; }
     repos.forEach(function (r) { repoDecisionRows(r).forEach(function (row) { decisions.push({ repo: r.repo, row: row }); }); });
     if (decisions.length) {
       p.body.appendChild(h("div", { class: "mc-section-head" }, h("h2", { text: "Branch decisions" })));
-      var dt = h("table", { class: "mc-table" });
+      var dt = h("table", { class: "mc-table mc-git-mobile-table" });
       dt.appendChild(h("tr", null, h("th", null, "Project"), h("th", null, "Decision"), h("th", null, "Detail"), h("th", null, "Next action")));
-      decisions.forEach(function (d) { var tone = d.row.state || "amber"; dt.appendChild(h("tr", null, h("td", { class: "mc-ellipsis", title: d.repo, style: "max-width:180px" }, d.repo), h("td", null, glyphSpan(tone), " ", d.row.label || "Git decision"), h("td", { class: "mc-ellipsis", title: d.row.detail || "", style: "max-width:320px" }, d.row.detail || ""), h("td", { class: "mc-action-verb" }, d.row.action || decisionRowAction(d.row)))); });
+      decisions.forEach(function (d) { var tone = d.row.state || "amber"; dt.appendChild(h("tr", null, h("td", { class: "mc-ellipsis", title: d.repo, style: "max-width:180px", "data-label": "Project" }, d.repo), h("td", { "data-label": "Decision" }, glyphSpan(tone), " ", d.row.label || "Git decision"), h("td", { class: "mc-ellipsis", title: d.row.detail || "", style: "max-width:320px", "data-label": "Detail" }, d.row.detail || ""), h("td", { class: "mc-action-verb", "data-label": "Next action" }, d.row.action || decisionRowAction(d.row)))); });
       p.body.appendChild(dt);
     }
 
@@ -2546,30 +2785,39 @@ html[data-theme="dark"] .mc-heat-l4 { background: #35b98a; }
     if (lifecycle.length) {
       p.body.appendChild(h("div", { class: "mc-section-head" }, h("h2", { text: "Branch lifecycle" })));
       p.body.appendChild(h("div", { class: "mc-card-foot" }, "Purpose, source chat, merge condition, and delete/retain condition come only from repo todo.md ledger entries."));
-      var lt = h("table", { class: "mc-table" });
+      var lt = h("table", { class: "mc-table mc-git-mobile-table" });
       lt.appendChild(h("tr", null, h("th", null, "Project"), h("th", null, "Kind"), h("th", null, "Branch/worktree"), h("th", null, "Metadata"), h("th", null, "Purpose"), h("th", null, "Owner/source"), h("th", null, "Merge"), h("th", null, "Close condition")));
-      lifecycle.forEach(function (repoRows) { repoRows.rows.forEach(function (row) { var tone = metadataTone(row.status); lt.appendChild(h("tr", null, h("td", { class: "mc-ellipsis", title: repoRows.repo, style: "max-width:170px" }, repoRows.repo), h("td", null, row.kind), h("td", { class: "mc-ellipsis", title: row.name, style: "max-width:180px" }, row.name), h("td", { class: STATE_CLASS[tone] || "" }, glyphSpan(tone), " ", metadataLabel(row.status)), h("td", { class: "mc-ellipsis", title: row.purpose || "", style: "max-width:220px" }, row.purpose || "not recorded"), h("td", { class: "mc-ellipsis", title: row.owner || "", style: "max-width:180px" }, row.owner || "not recorded"), h("td", { class: "mc-ellipsis", title: row.merge || "", style: "max-width:180px" }, row.merge || "not recorded"), h("td", { class: "mc-ellipsis", title: row.close || "", style: "max-width:220px" }, row.close || row.action || "not recorded"))); }); });
+      lifecycle.forEach(function (repoRows) { repoRows.rows.forEach(function (row) { var tone = metadataTone(row.status); lt.appendChild(h("tr", null, h("td", { class: "mc-ellipsis", title: repoRows.repo, style: "max-width:170px", "data-label": "Project" }, repoRows.repo), h("td", { "data-label": "Kind" }, row.kind), h("td", { class: "mc-ellipsis", title: row.name, style: "max-width:180px", "data-label": "Branch/worktree" }, row.name), h("td", { class: STATE_CLASS[tone] || "", "data-label": "Metadata" }, glyphSpan(tone), " ", metadataLabel(row.status)), h("td", { class: "mc-ellipsis", title: row.purpose || "", style: "max-width:220px", "data-label": "Purpose" }, row.purpose || "not recorded"), h("td", { class: "mc-ellipsis", title: row.owner || "", style: "max-width:180px", "data-label": "Owner/source" }, row.owner || "not recorded"), h("td", { class: "mc-ellipsis", title: row.merge || "", style: "max-width:180px", "data-label": "Merge" }, row.merge || "not recorded"), h("td", { class: "mc-ellipsis", title: row.close || "", style: "max-width:220px", "data-label": "Close condition" }, row.close || row.action || "not recorded"))); }); });
       p.body.appendChild(lt);
     }
     if (clean.length) {
-      var expanded = { on: false };
-      var line = h("div", { class: "mc-collapse" }, glyphSpan("green"), " " + clean.length + " projects are clean (click to show)");
-      var sub = h("div", { style: "display:none" });
+      var cleanDisclosureKey = "git-clean-projects";
+      var expanded = { on: disclosureOpen(cleanDisclosureKey) };
+      var subId = "mc-git-clean-projects";
+      var line = h("button", { class: "mc-collapse", type: "button", "aria-expanded": expanded.on ? "true" : "false",
+        "aria-controls": subId }, glyphSpan("green"), " " + clean.length + " projects are clean (" + (expanded.on ? "hide" : "show") + ")");
+      var sub = h("div", { id: subId, style: "display:" + (expanded.on ? "block" : "none") });
       clean.forEach(function (x) { sub.appendChild(h("div", { class: "mc-card-secondary" }, x.r.repo + " - " + (x.r.branch || "") + " matches GitHub")); });
-      line.addEventListener("click", function () { expanded.on = !expanded.on; sub.style.display = expanded.on ? "block" : "none"; });
+      line.addEventListener("click", function () {
+        expanded.on = !expanded.on; setDisclosureOpen(cleanDisclosureKey, expanded.on);
+        sub.style.display = expanded.on ? "block" : "none";
+        line.setAttribute("aria-expanded", expanded.on ? "true" : "false");
+        line.textContent = ""; line.appendChild(glyphSpan("green"));
+        line.appendChild(document.createTextNode(" " + clean.length + " projects are clean (" + (expanded.on ? "hide" : "show") + ")"));
+      });
       p.body.appendChild(line); p.body.appendChild(sub);
     }
 
     // separate watcher-flags list
     if (flags.length) {
       p.body.appendChild(h("div", { class: "mc-section-head" }, h("h2", { text: "Watcher notes" })));
-      var ft = h("table", { class: "mc-table" });
+      var ft = h("table", { class: "mc-table mc-git-mobile-table" });
       ft.appendChild(h("tr", null, h("th", null, "Project"), h("th", null, "Problem"), h("th", null, "Detail")));
       flags.forEach(function (f) {
         ft.appendChild(h("tr", null,
-          h("td", null, f.repo || "?"),
-          h("td", null, glyphSpan(f.state || "amber"), " ", f.flag || ""),
-          h("td", { class: "mc-ellipsis", title: f.detail || "", style: "max-width:420px" }, f.detail || "")));
+          h("td", { "data-label": "Project" }, f.repo || "?"),
+          h("td", { "data-label": "Problem" }, glyphSpan(f.state || "amber"), " ", f.flag || ""),
+          h("td", { class: "mc-ellipsis", title: f.detail || "", style: "max-width:420px", "data-label": "Detail" }, f.detail || "")));
       });
       p.body.appendChild(ft);
     }
@@ -2600,24 +2848,34 @@ html[data-theme="dark"] .mc-heat-l4 { background: #35b98a; }
   var countdowns = []; // {el, targetEpoch}
 
   // --- live headroom groups: one card per provider, labeled windows inside ---
-  function bandToState(r) {
+  function bandToState(r, feedEpoch) {
     if (r.health === "down") return "red";
     if (r.health === "auth") return "amber";
     if (r.band === "red") return "red";
     if (r.band === "orange" || r.band === "yellow") return "amber";
     if (r.confidence === "stale") return "amber";
+    var readingAge = readingAgeSeconds(r, feedEpoch);
+    if (readingAge == null || readingAge < 0 || readingAge > 300) return "amber";
     return "green";
   }
-  function renderHeadroomGroupCard(grp, credits) {
+  function headroomGroupState(grp, feedEpoch) {
     var order = { red: 0, amber: 1, green: 2 };
-    var worst = grp.rows.map(bandToState).sort(function (a, b) { return order[a] - order[b]; })[0] || "green";
+    return grp.rows.map(function (r) { return bandToState(r, feedEpoch); })
+      .sort(function (a, b) { return order[a] - order[b]; })[0] || "amber";
+  }
+  function headroomGroupRemaining(grp) {
+    var values = grp.rows.map(function (r) { return numericPct(r.remaining_pct); }).filter(isFinite);
+    return values.length ? Math.min.apply(Math, values) : null;
+  }
+  function renderHeadroomGroupCard(grp, credits, snapshotEpoch, liveEpoch) {
+    var worst = headroomGroupState(grp, liveEpoch);
     var chip = { red: "Wait", amber: "Watch", green: "Can use" }[worst];
     var card = h("div", { class: "mc-card" });
     card.appendChild(h("div", { class: "mc-decision-top" },
       h("div", { class: "mc-decision-title" }, grp.label),
       h("span", { class: "mc-chip mc-decision-state " + (worst === "green" ? "mc-badge-live" : "") }, chip)));
     grp.rows.forEach(function (r) {
-      var st = bandToState(r);
+      var st = bandToState(r, liveEpoch);
       var sub = h("div", { class: "mc-hr-window" });
       var valTxt = r.value_label ? r.value_label
                  : r.remaining_pct != null ? Math.round(r.remaining_pct) + "% left"
@@ -2629,7 +2887,12 @@ html[data-theme="dark"] .mc-heat-l4 { background: #35b98a; }
         sub.appendChild(h("div", { class: "mc-bar-track" },
           h("div", { class: "mc-bar-fill " + (STATE_CLASS[st] || ""), style: "--mc-w:" + Math.max(0, Math.min(100, r.remaining_pct)) + "%" })));
       }
-      var chips = [{ label: "Trust", value: confidenceLabel(r.confidence) }];
+      var chips = [
+        { label: "Trust", value: confidenceLabel(r.confidence) },
+        { label: "Source", value: sourceLabel(r.source) },
+        { label: "Reading", value: readingAgeText(r, liveEpoch) },
+        { label: "Cadence", value: "live · every 1 min" }
+      ];
       if (r.active) chips.push({ label: "Now", value: "in use" });
       if (r.health === "auth") chips.push({ label: "Flag", value: "token wait" });
       if (r.health === "down") chips.push({ label: "Flag", value: "source down" });
@@ -2652,6 +2915,8 @@ html[data-theme="dark"] .mc-heat-l4 { background: #35b98a; }
         sub.appendChild(h("div", { class: "mc-card-secondary" },
           Number(d.project_usage).toLocaleString() + " of " + Number(d.project_cap).toLocaleString() + " posts read this month"));
       }
+      var dailyReads = dailyReadsSummary(d);
+      if (dailyReads) sub.appendChild(h("div", { class: "mc-card-secondary mc-num" }, dailyReads));
       if (r.note) sub.appendChild(h("div", { class: "mc-card-secondary mc-ellipsis", title: r.note }, r.note));
       card.appendChild(sub);
     });
@@ -2660,6 +2925,12 @@ html[data-theme="dark"] .mc-heat-l4 { background: #35b98a; }
       sub.appendChild(h("div", { class: "mc-decision-top" },
         h("span", { class: "mc-hr-window-name" }, "Held credit"),
         h("span", { class: "mc-num" }, String(item.window || "").replace(/^credit:?/, "") || "credit")));
+      sub.appendChild(chipsLine([
+        { label: "Trust", value: confidenceLabel(item.confidence) },
+        { label: "Source", value: sourceLabel(item.source) },
+        { label: "Reading", value: readingAgeText(item, snapshotEpoch) },
+        { label: "Cadence", value: "snapshot · every 30 min" }
+      ]));
       if (item.notes) sub.appendChild(h("div", { class: "mc-card-secondary mc-ellipsis", title: item.notes }, item.notes));
       card.appendChild(sub);
     });
@@ -2675,21 +2946,29 @@ html[data-theme="dark"] .mc-heat-l4 { background: #35b98a; }
     var data = g.data || {};
     var nu = normUsageProviders(data);
     p.body.appendChild(h("div", { class: "mc-section-head" }, h("h2", { text: "Providers" })));
-    p.body.appendChild(h("div", { class: "mc-card-foot" }, "One card per provider; live cards refresh every minute and include held credits."));
+    p.body.appendChild(h("div", { class: "mc-card-foot" },
+      "Providers needing action or running low appear first. Live provider cards update every 1 minute; fallback snapshot cards update every 30 minutes. Each window shows its own reading age and source."));
     var grid = h("div", { class: "mc-decision-grid" });
-    // Live rows from the 60-second headroom collector come first; the 30-minute
-    // usage snapshot only contributes providers the collector does not cover.
+    // The 60-second headroom collector owns providers it covers; the 30-minute
+    // snapshot supplies fallbacks and held credits. The combined list is sorted
+    // by operator actionability, then lowest remaining headroom.
     var hg = guard("headroom");
-    var hrRows = (hg.ok && hg.data && Array.isArray(hg.data.rows))
+    var headroomTrusted = hg.ok && !hg.feedError && !hg.flag && hg.data &&
+      Array.isArray(hg.data.rows) && hg.data.rows.every(function (r) {
+        return r && typeof r === "object" && !Array.isArray(r);
+      });
+    var hrRows = headroomTrusted
       ? hg.data.rows.filter(function (r) { return r.health !== "hidden"; }) : [];
     var covered = {};
     var creditsByProv = {};
-    usageItems(data).forEach(function (item) {
+    var snapshotItems = usageItems(data);
+    snapshotItems.forEach(function (item) {
       if (isCreditWindow(item) && item.provider) {
         var ck = String(item.provider).toLowerCase();
         (creditsByProv[ck] = creditsByProv[ck] || []).push(item);
       }
     });
+    var cards = [];
     if (hrRows.length) {
       var hrGroups = [], byProv = {};
       hrRows.forEach(function (r) {
@@ -2699,19 +2978,37 @@ html[data-theme="dark"] .mc-heat-l4 { background: #35b98a; }
         if (!grp) { grp = { label: r.label || key, key: key, rows: [] }; byProv[key] = grp; hrGroups.push(grp); }
         grp.rows.push(r);
       });
-      hrGroups.forEach(function (grp) { grid.appendChild(renderHeadroomGroupCard(grp, creditsByProv[grp.key])); });
+      hrGroups.forEach(function (grp) {
+        cards.push({ kind: "live", group: grp, state: headroomGroupState(grp, hg.epoch),
+          remaining: headroomGroupRemaining(grp), label: grp.label || grp.key });
+      });
     }
-    usageItems(data).forEach(function (item) {
+    snapshotItems.forEach(function (item) {
       var provKey = String(item.provider || "").toLowerCase();
       // credits whose provider has a live card were folded into it above
       if (isCreditWindow(item) && covered[provKey]) return;
       if (!isCreditWindow(item) && item.provider && covered[provKey]) return;
-      grid.appendChild(renderUsageDecisionCard(item, g.epoch));
+      var decision = usageDecision(item);
+      cards.push({ kind: "snapshot", item: item, state: decision.state,
+        remaining: usageRemaining(item), label: item.title || item.provider || "provider" });
+    });
+    cards.sort(function (a, b) {
+      var stateDiff = actionStateRank(a.state) - actionStateRank(b.state);
+      if (stateDiff) return stateDiff;
+      var ar = a.remaining == null ? ((a.state === "red" || a.state === "amber") ? -1 : 101) : a.remaining;
+      var br = b.remaining == null ? ((b.state === "red" || b.state === "amber") ? -1 : 101) : b.remaining;
+      if (ar !== br) return ar - br;
+      return String(a.label).localeCompare(String(b.label));
+    });
+    cards.forEach(function (card) {
+      grid.appendChild(card.kind === "live"
+        ? renderHeadroomGroupCard(card.group, creditsByProv[card.group.key], g.epoch, hg.epoch)
+        : renderUsageDecisionCard(card.item, g.epoch));
     });
     p.body.appendChild(grid);
-    if (hrRows.length && hg.flag) {
+    if (!headroomTrusted && hg.ok && (hg.feedError || hg.flag)) {
       p.body.appendChild(h("div", { class: "mc-banner mc-banner-amber" },
-        "Live usage data is " + fmtAge(hg.epoch) + " old — the collector may be stopped (launchctl kickstart gui/501/com.gillettes.ai-headroom)"));
+        "Live usage feed is not trusted (" + (hg.feedError || hg.flag) + ") — showing snapshot cards until a fresh collector pass succeeds."));
     }
     if (!hrRows.length) {
       p.body.appendChild(h("div", { class: "mc-card-foot" },
@@ -2786,7 +3083,7 @@ html[data-theme="dark"] .mc-heat-l4 { background: #35b98a; }
     if (data.launchctl_note) p.body.appendChild(h("div", { class: "mc-banner mc-banner-amber" }, data.launchctl_note));
     if (data.t7_mounted === false) p.body.appendChild(h("div", { class: "mc-banner mc-banner-blue" }, "T7 offload drive not mounted — media-backed evidence shows offline, not failed"));
     var grid = h("div", { class: "mc-svc-grid" });
-    (data.jobs || []).forEach(function (jb) {
+    (data.jobs || []).forEach(function (jb, jobIndex) {
       var card = h("div", { class: "mc-svc" });
       var head = h("div", { class: "mc-svc-head" },
         glyphSpan(jb.state),
@@ -2825,10 +3122,18 @@ html[data-theme="dark"] .mc-heat-l4 { background: #35b98a; }
       }
       if (jb.run_cmd) card.appendChild(copyable(jb.run_cmd, "Run now"));
       if (jb.err_log_tail) {
-        var d = { on: false };
-        var toggle = h("div", { class: "mc-collapse" }, "Show last error");
-        var drawer = h("div", { class: "mc-drawer", style: "display:none" }, String(jb.err_log_tail));
-        toggle.addEventListener("click", function () { d.on = !d.on; drawer.style.display = d.on ? "block" : "none"; toggle.textContent = (d.on ? "Hide last error" : "Show last error"); });
+        var disclosureKey = "automation-error:" + String(jb.name || jb.label || jobIndex);
+        var d = { on: disclosureOpen(disclosureKey) };
+        var drawerId = "mc-automation-error-" + String(jobIndex);
+        var toggle = h("button", { class: "mc-collapse", type: "button", "aria-expanded": d.on ? "true" : "false",
+          "aria-controls": drawerId }, d.on ? "Hide last error" : "Show last error");
+        var drawer = h("div", { class: "mc-drawer", id: drawerId, style: "display:" + (d.on ? "block" : "none") }, String(jb.err_log_tail));
+        toggle.addEventListener("click", function () {
+          d.on = !d.on; setDisclosureOpen(disclosureKey, d.on);
+          drawer.style.display = d.on ? "block" : "none";
+          toggle.textContent = d.on ? "Hide last error" : "Show last error";
+          toggle.setAttribute("aria-expanded", d.on ? "true" : "false");
+        });
         card.appendChild(toggle); card.appendChild(drawer);
       }
       grid.appendChild(card);
@@ -2868,6 +3173,7 @@ html[data-theme="dark"] .mc-heat-l4 { background: #35b98a; }
   //  ROUTER + lifecycle
   // ===========================================================================
   var TABS = [["home", "Home"], ["brief", "Brief"], ["map", "Map"], ["chats", "Chats"], ["git", "Git"], ["usage", "Usage"], ["automation", "Automation"], ["attention", "Attention"]];
+  var LAST_ANNOUNCED_TAB = null;
   // pure render functions, spec shape render.<tab>(feed, el) reading window.MC.feeds.*
   var render = {
     home:       function (feed, el) { renderHome(el); },
@@ -2885,6 +3191,21 @@ html[data-theme="dark"] .mc-heat-l4 { background: #35b98a; }
     var h0 = (location.hash || "").replace(/^#/, "");
     return RENDER[h0] ? h0 : "home";
   }
+  function captureScrollContext() {
+    var x = typeof window.scrollX === "number" ? window.scrollX : 0;
+    var y = typeof window.scrollY === "number" ? window.scrollY : 0;
+    OPERATOR_STATE.scroll = { tab: currentTab(), x: x, y: y };
+    saveOperatorState();
+  }
+  function restoreScrollContext() {
+    if (!PENDING_SCROLL) return;
+    var saved = PENDING_SCROLL;
+    PENDING_SCROLL = null;
+    delete OPERATOR_STATE.scroll;
+    saveOperatorState();
+    if (saved.tab !== currentTab() || typeof window.scrollTo !== "function") return;
+    setTimeout(function () { window.scrollTo(+saved.x || 0, +saved.y || 0); }, 0);
+  }
   function renderNav() {
     var nav = document.getElementById("mc-nav");
     nav.textContent = "";
@@ -2892,10 +3213,17 @@ html[data-theme="dark"] .mc-heat-l4 { background: #35b98a; }
     var active = null;
     TABS.forEach(function (t) {
       var tab = h("a", { class: "mc-tab" + (t[0] === cur ? " mc-tab-active" : ""),
-        href: "#" + t[0] }, t[1]);
+        href: "#" + t[0], "aria-current": t[0] === cur ? "page" : null }, t[1]);
       if (t[0] === cur) active = tab;
       nav.appendChild(tab);
     });
+    var currentLabel = (TABS.filter(function (t) { return t[0] === cur; })[0] || [cur, cur])[1];
+    document.title = currentLabel + " — Mission Control";
+    if (LAST_ANNOUNCED_TAB !== cur) {
+      var status = document.getElementById("mc-tab-status");
+      if (status) status.textContent = currentLabel + " view";
+      LAST_ANNOUNCED_TAB = cur;
+    }
     if (active && typeof active.offsetLeft === "number" && nav.clientWidth) {
       nav.scrollLeft = Math.max(0,
         active.offsetLeft - (nav.clientWidth - active.offsetWidth) / 2);
@@ -2908,14 +3236,60 @@ html[data-theme="dark"] .mc-heat-l4 { background: #35b98a; }
     main.textContent = "";
     var cur = currentTab();
     render[cur](MC.feeds[cur], main);
+    restoreSearchFocus();
+    restoreScrollContext();
   }
 
   window.addEventListener("hashchange", rerender);
 
-  // 60s reload, paused while hidden; reload on focus if page stale >60s
-  setInterval(function () { if (!document.hidden) location.reload(); }, 60000);
-  window.addEventListener("focus", function () { if (nowS() - LOAD_EPOCH > 60) location.reload(); });
-  document.addEventListener("visibilitychange", function () { if (!document.hidden && nowS() - LOAD_EPOCH > 60) location.reload(); });
+  // Static file:// feeds require a page reload to pick up new script payloads.
+  // Save the operator's context first and defer that disruptive reload while a
+  // search field is active or a control was just used.
+  var LAST_TRANSIENT_INTERACTION = 0;
+  var REFRESH_PENDING = false;
+  var REFRESH_RETRY_TIMER = null;
+  function noteTransientInteraction() { LAST_TRANSIENT_INTERACTION = nowS(); }
+  function transientInteractionActive() {
+    return LAST_TRANSIENT_INTERACTION && nowS() - LAST_TRANSIENT_INTERACTION < 15;
+  }
+  function scheduleRefreshRetry() {
+    if (REFRESH_RETRY_TIMER != null) return;
+    REFRESH_RETRY_TIMER = setTimeout(function () {
+      REFRESH_RETRY_TIMER = null;
+      if (REFRESH_PENDING && !document.hidden) requestPageRefresh();
+    }, 16000);
+  }
+  function requestPageRefresh() {
+    if (document.hidden || transientInteractionActive()) {
+      REFRESH_PENDING = true;
+      if (!document.hidden) scheduleRefreshRetry();
+      return false;
+    }
+    REFRESH_PENDING = false;
+    captureScrollContext();
+    location.reload();
+    return true;
+  }
+  // Tiny observable seam for deterministic browser checks and support
+  // diagnostics; it exposes no mutable dashboard data.
+  window.MC_refreshGate = {
+    noteInteraction: noteTransientInteraction,
+    interactionActive: transientInteractionActive,
+    request: requestPageRefresh
+  };
+  ["input", "keydown", "pointerdown", "focusin"].forEach(function (eventName) {
+    document.addEventListener(eventName, noteTransientInteraction, true);
+  });
+  document.addEventListener("focusout", function () {
+    if (!REFRESH_PENDING) return;
+    setTimeout(function () { if (REFRESH_PENDING && nowS() - LOAD_EPOCH > 60) requestPageRefresh(); }, 15000);
+  }, true);
+  window.addEventListener("beforeunload", captureScrollContext);
+  // 60s reload, paused while hidden or interacting; focus/visibility reuse the
+  // same preservation and interaction gate.
+  setInterval(function () { if (!document.hidden) requestPageRefresh(); }, 60000);
+  window.addEventListener("focus", function () { if (nowS() - LOAD_EPOCH > 60) requestPageRefresh(); });
+  document.addEventListener("visibilitychange", function () { if (!document.hidden && nowS() - LOAD_EPOCH > 60) requestPageRefresh(); });
   // countdowns tick every second
   setInterval(tickCountdowns, 1000);
 
