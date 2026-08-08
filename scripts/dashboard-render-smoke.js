@@ -237,8 +237,8 @@ for (const tab of TABS) {
   const txt = (main && main.textContent) || '';
   if (!txt.trim()) { console.error('FAIL: #' + tab + ' rendered EMPTY mc-main'); fails++; continue; }
   const stripTxt = (byId['mc-strip'] && byId['mc-strip'].textContent) || '';
-  if (tab === 'home' && !/Usage\s*2/.test(stripTxt)) {
-    console.error('FAIL: strip does not count normalized usage used_pct rows (strip="' + stripTxt + '")');
+  if (tab === 'home' && !/Usage\s*6/.test(stripTxt)) {
+    console.error('FAIL: strip does not count the deduplicated live-first usage states (strip="' + stripTxt + '")');
     fails++; continue;
   }
   if (tab === 'map') {

@@ -1481,11 +1481,32 @@ html[data-theme="dark"] .mc-heat-l4 { background: #35b98a; }
       s.git = { state: worstTone(worst, guardTone(gg)), count: bad.length };
     } else s.git = { state: "grey", count: 0 };
 
-    var gu = guard("usage");
+    var gu = guard("usage"), gh = guard("headroom");
     if (gu.ok && gu.data && Array.isArray(gu.data.providers)) {
-      var states = normUsageProviders(gu.data).rows.map(usageState);
+      // The strip must summarize the same live-first provider set as the Usage
+      // tab. Counting only the slower snapshot can show a green "Usage 0" while
+      // a trusted one-minute window is exhausted on the page below it.
+      var states = [], covered = {}, liveGroups = {};
+      var headroomTrusted = gh.ok && !gh.feedError && !gh.flag && gh.data &&
+        Array.isArray(gh.data.rows) && gh.data.rows.every(function (r) {
+          return r && typeof r === "object" && !Array.isArray(r);
+        });
+      if (headroomTrusted) {
+        gh.data.rows.filter(function (r) { return r.health !== "hidden"; }).forEach(function (r) {
+          var key = String(r.provider || r.label || "?").toLowerCase();
+          covered[key] = true;
+          (liveGroups[key] = liveGroups[key] || { rows: [] }).rows.push(r);
+        });
+        Object.keys(liveGroups).forEach(function (key) {
+          states.push(headroomGroupState(liveGroups[key], gh.epoch));
+        });
+      }
+      normUsageProviders(gu.data).rows.forEach(function (item) {
+        if (!covered[String(item.provider || "").toLowerCase()]) states.push(usageState(item));
+      });
       var w = states.indexOf("red") >= 0 ? "red" : (states.indexOf("amber") >= 0 ? "amber" : "green");
-      s.usage = { state: worstTone(w, guardTone(gu)), count: states.filter(function (x) { return x === "red" || x === "amber"; }).length };
+      var guardState = worstTone(guardTone(gu), guardTone(gh));
+      s.usage = { state: worstTone(w, guardState), count: states.filter(function (x) { return x === "red" || x === "amber"; }).length };
     } else s.usage = { state: "grey", count: 0 };
 
     var ga = guard("automation");

@@ -115,3 +115,14 @@ The eleven source findings, merge, installed provenance, and task-owned live fee
 contract are complete. Manual VoiceOver, a future natural refresh, and an independent
 final exact-tip verdict were not observed and are not claimed. No new dependency,
 service, remote dashboard, activation-gated job, or credential flow was introduced.
+
+### Deployed-render follow-up
+
+The final installed CloakBrowser capture exposed one additional false-green path that
+source fixtures had not asserted: the Usage tab showed a live exhausted GLM weekly
+window while the global strip still summarized only the 30-minute snapshot as green
+`Usage 0`. The strip now derives its provider count/tone from the same trusted live-first,
+provider-deduplicated set as the Usage tab and folds both feed guards into the result.
+A browser regression requires the synthetic live red/amber providers to render a red
+count of two in the strip. This is the twelfth accepted finding; it does not alter
+provider collection, routing, or any activation-gated job.

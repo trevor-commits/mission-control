@@ -210,6 +210,12 @@ async function operatorUxAudit(browser, root) {
       check(/Live provider cards update every 1 minute/.test(usageText) && /snapshot cards update every 30 minutes/.test(usageText),
         'mixed live/snapshot cadence copy is inaccurate or missing');
       check(!/\b\d+[smhd] ago old\b/.test(usageText), `usage renders the duplicated age phrase "ago old"`);
+      const usageStrip = await page.getByRole('button', { name: 'Jump to Usage' }).evaluate(el => ({
+        state: (el.querySelector('.mc-glyph') || {}).title || '',
+        count: (el.querySelector('.mc-num') || {}).textContent || '',
+      }));
+      check(usageStrip.state === 'red' && usageStrip.count === '2',
+        `top Usage indicator ignores live red/amber headroom (${JSON.stringify(usageStrip)})`);
       await page.evaluate(nowEpoch => {
         window.MC.feedErrors.headroom = { ok: false, error: 'new collector failure', generated_epoch: nowEpoch + 1 };
         window.dispatchEvent(new Event('hashchange'));
