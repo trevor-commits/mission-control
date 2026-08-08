@@ -170,6 +170,22 @@ if os.path.isdir(root):
 print(json.dumps(rows, separators=(",", ":")))
 PY
 }
+
+live_data_change_is_refresher_only() {
+  local before_json="$1" after_json="$2"
+  LIVE_BEFORE_JSON="$before_json" LIVE_AFTER_JSON="$after_json" python3 - <<'PY' && \
+    /bin/launchctl print "gui/${UID}/com.gillettes.mission-control" >/dev/null 2>&1
+import json, os, re, sys
+before = {r[0]: r for r in json.loads(os.environ["LIVE_BEFORE_JSON"])}
+after = {r[0]: r for r in json.loads(os.environ["LIVE_AFTER_JSON"])}
+allowed = re.compile(
+    r"^((usage|git|chats|automation|decisions|attention|brief)"
+    r"\.(json|js|error\.js|error\.json)"
+    r"|job-history\.json|\.[a-z-]+\.lockfile)$")
+changed = sorted(n for n in set(before) | set(after) if before.get(n) != after.get(n))
+sys.exit(0 if changed and all(allowed.match(n) for n in changed) else 1)
+PY
+}
 LIVE_DATA_BEFORE="$(live_data_fingerprint)"
 
 # --- stub feeder payloads, written via python so unicode/hostile text is safe -
@@ -245,7 +261,7 @@ PY
 }
 
 c0() { # synthetic/test controls require a physically isolated state home
-  local fake_home candidate alias rc real_before swap_old swap_stub swap_pid i
+  local fake_home candidate alias rc real_before real_after swap_old swap_stub swap_pid i
   real_before="$(live_data_fingerprint)"
 
   fake_home="$ROOT/guard-omitted-home"
@@ -402,7 +418,9 @@ EOF
     ok "synthetic state writes stay pinned across a pathname swap"
   else no "synthetic state writes followed a replaced pathname (rc=$rc)"; fi
 
-  if [ "$real_before" != "$(live_data_fingerprint)" ]; then
+  real_after="$(live_data_fingerprint)"
+  if [ "$real_before" != "$real_after" ] && \
+     ! live_data_change_is_refresher_only "$real_before" "$real_after"; then
     no "state-home guard matrix changed live Mission Control data"
   fi
 }
@@ -547,7 +565,7 @@ EOF
   status_rc=$rc
   if [ ! -e "$marker_git" ] && [ -e "$marker_auto" ] && [ "$(cat "$H/data/git.json")" = "$before" ] && \
      [ "$scheduled_rc" -ne 0 ] && [ "$status_rc" -ne 0 ] && \
-     printf '%s\n' "$out" | grep -Eq 'git.*(error|backoff|degraded)'; then
+     grep -Eq 'git.*(error|backoff|degraded)' <<< "$out"; then
     ok "scheduled --due exposes backoff while sibling feeds continue"
   else
     no "scheduled backoff blocked sibling, retried early, hid top-level status, or changed last-good"
@@ -574,7 +592,7 @@ PY
   MISSION_CONTROL_HOME="$H" DASHBOARD_CMD_CHATS="cat '$ROOT/chats-degraded.json'" \
     bash "$DASH" collect --force chats >/dev/null 2>&1
   out="$(MISSION_CONTROL_HOME="$H" bash "$DASH" status 2>&1)"; rc=$?
-  if [ "$rc" -ne 0 ] && printf '%s\n' "$out" | grep -Eq 'chats.*degraded: chat-source'; then
+  if [ "$rc" -ne 0 ] && grep -Eq 'chats.*degraded: chat-source' <<< "$out"; then
     ok "status surfaces persisted chat metadata degradation"
   else no "status hid chat metadata degradation"; fi
 
@@ -587,7 +605,7 @@ PY
   MISSION_CONTROL_HOME="$H" bash "$DASH" collect --due chats >/dev/null 2>&1 || scheduled_rc=$?
   out="$(MISSION_CONTROL_HOME="$H" bash "$DASH" status 2>&1)"; status_rc=$?
   if [ "$scheduled_rc" -eq 0 ] && [ "$status_rc" -ne 0 ] && \
-     printf '%s\n' "$out" | grep -Eq 'chats.*degraded: chat-source'; then
+     grep -Eq 'chats.*degraded: chat-source' <<< "$out"; then
     ok "scheduled --due exits 0 on chat-source-only cosmetic degradation"
   else
     no "scheduled --due mishandled chat-source-only degradation (due=$scheduled_rc status=$status_rc)"
@@ -607,7 +625,7 @@ PY
     bash "$DASH" collect --force chats >/dev/null 2>&1
   reason_rc=0
   reason_err="$(MISSION_CONTROL_HOME="$H" bash "$DASH" collect --due chats 2>&1 >/dev/null)" || reason_rc=$?
-  if [ "$reason_rc" -eq 1 ] && printf '%s\n' "$reason_err" | grep -q 'degraded cycle: chats: stale providers cursor'; then
+  if [ "$reason_rc" -eq 1 ] && grep -q 'degraded cycle: chats: stale providers cursor' <<< "$reason_err"; then
     ok "degraded scheduled cycle names its reason on stderr"
   else
     no "degraded cycle exit stayed silent (rc=$reason_rc err=${reason_err:0:160})"
@@ -781,7 +799,7 @@ env = {"schema": 1, "feed": "chats", "generated_at": "now", "generated_epoch": n
 json.dump(env, open(sys.argv[1], "w"))
 PYEOF
   local out; out="$(MISSION_CONTROL_HOME="$mch" bash "$DASH" status 2>/dev/null || true)"
-  if printf '%s\n' "$out" | grep -q "unknown full ingest"; then
+  if grep -q "unknown full ingest" <<< "$out"; then
     ok "status: fresh chats feed still surfaces unknown full graph ingest"
   else
     no "status: unknown full graph ingest hidden behind fresh chats feed"
@@ -845,8 +863,8 @@ EOF
   printf 'raise RuntimeError("POISONED_REPO_COMMON")\n' > "$fr/scripts/mission_control_common.py"
   local status_out; status_out="$(env -u REPO_ROOT MISSION_CONTROL_HOME="$mch" \
     MISSION_CONTROL_NOW_EPOCH="$(date +%s)" bash "$mch/bin/dashboard" status 2>&1 || true)"
-  if printf '%s\n' "$status_out" | grep -q '^install' && \
-     ! printf '%s\n' "$status_out" | grep -q 'POISONED_REPO_COMMON\|Traceback'; then
+  if grep -q '^install' <<< "$status_out" && \
+     ! grep -q 'POISONED_REPO_COMMON\|Traceback' <<< "$status_out"; then
     ok "install: dashboard imports adjacent stamped common despite repo drift"
   else
     no "install: dashboard loaded the dirty repo common instead of adjacent bin"
@@ -864,7 +882,7 @@ c10() { # the REAL plist template, substituted as install does, must point at an
   sed -e "s|__MCHOME__|$mch|g" -e "s|__HOME__|$HOME|g" -e "s|__REPO__|$REPO|g" "$tmpl" > "$out"
   # extract the exec path = the ProgramArguments <string> ending in /dashboard
   local execpath; execpath="$(grep -oE '<string>[^<]*/bin/dashboard</string>' "$out" | head -1 | sed -E 's|</?string>||g')"
-  if printf '%s' "$execpath" | grep -q '\.mission-control/\.mission-control'; then
+  if grep -q '\.mission-control/\.mission-control' <<< "$execpath"; then
     no "plist: DOUBLE-PREFIX in exec path ($execpath)"; return; fi
   if [ "$execpath" != "$mch/bin/dashboard" ]; then
     no "plist: exec path '$execpath' != installed runtime '$mch/bin/dashboard'"; return; fi
@@ -989,7 +1007,7 @@ PY
     bash "$DASH" collect --force brief >/dev/null 2>&1
   out="$(MISSION_CONTROL_HOME="$mch" bash "$DASH" status 2>/dev/null || true)"
   if [ "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["generated_epoch"])' "$mch/data/brief.json")" = "$old_epoch" ] \
-     && printf '%s\n' "$out" | grep -Eqi 'brief.*(stale|red|aging)'; then
+     && grep -Eqi 'brief.*(stale|red|aging)' <<< "$out"; then
     ok "brief freshness preserves the sidecar compose age"
   else
     no "brief freshness relabeled a stale sidecar as current"
@@ -1019,7 +1037,7 @@ PY
     [ -f "$mch/data/brief.error.js" ] && grep -q 'feedErrors.brief' "$mch/data/brief.error.js" || miss=1
     [ "$(shasum -a 256 "$mch/data/brief.json" | awk '{print $1}')" = "$before" ] || miss=1
     out="$(MISSION_CONTROL_HOME="$mch" bash "$DASH" status 2>/dev/null || true)"
-    printf '%s\n' "$out" | grep -Eqi 'brief.*error' || miss=1
+    grep -Eqi 'brief.*error' <<< "$out" || miss=1
   done
   grep -q 'data/brief.error.js' "$REPO/dashboard/index.html" || miss=1
   grep -q 'MC.feedErrors' "$REPO/dashboard/index.html" || miss=1
@@ -1028,18 +1046,20 @@ PY
 }
 
 c17() { # feeder stderr is sanitized before JSON/JS error persistence
-  local mch stub status miss=0; mch="$(mktemp -d)"; stub="$ROOT/sensitive-error-stub"
-  cat > "$stub" <<'EOF'
+  local mch stub status fake_secret miss=0; mch="$(mktemp -d)"; stub="$ROOT/sensitive-error-stub"
+  fake_secret='sk-abcdefghijklmnop''qrstuvwxyz123456'
+  cat > "$stub" <<EOF
 #!/bin/sh
-printf '%s\n' 'failed sk-abcdefghijklmnopqrstuvwxyz123456 operator@example.com 415-555-1212 forbidden-term' >&2
+printf '%s\n' 'failed $fake_secret operator@example.com 415-555-1212 forbidden-term' >&2
 exit 2
 EOF
   chmod +x "$stub"
   MISSION_CONTROL_EGRESS_DENYLIST='forbidden-term' DASHBOARD_CMD_USAGE="$stub" \
-    MISSION_CONTROL_HOME="$mch" bash "$DASH" collect --force usage >/dev/null 2>&1
+  MISSION_CONTROL_HOME="$mch" bash "$DASH" collect --force usage >/dev/null 2>&1
   for artifact in "$mch/data/usage.error.json" "$mch/data/usage.error.js"; do
     [ -f "$artifact" ] || miss=1
-    grep -Eq 'sk-abcdefghijklmnopqrstuvwxyz123456|operator@example.com|415-555-1212|forbidden-term' "$artifact" && miss=1
+    grep -Fq "$fake_secret" "$artifact" && miss=1
+    grep -Eq 'operator@example.com|415-555-1212|forbidden-term' "$artifact" && miss=1
   done
   python3 - "$mch/data/usage.error.json" <<'PY' || miss=1
 import json,sys
@@ -1049,8 +1069,9 @@ assert c["dropped_fields"] == 1
 assert c["reason_secret"] == c["reason_email"] == c["reason_phone"] == c["reason_denylist"] == 1
 PY
   status="$(MISSION_CONTROL_HOME="$mch" bash "$DASH" status 2>/dev/null || true)"
-  printf '%s\n' "$status" | grep -Eqi 'usage.*error' || miss=1
-  printf '%s\n' "$status" | grep -Eq 'sk-abcdefghijklmnopqrstuvwxyz123456|operator@example.com|415-555-1212|forbidden-term' && miss=1
+  grep -Eqi 'usage.*error' <<< "$status" || miss=1
+  grep -Fq "$fake_secret" <<< "$status" && miss=1
+  grep -Eq 'operator@example.com|415-555-1212|forbidden-term' <<< "$status" && miss=1
   if [ "$miss" = 0 ]; then ok "error persistence sanitizes secrets, PII, and denylisted terms"
   else no "error persistence leaked sensitive feeder stderr"; fi
 }
@@ -1072,7 +1093,7 @@ PY
   env -u DASHBOARD_CMD_DECISIONS REPO_ROOT="$REPO" MISSION_CONTROL_HOME="$mch" \
     bash "$DASH" decide dismiss "$id" >/dev/null 2>&1
   state="$(MISSION_CONTROL_HOME="$mch" "$REPO/scripts/decision-alert" list --state dismissed --json)"
-  if [ ! -e "$marker" ] && printf '%s' "$state" | grep -Fq "$id" &&
+  if [ ! -e "$marker" ] && grep -Fq "$id" <<< "$state" &&
      python3 - "$mch/data/decisions.json" "$id" <<'PY'
 import json,sys
 d=json.load(open(sys.argv[1]))["data"]
@@ -1152,7 +1173,7 @@ env = {"schema": 1, "feed": "brief", "generated_at": "t", "generated_epoch": gen
 json.dump(env, open(sys.argv[1], "w"))
 PY
   out="$(MISSION_CONTROL_HOME="$mch" MISSION_CONTROL_NOW_EPOCH="$NOW" bash "$DASH" status 2>/dev/null || true)"
-  if printf '%s\n' "$out" | grep -E '^brief' | grep -Eqi 'stale|aging'; then
+  if grep -Eq '^brief.*([Ss][Tt][Aa][Ll][Ee]|[Aa][Gg][Ii][Nn][Gg])' <<< "$out"; then
     no "status flags a same-day brief stale on poll cadence (validity ignored)"
   else
     ok "status honors daily brief validity: same-day brief past 6x cadence not stale"
@@ -1311,7 +1332,7 @@ PY
 )"
   AFTER=$((EXPECTED + 1))
   out="$(MISSION_CONTROL_HOME="$H" MISSION_CONTROL_NOW_EPOCH="$AFTER" bash "$DASH" status 2>/dev/null || true)"
-  if printf '%s\n' "$out" | grep -E '^brief' | grep -qi 'stale'; then
+  if grep -Eq '^brief.*[Ss][Tt][Aa][Ll][Ee]' <<< "$out"; then
     ok "brief-migrate validity expires exactly after next local midnight"
   else
     no "brief-migrate: exact validity horizon did not become stale"
@@ -1319,7 +1340,7 @@ PY
   send_out="$(MISSION_CONTROL_HOME="$H" MORNING_BRIEF_NOW_EPOCH="$NOW" \
     MORNING_BRIEF_SEND_BIN=/usr/bin/false \
     "$BRIEF" --send 2>&1)" || { no "brief-migrate: delivered no-resend check failed"; return; }
-  if printf '%s\n' "$send_out" | grep -q 'delivery already complete'; then
+  if grep -q 'delivery already complete' <<< "$send_out"; then
     ok "brief-migrate delivered receipt prevents re-send"
   else
     no "brief-migrate: delivered brief did not take no-resend path"
@@ -1439,15 +1460,15 @@ for name,cadence in cadences.items():
     json.dump(env,open(os.path.join(root,name+".json"),"w"))
 PY
   out="$(MISSION_CONTROL_HOME="$mch" MISSION_CONTROL_NOW_EPOCH="$now" bash "$DASH" status 2>&1)"; rc=$?
-  if [ "$rc" -ne 0 ] && printf '%s\n' "$out" | grep -E '^install' | grep -q 'UNVERIFIED: missing'; then
+  if [ "$rc" -ne 0 ] && grep -q '^install.*UNVERIFIED: missing' <<< "$out"; then
     ok "status: missing install stamp is an explicit red row"
   else
     no "status: missing install stamp was omitted or green (rc=$rc out=$out)"
   fi
   mkdir -p "$mch/bin"; printf '[]\n' > "$mch/bin/install-stamp.json"
   out="$(MISSION_CONTROL_HOME="$mch" MISSION_CONTROL_NOW_EPOCH="$now" bash "$DASH" status 2>&1)"; rc=$?
-  if [ "$rc" -ne 0 ] && printf '%s\n' "$out" | grep -E '^install' | grep -q 'UNVERIFIED: malformed' && \
-     ! printf '%s\n' "$out" | grep -q 'Traceback'; then
+  if [ "$rc" -ne 0 ] && grep -q '^install.*UNVERIFIED: malformed' <<< "$out" && \
+     ! grep -q 'Traceback' <<< "$out"; then
     ok "status: malformed install stamp fails closed without traceback"
   else
     no "status: malformed install stamp did not return a structured red row (rc=$rc out=$out)"
@@ -1612,7 +1633,7 @@ elif kind == "data": d["data"] = []
 json.dump(d,open(p,"w"))
 PY
     out="$(MISSION_CONTROL_HOME="$h" bash "$DASH" status 2>&1)"; rc=$?
-    [ "$rc" -ne 0 ] && ! printf '%s\n' "$out" | grep -q 'Traceback' || fails=1
+    [ "$rc" -ne 0 ] && ! grep -q 'Traceback' <<< "$out" || fails=1
   done
   if [ "$fails" = 0 ]; then
     ok "status: malformed epoch/ok/cadence/data fields fail closed without traceback"
@@ -2122,8 +2143,8 @@ PY
   fi
   diag="$(env -u DASHBOARD_CMD_DECISIONS REPO_ROOT="$REPO" MISSION_CONTROL_HOME="$mch" \
     bash "$DASH" decide alert-backfill --chat-id ignored 2>&1 || true)"
-  if printf '%s' "$diag" | grep -qi 'fixed to the Control route' &&
-     ! printf '%s' "$diag" | grep -Eqi 'chat.*env|destination.*env'; then
+  if grep -qi 'fixed to the Control route' <<< "$diag" &&
+     ! grep -Eqi 'chat.*env|destination.*env' <<< "$diag"; then
     :
   else
     no "dashboard alert-backfill advertises removed destination override"; return
@@ -2512,19 +2533,7 @@ if [ "$LIVE_DATA_BEFORE" = "$LIVE_DATA_AFTER" ]; then
 # feed outputs mid-suite (5-min collect ticks). Attribute: pass only when every
 # changed path is a refresher-owned feed artifact AND the refresher is actually
 # loaded; anything else is a real suite leak and still fails.
-elif LIVE_BEFORE_JSON="$LIVE_DATA_BEFORE" LIVE_AFTER_JSON="$LIVE_DATA_AFTER" python3 - <<'PY' \
-    && launchctl list 2>/dev/null | grep -q com.gillettes.mission-control
-import json, os, re, sys
-before = {r[0]: r for r in json.loads(os.environ["LIVE_BEFORE_JSON"])}
-after = {r[0]: r for r in json.loads(os.environ["LIVE_AFTER_JSON"])}
-allowed = re.compile(
-    r"^((usage|git|chats|automation|decisions|attention|brief)"
-    r"\.(json|js|error\.js|error\.json)"
-    r"|job-history\.json|\.[a-z-]+\.lockfile)$")
-changed = sorted(n for n in set(before) | set(after) if before.get(n) != after.get(n))
-sys.exit(0 if changed and all(allowed.match(n) for n in changed) else 1)
-PY
-then
+elif live_data_change_is_refresher_only "$LIVE_DATA_BEFORE" "$LIVE_DATA_AFTER"; then
   ok "dashboard suite left live data untouched (only the live refresher's own mid-suite feed writes changed)"
 else
   no "dashboard suite mutated live Mission Control data"

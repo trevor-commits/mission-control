@@ -61,6 +61,9 @@ run "outcome coverage" /bin/bash scripts/outcome-coverage.test.sh
 run "outcome extractor" /bin/bash scripts/outcome-extractor.test.sh
 run "usage snapshot" /bin/bash scripts/usage-snapshot.test.sh
 run "dashboard browser" node scripts/dashboard-browser.test.js
+run "panel browser" node scripts/panel-browser.test.js
+run "native panel headroom" python3 scripts/mc-panel-headroom.test.py
+run "native panel core feeds" python3 scripts/mc-panel-summary.test.py
 run "unfinished-work scanner" scripts/scan-unfinished-work --self-test
 run "OpenSpec strict" openspec validate --all --strict
 run "Python syntax" python3 -c 'import pathlib; files=["scripts/chat-graph","scripts/decision-alert","scripts/mission_control_common.py","scripts/outcome_extractor.py","scripts/compose-decision-prompt.py","scripts/harvest-morning-brief-proof"]; [compile(pathlib.Path(p).read_text(),p,"exec") for p in files]'

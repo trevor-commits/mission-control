@@ -116,6 +116,18 @@ if (feeds.chats && feeds.chats.data && feeds.chats.data.counts) {
 // the compose epoch <= now and the horizon in the future for ANY time of day/TZ/DST,
 // so the round-6 next-local-midnight cap doesn't make this fixture midnight-flaky.
 const NOW_S = Math.floor(Date.now() / 1000);
+if (feeds.headroom && feeds.headroom.data && Array.isArray(feeds.headroom.data.rows)) {
+  // This fixture exercises the live-provider path, so bind its collection and
+  // per-reading clocks to the test run instead of letting a committed example
+  // silently age into the honest snapshot-fallback path.
+  feeds.headroom.generated_epoch = NOW_S;
+  feeds.headroom.generated_at = new Date(NOW_S * 1000).toISOString();
+  feeds.headroom.data.rows.forEach(row => {
+    if (!row || row.health !== 'ok' || row.confidence !== 'live') return;
+    const age = Number.isFinite(row.age_s) && row.age_s >= 0 ? row.age_s : 0;
+    row.fetched_epoch = NOW_S - age;
+  });
+}
 function localMidnightOf(sec) { // 00:00 local on sec's day (DST-correct)
   const d = new Date(sec * 1000);
   return Math.floor(new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0, 0).getTime() / 1000);
