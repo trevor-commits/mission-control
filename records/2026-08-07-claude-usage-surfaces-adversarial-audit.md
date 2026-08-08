@@ -96,3 +96,22 @@ The smaller trustworthy design is one fail-closed feed contract used by every su
 - Ripple Check: `PROJECT_INTENT.md`, `AGENTS.md`, `CONTINUITY.md`, `COHERENCE.md`, `LINEAR.md`, and the prior redesign records were checked for affected claims. No product-intent or governance contract changed; only audit truth and completion wording needed companion updates.
 - References: branch `codex/operator-ux-audit-019fdf95`; `todo.md`; source transcript above; visual evidence directory above; delivery evidence is appended after landing/install.
 - by: Codex audit task `019fdf95-6246-7301-a2b8-3316ff00bcbd`.
+
+## Final delivery disposition — 2026-08-08
+
+- Implementation head `da11b8a780359077db5d49e35c2db08cda1c0e34` merged
+  through PR #13 at `3d8b897c227d2ae624781df33299f3b80ab70538`; remote
+  ancestry proves the reviewed head is contained by current `origin/main`.
+- The live Mission Control install stamp attests provenance `head` at that exact
+  merge, with nine required runtimes and four required assets verified.
+- A merged-source usage refresh is fresh, and the installed headroom feed exactly
+  matches the Global merged collector output with its summary trust fields intact.
+- Mission Control's independently existing `chats` and `decisions` degradation
+  remains visible and leaves the aggregate launchd collection at exit 1. That is
+  outside this usage-surface acceptance item and is not rewritten as a successful
+  canary.
+
+The eleven source findings, merge, installed provenance, and task-owned live feed
+contract are complete. Manual VoiceOver, a future natural refresh, and an independent
+final exact-tip verdict were not observed and are not claimed. No new dependency,
+service, remote dashboard, activation-gated job, or credential flow was introduced.
