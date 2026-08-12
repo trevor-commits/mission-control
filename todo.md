@@ -9,6 +9,7 @@ Capture the current goal plus the concrete dependency-ordered steps that are sti
 - Put audit-created actionable execution items at the top of this section so audit follow-through is the next queue to execute.
 - If the current chat creates or discovers more urgent execution-ready work than the existing queue reflects, persist and move that fresher work to the top of this section before handoff so the chat is not the only durable record.
 - When a step is verified complete, move or summarize it in `## Completed` instead of deleting the history.
+- 2026-08-11 repository convergence: preserve all reachable, unreachable, detached, and dirty work; repair the current Decisions collector timeout; add CI; reconcile current-value rollup and reliability work; merge one verified outcome at a time; install and observe live scheduler evidence; then archive and clean every obsolete PR, branch, and worktree through exact-SHA and owner-lease gates. Preservation is complete through verified local and T7 bundles; implementation and cleanup remain active. | owner: Codex `019ff2ae-33b3-7e50-af39-3a08efef29a8` | plan: `records/2026-08-11-repository-convergence.md` | linear: self-contained; repo-only.
 - ER-156 Telegram producer routing: source, tests, and docs now route decisions to Control,
   normal Morning Brief chunks to Briefs, and the independent deadman to Incidents without
   treating the authorization identity as a destination. The first exact-byte review findings
@@ -81,6 +82,20 @@ Preserve a durable completion trail for verified work instead of deleting it fro
 - 2026-07-04 | ER-087 follow-up audit gaps — governance scaffold, product intent, tab wording, stale-ingest honesty, and Map smoke coverage landed in this change; full record below.
 
 ## Work Record Log
+
+### 2026-08-11 — Repository preservation and convergence intake
+- Problem: eleven secondary worktrees, ten unmerged local branches, two conflicting approved PRs, four dirty worktrees, detached heads, stale branch records, and 22 unreachable commits made direct merge or cleanup unsafe.
+- Reasoning: deletion cannot begin until every source has a verified recovery path. Product intent also requires selective integration because autonomy and additional feature work remain gated behind V1 clarity.
+- Diagnosis inputs: fresh local and remote refs, worktree registrations and dirt, process working directories, PR state, branch ancestry, `git fsck`, runtime status, `PROJECT_INTENT.md`, and branch-lifecycle policy.
+- Preservation: created rescue refs for every discovered unreachable object, all branch and detached heads, plus four virtual dirty-worktree snapshots. Created and verified two complete bundles, then restored one into a temporary mirror and checked the snapshot SHAs.
+- Self-audit:
+  - method: repeated `git fsck`; verified both bundles; compared SHA-256; mirror-cloned the bundle; ran strict Git object checks; resolved every dirty snapshot ref.
+  - outcome: `git fsck --full --unreachable --no-progress` is empty, both bundles verify, and all four uncommitted states resolve from the restore clone.
+  - did not verify: publishability of recovery-only objects, feature correctness, PR merge readiness, installed runtime, natural scheduler runs, or worktree deletion safety.
+- Ripple Check: preservation adds Git refs and external bundle files only. This record and the branch ledger document the active state; product code and runtime remain unchanged.
+- by: Codex `019ff2ae-33b3-7e50-af39-3a08efef29a8`.
+- led to: `records/2026-08-11-repository-convergence.md` and the owner-leased convergence worktree.
+- linear: self-contained; Mission Control remains repo-only.
 
 ### 2026-08-07 — Claude usage-surfaces adversarial audit and repair
 - Problem: Claude Code chat `71f37b5b-839f-4ac5-a933-cfa159ce18d4` improved the usage dashboard and compact panel, but its completion story did not cover hostile feed states, cross-feed tearing, provider-reading freshness, persistent input focus, keyboard semantics, current-seven-day X detail, or test/refresher races. Its durable completion row also stated without causal proof that weekly GLM saturation explained historical 429s.
@@ -781,6 +796,28 @@ Keep materially new suggestions here so they survive beyond the current chat.
 - 2026-07-05 | recommendation: do not adopt the GitHub Copilot enterprise-observability stack (OpenTelemetry Collector, Prometheus, Grafana, OpenObserve, Superset, Metabase, Airbyte, Meltano, dbt-core, Great Expectations, TensorZero, Helicone, OpenLIT, traceAI, TraceRoot, Pull Request Analytics Action); treat `records/2026-07-04-dashboard-coding-tracker-search-audit.md` as the real same-niche repo map; if a chart is ever justified, prefer vendorable zero-dependency `leeoniya/uPlot` over Chart.js/ECharts/CDN — but not for V1. | why: Copilot recommended from the repo description alone (it said so); every headline pick runs as a background service, framework, or separate warehouse and collides with the explicit non-goals of offline single-file, single-user, no-server. Full evaluation in Feedback Decision Log 2026-07-05. | by: Claude Code (Opus 4.8) session `a9724039-6595-4205-a25b-bf361020250a`. | linear: self-contained until Linear is configured.
 
 ## Active Branch Ledger
+### `codex/repo-convergence-019ff2ae`
+- status: active — preservation complete; runtime diagnosis and selective integration next
+- created: 2026-08-11
+- base: `origin/main@43bca917871a33f3b4176117df86e15eb80a3472`
+- worktree: `/Users/gillettes/Coding Projects/mission-control-worktrees/codex/repo-convergence-019ff2ae`
+- source chat: 2026-08-11 Codex `019ff2ae-33b3-7e50-af39-3a08efef29a8`, repository recovery and convergence
+- last refreshed by chat: 2026-08-11 preservation checkpoint
+- purpose: preserve all work, stabilize current main, integrate current-value work, and safely clean obsolete Git state.
+- linked issue: `self-contained:` repository convergence; Linear repo-only mode
+- plugin mirror: none
+- merge expectation: merge verified implementation and records to `main`
+- merge target: `main`
+- review surface: focused regressions, full verifier, exact-head review, GitHub PR checks, install readback, and scheduled-run evidence
+- exit checklist: preservation and restore test complete; runtime fix, CI, selected ports, sequential merges, install proof, archive tags, owner releases, branch cleanup, and final records remain
+- delete when: after `origin/main` containment, final install proof, owner release, and later cleanup-broker removal
+- retain reason: active convergence owner
+- cleanup command: owner release followed in a later turn by `worktree-owner-lease.py cleanup-released` using the recorded state file and lease ID
+- linked PR/audit/completion record: `records/2026-08-11-repository-convergence.md`; PR `TODO: verify`
+- pre-existing dirt at task start: isolated worktree clean; all legacy dirty worktrees have separate rescue snapshots and remain untouched
+- usable invocation path: n/a until implementation lands
+- owner lease: Codex `019ff2ae-33b3-7e50-af39-3a08efef29a8`; lease `c3d027bb-4fad-46d0-bc46-9ad206bb1b57`; state `/Users/gillettes/Coding Projects/mission-control/.git/codex-worktree-owners/61afdbaf8b34f98e8ddf07f6108026a5d146b484996a7f82641b65802d174221.json`
+
 ### `codex/er277-collector-019fb8ef`
 - status: four accepted `042b659` review blockers repaired and owning suites green at `ee54328`; fresh exact-SHA re-review pending
 - created: 2026-07-31
