@@ -61,7 +61,7 @@ SH
   export MORNING_BRIEF_LLM_COPILOT=1
   export MORNING_BRIEF_LLM_DAILY_CALL_CAP=20
   export MORNING_BRIEF_LLM_DAILY_TOKEN_CAP=100000
-  export MORNING_BRIEF_LLM_MODEL="claude-haiku-4-5-20251001"
+  export MORNING_BRIEF_LLM_MODEL="claude-opus-5"
   export MORNING_BRIEF_LLM_TIMEOUT=8
   export MORNING_BRIEF_LLM_TESTING=1
   unset MORNING_BRIEF_LLM_TEST_PROMPT_VERSION MORNING_BRIEF_LLM_MAX_OUTPUT_TOKENS
@@ -83,6 +83,8 @@ with open(os.environ["STUB_CAPTURE"], "a") as handle:
         "oauth_timeout": int(os.environ.get("CLAUDE_OAUTH_LOCK_TIMEOUT", "0")),
         "newest_marker": "NEWEST_MARKER" in prompt,
     }, sort_keys=True) + "\n")
+with open(os.environ["STUB_CAPTURE"]) as handle:
+    call_index = sum(1 for _ in handle)
 open(os.environ["STUB_STARTED"], "w").close()
 behavior = os.environ.get("STUB_BEHAVIOR", "success")
 if behavior == "slow":
@@ -109,13 +111,13 @@ result = {
     "ambiguity": False,
 }
 if behavior == "ambiguous":
-    model = sys.argv[sys.argv.index("--model") + 1]
+    resolved = call_index > 1
     result = {
-        "did": ["work_verified"] if "sonnet" in model else [],
+        "did": ["work_verified"] if resolved else [],
         "left_open": [],
-        "needs_trevor": [] if "sonnet" in model else ["resolve_ambiguity"],
+        "needs_trevor": [] if resolved else ["resolve_ambiguity"],
         "confidence": 0.71,
-        "ambiguity": "sonnet" not in model,
+        "ambiguity": not resolved,
     }
 elif behavior == "ambiguous_always":
     result = {
@@ -167,6 +169,22 @@ PY
 run_extract() {
   "$CG" extract-outcomes --days 7 --limit 20 --json
 }
+
+if PYTHONPATH="$HERE" python3 - <<'PY'
+import outcome_extractor as extractor
+
+assert extractor.DEFAULT_MODEL == "claude-opus-5"
+assert extractor.DEFAULT_ESCALATION_MODEL == "claude-opus-5"
+assert extractor._invoke_model("prompt", "claude-sonnet-4-6", 8) == {
+    "status": "model_policy",
+    "latency_ms": 0,
+}
+PY
+then
+  pass "non-Opus 5 selectors fail before model invocation"
+else
+  fail "Opus 5 model policy"
+fi
 
 # Global kill switch: normal ingest/export remain deterministic and never call a model.
 new_env
@@ -453,7 +471,7 @@ capture, prompt_path, db, sid, marker_path = sys.argv[1:]
 call = json.loads(open(capture).readline())
 argv = call["argv"]
 assert 1 <= call["oauth_timeout"] < 8, call["oauth_timeout"]
-assert "--model" in argv and argv[argv.index("--model") + 1] == "claude-haiku-4-5-20251001"
+assert "--model" in argv and argv[argv.index("--model") + 1] == "claude-opus-5"
 assert "--output-format" in argv and argv[argv.index("--output-format") + 1] == "json"
 schema=json.loads(argv[argv.index("--json-schema")+1])
 assert schema["properties"]["did"]["maxItems"] == 4
@@ -510,7 +528,7 @@ fi
 
 KILL_CAL="$TIER2_TMP/kill-calibration.json"
 cat > "$KILL_CAL" <<'JSON'
-{"schema":"mission-control/outcome-calibration/v1","model_calls":1,"observations":[{"provider":"claude","model":"claude-haiku-4-5-20251001","input_tokens":120,"output_tokens":44,"latency_ms":1,"status":"success"}],"recommended_caps":{"daily_call_cap":5,"daily_token_cap":50000}}
+{"schema":"mission-control/outcome-calibration/v1","model_calls":1,"observations":[{"provider":"claude","model":"claude-opus-5","input_tokens":120,"output_tokens":44,"latency_ms":1,"status":"success"}],"recommended_caps":{"daily_call_cap":5,"daily_token_cap":50000}}
 JSON
 "$CG" extract-outcomes --apply-calibration "$KILL_CAL" --json >/dev/null
 export MORNING_BRIEF_LLM=1
@@ -696,7 +714,7 @@ if run_extract > "$TIER2_TMP/variant-2.json" 2> "$TIER2_TMP/variant-2.err" \
 import json,sys
 rows=[json.loads(line) for line in open(sys.argv[1])]
 models=[row["argv"][row["argv"].index("--model")+1] for row in rows]
-assert models == ["claude-haiku-4-5-20251001","claude-haiku-4-5-20251001"], models
+assert models == ["claude-opus-5","claude-opus-5"], models
 PY
 then
   pass "pinned prompt variant changes preserve a new Tier-2 version"
@@ -704,7 +722,7 @@ else
   fail "Tier-2 extraction variant uniqueness"
 fi
 
-# Haiku escalates exactly once only when its structured result says ambiguous.
+# Opus 5 retries exactly once only when its structured result says ambiguous.
 new_env
 SID3B="33333333-3333-4333-8333-333333333334"
 write_claude_source "$SID3B" structured
@@ -715,16 +733,16 @@ if run_extract > "$TIER2_TMP/ambiguous.json" 2> "$TIER2_TMP/ambiguous.err" \
 import json,sqlite3,sys
 calls=[json.loads(line)["argv"] for line in open(sys.argv[1])]
 models=[argv[argv.index("--model")+1] for argv in calls]
-assert models == ["claude-haiku-4-5-20251001", "claude-sonnet-4-6"], models
+assert models == ["claude-opus-5", "claude-opus-5"], models
 con=sqlite3.connect(sys.argv[2])
 card=json.loads(con.execute("SELECT outcome_json FROM session_outcomes WHERE session_id=? AND method='tier2'",(sys.argv[3],)).fetchone()[0])
 assert card["did"] == ["The work was verified."]
-assert card["model_metadata"]["model"] == "claude-sonnet-4-6"
+assert card["model_metadata"]["model"] == "claude-opus-5"
 health=con.execute("SELECT calls,escalations,successes FROM outcome_extraction_health").fetchone()
 assert health == (2,1,1), health
 PY
 then
-  pass "explicit ambiguity alone escalates Haiku once to pinned Sonnet"
+  pass "explicit ambiguity alone retries once on pinned Opus 5"
 else
   fail "ambiguity escalation contract"
 fi
@@ -741,7 +759,7 @@ if run_extract > "$TIER2_TMP/ambiguous-always.json" 2> "$TIER2_TMP/ambiguous-alw
    && [ "$(q "SELECT COUNT(*) FROM session_outcomes WHERE session_id='$SID3D' AND method='tier2'")" = 0 ] \
    && [ "$(q "SELECT failures FROM outcome_extraction_health")" -ge 1 ] \
    && [ "$(q "SELECT successes FROM outcome_extraction_health")" = 0 ]; then
-  pass "ambiguity remaining after Sonnet fails open to Tier 1"
+  pass "ambiguity remaining after the Opus 5 retry fails open to Tier 1"
 else
   fail "unresolved ambiguity fail-open"
 fi
