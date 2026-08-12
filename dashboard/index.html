@@ -8,12 +8,14 @@
 <!-- feed transport: window.MC.feeds.* set by external scripts (file:// safe, no fetch).
      Every declared path is materialized by collect/demo/install; renderers still
      guard malformed or unavailable payloads. -->
+<script src="data/health.js"></script>
 <script src="data/usage.js"></script>
 <script src="data/git.js"></script>
 <script src="data/chats.js"></script>
 <script src="data/automation.js"></script>
 <script src="data/decisions.js"></script>
 <script src="data/brief.js"></script>
+<script src="data/health.error.js"></script>
 <script src="data/usage.error.js"></script>
 <script src="data/git.error.js"></script>
 <script src="data/chats.error.js"></script>
@@ -249,6 +251,7 @@ body {
 }
 .mc-banner-red   { background: var(--mc-red-bg);   border-color: color-mix(in srgb, var(--mc-red) 45%, transparent);   color: var(--mc-fg); }
 .mc-banner-amber { background: var(--mc-amber-bg); border-color: color-mix(in srgb, var(--mc-amber) 45%, transparent); color: var(--mc-fg); }
+.mc-banner-green { background: var(--mc-green-bg); border-color: color-mix(in srgb, var(--mc-green) 45%, transparent); color: var(--mc-fg); }
 .mc-banner-blue  { background: var(--mc-blue-bg);  border-color: color-mix(in srgb, var(--mc-blue) 45%, transparent);  color: var(--mc-fg); }
 
 /* stale feed desaturates so a frozen green dot can't lie */
@@ -614,7 +617,7 @@ body {
   }
 
   // --- per-feed guard: schema/staleness/skew ---------------------------------
-  var EXPECTED_CADENCE = { automation: 300, usage: 1800, git: 900,
+  var EXPECTED_CADENCE = { health: 300, automation: 300, usage: 1800, git: 900,
                            chats: 1800, decisions: 300, brief: 300 };
   function guard(name) {
     var env = MC.feeds[name];
@@ -883,6 +886,7 @@ body {
   function panelSourceName(name) {
     return {
       home: "combined local feeds",
+      health: "Resource Governor status",
       map: "chat-graph export",
       chats: "chat-graph export",
       git: "scan-unfinished-work + watcher notes",
@@ -895,6 +899,7 @@ body {
   function panelTrustText(name, g) {
     if (!g || !g.ok) return "not available";
     if (name === "usage") return usageTrustSummary(g.data);
+    if (name === "health") return "local machine telemetry";
     if (name === "map" || name === "chats") return providerStateHealth(g.data);
     if (name === "git") return "local scan";
     if (name === "automation") return "local launchd evidence";
@@ -908,6 +913,12 @@ body {
     if (g.flag === "stale") return "stale";
     if (g.flag === "aging") return "aging";
     if (g.flag === "skew") return "clock skew";
+    if (name === "health") {
+      if (!g.data || g.data.fresh === false) return "attention — protection data stale";
+      if (g.data.state === "red") return "action needed";
+      if (g.data.state === "amber") return "warning";
+      return "clear";
+    }
     if (name === "usage") {
       var providers = (g.data && g.data.providers) || [];
       if (providers.some(function (p) { return p.source === "none" || p.health === "absent"; })) return "partial — some providers not captured";
@@ -958,6 +969,16 @@ body {
   // ===========================================================================
   function harvestExceptions() {
     var out = [];
+    // system health: memory, disk, and guard freshness are first-class
+    var gh = guard("health");
+    if (gh.ok && gh.data && gh.data.state !== "green") {
+      out.push({ state: gh.data.state === "red" ? "red" : "amber", seen: gh.env.generated_at || "", tab: "health",
+                 problem: gh.data.headline || "System health needs a glance",
+                 impact: gh.data.summary || "Memory, disk, or protection freshness is outside its operating range.",
+                 action: "Open Health; use Optimize only if the evidence supports it.",
+                 sourceAge: fmtAge(gh.epoch),
+                 sourceName: "Resource Governor status" });
+    }
     // chats: sessions carrying open work
     var gc = guard("chats");
     if (gc.ok && gc.data) {
@@ -1243,6 +1264,13 @@ body {
   function feedSummary() {
     // returns per-tab {state, count} worst-state summary
     var s = {};
+    var gh = guard("health");
+    if (gh.ok && gh.data) {
+      var resourceTone = gh.data.state === "red" ? "red" : (gh.data.state === "amber" ? "amber" : "green");
+      var issueCount = Array.isArray(gh.data.issue_codes) ? gh.data.issue_codes.length : (resourceTone === "green" ? 0 : 1);
+      s.health = { state: worstTone(resourceTone, guardTone(gh)), count: issueCount };
+    } else s.health = { state: "grey", count: 0 };
+
     var gc = guard("chats");
     if (gc.ok && gc.data && Array.isArray(gc.data.nodes)) {
       var owe = looseEnds(gc.data).length;
@@ -1340,6 +1368,11 @@ body {
   }
 
   function healthLine() {
+    var gh = guard("health");
+    if (gh.ok && gh.data) {
+      if (gh.data.state === "red") return { tone: "red", text: gh.data.headline || "System health needs action" };
+      if (gh.data.state === "amber") return { tone: "amber", text: gh.data.headline || "System health needs a glance" };
+    }
     var ga = guard("automation");
     if (ga.ok && ga.data && Array.isArray(ga.data.jobs)) {
       var red = ga.data.jobs.filter(function (j) { return j.state === "red"; }).length;
@@ -1360,7 +1393,7 @@ body {
     var strip = document.getElementById("mc-strip");
     strip.textContent = "";
     var sum = feedSummary();
-    var segs = [["chats", "Open work"], ["git", "Git"], ["usage", "Usage"], ["automation", "Jobs"]];
+    var segs = [["health", "Health"], ["chats", "Open work"], ["git", "Git"], ["usage", "Usage"], ["automation", "Jobs"]];
     segs.forEach(function (pair) {
       var k = pair[0], label = pair[1], d = sum[k];
       strip.appendChild(h("button", { class: "mc-strip-seg", type: "button",
@@ -1379,7 +1412,7 @@ body {
     var meta = h("span", { class: "mc-strip-meta" });
     meta.appendChild(h("span", { title: "page loaded " + absTime(LOAD_EPOCH) }, "loaded " + fmtAge(LOAD_EPOCH)));
     var dots = h("span", { class: "mc-strip-dots" });
-    ["usage", "git", "chats", "automation"].forEach(function (n) {
+    ["health", "usage", "git", "chats", "automation"].forEach(function (n) {
       var g = guard(n);
       var st = guardTone(g);
       if (n === "chats" && g.ok && g.data && g.data.counts &&
@@ -2341,6 +2374,120 @@ body {
   function relSymbol(rel) { return REL_SYMBOL[rel] || "?"; }
 
   // ===========================================================================
+  //  SYSTEM HEALTH TAB
+  // ===========================================================================
+  function healthNumber(value, digits, suffix) {
+    return typeof value === "number" && isFinite(value) ? value.toFixed(digits) + (suffix || "") : "unknown";
+  }
+  function healthCard(title, state, primary, secondary, tertiary) {
+    var card = h("div", { class: "mc-card" });
+    card.appendChild(h("div", { class: "mc-card-title" }, glyphSpan(state), " ", title));
+    card.appendChild(h("div", { class: "mc-card-value mc-num" }, primary));
+    if (secondary) card.appendChild(h("div", { class: "mc-card-secondary" }, secondary));
+    if (tertiary) card.appendChild(h("div", { class: "mc-card-foot" }, tertiary));
+    return card;
+  }
+  function renderHealth(main) {
+    var g = guard("health");
+    var p = panel(g, "System Health");
+    main.appendChild(p.wrap);
+    if (!p.body) return;
+    appendPanelProvenance(p.body, "health", g);
+    var data = g.data || {};
+    var tone = data.state === "red" ? "red" : (data.state === "amber" ? "amber" : "green");
+    p.body.appendChild(h("div", { class: "mc-banner mc-banner-" + tone },
+      (data.headline || "System health") + " — " + (data.summary || "No summary available.")));
+
+    var memory = data.memory || {}, disk = data.disk || {}, watchdog = data.watchdog || {};
+    var grid = h("div", { class: "mc-decision-grid" });
+    grid.appendChild(healthCard("Memory", memory.state || "grey",
+      String(memory.pressure || "unknown"),
+      "Swap " + healthNumber(memory.swap_used_mb, 0, " MB") + " · rate " + healthNumber(memory.swap_rate_mb_per_min, 1, " MB/min"),
+      "Memory Guard " + (memory.guard_health || "unknown") + " · checked " + (memory.guard_age_seconds == null ? "unknown" : fmtAgeS(memory.guard_age_seconds))));
+    grid.appendChild(healthCard("Disk", disk.state || "grey",
+      healthNumber(disk.effective_free_gib, 1, " GiB effective free"),
+      "Raw free " + healthNumber(disk.raw_free_gib, 1, " GiB") + " · floor " + healthNumber(disk.floor_gib, 0, " GiB"),
+      "Disk Guard " + (disk.status || "unknown") + " · checked " + (disk.guard_age_seconds == null ? "unknown" : fmtAgeS(disk.guard_age_seconds))));
+    grid.appendChild(healthCard("Protection", watchdog.state || "grey",
+      data.fresh === false ? "stale" : "current",
+      "Memory Guard " + (watchdog.memory_guard || "unknown") + " · Disk Guard " + (watchdog.disk_guard || "unknown"),
+      data.age_seconds == null ? "No governor timestamp" : "Governor checked " + fmtAgeS(data.age_seconds)));
+    var activity = data.activity || {}, restart = activity.mac_restart_horizon || {};
+    var working = typeof activity.working_count === "number" ? activity.working_count : 0;
+    grid.appendChild(healthCard("Fleet activity", !activity.available ? "grey" : activity.exact ? "green" : "amber",
+      activity.available ? String(working) + (activity.exact ? " working" : "+? working") : "unavailable",
+      (activity.waiting_count || 0) + " waiting · " + (activity.cooling_count || 0) + " cooling",
+      "Mac restart horizon: " + (restart.state || "unknown") + " · automatic restart disabled"));
+    p.body.appendChild(grid);
+
+    p.body.appendChild(h("div", { class: "mc-section-head" }, h("h2", { text: "Fleet activity" })));
+    if (!activity.available) {
+      p.body.appendChild(h("div", { class: "mc-card" }, h("div", { class: "mc-card-secondary" }, "Provider activity is unavailable; health data remains usable.")));
+    } else {
+      var longest = activity.longest_task;
+      if (longest) {
+        p.body.appendChild(h("div", { class: "mc-card" },
+          h("div", { class: "mc-card-headline" }, "Longest current phase: " + (longest.label || longest.provider || "task")),
+          h("div", { class: "mc-card-secondary" }, (longest.phase || "unknown phase") + " · " + healthNumber(longest.eta_min_minutes, 0, "") + "–" + healthNumber(longest.eta_max_minutes, 0, " min") + " · not a countdown · " + (longest.confidence || "unknown") + " confidence")));
+      }
+      var at = h("table", {}, h("thead", {}, h("tr", {}, h("th", { text: "Provider" }), h("th", { text: "State" }), h("th", { text: "Working" }), h("th", { text: "Waiting" }), h("th", { text: "Restart" }))));
+      var ab = h("tbody");
+      (activity.providers || []).forEach(function (row) {
+        ab.appendChild(h("tr", {},
+          h("td", { text: row.name || "provider" }),
+          h("td", { text: row.exact ? (row.state || "exact") : (row.state || "unknown") + " · uncertain" }),
+          h("td", { text: row.working_count == null ? "—" : String(row.working_count) }),
+          h("td", { text: row.waiting_count == null ? "—" : String(row.waiting_count) }),
+          h("td", { text: row.restart_state || "unknown" })));
+      });
+      at.appendChild(ab);
+      p.body.appendChild(at);
+    }
+
+    var alerts = Array.isArray(data.alerts) ? data.alerts : [];
+    p.body.appendChild(h("div", { class: "mc-section-head" }, h("h2", { text: "Active warnings" })));
+    if (!alerts.length) {
+      p.body.appendChild(h("div", { class: "mc-card" }, h("div", { class: "mc-card-secondary" }, "No active memory or disk warnings.")));
+    } else {
+      var attention = h("div", { class: "mc-attention" });
+      alerts.forEach(function (row) {
+        var rowTone = row.severity === "critical" ? "red" : "amber";
+        attention.appendChild(h("div", { class: "mc-attention-row" },
+          glyphSpan(rowTone),
+          h("div", null,
+            h("div", { class: "mc-card-title" }, row.title || "Resource warning"),
+            h("div", { class: "mc-card-secondary" }, row.message || "No details supplied."))));
+      });
+      p.body.appendChild(attention);
+    }
+
+    var top = Array.isArray(data.top_rss) ? data.top_rss : [];
+    if (top.length) {
+      p.body.appendChild(h("div", { class: "mc-section-head" }, h("h2", { text: "Largest memory users" })));
+      var table = h("table", { class: "mc-table mc-panel-table" });
+      table.appendChild(h("tr", null, h("th", null, "Process family"), h("th", null, "PID"), h("th", null, "Memory")));
+      top.forEach(function (row) {
+        table.appendChild(h("tr", null,
+          h("td", null, row.family || "process"),
+          h("td", { class: "mc-num" }, row.pid == null ? "?" : String(row.pid)),
+          h("td", { class: "mc-num" }, healthNumber(row.rss_mb, 0, " MB"))));
+      });
+      p.body.appendChild(table);
+    }
+
+    p.body.appendChild(h("div", { class: "mc-section-head" }, h("h2", { text: "Optimize" })));
+    var optimize = data.optimization || {};
+    var actionCard = h("div", { class: "mc-card" });
+    actionCard.appendChild(h("div", { class: "mc-card-title" }, "Bounded cleanup, with receipts"));
+    actionCard.appendChild(h("div", { class: "mc-card-secondary" },
+      "Use Optimize in the menu-bar panel for one-click safe cleanup. It never restarts an app or the Mac and it does not delete disk caches."));
+    actionCard.appendChild(h("div", { class: "mc-card-foot" }, "Preview: ", copyable(optimize.preview_command || "governor optimize --preview")));
+    actionCard.appendChild(h("div", { class: "mc-card-foot" }, "Safe apply: ", copyable(optimize.safe_command || "governor optimize --apply")));
+    actionCard.appendChild(h("div", { class: "mc-card-foot" }, "Emergency: ", copyable(optimize.emergency_command || "governor optimize --emergency")));
+    p.body.appendChild(actionCard);
+  }
+
+  // ===========================================================================
   //  USAGE TAB
   // ===========================================================================
   var countdowns = []; // {el, targetEpoch}
@@ -2509,10 +2656,11 @@ body {
   // ===========================================================================
   //  ROUTER + lifecycle
   // ===========================================================================
-  var TABS = [["home", "Home"], ["brief", "Brief"], ["map", "Map"], ["chats", "Chats"], ["git", "Git"], ["usage", "Usage"], ["automation", "Automation"]];
+  var TABS = [["home", "Home"], ["health", "Health"], ["brief", "Brief"], ["map", "Map"], ["chats", "Chats"], ["git", "Git"], ["usage", "Usage"], ["automation", "Automation"]];
   // pure render functions, spec shape render.<tab>(feed, el) reading window.MC.feeds.*
   var render = {
     home:       function (feed, el) { renderHome(el); },
+    health:     function (feed, el) { renderHealth(el); },
     brief:      function (feed, el) { renderBrief(el); },
     map:        function (feed, el) { renderMap(el); },
     chats:      function (feed, el) { renderChats(el); },

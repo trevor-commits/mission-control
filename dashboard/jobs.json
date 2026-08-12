@@ -190,6 +190,27 @@
     {
       "evidence": [
         {
+          "path": "/Users/gillettes/Library/Application Support/Resource Governor/status.json",
+          "role": "run",
+          "run_key": true,
+          "semantic_status": true
+        },
+        {
+          "path": "/Users/gillettes/Library/Application Support/Resource Governor/heartbeat-sentinel.json",
+          "role": "heartbeat",
+          "run_key": true
+        }
+      ],
+      "err_log": "/Users/gillettes/Library/Application Support/Resource Governor/logs/sentinel.err.log",
+      "expected_freshness_s": 130,
+      "kind": "interval",
+      "label": "Resource Governor",
+      "name": "com.gillettes.resource-governor-sentinel",
+      "schedule": "every 60s"
+    },
+    {
+      "evidence": [
+        {
           "expected_offline": true,
           "path": "/Users/gillettes/.mission-control/data/automation.json",
           "role": "run",

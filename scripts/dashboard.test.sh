@@ -35,6 +35,12 @@ def w(name, obj):
 now = int(time.time())
 now_iso = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now))
 # raw payloads -> dashboard wraps them
+w("health.json", {"schema": "mission-control-resource-health-v1", "state": "green",
+                  "headline": "System health is clear", "summary": "Fixture clear",
+                  "fresh": True, "issue_codes": [], "age_seconds": 5,
+                  "memory": {"state": "green", "pressure": "normal"},
+                  "disk": {"state": "green", "effective_free_gib": 40.0},
+                  "watchdog": {"state": "green"}, "alerts": [], "top_rss": []})
 w("usage.json", {"providers": [{"name": "claude", "pct": 62}]})
 w("git.json", {"repos": [{"name": "gi", "dirty": True}]})
 w("git2.json", {"repos": [{"marker": "NEW"}]})
@@ -72,6 +78,7 @@ PYEOF
 printf '#!/bin/sh\ntouch "%s/open-called"\n' "$STUB" > "$STUB/bin/open"
 chmod +x "$STUB/bin/open"
 
+export DASHBOARD_CMD_HEALTH="cat '$STUB/health.json'"
 export DASHBOARD_CMD_USAGE="cat '$STUB/usage.json'"
 export DASHBOARD_CMD_GIT="cat '$STUB/git.json'"
 export DASHBOARD_CMD_CHATS="cat '$STUB/chats.json'"
@@ -98,27 +105,27 @@ write_install_stamp(bindir,"a"*40,"head",
 PY
 }
 
-# --- case 1: collect --force writes 12 files, every .json envelope-valid -------
+# --- case 1: collect --force writes 14 files, every .json envelope-valid -------
 c1() {
   local H; H="$(newhome)"
   MISSION_CONTROL_HOME="$H" bash "$DASH" collect --force >/dev/null 2>&1
   local f miss=0
-  for f in usage git chats automation decisions brief; do
+  for f in health usage git chats automation decisions brief; do
     [ -f "$H/data/$f.json" ] || miss=1
     [ -f "$H/data/$f.js" ] || miss=1
   done
-  if [ "$miss" != 0 ]; then no "collect --force writes 12 files (some missing)"; return; fi
+  if [ "$miss" != 0 ]; then no "collect --force writes 14 files (some missing)"; return; fi
   if python3 - "$H/data" <<'PYEOF'
 import json, os, sys
 d = sys.argv[1]
 keys = {"schema", "feed", "generated_at", "generated_epoch", "cadence_s", "ok", "error", "data"}
-for f in ("usage", "git", "chats", "automation", "decisions", "brief"):
+for f in ("health", "usage", "git", "chats", "automation", "decisions", "brief"):
     e = json.load(open(os.path.join(d, f + ".json")))
     assert keys <= set(e), (f, keys - set(e))
     assert e["schema"] == 1 and e["feed"] == f, f
     assert isinstance(e["generated_epoch"], int), f
 PYEOF
-  then ok "collect --force writes 12 files, all .json envelope-valid"
+  then ok "collect --force writes 14 files, all .json envelope-valid"
   else no "collect --force .json not envelope-valid"; fi
 }
 
@@ -129,7 +136,7 @@ c2() {
   if python3 - "$H/data" <<'PYEOF'
 import json, os, sys
 d = sys.argv[1]
-for f in ("usage", "git", "chats", "automation", "decisions", "brief"):
+for f in ("health", "usage", "git", "chats", "automation", "decisions", "brief"):
     jc = open(os.path.join(d, f + ".json")).read()
     js = open(os.path.join(d, f + ".js")).read()
     marker = "window.MC.feeds.%s = " % f
@@ -730,7 +737,7 @@ c21() { # install stamps provenance from committed HEAD; verify detects runtime 
   command -v git >/dev/null 2>&1 || { ok "install-stamp: git absent — provenance test skipped"; return; }
   local gr mch head; gr="$(mktemp -d)/repo"; mkdir -p "$gr/scripts" "$gr/dashboard/vendor"
   local n
-  for n in dashboard chat-graph mission_control_common.py queue_admission.py morning-brief morning-brief-deadman decision-alert compose-decision-prompt.py mc-panel.swift; do
+  for n in dashboard chat-graph mission_control_common.py queue_admission.py morning-brief morning-brief-deadman decision-alert compose-decision-prompt.py mc-panel.swift resource-health; do
     cp "$REPO/scripts/$n" "$gr/scripts/$n"
   done
   # Deployment assets are part of the shipped surface: install must stamp them from
@@ -898,7 +905,7 @@ c24() { # ER-109 round 6: installer honesty + safety. Each pathological input mu
   command -v git >/dev/null 2>&1 || { ok "install-safety: git absent — skipped"; return; }
   _mkrepo() { # -> committed repo path with all runtimes + index.html + vendor at HEAD
     local gr; gr="$(mktemp -d)/repo"; mkdir -p "$gr/scripts" "$gr/dashboard/vendor"; local n
-    for n in dashboard chat-graph mission_control_common.py queue_admission.py morning-brief morning-brief-deadman decision-alert compose-decision-prompt.py mc-panel.swift; do
+    for n in dashboard chat-graph mission_control_common.py queue_admission.py morning-brief morning-brief-deadman decision-alert compose-decision-prompt.py mc-panel.swift resource-health; do
       cp "$REPO/scripts/$n" "$gr/scripts/$n"
     done
     printf '<html>shell HEAD</html>\n' > "$gr/dashboard/index.html"
@@ -1036,7 +1043,7 @@ c27() { # committed plist source + checked atomic launchd reload/failure behavio
   local gr h mch sbin capture loaded rc out sentinel h2 mch2 h3 mch3 h4 mch4 failbin real_chmod mode fails=0
   gr="$(mktemp -d)/repo"; mkdir -p "$gr/scripts" "$gr/dashboard/vendor" "$gr/launchd"
   local n
-  for n in dashboard chat-graph mission_control_common.py queue_admission.py morning-brief morning-brief-deadman decision-alert compose-decision-prompt.py mc-panel.swift; do
+  for n in dashboard chat-graph mission_control_common.py queue_admission.py morning-brief morning-brief-deadman decision-alert compose-decision-prompt.py mc-panel.swift resource-health; do
     cp "$REPO/scripts/$n" "$gr/scripts/$n"
   done
   cp "$REPO/dashboard/index.html" "$gr/dashboard/index.html"
@@ -1237,12 +1244,12 @@ c31() { # the real macOS Bash 3.2 path executes embedded Python, not EOF
   local h count rc; h="$(newhome)"
   MISSION_CONTROL_HOME="$h" /bin/bash "$DASH" collect --force >/dev/null 2>&1; rc=$?
   count="$(find "$h/data" -type f \( -name '*.json' -o -name '*.js' \) 2>/dev/null | wc -l | tr -d ' ')"
-  # Six feeds emit canonical JSON + JS plus a healthy error sidecar. Keeping the
+  # Seven feeds emit canonical JSON + JS plus a healthy error sidecar. Keeping the
   # sidecar present prevents browsers from logging a missing resource on success.
-  if [ "$rc" -eq 0 ] && [ "$count" = 18 ]; then
+  if [ "$rc" -eq 0 ] && [ "$count" = 21 ]; then
     ok "bash-3.2: system /bin/bash executes the embedded Python engine"
   else
-    no "bash-3.2: dashboard returned rc=$rc with $count/18 feed files"
+    no "bash-3.2: dashboard returned rc=$rc with $count/21 feed files"
   fi
 }
 

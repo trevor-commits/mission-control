@@ -1,169 +1,246 @@
+#!/usr/bin/env swift
 import AppKit
 import Foundation
 import WebKit
 
-// Minimal menu-bar panel for Mission Control (ER-134 Phase B + stay-alive / one-click).
-// Loads ~/.mission-control/panel.html (or argv override).
-// Disables AppKit Automatic Termination — idle accessory apps otherwise exit silently.
-
-final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler {
-  var statusItem: NSStatusItem!
-  var popover: NSPopover!
-  var webView: WKWebView!
-  var timer: Timer?
-  // Retained RunningBoard activity — anonymous menu-bar binaries otherwise get
-  // Control Center "after-life.interrupted" / workspace invalidation and exit.
-  var stayAliveActivity: NSObjectProtocol?
-
-  func applicationDidFinishLaunching(_ notification: Notification) {
-    ProcessInfo.processInfo.disableAutomaticTermination("Mission Control menu bar")
-    ProcessInfo.processInfo.disableSuddenTermination()
-    stayAliveActivity = ProcessInfo.processInfo.beginActivity(
-      options: [.userInitiatedAllowingIdleSystemSleep],
-      reason: "Mission Control menu bar stay-alive")
-
-    let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-    if let button = item.button {
-      button.title = "MC"
-      button.toolTip = "Mission Control — Needs you"
-      button.action = #selector(togglePopover(_:))
-      button.target = self
+private func jsonLiteral(_ value: Any) -> String {
+    guard JSONSerialization.isValidJSONObject(value),
+          let data = try? JSONSerialization.data(withJSONObject: value, options: []),
+          let text = String(data: data, encoding: .utf8) else {
+        return "null"
     }
-    statusItem = item
+    return text
+}
 
-    let config = WKWebViewConfiguration()
-    config.userContentController.add(self, name: "mcDecide")
-    config.userContentController.add(self, name: "mcOpenFull")
-    let web = WKWebView(frame: NSRect(x: 0, y: 0, width: 380, height: 460), configuration: config)
-    web.setValue(false, forKey: "drawsBackground")
-    webView = web
-
-    let pop = NSPopover()
-    pop.contentSize = NSSize(width: 380, height: 460)
-    pop.behavior = .transient
-    pop.contentViewController = NSViewController()
-    pop.contentViewController!.view = web
-    popover = pop
-
-    reload()
-    timer = Timer.scheduledTimer(withTimeInterval: 120, repeats: true) { [weak self] _ in
-      self?.reload()
-    }
-  }
-
-  @objc func togglePopover(_ sender: Any?) {
-    guard let button = statusItem.button else { return }
-    if popover.isShown {
-      popover.performClose(sender)
-    } else {
-      reload()
-      popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
-      NSApp.activate(ignoringOtherApps: true)
-    }
-  }
-
-  func reload() {
-    let args = CommandLine.arguments
-    let override = args.count > 1 ? args[1] : nil
-    let home = FileManager.default.homeDirectoryForCurrentUser
-      .appendingPathComponent(".mission-control/panel.html")
-    let url = override.map { URL(fileURLWithPath: $0) } ?? home
-    if FileManager.default.fileExists(atPath: url.path) {
-      webView.loadFileURL(url, allowingReadAccessTo: url.deletingLastPathComponent())
-    } else {
-      let html = """
-      <html><body style='font:13px -apple-system;padding:16px'>
-      <h3>Mission Control panel not installed</h3>
-      <p>Run: <code>dashboard install</code> then <code>dashboard panel</code>.</p>
-      </body></html>
-      """
-      webView.loadHTMLString(html, baseURL: nil)
-    }
-  }
-
-  func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
-    return false
-  }
-
-  func openFullMissionControl() {
-    let index = FileManager.default.homeDirectoryForCurrentUser
-      .appendingPathComponent(".mission-control/index.html")
-    guard FileManager.default.fileExists(atPath: index.path) else {
-      notify("Mission Control", "index.html missing — run dashboard install")
-      return
-    }
-    NSWorkspace.shared.open(index)
-  }
-
-  func userContentController(_ userContentController: WKUserContentController,
-                             didReceive message: WKScriptMessage) {
-    if message.name == "mcOpenFull" {
-      DispatchQueue.main.async { [weak self] in self?.openFullMissionControl() }
-      return
-    }
-    guard message.name == "mcDecide" else { return }
-    guard let body = message.body as? [String: Any] else { return }
-    let idRaw = (body["id"] as? String) ?? ""
-    let n: Int
-    if let i = body["n"] as? Int {
-      n = i
-    } else if let s = body["n"] as? String, let i = Int(s) {
-      n = i
-    } else {
-      return
-    }
-    guard n >= 1, n <= 9 else { return }
-    guard idRaw.range(of: "^decision:[0-9a-f]{24}$", options: .regularExpression) != nil else { return }
-
-    let home = FileManager.default.homeDirectoryForCurrentUser
-      .appendingPathComponent(".mission-control/bin/dashboard")
-    let dash = home.path
-    guard FileManager.default.isExecutableFile(atPath: dash) else {
-      notify("Mission Control", "dashboard binary missing — run dashboard install")
-      return
-    }
-
-    let proc = Process()
-    proc.executableURL = URL(fileURLWithPath: dash)
-    proc.arguments = ["decide", "answer", idRaw, String(n)]
-    proc.environment = ProcessInfo.processInfo.environment
-    let err = Pipe()
-    proc.standardOutput = FileHandle.nullDevice
-    proc.standardError = err
-    proc.terminationHandler = { [weak self] completed in
-      let data = err.fileHandleForReading.readDataToEndOfFile()
-      let msg = String(data: data, encoding: .utf8)?
-        .trimmingCharacters(in: .whitespacesAndNewlines) ?? "decide failed"
-      DispatchQueue.main.async {
-        guard let self = self else { return }
-        if completed.terminationStatus == 0 {
-          self.notify("Mission Control", "Recorded choice \(n)")
-          self.reload()
-        } else {
-          self.notify("Mission Control", msg.isEmpty
-            ? "decide answer failed (\(completed.terminationStatus))"
-            : String(msg.prefix(180)))
-        }
-      }
-    }
+private func runProcess(_ executable: String, _ arguments: [String]) -> (Int32, String) {
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: executable)
+    process.arguments = arguments
+    let pipe = Pipe()
+    process.standardOutput = pipe
+    process.standardError = pipe
     do {
-      try proc.run()
+        try process.run()
+        process.waitUntilExit()
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        return (process.terminationStatus, String(data: data, encoding: .utf8) ?? "")
     } catch {
-      notify("Mission Control", "Could not run decide answer")
+        return (127, "\(error.localizedDescription)")
     }
-  }
+}
 
-  func notify(_ title: String, _ body: String) {
-    let n = NSUserNotification()
-    n.title = title
-    n.informativeText = body
-    NSUserNotificationCenter.default.deliver(n)
-  }
+final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler, WKNavigationDelegate {
+    private var statusItem: NSStatusItem!
+    private let popover = NSPopover()
+    private var web: WKWebView!
+    private var timer: Timer?
+    private var lastHealth: [String: Any]?
+    private var healthRefreshInFlight = false
+
+    private var home: String { FileManager.default.homeDirectoryForCurrentUser.path }
+    private var mcHome: String { ProcessInfo.processInfo.environment["MISSION_CONTROL_HOME"] ?? "\(home)/.mission-control" }
+    private var healthBin: String { ProcessInfo.processInfo.environment["MISSION_CONTROL_RESOURCE_HEALTH_BIN"] ?? "\(mcHome)/bin/resource-health" }
+    private var governorBin: String { ProcessInfo.processInfo.environment["MISSION_CONTROL_GOVERNOR_BIN"] ?? "\(home)/.local/bin/governor" }
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        NSApp.setActivationPolicy(.accessory)
+
+        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        statusItem.button?.target = self
+        statusItem.button?.action = #selector(togglePopover(_:))
+        statusItem.button?.sendAction(on: [.leftMouseUp])
+        applyMenuState(nil)
+
+        let config = WKWebViewConfiguration()
+        config.defaultWebpagePreferences.allowsContentJavaScript = true
+        ["mcOpenDashboard", "mcDecision", "mcReload", "mcOptimize"].forEach {
+            config.userContentController.add(self, name: $0)
+        }
+        web = WKWebView(frame: NSRect(x: 0, y: 0, width: 420, height: 620), configuration: config)
+        web.navigationDelegate = self
+        web.setValue(false, forKey: "drawsBackground")
+
+        let controller = NSViewController()
+        controller.view = web
+        popover.contentViewController = controller
+        popover.contentSize = NSSize(width: 420, height: 620)
+        popover.behavior = .transient
+        popover.animates = true
+
+        loadPanel()
+        refreshHealth()
+        let timer = Timer(timeInterval: 30, repeats: true) { [weak self] _ in self?.refreshHealth() }
+        RunLoop.main.add(timer, forMode: .common)
+        self.timer = timer
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        timer?.invalidate()
+        ["mcOpenDashboard", "mcDecision", "mcReload", "mcOptimize"].forEach {
+            web?.configuration.userContentController.removeScriptMessageHandler(forName: $0)
+        }
+    }
+
+    private func loadPanel() {
+        let path = "\(mcHome)/panel.html"
+        let url = URL(fileURLWithPath: path)
+        web.loadFileURL(url, allowingReadAccessTo: URL(fileURLWithPath: mcHome, isDirectory: true))
+    }
+
+    @objc private func togglePopover(_ sender: Any?) {
+        guard let button = statusItem.button else { return }
+        if popover.isShown {
+            popover.performClose(sender)
+        } else {
+            refreshHealth()
+            popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+            NSApp.activate(ignoringOtherApps: true)
+        }
+    }
+
+    private func openDashboard(tab: String) {
+        var components = URLComponents(url: URL(fileURLWithPath: "\(mcHome)/index.html"), resolvingAgainstBaseURL: false)
+        components?.fragment = tab.isEmpty ? "home" : tab
+        if let url = components?.url { NSWorkspace.shared.open(url) }
+        popover.performClose(nil)
+    }
+
+    private func applyMenuState(_ data: [String: Any]?) {
+        let state = data?["state"] as? String ?? "unknown"
+        let fresh = data?["fresh"] as? Bool ?? false
+        let codes = (data?["issue_codes"] as? [String]) ?? []
+        let suffix = codes.isEmpty ? "" : " " + codes.joined(separator: "·")
+        let title = !fresh ? "MC ?" : (state == "green" ? "MC" : "MC\(suffix.isEmpty ? " !" : suffix)")
+        let color: NSColor
+        if !fresh {
+            color = .systemOrange
+        } else {
+            switch state {
+            case "red": color = .systemRed
+            case "yellow": color = .systemOrange
+            default: color = .labelColor
+            }
+        }
+        let font = NSFont.systemFont(ofSize: NSFont.systemFontSize, weight: state == "green" && fresh ? .semibold : .bold)
+        statusItem.button?.attributedTitle = NSAttributedString(
+            string: title,
+            attributes: [.foregroundColor: color, .font: font]
+        )
+        let headline = data?["headline"] as? String ?? "System health is unavailable"
+        statusItem.button?.toolTip = headline
+        statusItem.button?.setAccessibilityLabel("Mission Control. \(headline)")
+    }
+
+    private func refreshHealth() {
+        guard !healthRefreshInFlight else { return }
+        healthRefreshInFlight = true
+        let executable = healthBin
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let result = runProcess(executable, [])
+            var payload: [String: Any]?
+            if result.0 == 0,
+               let data = result.1.data(using: .utf8),
+               let object = try? JSONSerialization.jsonObject(with: data),
+               let dictionary = object as? [String: Any],
+               dictionary["schema"] as? String == "mission-control-resource-health-v1" {
+                payload = dictionary
+            }
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.healthRefreshInFlight = false
+                self.lastHealth = payload
+                self.applyMenuState(payload)
+                self.pushHealthToPanel()
+            }
+        }
+    }
+
+    private func pushHealthToPanel() {
+        guard let health = lastHealth else { return }
+        let script = "if(window.MCPanelReceiveHealth){window.MCPanelReceiveHealth(\(jsonLiteral(health)));}"
+        web.evaluateJavaScript(script, completionHandler: nil)
+    }
+
+    private func completePanelAction(ok: Bool, message: String) {
+        let clean = message.trimmingCharacters(in: .whitespacesAndNewlines)
+        let lines = clean.split(separator: "\n").prefix(2).joined(separator: " · ")
+        let summary = lines.isEmpty ? (ok ? "Action completed." : "Action failed.") : String(lines)
+        let script = "if(window.MCPanelActionComplete){window.MCPanelActionComplete(\(ok ? "true" : "false"),\(jsonLiteral([summary]).dropFirst().dropLast()));}"
+        web.evaluateJavaScript(script, completionHandler: nil)
+    }
+
+    private func runDashboardDecision(id: String, option: Int) {
+        let dashboard = "\(mcHome)/bin/dashboard"
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let result = runProcess(dashboard, ["decide", "answer", id, String(option)])
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.completePanelAction(ok: result.0 == 0, message: result.1)
+                if result.0 == 0 { self.loadPanel() }
+            }
+        }
+    }
+
+    private func confirmEmergencyOptimize() -> Bool {
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "Run more aggressive cleanup?"
+        alert.informativeText = "This may close only finished task helpers that Memory Guard revalidates as safe. It will not close protected apps, restart the Mac, or delete disk caches."
+        alert.addButton(withTitle: "Cancel")
+        alert.addButton(withTitle: "Optimize harder")
+        return alert.runModal() == .alertSecondButtonReturn
+    }
+
+    private func runOptimize(mode: String) {
+        let args = mode == "emergency" ? ["optimize", "--emergency", "--yes"] : ["optimize", "--apply"]
+        let executable = governorBin
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let result = runProcess(executable, args)
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.completePanelAction(ok: result.0 == 0, message: result.1)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1) { self.refreshHealth() }
+            }
+        }
+    }
+
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        pushHealthToPanel()
+    }
+
+    func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+        switch message.name {
+        case "mcOpenDashboard":
+            openDashboard(tab: message.body as? String ?? "home")
+        case "mcReload":
+            loadPanel()
+        case "mcDecision":
+            guard let body = message.body as? [String: Any],
+                  let id = body["id"] as? String,
+                  !id.isEmpty,
+                  let option = body["q"] as? Int,
+                  (1...3).contains(option) else {
+                completePanelAction(ok: false, message: "Decision payload was invalid.")
+                return
+            }
+            runDashboardDecision(id: id, option: option)
+        case "mcOptimize":
+            guard let mode = message.body as? String, mode == "apply" || mode == "emergency" else {
+                completePanelAction(ok: false, message: "Optimize mode was invalid.")
+                return
+            }
+            if mode == "emergency" && !confirmEmergencyOptimize() {
+                completePanelAction(ok: true, message: "Aggressive optimize canceled. Nothing changed.")
+                return
+            }
+            runOptimize(mode: mode)
+        default:
+            break
+        }
+    }
 }
 
 let app = NSApplication.shared
 let delegate = AppDelegate()
 app.delegate = delegate
-app.setActivationPolicy(.accessory)
-ProcessInfo.processInfo.disableAutomaticTermination("Mission Control menu bar")
 app.run()

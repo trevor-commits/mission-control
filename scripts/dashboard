@@ -68,6 +68,7 @@ OK_EXITS = {"git": (0, 1)}
 # and the slow chats feed (up to 150s catch-up scan) runs only after independent
 # feeds; its dependent decision and brief feeds then run last.
 FEEDS = [
+    ("health",      300, _repo_script("resource-health"), "DASHBOARD_CMD_HEALTH", 10),
     ("automation",  300, _repo_script("automation-status") + " --json --registry " + shlex.quote(os.path.join(REPO, "dashboard", "jobs.json")), "DASHBOARD_CMD_AUTOMATION", 30),
     ("usage",      1800, _repo_script("usage-snapshot") + " --no-ccusage", "DASHBOARD_CMD_USAGE", 60),
     ("git",         900, _repo_script("scan-unfinished-work") + " --json", "DASHBOARD_CMD_GIT", 120),
@@ -1166,7 +1167,7 @@ do_install() {
   local stamp_path="$MISSION_CONTROL_HOME/bin/install-stamp.json"
   # Keep this Bash 3.2 install loop aligned with the canonical verifier manifest
   # in mission_control_common.py; dashboard.test.sh asserts the exact set.
-  local required_runtimes="dashboard morning-brief morning-brief-deadman decision-alert mission_control_common.py queue_admission.py compose-decision-prompt.py mc-panel.swift"
+  local required_runtimes="dashboard morning-brief morning-brief-deadman decision-alert mission_control_common.py queue_admission.py compose-decision-prompt.py mc-panel.swift resource-health"
   local required_assets="index.html vendor/cytoscape.min.js panel.html launchd/com.gillettes.mc-panel.plist.template"
   # Safe file install: refuse a symlink or non-regular-file destination (never
   # write THROUGH a link, which would escape the target dir), write via a temp
@@ -1241,7 +1242,7 @@ do_install() {
     fi
   fi
   local runtime dest
-  for runtime in chat-graph morning-brief morning-brief-deadman decision-alert mission_control_common.py queue_admission.py compose-decision-prompt.py mc-panel.swift; do
+  for runtime in chat-graph morning-brief morning-brief-deadman decision-alert mission_control_common.py queue_admission.py compose-decision-prompt.py mc-panel.swift resource-health; do
     dest="$MISSION_CONTROL_HOME/bin/$runtime"
     if [ "$provenance" = "head" ]; then
       if git -C "$REPO_ROOT" cat-file -e "$head_sha:scripts/$runtime" 2>/dev/null; then

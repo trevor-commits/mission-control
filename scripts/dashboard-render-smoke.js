@@ -96,7 +96,7 @@ const PRIVACY_CASES = JSON.parse(fs.readFileSync(
 // --- fixtures as window.MC.feeds -------------------------------------------
 const FIX = path.join(REPO, 'dashboard', 'fixtures');
 const feeds = {};
-for (const name of ['usage', 'git', 'chats', 'automation', 'decisions', 'brief']) {
+for (const name of ['health', 'usage', 'git', 'chats', 'automation', 'decisions', 'brief']) {
   const p = path.join(FIX, name + '.json');
   if (!fs.existsSync(p)) { console.error('FAIL: missing fixture ' + p); process.exit(1); }
   feeds[name] = JSON.parse(fs.readFileSync(p, 'utf8'));
@@ -167,6 +167,7 @@ function newestChatTitle(feed) {
   return n && n.title;
 }
 const markers = {
+  health: ((feeds.health || {}).data || {}).headline,
   brief: ((feeds.brief || {}).data || {}).brief_id,
   map: newestChatTitle(feeds.chats),
   chats: firstStr(feeds.chats, ['nodes']),
@@ -178,7 +179,7 @@ const markers = {
 // --- run the IIFE once per tab ---------------------------------------------
 // The map tab uses Cytoscape in the browser. A tiny stub is enough to prove the
 // real graph path builds elements and wires handlers without loading the vendor.
-const TABS = ['home', 'brief', 'map', 'chats', 'git', 'usage', 'automation'];
+const TABS = ['home', 'health', 'brief', 'map', 'chats', 'git', 'usage', 'automation'];
 let fails = 0;
 for (const tab of TABS) {
   resetDom();
@@ -662,10 +663,10 @@ for (const tab of TABS) {
     console.error('FAIL: skew Home render THREW: ' + (e && e.message));
     fails++; return;
   }
-  // "Open work" is the first strip segment; its state color lives on the inner glyph,
-  // so gather the class names of the whole segment subtree.
-  const seg = collectClass(byId['mc-strip'], has('mc-strip-seg '), [])[0]
-           || collectClass(byId['mc-strip'], has('mc-strip-seg'), [])[0];
+  // "Open work" is the second strip segment (after System Health); its state
+  // color lives on the inner glyph, so gather the segment subtree classes.
+  const segments = collectClass(byId['mc-strip'], e => e.className === 'mc-strip-seg', []);
+  const seg = segments[1];
   const headline = collectClass(byId['mc-main'], has('mc-card-headline'), [])[0];
   const segCls = seg ? collectClass(seg, () => true, []).map(e => e.className).join(' ') : '';
   const cardCls = headline ? headline.className : '';

@@ -1,0 +1,325 @@
+#!/usr/bin/env python3
+"""Emit a small, local-only Mission Control view of Mac Health state."""
+
+from __future__ import annotations
+
+import json
+import math
+import os
+import shlex
+import subprocess
+import sys
+import time
+from pathlib import Path
+from typing import Any
+
+SCHEMA = "mission-control-resource-health-v1"
+DEFAULT_STATUS = Path.home() / "Library/Application Support/Resource Governor/status.json"
+STATUS_PATH = Path(os.environ.get("MISSION_CONTROL_RESOURCE_STATUS", str(DEFAULT_STATUS)))
+NOW = int(os.environ.get("MISSION_CONTROL_NOW_EPOCH", str(int(time.time()))))
+MAX_AGE_SECONDS = int(os.environ.get("MISSION_CONTROL_RESOURCE_MAX_AGE_SECONDS", "180"))
+DEFAULT_ACTIVITY_COMMAND = f"{Path.home() / '.local/bin/governor'} activity --json"
+ACTIVITY_COMMAND = os.environ.get("MISSION_CONTROL_ACTIVITY_COMMAND", DEFAULT_ACTIVITY_COMMAND)
+
+
+def number(value: Any) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    value = float(value)
+    return value if math.isfinite(value) else None
+
+
+def integer(value: Any) -> int | None:
+    value = number(value)
+    return int(value) if value is not None else None
+
+
+def text(value: Any, fallback: str = "unknown") -> str:
+    return value if isinstance(value, str) and value.strip() else fallback
+
+
+def load_status() -> tuple[dict[str, Any] | None, str | None]:
+    try:
+        payload = json.loads(STATUS_PATH.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return None, "Resource Governor has not published status yet."
+    except (OSError, json.JSONDecodeError) as error:
+        return None, f"Resource Governor status is unreadable ({type(error).__name__})."
+    if not isinstance(payload, dict) or payload.get("schema") != "resource-governor-status-v1":
+        return None, "Resource Governor status has an unsupported schema."
+    return payload, None
+
+
+def load_activity() -> dict[str, Any] | None:
+    if not ACTIVITY_COMMAND or ACTIVITY_COMMAND.lower() == "off":
+        return None
+    try:
+        completed = subprocess.run(
+            shlex.split(ACTIVITY_COMMAND),
+            text=True,
+            capture_output=True,
+            timeout=8,
+            check=False,
+        )
+        payload = json.loads(completed.stdout) if completed.stdout.strip() else None
+    except (OSError, subprocess.SubprocessError, json.JSONDecodeError, ValueError):
+        return None
+    if completed.returncode != 0 or not isinstance(payload, dict):
+        return None
+    if payload.get("schema") != "resource-governor-activity-v1":
+        return None
+    return payload
+
+
+def normalize_activity(payload: dict[str, Any] | None) -> dict[str, Any]:
+    if payload is None:
+        return {
+            "available": False,
+            "exact": False,
+            "working_count": None,
+            "waiting_count": None,
+            "cooling_count": None,
+            "unknown_provider_count": None,
+            "providers": [],
+            "longest_task": None,
+            "mac_restart_horizon": {"state": "unknown", "reason": "activity-unavailable"},
+        }
+    providers = []
+    raw_providers = payload.get("providers") if isinstance(payload.get("providers"), dict) else {}
+    for name in ("codex", "claude", "cursor", "hermes", "copilot"):
+        row = raw_providers.get(name)
+        if not isinstance(row, dict):
+            continue
+        source = row.get("source_health") if isinstance(row.get("source_health"), dict) else {}
+        horizon = row.get("restart_horizon") if isinstance(row.get("restart_horizon"), dict) else {}
+        providers.append(
+            {
+                "name": name,
+                "state": text(row.get("state")),
+                "exact": row.get("exact") is True,
+                "working_count": integer(row.get("working_count")),
+                "waiting_count": integer(row.get("waiting_count")),
+                "cooling_count": integer(row.get("cooling_count")),
+                "source_status": text(source.get("status")),
+                "restart_state": text(horizon.get("state")),
+            }
+        )
+    raw_horizon = payload.get("mac_restart_horizon") if isinstance(payload.get("mac_restart_horizon"), dict) else {}
+    raw_longest = payload.get("longest_task") if isinstance(payload.get("longest_task"), dict) else None
+    longest_task = None
+    if raw_longest is not None:
+        provider = text(raw_longest.get("provider"))
+        label = text(raw_longest.get("label"))
+        if provider in ("codex", "claude", "cursor", "hermes", "copilot") and label.startswith(provider + ":"):
+            longest_task = {
+                "provider": provider,
+                "label": label,
+                "phase": text(raw_longest.get("phase")),
+                "eta_min_minutes": integer(raw_longest.get("eta_min_minutes")),
+                "eta_max_minutes": integer(raw_longest.get("eta_max_minutes")),
+                "eta_kind": text(raw_longest.get("eta_kind")),
+                "confidence": text(raw_longest.get("confidence")),
+            }
+    return {
+        "available": True,
+        "exact": payload.get("exact") is True,
+        "working_count": integer(payload.get("working_count")),
+        "waiting_count": integer(payload.get("waiting_count")),
+        "cooling_count": integer(payload.get("cooling_count")),
+        "unknown_provider_count": integer(payload.get("unknown_provider_count")),
+        "providers": providers,
+        "longest_task": longest_task,
+        "mac_restart_horizon": {
+            "state": text(raw_horizon.get("state")),
+            "reason": text(raw_horizon.get("reason")),
+            "minutes_min": integer(raw_horizon.get("minutes_min")),
+            "minutes_max": integer(raw_horizon.get("minutes_max")),
+        },
+    }
+
+
+def state_rank(value: str) -> int:
+    return {"green": 0, "amber": 1, "red": 2}.get(value, 1)
+
+
+def worst(*values: str) -> str:
+    return max(values, key=state_rank)
+
+
+def alert_state(alerts: list[dict[str, Any]]) -> str:
+    if any(row.get("severity") == "critical" for row in alerts):
+        return "red"
+    if alerts:
+        return "amber"
+    return "green"
+
+
+def build(payload: dict[str, Any] | None, error: str | None) -> dict[str, Any]:
+    if payload is None:
+        return {
+            "schema": SCHEMA,
+            "state": "red",
+            "headline": "System health is unavailable",
+            "summary": error or "Resource Governor status is unavailable.",
+            "checked_epoch": None,
+            "age_seconds": None,
+            "fresh": False,
+            "issue_codes": ["!"],
+            "memory": {"state": "grey", "pressure": "unknown"},
+            "disk": {"state": "grey", "status": "unknown"},
+            "watchdog": {"state": "red", "memory_guard": "unknown", "disk_guard": "unknown"},
+            "alerts": [],
+            "top_rss": [],
+            "recent_incidents": [],
+        }
+
+    checked = integer(payload.get("checked_epoch"))
+    age = None if checked is None else max(0, NOW - checked)
+    fresh = age is not None and age <= MAX_AGE_SECONDS
+    metrics = payload.get("metrics") if isinstance(payload.get("metrics"), dict) else {}
+    memory_guard = payload.get("memory_guard") if isinstance(payload.get("memory_guard"), dict) else {}
+    disk_guard = payload.get("disk_guard") if isinstance(payload.get("disk_guard"), dict) else {}
+    watchdog = payload.get("watchdog") if isinstance(payload.get("watchdog"), dict) else {}
+    slo = payload.get("slo") if isinstance(payload.get("slo"), dict) else {}
+    thresholds = slo.get("thresholds") if isinstance(slo.get("thresholds"), dict) else {}
+    raw_alerts = payload.get("alerts") if isinstance(payload.get("alerts"), list) else []
+    alerts = [row for row in raw_alerts if isinstance(row, dict)]
+
+    pressure = text(metrics.get("pressure_state"))
+    swap_rate = number(metrics.get("swap_rate_mb_per_minute"))
+    swap_alarm = number(thresholds.get("swap_rate_alarm_mb_per_min"))
+    memory_state = "red" if pressure == "critical" else "amber" if pressure == "warning" else "green"
+    if swap_rate is not None and swap_alarm is not None and swap_rate > swap_alarm:
+        memory_state = worst(memory_state, "amber")
+    if memory_guard.get("stale") is True or watchdog.get("memory_guard") not in (None, "ok"):
+        memory_state = worst(memory_state, "amber")
+
+    disk_summary = disk_guard.get("summary") if isinstance(disk_guard.get("summary"), dict) else {}
+    disk_status = text(disk_summary.get("status"))
+    effective_free = number(metrics.get("effective_free_gib"))
+    disk_floor = number(thresholds.get("disk_floor_gib"))
+    disk_target = number(thresholds.get("disk_target_gib"))
+    disk_state = "amber" if disk_status not in ("ok", "green", "normal") else "green"
+    if effective_free is not None and disk_floor is not None and effective_free < disk_floor:
+        disk_state = "red"
+    elif effective_free is not None and disk_target is not None and effective_free < disk_target:
+        disk_state = worst(disk_state, "amber")
+    if disk_guard.get("stale") is True or watchdog.get("disk_guard") not in (None, "ok"):
+        disk_state = worst(disk_state, "amber")
+
+    watchdog_state = "green"
+    if watchdog.get("memory_guard") != "ok" or watchdog.get("disk_guard") != "ok":
+        watchdog_state = "amber"
+    if not fresh:
+        watchdog_state = "red"
+
+    state = worst(memory_state, disk_state, watchdog_state, alert_state(alerts))
+    issue_codes: list[str] = []
+    if memory_state != "green":
+        issue_codes.append("M")
+    if disk_state != "green":
+        issue_codes.append("D")
+    if watchdog_state == "red" and not issue_codes:
+        issue_codes.append("!")
+
+    if state == "green":
+        headline = "System health is clear"
+        summary = "Memory, disk, and guard freshness are within their operating ranges."
+    elif state == "red":
+        headline = "System health needs action"
+        summary = "Critical pressure or stale protection data needs attention now."
+    else:
+        headline = "System health needs a glance"
+        summary = "A warning is active; Mission Control has the current details."
+
+    public_alerts = [
+        {
+            "key": text(row.get("key")),
+            "severity": text(row.get("severity"), "warning"),
+            "title": text(row.get("title"), "Resource warning"),
+            "message": text(row.get("message"), "No details supplied."),
+            "acked": bool(row.get("acked")),
+        }
+        for row in alerts[:6]
+    ]
+    top_rss = []
+    for row in (payload.get("top_rss") or [])[:6]:
+        if not isinstance(row, dict):
+            continue
+        top_rss.append(
+            {
+                "family": text(row.get("family") or row.get("command"), "process"),
+                "pid": integer(row.get("pid")),
+                "rss_mb": number(row.get("rss_mb")),
+            }
+        )
+    incidents = []
+    for row in (payload.get("recent_incidents") or [])[:8]:
+        if not isinstance(row, dict):
+            continue
+        incidents.append(
+            {
+                "time": integer(row.get("time")),
+                "kind": text(row.get("kind")),
+                "severity": text(row.get("severity"), "info"),
+                "title": text(row.get("title"), "Resource Governor"),
+                "message": text(row.get("message"), "No details supplied."),
+            }
+        )
+
+    return {
+        "schema": SCHEMA,
+        "state": state,
+        "headline": headline,
+        "summary": summary,
+        "checked_epoch": checked,
+        "age_seconds": age,
+        "fresh": fresh,
+        "issue_codes": issue_codes,
+        "memory": {
+            "state": memory_state,
+            "pressure": pressure,
+            "swap_used_mb": number(metrics.get("swap_used_mb")),
+            "swap_rate_mb_per_min": swap_rate,
+            "free_percent": number((payload.get("admit") or {}).get("free_percent")) if isinstance(payload.get("admit"), dict) else None,
+            "guard_health": text((memory_guard.get("summary") or {}).get("health")) if isinstance(memory_guard.get("summary"), dict) else "unknown",
+            "guard_age_seconds": integer(memory_guard.get("age_seconds")),
+        },
+        "disk": {
+            "state": disk_state,
+            "status": disk_status,
+            "effective_free_gib": effective_free,
+            "raw_free_gib": number(metrics.get("raw_free_gib")),
+            "floor_gib": disk_floor,
+            "target_gib": disk_target,
+            "guard_age_seconds": integer(disk_guard.get("age_seconds")),
+        },
+        "watchdog": {
+            "state": watchdog_state,
+            "memory_guard": text(watchdog.get("memory_guard")),
+            "disk_guard": text(watchdog.get("disk_guard")),
+        },
+        "alerts": public_alerts,
+        "top_rss": top_rss,
+        "recent_incidents": incidents,
+        "optimization": {
+            "safe_command": "governor optimize --apply",
+            "preview_command": "governor optimize --preview",
+            "emergency_command": "governor optimize --emergency",
+            "automatic_restart": False,
+            "disk_delete": False,
+        },
+    }
+
+
+def main() -> int:
+    payload, error = load_status()
+    result = build(payload, error)
+    result["activity"] = normalize_activity(load_activity())
+    json.dump(result, sys.stdout, sort_keys=True)
+    sys.stdout.write("\n")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

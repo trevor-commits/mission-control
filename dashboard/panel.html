@@ -1,215 +1,352 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Mission Control Panel</title>
+<script src="data/health.js"></script>
 <script src="data/decisions.js"></script>
 <script src="data/automation.js"></script>
-<script src="data/decisions.error.js"></script>
-<script src="data/automation.error.js"></script>
+<script src="data/chats.js"></script>
+<script src="data/git.js"></script>
+<script src="data/usage.js"></script>
 <style>
 :root {
-  --bg: #f4f5f7; --card: #fff; --fg: #1a1d24; --muted: #5b6472;
-  --border: #d5d9e2; --accent: #3b5bdb; --accent-bg: #e8ecfb;
-  --green: #0f8a5f; --red: #c43c45; --amber: #b86e0a;
-  --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  color-scheme: light dark;
+  --bg: #f5f5f1;
+  --surface: rgba(255,255,255,.78);
+  --surface-2: rgba(0,0,0,.035);
+  --ink: #191918;
+  --muted: #6f716c;
+  --line: rgba(0,0,0,.11);
+  --green: #1f7a4f;
+  --green-bg: rgba(31,122,79,.11);
+  --amber: #a35d00;
+  --amber-bg: rgba(211,126,0,.13);
+  --red: #bd2c2c;
+  --red-bg: rgba(189,44,44,.12);
+  --accent: #2859c5;
+  --accent-bg: rgba(40,89,197,.12);
+  --shadow: 0 12px 40px rgba(0,0,0,.12);
 }
-html[data-theme="dark"] {
-  --bg: #0e1013; --card: #16181d; --fg: #edeef1; --muted: #a7adba;
-  --border: #23262e; --accent: #7c8cff; --accent-bg: #191d33;
-  --green: #35b98a; --red: #e5646a; --amber: #e0a534;
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #171816;
+    --surface: rgba(35,36,33,.9);
+    --surface-2: rgba(255,255,255,.055);
+    --ink: #f1f1ec;
+    --muted: #a9aaa4;
+    --line: rgba(255,255,255,.12);
+    --green: #66d49b;
+    --green-bg: rgba(70,190,126,.13);
+    --amber: #ffba55;
+    --amber-bg: rgba(255,170,51,.13);
+    --red: #ff7770;
+    --red-bg: rgba(255,95,88,.13);
+    --accent: #91b1ff;
+    --accent-bg: rgba(97,139,246,.16);
+    --shadow: 0 12px 40px rgba(0,0,0,.34);
+  }
 }
 * { box-sizing: border-box; }
 body {
-  margin: 0; padding: 14px 16px 18px; background: var(--bg); color: var(--fg);
-  font: 13px/1.45 var(--font); -webkit-font-smoothing: antialiased;
+  margin: 0;
+  padding: 16px;
+  background: var(--bg);
+  color: var(--ink);
+  font: 13px/1.35 -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
+  -webkit-font-smoothing: antialiased;
 }
-h1 { font-size: 18px; margin: 0 0 10px; font-weight: 650; }
-.card {
-  background: var(--card); border: 1px solid var(--border); border-radius: 12px;
-  padding: 12px 14px; margin-bottom: 10px;
+button { font: inherit; }
+.shell { display: grid; gap: 12px; }
+.top { display: flex; align-items: center; gap: 10px; }
+.brand { font-size: 16px; font-weight: 720; letter-spacing: -.02em; }
+.top .age { color: var(--muted); font-size: 11px; }
+.spacer { flex: 1; }
+.badge {
+  display: inline-flex; align-items: center; gap: 6px;
+  border-radius: 999px; padding: 4px 8px;
+  font-size: 11px; font-weight: 680; border: 1px solid var(--line);
 }
-.item { padding: 10px 0; border-top: 1px solid var(--border); }
-.item:first-child { border-top: 0; padding-top: 0; }
-.q { font-weight: 600; margin-bottom: 8px; }
-.opts { display: flex; flex-wrap: wrap; gap: 6px; }
-.opt {
-  border: 1px solid var(--border); background: var(--bg); color: var(--fg);
-  border-radius: 8px; padding: 6px 9px; cursor: pointer; font: inherit; text-align: left;
+.badge::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.green { color: var(--green); background: var(--green-bg); }
+.amber { color: var(--amber); background: var(--amber-bg); }
+.red { color: var(--red); background: var(--red-bg); }
+.grey { color: var(--muted); background: var(--surface-2); }
+.hero {
+  padding: 12px 13px; border: 1px solid var(--line); border-radius: 13px;
+  background: var(--surface); box-shadow: var(--shadow);
 }
-.opt:hover, .opt.suggested { border-color: var(--accent); background: var(--accent-bg); }
-.meta { color: var(--muted); font-size: 11.5px; margin-top: 6px; }
-.health { display: flex; gap: 8px; align-items: center; color: var(--muted); margin: 8px 0 12px; }
-.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); display: inline-block; }
-.dot.green { background: var(--green); } .dot.red { background: var(--red); } .dot.amber { background: var(--amber); }
-.row { display: flex; gap: 8px; flex-wrap: wrap; }
-button.linkish, a.linkish {
-  border: 1px solid var(--border); background: transparent; color: var(--accent);
-  border-radius: 8px; padding: 7px 10px; cursor: pointer; font: inherit; text-decoration: none;
+.hero.green { border-color: color-mix(in srgb, var(--green) 35%, var(--line)); }
+.hero.amber { border-color: color-mix(in srgb, var(--amber) 45%, var(--line)); }
+.hero.red { border-color: color-mix(in srgb, var(--red) 48%, var(--line)); }
+.hero-title { color: var(--ink); font-size: 15px; font-weight: 720; letter-spacing: -.01em; }
+.hero-copy { color: var(--muted); margin-top: 3px; }
+.health-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 10px; }
+.metric { border-radius: 10px; background: var(--surface-2); padding: 9px 10px; min-width: 0; }
+.metric-head { display: flex; align-items: center; justify-content: space-between; color: var(--muted); font-size: 11px; }
+.metric-value { margin-top: 3px; font-size: 16px; font-weight: 720; letter-spacing: -.02em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.metric-detail { margin-top: 2px; color: var(--muted); font-size: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.actions { display: flex; gap: 8px; margin-top: 11px; }
+.btn {
+  min-height: 34px; border-radius: 9px; padding: 0 12px;
+  border: 1px solid var(--line); background: var(--surface); color: var(--ink);
+  font-weight: 660; cursor: pointer;
 }
+.btn:hover { background: var(--surface-2); }
+.btn:disabled { opacity: .55; cursor: wait; }
+.btn-primary { flex: 1; border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); color: var(--accent); background: var(--accent-bg); }
+.btn-danger { color: var(--red); }
+.action-status { display: none; margin-top: 8px; color: var(--muted); font-size: 11px; }
+.action-status.visible { display: block; }
+.section { border: 1px solid var(--line); border-radius: 12px; background: var(--surface); overflow: hidden; }
+.section-title { padding: 9px 11px 6px; color: var(--muted); font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; }
+.row {
+  width: 100%; display: flex; align-items: center; gap: 9px; text-align: left;
+  padding: 9px 11px; border: 0; border-top: 1px solid var(--line);
+  background: transparent; color: var(--ink); cursor: pointer;
+}
+.row:hover { background: var(--surface-2); }
+.row-symbol { width: 16px; text-align: center; font-weight: 800; }
+.row-main { min-width: 0; flex: 1; }
+.row-name { font-weight: 650; }
+.row-detail { color: var(--muted); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.row-value { font-variant-numeric: tabular-nums; color: var(--muted); font-size: 11px; }
+.chevron { color: var(--muted); }
+.decision { padding: 10px 11px 11px; border-top: 1px solid var(--line); }
+.decision-q { font-weight: 650; }
+.decision-options { display: grid; gap: 6px; margin-top: 8px; }
+.decision-options .btn { min-height: 30px; text-align: left; }
+.footer { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.footer .btn { width: 100%; }
+.hidden { display: none !important; }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
 </style>
 </head>
 <body>
-<h1>Needs you</h1>
-<div id="health" class="health"></div>
-<div id="list" class="card"></div>
-<div class="row">
-  <button class="linkish" type="button" id="refresh">Refresh</button>
-  <button class="linkish" type="button" id="theme">Dark mode</button>
-  <button class="linkish" type="button" id="open-full">Open full Mission Control</button>
+<div class="shell">
+  <div class="top">
+    <div>
+      <div class="brand">Mission Control</div>
+      <div class="age" id="health-age">Waiting for system health…</div>
+    </div>
+    <div class="spacer"></div>
+    <div class="badge grey" id="health-badge">Unknown</div>
+  </div>
+
+  <section class="hero grey" id="health-hero">
+    <div class="hero-title" id="health-title">System health is loading</div>
+    <div class="hero-copy" id="health-summary">Mission Control is reading Memory Guard, Disk Guard, and Resource Governor.</div>
+    <div class="health-grid">
+      <div class="metric">
+        <div class="metric-head"><span>Memory</span><span id="memory-state">?</span></div>
+        <div class="metric-value" id="memory-value">—</div>
+        <div class="metric-detail" id="memory-detail">No reading yet</div>
+      </div>
+      <div class="metric">
+        <div class="metric-head"><span>Disk</span><span id="disk-state">?</span></div>
+        <div class="metric-value" id="disk-value">—</div>
+        <div class="metric-detail" id="disk-detail">No reading yet</div>
+      </div>
+    </div>
+    <div class="actions">
+      <button class="btn btn-primary" id="optimize" type="button">Optimize</button>
+      <button class="btn" id="emergency" type="button">More aggressive…</button>
+    </div>
+    <div class="action-status" id="action-status" role="status" aria-live="polite"></div>
+  </section>
+
+  <section class="section">
+    <div class="section-title">At a glance</div>
+    <button class="row" type="button" data-tab="health">
+      <span class="row-symbol" id="overview-health-symbol">○</span>
+      <span class="row-main"><span class="row-name">System health</span><span class="row-detail" id="overview-health-detail">Waiting for status</span></span>
+      <span class="row-value" id="overview-health-value">—</span><span class="chevron">›</span>
+    </button>
+    <button class="row" type="button" data-tab="chats">
+      <span class="row-symbol" id="work-symbol">○</span>
+      <span class="row-main"><span class="row-name">Open work</span><span class="row-detail" id="work-detail">Chats and Git</span></span>
+      <span class="row-value" id="work-value">—</span><span class="chevron">›</span>
+    </button>
+    <button class="row" type="button" data-tab="automation">
+      <span class="row-symbol" id="jobs-symbol">○</span>
+      <span class="row-main"><span class="row-name">Automation</span><span class="row-detail" id="jobs-detail">Background jobs</span></span>
+      <span class="row-value" id="jobs-value">—</span><span class="chevron">›</span>
+    </button>
+    <button class="row" type="button" data-tab="usage">
+      <span class="row-symbol" id="usage-symbol">○</span>
+      <span class="row-main"><span class="row-name">AI usage</span><span class="row-detail" id="usage-detail">Provider capacity</span></span>
+      <span class="row-value" id="usage-value">—</span><span class="chevron">›</span>
+    </button>
+  </section>
+
+  <section class="section hidden" id="decision-section">
+    <div class="section-title">Decision waiting</div>
+    <div class="decision">
+      <div class="decision-q" id="decision-q"></div>
+      <div class="decision-options" id="decision-options"></div>
+    </div>
+  </section>
+
+  <div class="footer">
+    <button class="btn" id="open-dashboard" type="button">Open Dashboard</button>
+    <button class="btn" id="refresh" type="button">Refresh</button>
+  </div>
 </div>
 <script>
 (function () {
-  function theme() {
-    try { return localStorage.getItem("mc-theme") || "light"; } catch (e) { return "light"; }
+  "use strict";
+  var MC = window.MC || { feeds: {} };
+  var health = MC.feeds && MC.feeds.health && MC.feeds.health.data;
+  var busy = false;
+  var actionsAllowed = false;
+
+  function el(id) { return document.getElementById(id); }
+  function text(id, value) { el(id).textContent = value == null ? "—" : String(value); }
+  function tone(value) { return value === "red" ? "red" : value === "amber" ? "amber" : value === "green" ? "green" : "grey"; }
+  function symbol(value) { return value === "red" ? "✕" : value === "amber" ? "!" : value === "green" ? "✓" : "○"; }
+  function fmt(value, digits, suffix) { return typeof value === "number" && isFinite(value) ? value.toFixed(digits) + suffix : "unknown"; }
+  function age(seconds) {
+    if (typeof seconds !== "number" || !isFinite(seconds)) return "unknown age";
+    if (seconds < 60) return Math.max(0, Math.round(seconds)) + "s ago";
+    if (seconds < 3600) return Math.floor(seconds / 60) + "m ago";
+    return Math.floor(seconds / 3600) + "h ago";
   }
-  function applyTheme(t) {
-    t = t === "dark" ? "dark" : "light";
-    document.documentElement.setAttribute("data-theme", t);
-    try { localStorage.setItem("mc-theme", t); } catch (e) {}
-    document.getElementById("theme").textContent = t === "dark" ? "Light mode" : "Dark mode";
+  function setSymbol(id, state) { var node = el(id); node.textContent = symbol(state); node.className = "row-symbol " + tone(state); }
+  function setBusy(value, message) {
+    busy = value;
+    el("optimize").disabled = value || !actionsAllowed;
+    el("emergency").disabled = value || !actionsAllowed;
+    if (message) { text("action-status", message); el("action-status").classList.add("visible"); }
   }
-  applyTheme(theme());
-  document.getElementById("theme").onclick = function () {
-    applyTheme(theme() === "dark" ? "light" : "dark");
-  };
-  document.getElementById("refresh").onclick = function () { location.reload(); };
-  document.getElementById("open-full").onclick = function () {
-    if (window.webkit && window.webkit.messageHandlers &&
-        window.webkit.messageHandlers.mcOpenFull) {
-      window.webkit.messageHandlers.mcOpenFull.postMessage({});
-      return;
-    }
-    // Browser fallback when not inside mc-panel WKWebView.
-    try { location.href = "index.html"; } catch (e) {}
+  function renderHealth(data) {
+    if (!data || typeof data !== "object") return;
+    health = data;
+    var state = tone(data.state);
+    var watchdog = data.watchdog || {};
+    actionsAllowed = data.fresh === true && watchdog.state !== "red";
+    el("optimize").disabled = busy || !actionsAllowed;
+    el("emergency").disabled = busy || !actionsAllowed;
+    el("optimize").title = actionsAllowed ? "Run bounded cleanup with a receipt" : "Optimize unavailable until guard data is current";
+    el("emergency").title = actionsAllowed ? "Requires a native confirmation" : "Optimize unavailable until guard data is current";
+    var hero = el("health-hero");
+    hero.className = "hero " + state;
+    var badge = el("health-badge");
+    badge.className = "badge " + state;
+    var codes = Array.isArray(data.issue_codes) ? data.issue_codes.join(" · ") : "";
+    badge.textContent = state === "green" ? "Clear" : (codes || (state === "red" ? "Action" : "Watch"));
+    text("health-age", data.age_seconds == null ? "No current governor reading" : "Checked " + age(data.age_seconds));
+    text("health-title", data.headline || "System health");
+    text("health-summary", data.summary || "No summary available.");
+
+    var memory = data.memory || {}, disk = data.disk || {};
+    text("memory-state", symbol(memory.state));
+    el("memory-state").className = tone(memory.state);
+    text("memory-value", String(memory.pressure || "unknown"));
+    text("memory-detail", "Swap " + fmt(memory.swap_used_mb, 0, " MB") + " · " + fmt(memory.swap_rate_mb_per_min, 1, " MB/min"));
+    text("disk-state", symbol(disk.state));
+    el("disk-state").className = tone(disk.state);
+    text("disk-value", fmt(disk.effective_free_gib, 1, " GiB free"));
+    text("disk-detail", "Raw " + fmt(disk.raw_free_gib, 1, " GiB") + " · floor " + fmt(disk.floor_gib, 0, " GiB"));
+
+    setSymbol("overview-health-symbol", state);
+    text("overview-health-detail", data.summary || "Memory and disk");
+    text("overview-health-value", codes || (state === "green" ? "Clear" : "1"));
+    renderOverview();
+  }
+  window.MCPanelReceiveHealth = renderHealth;
+  window.MCPanelActionComplete = function (ok, message) {
+    setBusy(false, message || (ok ? "Optimization completed." : "Optimization did not complete."));
+    if (!ok) el("action-status").className = "action-status visible red";
   };
 
-  function parseOptions(text) {
-    var raw = String(text || ""), opts = [], suggested = null, m, firstChoice = -1;
-    var tick = /\*\*`([^`]+)`\*\*/g;
-    while ((m = tick.exec(raw)) && opts.length < 3) {
-      if (firstChoice < 0) firstChoice = m.index;
-      opts.push(m[1].trim());
-    }
-    if (!opts.length) {
-      var bold = /\*\*([^*]{2,80})\*\*/g;
-      while ((m = bold.exec(raw)) && opts.length < 3) {
-        var label = m[1].replace(/^`|`$/g, "").trim();
-        if (/DECISION NEEDED|Confirmed|recommend/i.test(label)) continue;
-        if (firstChoice < 0) firstChoice = m.index;
-        opts.push(label);
-      }
-    }
-    if (/recommend(?:ed)?(?:\s+the)?\s+(?:first|1st|option\s*1)/i.test(raw) && opts.length) suggested = 1;
-    else if (/Recommended/i.test(raw) && opts.length) suggested = 1;
-    var questionRaw = firstChoice >= 0 ? raw.slice(0, firstChoice) : raw;
-    var q = questionRaw.replace(/^\s*\*\*DECISION NEEDED:\*\*\s*/i, "")
-      .replace(/\*\*|`/g, " ").replace(/\s+/g, " ").trim();
-    if (q.length > 140) q = q.slice(0, 137) + "…";
-    return { q: q || "Decision needs your answer", opts: opts, suggested: suggested };
-  }
-
-  function feeds() {
-    return (window.MC && window.MC.feeds) || {};
-  }
-  function clipboardWrite(text) {
-    try {
-      if (typeof window.MC_CLIPBOARD_WRITE === "function") {
-        return Promise.resolve().then(function () { return window.MC_CLIPBOARD_WRITE(text); });
-      }
-      if (!navigator.clipboard || typeof navigator.clipboard.writeText !== "function") {
-        return Promise.reject(new Error("clipboard unavailable"));
-      }
-      return Promise.resolve(navigator.clipboard.writeText(text));
-    } catch (error) {
-      return Promise.reject(error);
-    }
-  }
-  function render() {
-    var f = feeds();
-    var dec = f.decisions || {};
-    var pinned = ((dec.data || {}).pinned) || [];
-    var list = document.getElementById("list");
-    list.textContent = "";
-    if (!pinned.length) {
-      list.appendChild(document.createTextNode("Nothing waiting on you right now."));
+  function feedData(name) { return MC.feeds && MC.feeds[name] && MC.feeds[name].data || {}; }
+  function renderOverview() {
+    var chats = feedData("chats"), git = feedData("git"), automation = feedData("automation"), usage = feedData("usage");
+    var activity = health && health.activity || {};
+    if (activity.available) {
+      var working = typeof activity.working_count === "number" ? activity.working_count : 0;
+      var waiting = typeof activity.waiting_count === "number" ? activity.waiting_count : 0;
+      var cooling = typeof activity.cooling_count === "number" ? activity.cooling_count : 0;
+      var uncertain = activity.exact !== true;
+      setSymbol("work-symbol", uncertain ? "amber" : "green");
+      text("work-value", String(working) + (uncertain ? "+?" : ""));
+      text("work-detail", waiting + " waiting · " + cooling + " cooling" + (uncertain ? " · one source unknown" : ""));
     } else {
-      pinned.slice(0, 3).forEach(function (d, i) {
-        var parsed = (Array.isArray(d.options) && d.question) ? {
-          q: d.question,
-          opts: d.options.slice(0, 3),
-          suggested: d.recommended == null ? null : +d.recommended
-        } : parseOptions(d.text);
-        var item = document.createElement("div");
-        item.className = "item";
-        var q = document.createElement("div");
-        q.className = "q";
-        q.textContent = (i + 1) + ". " + parsed.q;
-        item.appendChild(q);
-        if (parsed.opts.length) {
-          var row = document.createElement("div");
-          row.className = "opts";
-          parsed.opts.forEach(function (label, oi) {
-            var n = oi + 1;
-            var btn = document.createElement("button");
-            btn.type = "button";
-            btn.className = "opt" + (parsed.suggested === n ? " suggested" : "");
-            btn.textContent = n + " — " + label;
-            btn.title = "Record choice " + n + " (or copies: dashboard decide answer " + d.id + " " + n + ")";
-            btn.onclick = function () {
-              var cmd = "dashboard decide answer " + d.id + " " + n;
-              if (window.webkit && window.webkit.messageHandlers &&
-                  window.webkit.messageHandlers.mcDecide) {
-                btn.textContent = "Recording…";
-                window.webkit.messageHandlers.mcDecide.postMessage({ id: d.id, n: n });
-                setTimeout(function () { btn.textContent = n + " — " + label; }, 1600);
-                return;
-              }
-              var old = btn.textContent;
-              btn.disabled = true;
-              clipboardWrite(cmd).then(function () {
-                btn.textContent = "Copied command";
-              }, function () {
-                btn.textContent = "Copy failed — select command";
-              }).then(function () {
-                setTimeout(function () { btn.textContent = old; btn.disabled = false; }, 1600);
-              });
-            };
-            row.appendChild(btn);
-          });
-          item.appendChild(row);
-          if (parsed.suggested) {
-            var sug = document.createElement("div");
-            sug.className = "meta";
-            sug.textContent = "Suggested: " + parsed.suggested + " — " +
-              (parsed.opts[parsed.suggested - 1] || "");
-            item.appendChild(sug);
-          }
-        }
-        list.appendChild(item);
-      });
-      if (pinned.length > 3) {
-        var more = document.createElement("div");
-        more.className = "meta";
-        more.textContent = "+" + (pinned.length - 3) + " more in full Mission Control";
-        list.appendChild(more);
-      }
+      var openWork = 0;
+      (chats.nodes || []).forEach(function (node) { openWork += Array.isArray(node.open_ends) ? node.open_ends.length : 0; });
+      var gitIssues = (git.repos || []).filter(function (repo) {
+        return repo.dirty || repo.detached || repo.ahead > 0 || repo.behind > 0 || repo.no_remote || (repo.decision_rows || []).length;
+      }).length;
+      var workTotal = openWork + gitIssues;
+      setSymbol("work-symbol", workTotal ? "amber" : "green");
+      text("work-value", workTotal || "Clear");
+      text("work-detail", openWork + " open end" + (openWork === 1 ? "" : "s") + " · " + gitIssues + " Git item" + (gitIssues === 1 ? "" : "s"));
     }
-    var jobs = ((f.automation || {}).data || {}).jobs || [];
-    var red = jobs.filter(function (j) { return j.state === "red"; }).length;
-    var yellow = jobs.filter(function (j) {
-      return j.state === "yellow" || j.state === "degraded"; }).length;
-    var h = document.getElementById("health");
-    h.textContent = "";
-    var dot = document.createElement("span");
-    dot.className = "dot " + (red ? "red" : yellow ? "amber" : "green");
-    h.appendChild(dot);
-    h.appendChild(document.createTextNode(
-      red ? ("Automation: " + red + " red") :
-      yellow ? ("Automation: " + yellow + " warning") : "Machinery healthy"));
+
+    var jobs = automation.jobs || [];
+    var redJobs = jobs.filter(function (job) { return job.state === "red"; }).length;
+    var warnJobs = jobs.filter(function (job) { return job.state === "yellow" || job.state === "degraded"; }).length;
+    var jobState = redJobs ? "red" : warnJobs ? "amber" : jobs.length ? "green" : "grey";
+    setSymbol("jobs-symbol", jobState);
+    text("jobs-value", redJobs + warnJobs || (jobs.length ? "Clear" : "—"));
+    text("jobs-detail", redJobs ? redJobs + " failed · " + warnJobs + " warning" : warnJobs ? warnJobs + " warning" + (warnJobs === 1 ? "" : "s") : jobs.length ? jobs.length + " jobs checked" : "No job feed");
+
+    var providers = usage.providers || [];
+    var constrained = providers.filter(function (p) {
+      var used = typeof p.used_pct === "number" ? p.used_pct : typeof p.percent === "number" ? p.percent : null;
+      var remaining = typeof p.remaining_pct === "number" ? p.remaining_pct : null;
+      return (used != null && used >= 85) || (remaining != null && remaining <= 15) || p.health === "red" || p.state === "red";
+    }).length;
+    setSymbol("usage-symbol", constrained ? "amber" : providers.length ? "green" : "grey");
+    text("usage-value", constrained || (providers.length ? "Clear" : "—"));
+    text("usage-detail", constrained ? constrained + " constrained source" + (constrained === 1 ? "" : "s") : providers.length ? providers.length + " sources checked" : "No usage feed");
   }
-  render();
+
+  function parseOptions(body) {
+    var matches = [], re = /\*\*`([^`]+)`\*\*/g, m;
+    while ((m = re.exec(body || "")) && matches.length < 3) matches.push(m[1]);
+    return matches;
+  }
+  function renderDecision() {
+    var data = feedData("decisions"), rows = data.pinned || data.decisions || [];
+    if (!rows.length) return;
+    var row = rows[0], body = row.body || row.text || "", options = row.options || parseOptions(body);
+    if (!Array.isArray(options) || !options.length) return;
+    el("decision-section").classList.remove("hidden");
+    text("decision-q", (row.question || body).replace(/\*\*|`/g, " ").replace(/\s+/g, " ").slice(0, 180));
+    var wrap = el("decision-options");
+    wrap.textContent = "";
+    options.slice(0, 3).forEach(function (label, index) {
+      var button = document.createElement("button");
+      button.className = "btn";
+      button.type = "button";
+      button.textContent = (index + 1) + ". " + label;
+      button.addEventListener("click", function () {
+        window.webkit.messageHandlers.mcDecision.postMessage({ id: row.id || row.decision_id, q: index + 1 });
+      });
+      wrap.appendChild(button);
+    });
+  }
+
+  document.querySelectorAll("[data-tab]").forEach(function (node) {
+    node.addEventListener("click", function () { window.webkit.messageHandlers.mcOpenDashboard.postMessage(node.getAttribute("data-tab")); });
+  });
+  el("open-dashboard").addEventListener("click", function () { window.webkit.messageHandlers.mcOpenDashboard.postMessage("home"); });
+  el("refresh").addEventListener("click", function () { location.reload(); });
+  el("optimize").addEventListener("click", function () {
+    if (busy) return;
+    setBusy(true, "Running bounded cleanup…");
+    window.webkit.messageHandlers.mcOptimize.postMessage("apply");
+  });
+  el("emergency").addEventListener("click", function () {
+    if (busy || !actionsAllowed) return;
+    setBusy(true, "Waiting for confirmation…");
+    window.webkit.messageHandlers.mcOptimize.postMessage("emergency");
+  });
+
+  renderHealth(health);
+  renderOverview();
+  renderDecision();
 })();
 </script>
 </body>

@@ -1,0 +1,67 @@
+{
+  "schema": 1,
+  "feed": "health",
+  "generated_at": "2026-07-22T15:00:00Z",
+  "generated_epoch": 1784732400,
+  "cadence_s": 300,
+  "ok": true,
+  "error": null,
+  "data": {
+    "schema": "mission-control-resource-health-v1",
+    "state": "green",
+    "headline": "System health is clear",
+    "summary": "Memory, disk, and guard freshness are within their operating ranges.",
+    "checked_epoch": 1784732390,
+    "age_seconds": 10,
+    "fresh": true,
+    "issue_codes": [],
+    "memory": {
+      "state": "green",
+      "pressure": "normal",
+      "swap_used_mb": 640,
+      "swap_rate_mb_per_min": 2.5,
+      "free_percent": 42,
+      "guard_health": "green",
+      "guard_age_seconds": 20
+    },
+    "disk": {
+      "state": "green",
+      "status": "ok",
+      "effective_free_gib": 42.5,
+      "raw_free_gib": 54.2,
+      "floor_gib": 25,
+      "target_gib": 40,
+      "guard_age_seconds": 25
+    },
+    "watchdog": {
+      "state": "green",
+      "memory_guard": "ok",
+      "disk_guard": "ok"
+    },
+    "alerts": [],
+    "top_rss": [
+      {"family": "Hermes", "pid": 4321, "rss_mb": 812}
+    ],
+    "recent_incidents": [],
+    "activity": {
+      "available": true,
+      "exact": false,
+      "working_count": 2,
+      "waiting_count": 1,
+      "cooling_count": 0,
+      "unknown_provider_count": 1,
+      "providers": [
+        {"name": "cursor", "state": "active", "exact": true, "working_count": 2, "waiting_count": 1, "cooling_count": 0, "source_status": "ok", "restart_state": "active"}
+      ],
+      "longest_task": {"provider": "cursor", "label": "cursor:ab12cd", "phase": "tool-work", "eta_min_minutes": 15, "eta_max_minutes": 60, "eta_kind": "phase-range-not-countdown", "confidence": "low"},
+      "mac_restart_horizon": {"state": "blocked", "reason": "unknown-activity", "minutes_min": null, "minutes_max": null}
+    },
+    "optimization": {
+      "safe_command": "governor optimize --apply",
+      "preview_command": "governor optimize --preview",
+      "emergency_command": "governor optimize --emergency",
+      "automatic_restart": false,
+      "disk_delete": false
+    }
+  }
+}
