@@ -879,6 +879,12 @@ def answer_rollup_transaction(
     if not os.path.isdir(parent):
         raise RuntimeError("decide answer-rollup: state parent does not exist")
 
+    # Semantic card/member validation must remain read-only. Reject a stale or
+    # nonexistent target before creating the batch parent, lock, or any stage.
+    _run_alert(
+        decision_alert, home, "plan-rollup-answer", card_id,
+        primary_decision_id, str(choice), "--json")
+
     home_fd = batches_fd = lock_fd = artifact_fd = -1
     stage_name = artifact_name = None
     artifact_is_stage = False
