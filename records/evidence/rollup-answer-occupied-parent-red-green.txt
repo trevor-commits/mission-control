@@ -11,14 +11,14 @@ Observed:
 Consequence: the command failed and preserved the exact held old-parent object, but the current canonical path still resolved to receipt-divergent bytes until a later replay.
 
 LOCAL REGRESSION RED
-Command: PYTHONDONTWRITEBYTECODE=1 python3 -m unittest scripts.rollup-answer.test.RollupAnswerTests.test_existing_batch_parent_swap_quarantines_visible_conflict
+Command: PYTHONDONTWRITEBYTECODE=1 python3 scripts/rollup-answer.test.py RollupAnswerTests.test_existing_batch_parent_swap_quarantines_visible_conflict
 Result: one expected failure at the new assertion that the current-parent conflict must not exist after the failed command.
 
 REPAIR
 The composer now opens/revalidates the current answer-batches parent through the pinned home descriptor, distinguishes replacement from held parent by inode, binds the current canonical name to an fd, and quarantines it only when it is not the persisted receipt-backed artifact. The exact held artifact remains preserved under its pinned old parent.
 
 TARGETED GREEN
-Command: PYTHONDONTWRITEBYTECODE=1 python3 -m unittest scripts.rollup-answer.test.RollupAnswerTests.test_existing_batch_parent_swap_quarantines_visible_conflict
+Command: PYTHONDONTWRITEBYTECODE=1 python3 scripts/rollup-answer.test.py RollupAnswerTests.test_existing_batch_parent_swap_quarantines_visible_conflict
 Result: Ran 1 test; OK.
 
 FOCUSED GREEN

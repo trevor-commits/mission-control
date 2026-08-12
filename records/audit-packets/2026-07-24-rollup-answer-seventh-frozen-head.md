@@ -3,7 +3,7 @@
 - Date: 2026-07-24
 - Auditor: Cursor code-reviewer subagent `f84e6b96-c741-495e-8163-d193af78bed3` (session `9db69b00-966c-43d3-b1eb-72181b949178`)
 - Parent finish chat: Cursor finishing Codex `019f73d8-e5dc-73a0-acc5-8a4916ac6819` (marker `CURSOR-FINISH-019f73d8-20260724`)
-- Model note: Codex Sol unavailable (usage-limited); Cursor independent read-only review substituted
+- Model note: Codex Sol was usage-limited. Cursor independent read-only review substituted.
 
 ## Frozen target
 
@@ -21,12 +21,29 @@
 
 ## Verdict
 
-**REVIEW-CLEAN / MERGE-READY** at frozen code head `78672c4`.
+**REVIEW-CLEAN / MERGE-READY** at frozen code head `78672c4` only. This verdict
+does not certify later source, convergence, or PR heads.
 
 - Seven-point answered_pending contract: all PASS with file:line evidence
 - Prior P1/P2 classes from audits 1–6: all REPAIRED with regressions
 - New merge-blocking findings: none
-- Residual informational P3 only: `_quarantine_visible_rollup_conflict` best-effort swallow; next receipt-backed replay still recovers
+- Residual informational P3 only: `_quarantine_visible_rollup_conflict` uses
+  best-effort cleanup and may swallow a cleanup error. The next receipt-backed
+  replay still recovers.
+
+### Residual P3 disposition
+
+The convergence review closed this informational item without changing the
+best-effort contract. Replacement-parent directory, regular-file, symlink,
+name-swap, and exact-replay regressions now exercise the canonical-conflict
+boundary.
+
+Source head `fdb838dd6d7520646541c9bf95e2a7901c8c2d58` passed its
+exact `26/0` verifier, and convergence repair
+`2bfda6afe0ee839dc498cf27820febfde543dbde` passed rollup `32/32` plus the full
+affected matrix. Owner: repository convergence task
+`019ff2ae-33b3-7e50-af39-3a08efef29a8`. Reopen only if a cleanup error leaves
+the canonical conflict durable or exact receipt-backed replay stops recovering.
 
 ## Approval citation
 

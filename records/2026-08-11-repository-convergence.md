@@ -21,11 +21,11 @@ Linear: `self-contained:` because `LINEAR.md` records repo-only mode.
   - `unified-health`: `d37d8e672e117514397866dafba9a61ea2d20a0c`.
 - Local branches, remote-tracking branches, and detached worktree heads have matching pre-convergence rescue refs.
 - Two complete Git bundles exist:
-  - `/Users/gillettes/Downloads/mission-control-recovery-2026-08-11-019ff2ae.bundle`.
-  - `/Volumes/T7/mission-control-recovery/mission-control-recovery-2026-08-11-019ff2ae.bundle`.
+  - private local recovery copy `mission-control-recovery-2026-08-11-019ff2ae.bundle`.
+  - private offline-media recovery copy with the same logical bundle name.
 - Both bundles have SHA-256 `5f62b9b219524e2eb1dea6acf1a37d258b116285478c1614684955cb0270072a`.
 - `git bundle verify` passed for both copies.
-- A temporary mirror clone from the Downloads bundle passed `git fsck --full --strict` and resolved all four dirty-worktree refs to their expected commits.
+- A temporary mirror clone from the private local copy passed `git fsck --full --strict` and resolved all four dirty-worktree refs to their expected commits.
 - The GitHub repository is public. Recovery-only refs and snapshots stay local until a privacy review proves they contain only publishable data.
 
 ## Current inventory and initial dispositions
@@ -59,6 +59,7 @@ Linear: `self-contained:` because `LINEAR.md` records repo-only mode.
 - A repeated fast-feeder probe reproduced four ownership failures in 120 runs because the child could exit before `os.getpgid()` registered its group. Commit `e6e0d09` records the guaranteed session PGID from `Popen(start_new_session=True)` and consults `os.getpgid()` only while the process still exists. The targeted RED was `PASS=6 FAIL=1`; targeted GREEN is `PASS=7 FAIL=0`; the full dashboard suite is `PASS=90 FAIL=0`.
 - Fresh review found that a valid `attention` envelope was absent from `EXPECTED_CADENCE` and `combinedHomeState()`. Manual attention and a stale Brief could therefore leave Home at `Answers recorded`. Source commit `60577b78fa32b48f10580796f94aacdb16a1fb19`, integrated as `bd83a30`, accepts the 300-second cadence, includes the feed in combined Home state, and keeps pending decisions read-only. Both exact RED mutations produced `Answers recorded`; the integrated browser suite passes 315 assertions.
 - Source commit `79cff0d98ef97e6c7eeabcf9cd43be19c877cd67`, integrated as `55544cb`, pins both Outcome Extractor attempts to exact `claude-opus-5` and rejects another selector before command lookup. The source owner passed the 37-case extractor suite and two complete `SUITES PASS=24 FAIL=0` runs, including the push hook. The combined branch independently passes all 37 extractor checks and its slow-call transaction test. No live Claude call was made.
+- Source commit `fdb838dd6d7520646541c9bf95e2a7901c8c2d58`, integrated as `4453b8e`, validates rollup targets before creating locks, batch paths, or SQLite files. The source exact-head verifier passed `SUITES PASS=26 FAIL=0`; the convergence branch independently retains the invalid-target no-write regression.
 - Answer-dispatch autonomy, unified-health, memory-health, and the old visual refresh remain preserved but excluded. They conflict with the current V1 clarity gate or are superseded by newer mainline work.
 
 ## Final candidate verification
@@ -67,6 +68,13 @@ Linear: `self-contained:` because `LINEAR.md` records repo-only mode.
 - Key totals: dashboard `90/0`; Rollup Answer `29/29`; ER-134 `63/0`; loose-end runner `32/0`; shared policy `2/0`; Usage `24/0`; dashboard browser 315; panel browser `13/0`; native panel suites `16/0` and `15/0`; OpenSpec `2/0`.
 - Python syntax, shell syntax, source-artifact checks, `git diff --check`, and immediate commit/status readback passed. The worktree remained clean at the exact candidate.
 - The required technical-prose check was run over the five changed record/OpenSpec files. It reported 1,765 errors and 227 warnings across their full historical contents. No prose-clean claim is made, and a wholesale historical rewrite is outside this convergence change.
+
+## PR review and hosted-CI repair
+
+- PR #16 published docs head `8b36b32f0a0bb02b942672500881dbd203a62df8`. GitGuardian passed. The first hosted verifier reached `25/26`; its only failed suite used a 150-millisecond wall-clock threshold and observed 152 milliseconds on the hosted runner. Two passing suites also printed `rg: command not found` because the workflow never installed ripgrep.
+- Codex and CodeRabbit found valid gaps in attention refresh, native pending counts, Morning Brief sidecar health, rollup test isolation, failure-injection gating, process-group cleanup, model-policy accounting, SQLite indexing, identifier validation, and checkout credential persistence.
+- Repair commit `2bfda6afe0ee839dc498cf27820febfde543dbde` closes those paths. Mutation-backed RED reproduced stale attention, ambient aborts, stale sidecar health, pending native overcount, missing index coverage, and whole-value validation bypass before GREEN.
+- Focused GREEN at that commit: dashboard `91/0`; Rollup Answer `32/32`; dashboard browser 315; panel browser `13/0`; native summary `16/0`; Decision Alert, Morning Brief, Outcome Extractor, deadman sender, and loose-end runner all pass. Syntax, strict OpenSpec, and diff checks pass. The exact-head authoritative verifier and new hosted readback remain separate gates.
 
 ## No-delete gates
 
@@ -85,7 +93,7 @@ No worktree, local branch, remote branch, PR, rescue ref, or backup is removed u
 ## Current unverified boundaries
 
 - Historical Decisions timeouts cannot be attributed more narrowly than the observed host-wide storage/timeout episode; current behavior is green and no source defect was reproduced.
-- The records-complete convergence head still needs the ordinary push-hook verifier, hosted CI result, PR merge, and installed-source readback.
+- Repair head `2bfda6afe0ee839dc498cf27820febfde543dbde` still needs the exact-head authoritative verifier, records commit, ordinary push-hook verifier, hosted CI/review readback, PR merge, and installed-source readback.
 - Existing secondary worktrees predate owner leases and require owner-bound recovery before cleanup.
 - The Rollup Answer and Opus 5 owner worktrees remain registered until their exact owners release their leases. Their source commits are contained, but physical cleanup must use the broker after each owner turn ends.
 - Natural scheduled-run proof must come from an observed scheduler firing; quiet time is not proof.

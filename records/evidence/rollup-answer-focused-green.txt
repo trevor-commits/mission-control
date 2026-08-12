@@ -28,6 +28,6 @@ Negative and mutation coverage:
 - Pending decisions remain open and visible while ordinary alert, dismiss, single-answer, Morning Brief, Home, and panel action paths suppress duplicate owner action.
 
 Did not verify at this checkpoint:
-- The authoritative 22-suite candidate verifier has not yet run against a committed implementation SHA.
+- The then-authoritative 22-suite candidate verifier had not yet run against a committed implementation SHA. The later source-artifact repair added suite 23, as recorded in `records/2026-07-18-verifier-source-artifact-repair.md`.
 - The required fresh same-model/max-reasoning audit has not yet reviewed a frozen implementation SHA.
 - No PR exists yet, and no merge, install, deployment, provider send, live-store write, plist, or launchd action was attempted.

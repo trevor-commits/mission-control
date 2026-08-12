@@ -1,8 +1,10 @@
 # Lane D state — rollup-answer CLI wiring
 
-- Status: CURRENT-MAIN INTEGRATION IN PROGRESS. Branch head `6a75e879b6b9bd43737edce841d4268453f8a1eb` is merging `origin/main@43bca917871a33f3b4176117df86e15eb80a3472`; all four conflicts are resolved with the redesigned attention surfaces and answered-pending semantics preserved. Focused integration gates are green; the immutable merge commit, exact-head authoritative gate, fresh independent audit, push, and PR readback remain pending. Live card `decision:a6f185b53cbc1278499b062d` remains for the merge sitting only.
-- Branch: `codex/rollup-answer-wiring`
+- Status: CONVERGENCE PR REVIEW REPAIR COMPLETE; FINAL GATES PENDING. PR #16 contains the current-main integration through remote docs head `8b36b32`; local convergence repair `2bfda6afe0ee839dc498cf27820febfde543dbde` closes the first hosted-CI failure and every validated Codex/CodeRabbit finding. Focused affected suites are green. Exact final-head verification, push-hook and hosted readback, merge, install, archive, and cleanup remain.
+- Branch: `codex/repo-convergence-019ff2ae`
 - Review base: `43bca917871a33f3b4176117df86e15eb80a3472`
+- Convergence PR: #16, `https://github.com/trevor-commits/mission-control/pull/16`
+- Source branch: `codex/rollup-answer-wiring` at `fdb838dd6d7520646541c9bf95e2a7901c8c2d58`; contained by convergence commits `bd83a30` and `4453b8e`.
 - Seventh frozen-head audit: Cursor `9db69b00-966c-43d3-b1eb-72181b949178` / packet `records/audit-packets/2026-07-24-rollup-answer-seventh-frozen-head.md`
 - Finish parent: Cursor finishing Codex `019f73d8` (`CURSOR-FINISH-019f73d8-20260724`)
 - Original implementation checkpoint: `754de932301113e81f51bbf4febe2d3fc28c01e0`
@@ -13,8 +15,8 @@
 - Fourth-audit local-view repair: `0ce6d3d7704a8e305159cdbd78965bd34f1b8a02` (`fix(decisions): reconcile local views after answers`)
 - Fifth-audit receipt/entry repair: `c0d0a5306ae51a81fb7ace3948804e78e810b651` (`fix(decisions): bind receipts and canonical entries`)
 - Sixth-audit boundary repair: `78672c46d94041f974ca97b0d2cfe5596c6b020a` (`fix(decisions): harden symlink quarantine for macOS O_SYMLINK gap`) — authoritative `SUITES PASS=23 FAIL=0` at this exact head; evidence `records/evidence/rollup-answer-final-boundaries-red-green.txt` and `records/evidence/rollup-answer-final-boundaries-full-green.txt`
-- Worktree: `/Users/gillettes/Coding Projects/mission-control-worktrees/rollup-answer-wiring`
-- Source chat: Codex `019f73d8-e5dc-73a0-acc5-8a4916ac6819`
+- Worktree: owner-leased repository convergence worktree.
+- Source chat: Codex `019ff2ae-33b3-7e50-af39-3a08efef29a8`; Lane D source owner `019f762c-c815-77b3-97c0-021c66fd3b7e`.
 - Trust Gate: on — durable operator direction and completion semantics
 - Canonical change: `openspec/changes/rollup-answer/`
 - Executable binding: `hotl-workflow-rollup-answer.md`
@@ -38,9 +40,9 @@ Trevor approved the following seven points through `thread_goal_updated` at `202
 
 - `scripts/decision-alert` derives pending from immutable events, replans current scope inside one immediate transaction, verifies private artifact proof, persists the canonical manifest SHA-256 plus exact member/metadata/artifact identity, inserts all target events atomically, and exact-compares every replay field.
 - `scripts/compose-decision-prompt.py` validates before paths, creates deterministic rollup bytes, retains pinned descriptors, verifies name-to-fd and member bytes before/after commit and publication, quarantines the exact receipt-bound held artifact on first publication/replay failure, and fd/inode-binds either a directory or regular-file canonical conflict before private quarantine; orphan first-answer conflicts remain untouched.
-- `scripts/dashboard` exposes public single/rollup answer commands and treats the strict decisions feed, persisted Morning Brief, and strict public brief feed as one same-`SCRIPT_DIR` success boundary with `DECISION_ALERT_AUTO=0`; committed-but-refresh-failed is nonzero with receipt stdout and explicit degraded stderr.
+- `scripts/dashboard` exposes public single/rollup answer commands and treats strict decisions, derived attention, persisted Morning Brief, and strict public brief feeds as one same-`SCRIPT_DIR` success boundary with `DECISION_ALERT_AUTO=0`; committed-but-refresh-failed is nonzero with receipt stdout and explicit degraded stderr.
 - Morning Brief omits exactly current pending targets from `NEEDS YOU`; its local-only refresh recomposes not-sent state and accepts delivered state only after a private receipt contains and matches the full delivered Markdown digest, deterministic chunk limit, every ordered chunk digest, and then the exact receipt bytes across replay. It preserves delivered identity/receipt/cursor bytes without resend and refuses to rewrite pending/partial/failed retry content even after local-day rollover. Home and panel show the recorded choice as read-only awaiting owner consumption, with actionable rows stably ordered before pending rows on bounded views; Home's global H1 also reflects combined non-decision attention.
-- `scripts/rollup-answer.test.py` covers 29 temporary-state contracts, including first-write and replay mutation/parent replacement, directory/regular-file/symlink occupied canonical names, quarantine name-swap rollback, orphan symlink preservation, stale installed decision/brief readers, tampered destination repair, deterministic digest replay, three-surface strict refresh failure, persisted/delivered/in-flight/prior-day Morning Brief behavior, malformed/byte-unbound/missing-field receipt rejection, single-answer parity, and fake-sender no-egress proof.
+- `scripts/rollup-answer.test.py` covers 32 temporary-state contracts, including write-before-validation, whole-value identifiers, ambient test controls, replay mutation/parent replacement, occupied canonical names, quarantine rollback, exact refresh through attention and Morning Brief, receipt validation, single-answer parity, and fake-sender no-egress proof.
 
 ## Audit history and disposition
 
@@ -67,7 +69,7 @@ Trevor approved the following seven points through `thread_goal_updated` at `202
 - Fifth fresh audit: `/root/lane_d_local_view_reaudit`, `gpt-5.6-sol`/max, reviewed frozen `8b8fa77` and returned `NOT MERGE-READY` with two P1s despite the green declared suites. P1: structurally complete 64-hex receipt fields did not bind actual delivered Markdown/chunks. P1: a mode-0600 regular file at the canonical name in a replacement parent survived failure and wedged later replay.
 - Disposition: both accepted and independently RED-reproduced. Exact repair `c0d0a53` binds full Markdown, chunking, ordered chunks, and exact receipt bytes, and quarantines only exact fd/inode-bound receipt-backed regular-file/directory conflicts. Targeted 3/3, rollup 25/25, Morning Brief delivery, and authoritative 23/0 are green; only the fresh successor audit remains pending.
 - Sixth fresh audit: Codex `019f77f3-4975-7f51-b296-fbdc2dbd3d47`, `gpt-5.6-sol`/max, reviewed frozen `0bf1c69` and returned `NOT REVIEW-CLEAN / NOT MERGE-READY` with two P1s and two P2s despite focused 25/25 and authoritative 23/0. P1: delivered receipt identity fields remained optional. P1: a receipt-backed canonical symlink remained visible and permanently wedged replay. P2: quarantine could move an unbound name-swap replacement before detecting the inode mismatch. P2: Home could say `Answers recorded` while non-decision work required attention.
-- Disposition: all four accepted and independently RED-reproduced. The current repair requires both identity fields, opens/quarantines symlink entries without target traversal, restores a raced moved replacement through descriptor-bound rollback, and binds the global Home H1 to combined attention. Targeted 4/4, rollup 29/29, browser 254, and static checks are green; the authoritative gate and fresh successor audit remain pending.
+- Disposition at that audit point: all four were accepted and independently RED-reproduced. The repair requires both identity fields, opens/quarantines symlink entries without target traversal, restores a raced moved replacement through descriptor-bound rollback, and binds the global Home H1 to combined attention. Targeted 4/4, rollup 29/29, browser 254, and static checks were green; the later authoritative gate and successor audit are recorded below.
 
 ## Evidence
 
@@ -191,13 +193,14 @@ Receipts:
 - Confirmed: no schema migration, dependency, live-store write, provider send, main touch, install, deploy, release, plist, or launchd action occurred during Lane D implementation.
 - Confirmed: the sixth repair's focused matrix is targeted 4/4, rollup 29/29, browser 254, with syntax/diff/source-artifact checks green.
 - Confirmed: exact sixth-repair head `78672c46d94041f974ca97b0d2cfe5596c6b020a` passes the authoritative `SUITES PASS=23 FAIL=0` gate live on macOS 26.5 (evidence `records/evidence/rollup-answer-final-boundaries-full-green.txt`); the macOS `O_SYMLINK` gap was RED before this head and GREEN after.
-- Confirmed: seventh frozen-head audit is `REVIEW-CLEAN / MERGE-READY` (Cursor `9db69b00`; Codex Sol usage-limited). Parent re-ran rollup 29/29 OK before the audit.
-- Confirmed: PR https://github.com/trevor-commits/mission-control/pull/11 is open; main merge conflicts resolved with attention-lane + answered-pending preserved; post-merge focused gates green (rollup 29/29, ER-134 62/0, browser 254, attention 5/0).
-- Did not verify: merged-main install/deploy, provider delivery, or live-store behavior because those actions are prohibited here.
-- Do not do: merge to main, install, deploy, send, write a live store, change plist/launchd, or resolve live decision `decision:a6f185b53cbc1278499b062d` from this lane.
-- Merge-sitting note: the still-open/alerting live card `decision:a6f185b53cbc1278499b062d` should be resolved by the integrator at the merge sitting, not by this branch task.
+- Confirmed: the seventh frozen-head audit is historically `REVIEW-CLEAN / MERGE-READY` for source code head `78672c4` only (Cursor `9db69b00`; Codex Sol usage-limited). Parent re-ran rollup 29/29 before that audit.
+- Confirmed: source PR #11 is superseded for landing by convergence PR #16. Source repairs `60577b78` and `fdb838d` are contained as `bd83a30` and `4453b8e`; review repair `2bfda6a` passes the full affected matrix.
+- Did not verify: final records-head authoritative and hosted gates, merged-main install, provider delivery, or live-store behavior.
+- Do not do from the retained source branch: merge PR #11, install, deploy, send, write a live store, change plist/launchd, or resolve live decision `decision:a6f185b53cbc1278499b062d`.
+- Merge-sitting note: PR #16 owns landing. The integrator must read back the live card before changing it and must preserve provider/no-egress boundaries during verification.
 
 ## Exact resume
 
-1. Lane D implementation + seventh audit + conflict-resolved PR are complete for branch-only review.
-2. Integrator at merge sitting: merge PR #11 after hosted checks, resolve live card `decision:a6f185b53cbc1278499b062d`, then install/deploy only with explicit Trevor authorization.
+1. Lane D source implementation, historical frozen-head audit, current-main integration, and convergence review repair are complete.
+2. Run the exact final records-head verifier, push PR #16, and require hosted CI/review readback before merge.
+3. After `origin/main` contains the merged commit, install that exact source, verify the install stamp/runtime, then archive PR #11 and clean released refs/worktrees through the owner broker.

@@ -80,7 +80,7 @@ Evidence: `records/evidence/rollup-answer-occupied-parent-red-green.txt`.
 
 ## Final attempt
 
-- Status: seventh frozen-head audit **REVIEW-CLEAN / MERGE-READY** at code head `78672c46d94041f974ca97b0d2cfe5596c6b020a`. Codex Sol was usage-limited; Cursor independent auditor `9db69b00-966c-43d3-b1eb-72181b949178` substituted. PR #11 exists; main merge conflicts resolved in the finish session (attention-lane + answered-pending preserved).
+- Status: seventh frozen-head audit **REVIEW-CLEAN / MERGE-READY** at code head `78672c46d94041f974ca97b0d2cfe5596c6b020a` only. Codex Sol was usage-limited; Cursor independent auditor `9db69b00-966c-43d3-b1eb-72181b949178` substituted. PR #11 exists; main merge conflicts resolved in the finish session (attention-lane + answered-pending preserved). This historical verdict does not certify later source, convergence, or PR heads.
 - Historical full-gate evidence: `records/evidence/rollup-answer-receipt-entry-full-green.txt` (`SUITES PASS=23 FAIL=0`, rollup 25/25).
 - Current focused evidence: `records/evidence/rollup-answer-final-boundaries-red-green.txt` (targeted 4/4, rollup 29/29, browser 254; records the live macOS `O_SYMLINK` RED and its repair).
 - Current authoritative evidence: `records/evidence/rollup-answer-final-boundaries-full-green.txt` (`SUITES PASS=23 FAIL=0` at exact repair head `78672c46d94041f974ca97b0d2cfe5596c6b020a`; rollup 29/29; browser 254; OpenSpec 2/0).
@@ -105,3 +105,29 @@ Evidence: `records/evidence/rollup-answer-occupied-parent-red-green.txt`.
 - Resolved transcript: `/Users/gillettes/.codex/sessions/2026/07/17/rollout-2026-07-17T23-10-22-019f73d8-e5dc-73a0-acc5-8a4916ac6819.jsonl`.
 
 No live store, provider send, install, deployment, plist, launchd, or main-branch merge was performed by the auditor or finish session. Branch-only PR updates and conflict resolution only.
+
+## Post-audit convergence handoff
+
+- Later source repairs: attention/feed repair
+  `60577b78fa32b48f10580796f94aacdb16a1fb19` and validation-before-write repair
+  `fdb838dd6d7520646541c9bf95e2a7901c8c2d58`.
+- Convergence containment: `bd83a30` and `4453b8e` on
+  `codex/repo-convergence-019ff2ae`. PR review and hosted-CI repair is
+  `2bfda6afe0ee839dc498cf27820febfde543dbde`.
+- Separate verification: exact source head `fdb838d` passed `SUITES PASS=26 FAIL=0`.
+  Convergence repair passed rollup `32/32`, dashboard `91/0`, browser
+  315, panel `13/0`, native summary `16/0`, and every affected owner suite.
+  Final records-head authoritative and hosted verification remain landing gates.
+- Work Record: `todo.md`, “2026-08-12 — PR review and hosted-CI repair.”
+- Completed index: `todo.md`, “Lane D source implementation and review repair.”
+- Issue and branch ledger: `self-contained:` repository convergence in Active
+  Next Steps and `codex/repo-convergence-019ff2ae` in Active Branch Ledger.
+- Self-audit: behavioral findings were mutation-reproduced before repair.
+  Historical evidence commands were corrected without rewriting their outcomes.
+  No install, provider send, live-store mutation, merge, ref deletion, or
+  worktree cleanup occurred during reconciliation.
+- Ripple Check: `STATE.md`, the Rollup Answer OpenSpec tasks, verification and
+  retrospective, the convergence record, audit packet, Active Next Steps,
+  Completed, Branch/Audit/Test/Feedback ledgers, and evidence records were
+  reconciled together. Product intent, V2 gates, and runtime activation remain
+  unchanged.

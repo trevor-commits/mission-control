@@ -28,4 +28,21 @@ The first full verifier was necessary but insufficient. Independent review found
 
 ## Remaining boundary
 
-Fresh audit of frozen `0bf1c69` reopened four boundaries: absent receipt identity fields, receipt-backed canonical symlinks, quarantine name-swap rollback, and the global Home headline. All four are RED/GREEN; exact repair `78672c46d94041f974ca97b0d2cfe5596c6b020a` closes the live macOS gap and passed its authoritative gate. Current main `43bca917` added redesigned Home/panel and attention aggregation contracts. Source repair `60577b78fa32b48f10580796f94aacdb16a1fb19` closes the remaining cadence and combined-state omissions with independent manual-attention and stale-Brief mutations plus 315 browser assertions. That source is contained as `bd83a30` in the repository convergence branch. Final convergence verification, hosted CI, merge, and installation remain outside the source branch.
+Fresh audit of frozen `0bf1c69` reopened receipt identity, canonical symlink,
+quarantine rollback, and global Home headline boundaries. Exact repair
+`78672c46d94041f974ca97b0d2cfe5596c6b020a` closed all four and passed its
+authoritative gate.
+
+Current main `43bca917` added redesigned Home, panel, and attention aggregation
+contracts. Source repair `60577b78fa32b48f10580796f94aacdb16a1fb19`
+closed the remaining cadence and combined-state omissions. Its independent
+manual-attention and stale-Brief mutations pass with 315 browser assertions.
+
+Validation-before-write repair
+`fdb838dd6d7520646541c9bf95e2a7901c8c2d58` prevents invalid targets from
+creating locks, batch paths, or SQLite files. Convergence commits `bd83a30` and
+`4453b8e` contain both source repairs.
+
+PR review repair `2bfda6afe0ee839dc498cf27820febfde543dbde`
+passes rollup `32/32` and dashboard `91/0`. Final records-head verification,
+hosted readback, merge, and installation remain outside the source branch.

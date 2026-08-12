@@ -58,6 +58,8 @@ overrides and returned committed-but-refresh-failed instead of using one runtime
 GREEN: the answer-only refresh boundary unsets those two overrides; both planted
 markers remain absent, current feeds are published, and the paired real-collector
 failure test still returns the committed receipt nonzero.
+The transaction also ignores ambient `DASHBOARD_TEST_ROLLUP_FAIL_BEFORE_COMMIT`
+and `DASHBOARD_TEST_ROLLUP_FAIL_AFTER_COMMIT` unless `DASHBOARD_TESTING=1`.
 
 SELF-REVIEW RED/GREEN — ambient composer root
 RED: a planted `REPO_ROOT/scripts/compose-decision-prompt.py` was selected before
