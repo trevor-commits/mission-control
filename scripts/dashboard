@@ -2223,11 +2223,20 @@ refresh_answer_views() {
     # Feeder overrides are useful for ordinary collection and tests, but a
     # state-changing answer must prove coherence through the same exact runtime
     # as its writer. Ambient overrides cannot participate in this transaction.
-    unset DASHBOARD_CMD_DECISIONS DASHBOARD_CMD_BRIEF
+    unset DASHBOARD_CMD_DECISIONS DASHBOARD_CMD_ATTENTION DASHBOARD_CMD_BRIEF
     engine collect --force --strict decisions >/dev/null &&
+      engine collect --force --strict attention >/dev/null &&
       "$SCRIPT_DIR/morning-brief" --refresh-local >/dev/null &&
       engine collect --force --strict brief >/dev/null
   )
+}
+
+valid_card_id() {
+  [[ "${1:-}" =~ ^card:[0-9a-f]{16}$ ]]
+}
+
+valid_decision_id() {
+  [[ "${1:-}" =~ ^decision:[0-9a-f]{24}$ ]]
 }
 
 cmd="${1:-}"
@@ -2281,7 +2290,7 @@ case "$cmd" in
         done
         case "$choice" in *[!0-9]*|"") echo "decide answer: choice must be a positive integer" >&2; exit 2 ;; esac
         [ "$choice" -ge 1 ] || { echo "decide answer: choice must be >= 1" >&2; exit 2; }
-        printf '%s\n' "$did" | grep -Eq '^decision:[0-9a-f]{24}$' || {
+        valid_decision_id "$did" || {
           echo "decide answer: invalid decision id" >&2; exit 2;
         }
         compose_bin="$SCRIPT_DIR/compose-decision-prompt.py"
@@ -2325,10 +2334,10 @@ case "$cmd" in
         done
         case "$choice" in *[!0-9]*|"") echo "decide answer-rollup: choice must be a positive integer" >&2; exit 2 ;; esac
         [ "$choice" -ge 1 ] || { echo "decide answer-rollup: choice must be >= 1" >&2; exit 2; }
-        printf '%s\n' "$card_id" | grep -Eq '^card:[0-9a-f]{16}$' || {
+        valid_card_id "$card_id" || {
           echo "decide answer-rollup: invalid card id" >&2; exit 2;
         }
-        printf '%s\n' "$primary_did" | grep -Eq '^decision:[0-9a-f]{24}$' || {
+        valid_decision_id "$primary_did" || {
           echo "decide answer-rollup: invalid primary decision id" >&2; exit 2;
         }
         compose_bin="$SCRIPT_DIR/compose-decision-prompt.py"

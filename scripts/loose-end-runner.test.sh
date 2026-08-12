@@ -201,9 +201,11 @@ SENSITIVE_HOME="$TMP/home-sensitive"
 if MISSION_CONTROL_HOME="$SENSITIVE_HOME" STUB_SCENARIO=sensitive_ref \
     STUB_CALL_LOG="$TMP/calls-sensitive" "$RUNNER" --scanner "$STUB" --repo "$REPO" \
     > "$TMP/out-sensitive.json"; then
-  if ! rg -q 'sk-abcdefghijklmnopqrstuvwxyz123456' "$TMP/out-sensitive.json" "$SENSITIVE_HOME/loose-end-runner/report.jsonl" &&
-      python3 - "$TMP/out-sensitive.json" <<'PY'
+  if python3 - "$TMP/out-sensitive.json" "$SENSITIVE_HOME/loose-end-runner/report.jsonl" <<'PY'
 import json,sys
+secret="sk-"+"abcdefghijklmnopqrstuvwxyz"+"123456"
+for path in sys.argv[1:]:
+    assert secret not in open(path).read(), path
 d=json.load(open(sys.argv[1])); assert d["actions"][0]["reason"]=="privacy_rejected", d
 PY
   then ok; else bad "shared privacy content-free refusal"; fi
@@ -296,7 +298,7 @@ PY
 else bad "default discovery exit"; fi
 
 # The stub receives scanner invocations only. The runner never invokes git push.
-if ! rg -q '"push"' "$TMP"/calls-*.jsonl 2>/dev/null; then ok; else bad "runner executed or delegated push"; fi
+if ! grep -q '"push"' "$TMP"/calls-*.jsonl 2>/dev/null; then ok; else bad "runner executed or delegated push"; fi
 SENTINEL_AFTER=$(shasum -a 256 "$REPO/sentinel" | awk '{print $1}')
 [ "$SENTINEL_BEFORE" = "$SENTINEL_AFTER" ] && ok || bad "repository sentinel mutated"
 

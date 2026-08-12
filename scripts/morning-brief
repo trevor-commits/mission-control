@@ -1146,11 +1146,14 @@ def _refresh_local_locked():
     snapshot = _snapshot_inputs()
     health = {name: _input_health(name, snapshot[name], now) for name in INPUTS}
     needs_cap = _bounded_int("MORNING_BRIEF_NEEDS_YOU_MAX", 3, maximum=10)
-    needs, collapsed, _stale = _needs_you(snapshot, health, needs_cap)
+    needs, collapsed, stale = _needs_you(snapshot, health, needs_cap)
     sections[needs_indexes[0]] = _section("NEEDS YOU", needs, collapsed)
     inputs = existing.get("inputs")
     if isinstance(inputs, dict):
-        inputs["decisions"] = health["decisions"]
+        for name in INPUTS:
+            if name in inputs:
+                inputs[name] = health[name]
+    existing["stale_required_inputs"] = sorted(stale)
 
     existing["local_refresh"] = {
         "reason": "decision_state_changed",

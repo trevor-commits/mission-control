@@ -179,6 +179,28 @@ PY
 then pass "sidecar preserves order, freshness, equal-timestamp cursor, Git and open deltas"
 else fail "sidecar preserves order, freshness, equal-timestamp cursor, Git and open deltas"; fi
 
+if PYTHONPATH="$ROOT/scripts" python3 - "$BRIEF" <<'PY'
+import importlib.machinery, sys
+m = importlib.machinery.SourceFileLoader("mb_pending_null", sys.argv[1]).load_module()
+snapshot = {name: None for name in m.INPUTS}
+snapshot["decisions"] = {"data": {"pinned": [{
+    "id": "decision:" + "5" * 24,
+    "text": "Explicit null pending marker stays actionable",
+    "trust": "structured",
+    "provenance": "chat-graph tier1",
+    "answer_pending": None,
+}]}}
+health = {
+    name: {"required": config["required"], "state": "fresh"}
+    for name, config in m.INPUTS.items()
+}
+needs, _, _ = m._needs_you(snapshot, health, 3)
+assert any(row["text"] == "Explicit null pending marker stays actionable"
+           for row in needs), needs
+PY
+then pass "explicit null answer_pending remains actionable in NEEDS YOU"
+else fail "explicit null answer_pending was hidden from NEEDS YOU"; fi
+
 if find "$MISSION_CONTROL_HOME/morning-brief" -name '*.tmp.*' -print | grep -q .; then
   fail "atomic compose leaves no temp files"
 else pass "atomic compose leaves no temp files"; fi

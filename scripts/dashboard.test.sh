@@ -250,8 +250,8 @@ wait_owned_groups_absent() {
 }
 
 cleanup_owned_groups() {
-  local leader pgid identity expected i alive unsafe=0
-  register_owned_groups || return 1
+  local leader pgid identity expected i alive unsafe=0 registration_failed=0
+  register_owned_groups || registration_failed=1
   while IFS="$(printf '\t')" read -r leader pgid identity expected; do
     fixture_group_matches "$leader" "$pgid" "$identity" "$expected" || continue
     kill -TERM -- "-$pgid" 2>/dev/null || true
@@ -275,7 +275,7 @@ cleanup_owned_groups() {
       unsafe=1
     fi
   done < "$OWNED_GROUP_REGISTRY"
-  [ "$unsafe" = 0 ]
+  [ "$unsafe" = 0 ] && [ "$registration_failed" = 0 ]
 }
 
 SUITE_CLEANED=0
@@ -2893,7 +2893,7 @@ c53() { # nested shells keep bare BSD mktemp calls inside the owned suite root
 }
 
 c54() { # a feeder may finish before the test harness records its private group
-  local mch error
+  local mch error error_ok
   mch="$(newhome)"
   DASHBOARD_TESTING=1 DASHBOARD_TEST_REGISTER_PAUSE_MS=50 \
     DASHBOARD_CMD_GIT=/usr/bin/true MISSION_CONTROL_HOME="$mch" \
@@ -2906,12 +2906,58 @@ except (OSError, ValueError):
     print("")
 PYEOF
 )"
-  if [ "$error" = "feeder output not JSON: Expecting value: line 1 column 1 (char 0)" ] && \
+  case "$error" in
+    "feeder output not JSON:"*) error_ok=1 ;;
+    *) error_ok=0 ;;
+  esac
+  if [ "$error_ok" = 1 ] && \
      grep -q $'\t/usr/bin/true$' "$OWNED_GROUP_RECEIPTS"; then
     ok "test fixtures: a completed fast feeder still records its owned group"
   else
     no "test fixtures: fast feeder registration failed ($error)"
   fi
+}
+
+c55() { # one invalid receipt must not keep a separately valid group alive
+  local probe ready child pgid="" cleanup_status=0
+  probe="$ROOT/group-cleanup-probe.py"
+  ready="$ROOT/group-cleanup-probe.ready"
+  cat > "$probe" <<'PY'
+import os, signal, sys, time
+signal.signal(signal.SIGTERM, signal.SIG_IGN)
+with open(sys.argv[1], "w") as handle:
+    handle.write("ready\n")
+while True:
+    time.sleep(1)
+PY
+  /usr/bin/python3 - "$probe" "$ready" <<'PY' &
+import os, sys
+os.setsid()
+os.execv("/usr/bin/python3", ["/usr/bin/python3", sys.argv[1], sys.argv[2]])
+PY
+  child=$!
+  register_owned_process "$child" 2>/dev/null || true
+  for _ in $(seq 1 100); do
+    pgid="$(fixture_process_pgid "$child")"
+    [ "$pgid" = "$child" ] && [ -e "$ready" ] && break
+    sleep 0.01
+  done
+  if [ "$pgid" != "$child" ] || [ ! -e "$ready" ] ||
+     ! record_owned_group_receipt "$child" "$pgid" "$probe"; then
+    no "test fixtures: invalid receipt setup reached a valid private group"
+    return
+  fi
+  printf '%s\n' 'invalid-receipt' >&9
+  cleanup_owned_groups || cleanup_status=$?
+  wait_owned_groups_absent || true
+  wait "$child" 2>/dev/null || true
+  if [ "$cleanup_status" -ne 0 ] && ! fixture_group_has_members "$pgid"; then
+    ok "test fixtures: invalid receipt reports failure after valid groups are reaped"
+  else
+    no "test fixtures: invalid receipt skipped valid-group cleanup"
+  fi
+  : > "$OWNED_GROUP_RECEIPTS"
+  : > "$OWNED_GROUP_REGISTRY"
 }
 
 case "${DASHBOARD_TEST_CASE:-}" in
@@ -2923,9 +2969,11 @@ temp-root)
   c53 ;;
 fast-feeder-registration)
   c54 ;;
+invalid-group-receipt-cleanup)
+  c55 ;;
 *)
   c0; c1; c2; c3; c4; c4b; c5; c6; c7; c8; c8a; c8b; c9; c10; c11; c12; c13; c14; c14a; c15; c16; c17; c18; c19; c20; c21; c22; c23; c24; c25; c26; c27; c28; c29; c30; c31; c32; c33; c34; c35; c36; c37; c38; c39; c39a; c40; c41; c42; c42a; c43; c44; c45; c46; c47; c48; c49; c50; c51
-  c52; c53; c54 ;;
+  c52; c53; c54; c55 ;;
 esac
 shell_contract
 LIVE_DATA_AFTER="$(live_data_fingerprint)"

@@ -8,6 +8,7 @@ reachable from this suite.
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import importlib.util
 import json
@@ -20,6 +21,7 @@ import subprocess
 import tempfile
 import time
 import unittest
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -45,7 +47,12 @@ class RollupAnswerTests(unittest.TestCase):
         self.temp = Path(tempfile.mkdtemp(prefix="mc-rollup-answer-test."))
         self.home = self.temp / "state"
         self.home.mkdir(mode=0o700)
-        self.env = dict(os.environ)
+        self.env = {
+            key: value for key, value in os.environ.items()
+            if not key.startswith((
+                "MISSION_CONTROL_", "DECISION_ALERT_", "DECISION_TEST_",
+                "MORNING_BRIEF_", "CHAT_GRAPH_", "DASHBOARD_"))
+        }
         self.env.update({
             "MISSION_CONTROL_HOME": str(self.home),
             "REPO_ROOT": str(ROOT),
@@ -71,6 +78,21 @@ class RollupAnswerTests(unittest.TestCase):
         if not ok and proc.returncode == 0:
             self.fail("command unexpectedly succeeded: %s\nstdout=%s" % (argv, proc.stdout))
         return proc
+
+    def _await_pause(self, proc: subprocess.Popen[str], marker: Path,
+                     what: str) -> None:
+        deadline = time.monotonic() + 5
+        while not marker.exists() and time.monotonic() < deadline:
+            if proc.poll() is not None:
+                break
+            time.sleep(0.01)
+        if marker.exists():
+            return
+        if proc.poll() is None:
+            proc.kill()
+        stdout, stderr = proc.communicate()
+        self.fail("%s did not reach test pause: %s %s" % (
+            what, stdout, stderr))
 
     def _alert(self, *args: str, ok: bool = True,
                extra_env: dict[str, str] | None = None) -> dict:
@@ -207,6 +229,42 @@ class RollupAnswerTests(unittest.TestCase):
         self._dashboard(
             "decide", "answer-rollup", fixture["card"]["card_id"],
             "decision:" + "0" * 24, "1", ok=False)
+        self.assertEqual(self._state_snapshot(), before)
+
+    def test_public_rollup_identifiers_reject_trailing_lines(self) -> None:
+        fixture = self._three_member_card()
+        card_id = fixture["card"]["card_id"]
+        primary_id = fixture["ids"]["primary"]
+        before = self._state_snapshot()
+        marker = self.temp / "composer-invoked"
+        fake_bin = self.temp / "bin"
+        fake_bin.mkdir()
+        fake_python = fake_bin / "python3"
+        fake_python.write_text(
+            "#!/bin/sh\ntouch \"$ROLLUP_TEST_COMPOSER_MARKER\"\nexit 99\n")
+        fake_python.chmod(0o700)
+        validation_env = {
+            "PATH": str(fake_bin) + os.pathsep + self.env.get("PATH", ""),
+            "ROLLUP_TEST_COMPOSER_MARKER": str(marker),
+        }
+
+        bad_card = self._dashboard(
+            "decide", "answer-rollup", card_id + "\ntrailing",
+            primary_id, "1", ok=False, extra_env=validation_env)
+        self.assertEqual(
+            bad_card["stderr"].strip(),
+            "decide answer-rollup: invalid card id")
+        self.assertFalse(marker.exists())
+        self.assertEqual(self._state_snapshot(), before)
+
+        bad_primary = self._dashboard(
+            "decide", "answer-rollup", card_id,
+            primary_id + "\ntrailing", "1", ok=False,
+            extra_env=validation_env)
+        self.assertEqual(
+            bad_primary["stderr"].strip(),
+            "decide answer-rollup: invalid primary decision id")
+        self.assertFalse(marker.exists())
         self.assertEqual(self._state_snapshot(), before)
 
     def test_batch_keeps_targets_open_and_blocks_ordinary_reanswer(self) -> None:
@@ -432,10 +490,14 @@ class RollupAnswerTests(unittest.TestCase):
         for decision_id in (ids["primary"], ids["equivalent"]):
             self.assertEqual(self._pending_events(decision_id), [])
 
+        (self.home / ".rollup-answer-test-continue").touch(mode=0o600)
         self._dashboard(
             "decide", "answer-rollup", card_id, ids["primary"], "1",
             ok=False,
-            extra_env={"DASHBOARD_TEST_ROLLUP_FAIL_BEFORE_COMMIT": "1"})
+            extra_env={
+                "DASHBOARD_TESTING": "1",
+                "DASHBOARD_TEST_ROLLUP_FAIL_BEFORE_COMMIT": "1",
+            })
         for decision_id in (ids["primary"], ids["equivalent"]):
             self.assertEqual(self._pending_events(decision_id), [])
         batch_parent = self.home / "answer-batches"
@@ -445,7 +507,10 @@ class RollupAnswerTests(unittest.TestCase):
         self._dashboard(
             "decide", "answer-rollup", card_id, ids["primary"], "1",
             ok=False,
-            extra_env={"DASHBOARD_TEST_ROLLUP_FAIL_AFTER_COMMIT": "1"})
+            extra_env={
+                "DASHBOARD_TESTING": "1",
+                "DASHBOARD_TEST_ROLLUP_FAIL_AFTER_COMMIT": "1",
+            })
         pending_digest = self._history(
             ids["primary"])["decision"]["answer_pending"][
                 "artifact_manifest_sha256"]
@@ -462,6 +527,19 @@ class RollupAnswerTests(unittest.TestCase):
         self.assertTrue(recovered["replayed"])
         self.assertEqual(recovered["manifest_sha256"], pending_digest)
         self.assertTrue(Path(recovered["batch_path"]).is_dir())
+        for decision_id in (ids["primary"], ids["equivalent"]):
+            self.assertEqual(len(self._pending_events(decision_id)), 1)
+
+    def test_ambient_rollup_failure_switches_are_ignored_outside_tests(self) -> None:
+        fixture = self._three_member_card()
+        ids = fixture["ids"]
+        result = self._dashboard(
+            "decide", "answer-rollup", fixture["card"]["card_id"],
+            ids["primary"], "1", extra_env={
+                "DASHBOARD_TEST_ROLLUP_FAIL_BEFORE_COMMIT": "1",
+                "DASHBOARD_TEST_ROLLUP_FAIL_AFTER_COMMIT": "1",
+            })
+        self.assertTrue(Path(result["batch_path"]).is_dir())
         for decision_id in (ids["primary"], ids["equivalent"]):
             self.assertEqual(len(self._pending_events(decision_id)), 1)
 
@@ -490,16 +568,9 @@ class RollupAnswerTests(unittest.TestCase):
             ["/bin/bash", str(DASHBOARD), "decide", "answer-rollup",
              card_id, ids["primary"], "1"],
             env=env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        ready = self.home / ".rollup-answer-test-ready"
-        deadline = time.monotonic() + 5
-        while not ready.exists() and time.monotonic() < deadline:
-            if proc.poll() is not None:
-                break
-            time.sleep(0.01)
-        if not ready.exists():
-            stdout, stderr = proc.communicate(timeout=2)
-            self.fail("rollup transaction did not reach test pause: %s %s" % (
-                stdout, stderr))
+        self._await_pause(
+            proc, self.home / ".rollup-answer-test-ready",
+            "rollup transaction")
         old_parent = self.home / "answer-batches-old"
         batch_parent.rename(old_parent)
         batch_parent.mkdir(mode=0o700)
@@ -524,16 +595,9 @@ class RollupAnswerTests(unittest.TestCase):
             ["/bin/bash", str(DASHBOARD), "decide", "answer-rollup",
              card_id, ids["primary"], "1"],
             env=env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        ready = self.home / ".rollup-answer-postcommit-test-ready"
-        deadline = time.monotonic() + 5
-        while not ready.exists() and time.monotonic() < deadline:
-            if proc.poll() is not None:
-                break
-            time.sleep(0.01)
-        if not ready.exists():
-            stdout, stderr = proc.communicate(timeout=2)
-            self.fail("rollup transaction did not reach postcommit pause: %s %s" % (
-                stdout, stderr))
+        self._await_pause(
+            proc, self.home / ".rollup-answer-postcommit-test-ready",
+            "rollup transaction")
         stage = next((self.home / "answer-batches").glob(".rollup-stage.*"))
         prompt = stage / "prompts" / (ids["primary"] + ".md")
         prompt.write_text(prompt.read_text() + "mutated-after-commit\n")
@@ -568,16 +632,9 @@ class RollupAnswerTests(unittest.TestCase):
             ["/bin/bash", str(DASHBOARD), "decide", "answer-rollup",
              card_id, ids["primary"], "1"],
             env=env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        ready = self.home / ".rollup-answer-postcommit-test-ready"
-        deadline = time.monotonic() + 5
-        while not ready.exists() and time.monotonic() < deadline:
-            if proc.poll() is not None:
-                break
-            time.sleep(0.01)
-        if not ready.exists():
-            stdout, stderr = proc.communicate(timeout=2)
-            self.fail("rollup transaction did not reach postcommit pause: %s %s" % (
-                stdout, stderr))
+        self._await_pause(
+            proc, self.home / ".rollup-answer-postcommit-test-ready",
+            "rollup transaction")
         parent = self.home / "answer-batches"
         old_parent = self.home / "answer-batches-old-postcommit"
         parent.rename(old_parent)
@@ -612,16 +669,9 @@ class RollupAnswerTests(unittest.TestCase):
             ["/bin/bash", str(DASHBOARD), "decide", "answer-rollup",
              card_id, ids["primary"], "1"],
             env=env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        ready = self.home / ".rollup-answer-postcommit-test-ready"
-        deadline = time.monotonic() + 5
-        while not ready.exists() and time.monotonic() < deadline:
-            if proc.poll() is not None:
-                break
-            time.sleep(0.01)
-        if not ready.exists():
-            stdout, stderr = proc.communicate(timeout=2)
-            self.fail("replay did not reach postcommit pause: %s %s" % (
-                stdout, stderr))
+        self._await_pause(
+            proc, self.home / ".rollup-answer-postcommit-test-ready",
+            "replay")
 
         prompt = batch / "prompts" / (ids["primary"] + ".md")
         prompt.write_text(prompt.read_text() + "mutated-during-replay\n")
@@ -658,16 +708,9 @@ class RollupAnswerTests(unittest.TestCase):
             ["/bin/bash", str(DASHBOARD), "decide", "answer-rollup",
              card_id, ids["primary"], "1"],
             env=env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        ready = self.home / ".rollup-answer-postcommit-test-ready"
-        deadline = time.monotonic() + 5
-        while not ready.exists() and time.monotonic() < deadline:
-            if proc.poll() is not None:
-                break
-            time.sleep(0.01)
-        if not ready.exists():
-            stdout, stderr = proc.communicate(timeout=2)
-            self.fail("replay did not reach postcommit pause: %s %s" % (
-                stdout, stderr))
+        self._await_pause(
+            proc, self.home / ".rollup-answer-postcommit-test-ready",
+            "replay")
 
         parent = self.home / "answer-batches"
         old_parent = self.home / "answer-batches-old-replay"
@@ -705,16 +748,9 @@ class RollupAnswerTests(unittest.TestCase):
             ["/bin/bash", str(DASHBOARD), "decide", "answer-rollup",
              card_id, ids["primary"], "1"],
             env=env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        ready = self.home / ".rollup-answer-postcommit-test-ready"
-        deadline = time.monotonic() + 5
-        while not ready.exists() and time.monotonic() < deadline:
-            if proc.poll() is not None:
-                break
-            time.sleep(0.01)
-        if not ready.exists():
-            stdout, stderr = proc.communicate(timeout=2)
-            self.fail("replay did not reach postcommit pause: %s %s" % (
-                stdout, stderr))
+        self._await_pause(
+            proc, self.home / ".rollup-answer-postcommit-test-ready",
+            "replay")
 
         parent = self.home / "answer-batches"
         old_parent = self.home / "answer-batches-old-visible-conflict"
@@ -760,16 +796,9 @@ class RollupAnswerTests(unittest.TestCase):
             ["/bin/bash", str(DASHBOARD), "decide", "answer-rollup",
              card_id, ids["primary"], "1"],
             env=env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        ready = self.home / ".rollup-answer-postcommit-test-ready"
-        deadline = time.monotonic() + 5
-        while not ready.exists() and time.monotonic() < deadline:
-            if proc.poll() is not None:
-                break
-            time.sleep(0.01)
-        if not ready.exists():
-            stdout, stderr = proc.communicate(timeout=2)
-            self.fail("replay did not reach postcommit pause: %s %s" % (
-                stdout, stderr))
+        self._await_pause(
+            proc, self.home / ".rollup-answer-postcommit-test-ready",
+            "replay")
 
         parent = self.home / "answer-batches"
         old_parent = self.home / "answer-batches-old-regular-conflict"
@@ -855,34 +884,34 @@ class RollupAnswerTests(unittest.TestCase):
         replacement = parent / "replacement"
         replacement.write_text("unbound replacement\n")
         replacement.chmod(0o600)
-        parent_fd = os.open(parent, os.O_RDONLY | os.O_DIRECTORY)
-        held_fd = os.open(canonical, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
-        real_rename = COMPOSER.os.rename
         raced = False
+        with contextlib.ExitStack() as stack:
+            parent_fd = os.open(parent, os.O_RDONLY | os.O_DIRECTORY)
+            stack.callback(os.close, parent_fd)
+            held_fd = os.open(
+                canonical, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+            stack.callback(os.close, held_fd)
+            real_rename = COMPOSER.os.rename
 
-        def racing_rename(src, dst, *, src_dir_fd=None, dst_dir_fd=None):
-            nonlocal raced
-            if src == "canonical" and str(dst).startswith(
-                    ".rollup-quarantine.") and not raced:
-                raced = True
-                real_rename(
-                    "canonical", "held-away",
-                    src_dir_fd=src_dir_fd, dst_dir_fd=dst_dir_fd)
-                real_rename(
-                    "replacement", "canonical",
-                    src_dir_fd=src_dir_fd, dst_dir_fd=dst_dir_fd)
-            return real_rename(
-                src, dst, src_dir_fd=src_dir_fd, dst_dir_fd=dst_dir_fd)
+            def racing_rename(src, dst, *, src_dir_fd=None, dst_dir_fd=None):
+                nonlocal raced
+                if src == "canonical" and str(dst).startswith(
+                        ".rollup-quarantine.") and not raced:
+                    raced = True
+                    real_rename(
+                        "canonical", "held-away",
+                        src_dir_fd=src_dir_fd, dst_dir_fd=dst_dir_fd)
+                    real_rename(
+                        "replacement", "canonical",
+                        src_dir_fd=src_dir_fd, dst_dir_fd=dst_dir_fd)
+                return real_rename(
+                    src, dst, src_dir_fd=src_dir_fd, dst_dir_fd=dst_dir_fd)
 
-        COMPOSER.os.rename = racing_rename
-        try:
+            stack.enter_context(mock.patch.object(
+                COMPOSER.os, "rename", side_effect=racing_rename))
             with self.assertRaisesRegex(RuntimeError, "path changed"):
                 COMPOSER._quarantine_rollup_entry(
                     parent_fd, "canonical", held_fd, "race")
-        finally:
-            COMPOSER.os.rename = real_rename
-            os.close(held_fd)
-            os.close(parent_fd)
 
         self.assertTrue(raced)
         self.assertEqual(canonical.read_text(), "unbound replacement\n")
@@ -907,9 +936,18 @@ class RollupAnswerTests(unittest.TestCase):
         self._proc(
             ["/bin/bash", str(DASHBOARD), "refresh", "decisions"],
             extra_env=no_send_env)
+        self._proc(
+            ["/bin/bash", str(DASHBOARD), "refresh", "attention"],
+            extra_env=no_send_env)
         before = json.loads((self.home / "data" / "decisions.json").read_text())
         before_by_id = {row["id"]: row for row in before["data"]["pinned"]}
         self.assertIsNone(before_by_id[ids["primary"]]["answer_pending"])
+        attention_path = self.home / "data" / "attention.json"
+        attention_before = json.loads(attention_path.read_text())
+        attention_before_ids = {
+            row["id"] for row in attention_before["data"]["board"]}
+        self.assertIn(ids["primary"], attention_before_ids)
+        self.assertIn(ids["equivalent"], attention_before_ids)
 
         # Persist both Morning Brief surfaces before the answer. The public
         # transaction itself must reconcile these already-existing views; a
@@ -939,6 +977,12 @@ class RollupAnswerTests(unittest.TestCase):
         after_by_id = {row["id"]: row for row in after["data"]["pinned"]}
         self.assertIsNotNone(after_by_id[ids["primary"]]["answer_pending"])
         self.assertIsNotNone(after_by_id[ids["equivalent"]]["answer_pending"])
+        attention_after = json.loads(attention_path.read_text())
+        attention_after_ids = {
+            row["id"] for row in attention_after["data"]["board"]}
+        self.assertNotIn(ids["primary"], attention_after_ids)
+        self.assertNotIn(ids["equivalent"], attention_after_ids)
+        self.assertIn(ids["independent"], attention_after_ids)
         latest_after = latest_path.read_text()
         brief_feed_after = brief_feed_path.read_text()
         self.assertNotEqual(latest_before, latest_after)
@@ -999,6 +1043,13 @@ class RollupAnswerTests(unittest.TestCase):
         self._proc(["/bin/bash", str(DASHBOARD), "refresh", "brief"],
                    extra_env=brief_env)
 
+        # Let another required input become stale after compose. The local
+        # refresh must keep sidecar health and the rebuilt NEEDS YOU text equal.
+        automation_path = self.home / "data" / "automation.json"
+        automation = json.loads(automation_path.read_text())
+        automation["generated_epoch"] = 1784360000
+        automation_path.write_text(json.dumps(automation))
+
         self._dashboard(
             "decide", "answer-rollup", card_id, ids["primary"], "1",
             extra_env=brief_env)
@@ -1011,6 +1062,14 @@ class RollupAnswerTests(unittest.TestCase):
         self.assertEqual(
             refreshed["local_refresh"]["delivered_receipt_sha256"],
             hashlib.sha256(receipt_before.encode("utf-8")).hexdigest())
+        self.assertEqual(refreshed["inputs"]["automation"]["state"], "stale")
+        self.assertIn("automation", refreshed["stale_required_inputs"])
+        needs = next(
+            section for section in refreshed["sections"]
+            if section["title"] == "NEEDS YOU")
+        self.assertTrue(any(
+            "Required inputs are not current: automation" in row["text"]
+            for row in needs["lines"]))
         rendered = latest_path.read_text()
         brief_feed = (self.home / "data" / "brief.json").read_text()
         for decision_id in (ids["primary"], ids["equivalent"]):

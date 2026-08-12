@@ -385,7 +385,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
     if let board = attention?.data["board"] as? [[String: Any]], !board.isEmpty {
       count = board.count
     } else if let pinned = decisions?.data["pinned"] as? [[String: Any]] {
-      count = pinned.count
+      count = pinned.filter {
+        $0["answer_pending"] == nil || $0["answer_pending"] is NSNull
+      }.count
     }
     if let jobs = automation?.data["jobs"] as? [[String: Any]] {
       redJobs = jobs.filter { ($0["state"] as? String) == "red" }.count

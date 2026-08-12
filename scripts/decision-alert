@@ -178,6 +178,9 @@ def _migrate(con):
         );
         CREATE INDEX IF NOT EXISTS idx_decision_events_item
             ON decision_events(decision_id, event_id);
+        CREATE INDEX IF NOT EXISTS idx_decision_events_pending
+            ON decision_events(
+                decision_id, event_type, evidence_fingerprint, event_id);
         CREATE TABLE IF NOT EXISTS alert_attempts(
             attempt_id TEXT PRIMARY KEY,
             decision_id TEXT NOT NULL REFERENCES decisions(decision_id),

@@ -522,6 +522,9 @@ def _set_enabled(enabled):
             "escalation_model": DEFAULT_ESCALATION_MODEL,
             "providers": {provider: True for provider in PROVIDERS},
         }
+    # A state toggle is also a deliberate selector-normalization boundary.
+    # Reapply the supported defaults so stale private config cannot reactivate
+    # an earlier model when an operator enables or disables the extractor.
     config["model"] = DEFAULT_MODEL
     config["escalation_model"] = DEFAULT_ESCALATION_MODEL
     config["enabled"] = bool(enabled)
@@ -930,10 +933,13 @@ def run(graph, args):
         config = _set_enabled(parsed.set_enabled == "1")
         result = {
             "schema": 1, "mode": "set_enabled", "enabled": config["enabled"],
+            "model": config["model"],
             "config_path": _config_path(),
         }
         print(json.dumps(result, sort_keys=True) if parsed.json else
-              "chat-graph: Tier 2 %s" % ("enabled" if config["enabled"] else "disabled"))
+              "chat-graph: Tier 2 %s with %s" % (
+                  "enabled" if config["enabled"] else "disabled",
+                  config["model"]))
         return 0
     sample_mode = parsed.sample_per_provider > 0
     testing_mode = _flag("MORNING_BRIEF_LLM_TESTING", False)
@@ -1096,6 +1102,17 @@ def run(graph, args):
                                 "deferred", DEFER_RETRY_S)
                 _observe_tier1(graph, sid, tier1["tail_hash"])
                 continue
+            if response["status"] == "model_policy":
+                if sample_mode:
+                    sample_observations.append(_sample_row(
+                        provider, primary_model, response, estimated_input))
+                summary["provider_skips"] += 1
+                _finish_call(
+                    graph, "model_policy_skip", estimated_input,
+                    actual_input=0, latency_ms=response.get("latency_ms", 0),
+                    provider_skips=1)
+                _observe_tier1(graph, sid, tier1["tail_hash"])
+                continue
             if response["status"] != "success":
                 if sample_mode:
                     sample_observations.append(_sample_row(
@@ -1158,6 +1175,17 @@ def run(graph, args):
                 summary["escalations"] += 1
                 _health(graph, "escalating", escalations=1)
                 second = _invoke_model(prompt, escalation_model, timeout_s)
+                if second["status"] == "model_policy":
+                    if sample_mode:
+                        sample_observations.append(_sample_row(
+                            provider, escalation_model, second, second_estimate))
+                    summary["provider_skips"] += 1
+                    _finish_call(
+                        graph, "model_policy_skip", second_estimate,
+                        actual_input=0, latency_ms=second.get("latency_ms", 0),
+                        provider_skips=1)
+                    _observe_tier1(graph, sid, tier1["tail_hash"])
+                    continue
                 if second["status"] == "deferred":
                     if sample_mode:
                         sample_observations.append(_sample_row(

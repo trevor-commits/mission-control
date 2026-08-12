@@ -1016,7 +1016,8 @@ def answer_rollup_transaction(
         _validate_named_dir(
             batches_fd, artifact_name, artifact_fd, "artifact proof")
         _verify_rollup_batch_fd(artifact_fd, expected, manifest_sha256)
-        if os.environ.get("DASHBOARD_TEST_ROLLUP_FAIL_BEFORE_COMMIT") == "1":
+        if (os.environ.get("DASHBOARD_TESTING") == "1" and
+                os.environ.get("DASHBOARD_TEST_ROLLUP_FAIL_BEFORE_COMMIT") == "1"):
             raise RuntimeError("decide answer-rollup: forced pre-commit failure")
 
         record_args = [
@@ -1035,7 +1036,8 @@ def answer_rollup_transaction(
         decision_result = _run_alert(decision_alert, home, *record_args)
         commit_recorded = True
 
-        if os.environ.get("DASHBOARD_TEST_ROLLUP_FAIL_AFTER_COMMIT") == "1":
+        if (os.environ.get("DASHBOARD_TESTING") == "1" and
+                os.environ.get("DASHBOARD_TEST_ROLLUP_FAIL_AFTER_COMMIT") == "1"):
             raise RuntimeError("decide answer-rollup: forced post-commit failure")
         _test_pause_after_rollup_commit(home_fd)
         _validate_rollup_dirs(home, home_fd, batches_fd)

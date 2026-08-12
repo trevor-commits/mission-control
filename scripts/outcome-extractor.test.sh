@@ -189,6 +189,69 @@ else
   fail "Opus 5 model policy"
 fi
 
+new_env
+SID_POLICY="10000000-0000-4000-8000-000000000001"
+write_claude_source "$SID_POLICY" structured
+seed_high_value "$SID_POLICY"
+if PYTHONPATH="$HERE" python3 - "$CG" <<'PY'
+import contextlib, importlib.machinery, io, json, os, sqlite3, sys
+from unittest import mock
+import outcome_extractor as extractor
+
+graph = importlib.machinery.SourceFileLoader("chat_graph_policy_primary", sys.argv[1]).load_module()
+output = io.StringIO()
+with mock.patch.object(
+        extractor, "_invoke_model",
+        return_value={"status": "model_policy", "latency_ms": 0}), \
+        contextlib.redirect_stdout(output):
+    assert extractor.run(graph, ["--days", "7", "--limit", "20", "--json"]) == 0
+summary = json.loads(output.getvalue())
+assert summary["failures"] == 0 and summary["provider_skips"] == 1, summary
+con = sqlite3.connect(os.path.join(os.environ["CHAT_GRAPH_HOME"], "graph.db"))
+assert con.execute("SELECT COUNT(*) FROM outcome_extraction_attempts").fetchone()[0] == 0
+health = con.execute("SELECT failures,provider_skips,last_status FROM outcome_extraction_health").fetchone()
+assert health == (0, 1, "model_policy_skip"), health
+PY
+then
+  pass "primary model-policy rejection skips without failure or retry"
+else
+  fail "primary model-policy rejection"
+fi
+
+new_env
+SID_ESCALATION_POLICY="10000000-0000-4000-8000-000000000002"
+write_claude_source "$SID_ESCALATION_POLICY" structured
+seed_high_value "$SID_ESCALATION_POLICY"
+if PYTHONPATH="$HERE" python3 - "$CG" <<'PY'
+import contextlib, importlib.machinery, io, json, os, sqlite3, sys
+from unittest import mock
+import outcome_extractor as extractor
+
+graph = importlib.machinery.SourceFileLoader("chat_graph_policy_escalation", sys.argv[1]).load_module()
+responses = iter([
+    {"status": "success", "latency_ms": 1, "input_tokens": 120,
+     "output_tokens": 20, "result": {
+         "did": [], "left_open": [], "needs_trevor": ["resolve_ambiguity"],
+         "confidence": 0.5, "ambiguity": True}},
+    {"status": "model_policy", "latency_ms": 0},
+])
+output = io.StringIO()
+with mock.patch.object(extractor, "_invoke_model", side_effect=lambda *_: next(responses)), \
+        contextlib.redirect_stdout(output):
+    assert extractor.run(graph, ["--days", "7", "--limit", "20", "--json"]) == 0
+summary = json.loads(output.getvalue())
+assert summary["failures"] == 0 and summary["provider_skips"] == 1, summary
+con = sqlite3.connect(os.path.join(os.environ["CHAT_GRAPH_HOME"], "graph.db"))
+assert con.execute("SELECT COUNT(*) FROM outcome_extraction_attempts").fetchone()[0] == 0
+health = con.execute("SELECT failures,provider_skips,last_status FROM outcome_extraction_health").fetchone()
+assert health == (0, 1, "model_policy_skip"), health
+PY
+then
+  pass "escalation model-policy rejection skips without failure or retry"
+else
+  fail "escalation model-policy rejection"
+fi
+
 # Global kill switch: normal ingest/export remain deterministic and never call a model.
 new_env
 SID0="10000000-0000-4000-8000-000000000000"
@@ -803,6 +866,8 @@ assert config["daily_call_cap"] == sample["recommended_caps"]["daily_call_cap"]
 assert config["daily_token_cap"] == sample["recommended_caps"]["daily_token_cap"]
 assert config["enabled"] is True
 assert disabled["enabled"] is False and enabled["enabled"] is True
+assert disabled["model"] == "claude-opus-5"
+assert enabled["model"] == "claude-opus-5"
 assert config["providers"]["claude"] is True
 assert all(config["providers"][name] is False for name in ("codex","cursor","hermes","copilot"))
 assert stat.S_IMODE(os.stat(sys.argv[2]).st_mode) == 0o600
@@ -967,7 +1032,7 @@ if run_extract > "$TIER2_TMP/oversized.json" 2> "$TIER2_TMP/oversized.err" \
    && [ "$(q "SELECT failures FROM outcome_extraction_health")" -ge 1 ] \
    && [ "$(q "SELECT COUNT(*) FROM outcome_extraction_cache")" = 0 ] \
    && [ "$(q "SELECT COUNT(*) FROM session_outcomes WHERE session_id='$SID5B' AND method='tier2'")" = 0 ] \
-   && ! rg -q 'XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX' "$CHAT_GRAPH_HOME" "$MISSION_CONTROL_HOME"; then
+   && ! grep -R -Fq 'XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX' "$CHAT_GRAPH_HOME" "$MISSION_CONTROL_HOME"; then
   pass "oversized model output is bounded and never persisted"
 else
   fail "oversized output bound"
