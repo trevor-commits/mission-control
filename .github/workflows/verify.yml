@@ -31,5 +31,10 @@ jobs:
       - name: Install the pinned OpenSpec CLI
         run: npm install --global --ignore-scripts @fission-ai/openspec@1.5.0
 
+      - name: Install the pinned Playwright test client
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+        run: npm install --no-save --no-package-lock --ignore-scripts playwright@1.62.0
+
       - name: Run the authoritative verifier
         run: /bin/bash scripts/verify.sh
