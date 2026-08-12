@@ -3,6 +3,9 @@ set -u
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 USAGE="$SCRIPT_DIR/usage-snapshot"
+# shellcheck source=scripts/test-temp-root.sh
+source "$SCRIPT_DIR/test-temp-root.sh"
+mission_test_temp_init usage-snapshot-test || exit 1
 
 PASS=0
 FAIL=0

@@ -5,6 +5,9 @@ set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 export REPO_ROOT="$ROOT"
 export PYTHONDONTWRITEBYTECODE=1
+# shellcheck source=scripts/test-temp-root.sh
+source "$ROOT/scripts/test-temp-root.sh"
+mission_test_temp_init mission-control-verify || exit 1
 PASS=0
 FAIL=0
 
@@ -20,8 +23,12 @@ run() {
 }
 
 self_test() {
-  local t rc
+  local t rc helper regression_root
   t="$(mktemp -d)"
+  case "$t" in
+    "$MISSION_TEST_TMPDIR"/*) ;;
+    *) printf 'verify self-test: bare mktemp escaped %s: %s\n' "$MISSION_TEST_TMPDIR" "$t" >&2; return 1 ;;
+  esac
   printf '#!/bin/sh\nexit 0\n' > "$t/pass"
   printf '#!/bin/sh\nexit 7\n' > "$t/fail"
   chmod +x "$t/pass" "$t/fail"
@@ -32,6 +39,61 @@ self_test() {
   rm -rf "$t"
   [ "$rc" -eq 0 ] || return "$rc"
   printf 'verify self-test: aggregator retained the failing result\n'
+
+  helper="$ROOT/scripts/test-temp-root.sh"
+  regression_root="$MISSION_TEST_TMPDIR/helper-regressions"
+  mkdir -p "$regression_root/relative/parent" "$regression_root/relative/elsewhere" \
+    "$regression_root/replacement"
+
+  # Resolve a relative TMPDIR before the suite later changes directories.
+  /bin/bash - "$helper" "$regression_root/relative" <<'BASH' || return 1
+set -u
+helper=$1
+sandbox=$2
+cd "$sandbox" || exit 1
+TMPDIR=parent
+unset MISSION_TEST_TEMP_ROOT MISSION_TEST_TEMP_ROOT_ID \
+  MISSION_TEST_TEMP_CLAIM MISSION_TEST_TEMP_CLAIM_ID MISSION_TEST_TEMP_PARENT \
+  MISSION_TEST_TEMP_PREFIX MISSION_TEST_TMPDIR
+source "$helper"
+mission_test_temp_init relative-parent || exit 1
+owned=$MISSION_TEST_TEMP_ROOT
+cd elsewhere || exit 1
+mission_test_temp_cleanup || exit 1
+trap - EXIT HUP INT TERM
+[[ ! -e "$owned" && ! -L "$owned" ]]
+BASH
+
+  # A same-name replacement inserted immediately before cleanup must survive.
+  # The original owned root is also retained when post-claim identity differs.
+  /bin/bash - "$helper" "$regression_root/replacement" <<'BASH' || return 1
+set -u
+helper=$1
+sandbox=$2
+TMPDIR=$sandbox
+unset MISSION_TEST_TEMP_ROOT MISSION_TEST_TEMP_ROOT_ID \
+  MISSION_TEST_TEMP_CLAIM MISSION_TEST_TEMP_CLAIM_ID MISSION_TEST_TEMP_PARENT \
+  MISSION_TEST_TEMP_PREFIX MISSION_TEST_TMPDIR
+source "$helper"
+mission_test_temp_init replacement-race || exit 1
+owned=$MISSION_TEST_TEMP_ROOT
+claim=$MISSION_TEST_TEMP_CLAIM
+original="$owned.original"
+printf 'owned\n' > "$owned/original-sentinel"
+mission_test_temp_before_claim() {
+  /bin/mv -- "$MISSION_TEST_TEMP_ROOT" "$original" || return 1
+  mkdir -m 700 "$MISSION_TEST_TEMP_ROOT" || return 1
+  printf 'replacement\n' > "$MISSION_TEST_TEMP_ROOT/replacement-sentinel"
+}
+if mission_test_temp_cleanup; then
+  exit 1
+fi
+trap - EXIT HUP INT TERM
+[[ -f "$original/original-sentinel" ]] || exit 1
+[[ -f "$claim/root/replacement-sentinel" ]] || exit 1
+/bin/rm -rf -- "$original" "$claim"
+BASH
+  printf 'verify self-test: temp cleanup preserves replacements and resolves relative TMPDIR\n'
 }
 
 if [ "${1:-}" = "--self-test" ]; then

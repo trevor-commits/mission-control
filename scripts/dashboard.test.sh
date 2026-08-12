@@ -21,8 +21,11 @@ FAIL=0
 ok() { echo "PASS: $1"; PASS=$((PASS + 1)); }
 no() { echo "FAIL: $1"; FAIL=$((FAIL + 1)); }
 
-ROOT="$(mktemp -d "${TMPDIR:-/tmp}/mc-test.XXXXXX")"
-trap 'rm -rf "$ROOT"' EXIT
+# shellcheck source=scripts/test-temp-root.sh
+source "$HERE/test-temp-root.sh"
+mission_test_temp_init mc-test || exit 1
+ROOT="$MISSION_TEST_TEMP_ROOT"
+TEST_TMPDIR="$MISSION_TEST_TMPDIR"
 STUB="$ROOT/stubs"
 mkdir -p "$STUB/bin"
 
@@ -80,6 +83,14 @@ export DASHBOARD_CMD_DECISIONS="cat '$STUB/decisions.json'"
 export DASHBOARD_CMD_BRIEF="cat '$STUB/brief.json'"
 
 newhome() { mktemp -d "$ROOT/home.XXXXXX"; }
+c0() { # every unqualified mktemp is contained by the one trapped test root
+  local probe
+  probe="$(mktemp -d)"
+  case "$probe" in
+    "$TEST_TMPDIR"/*) ok "test fixtures: default mktemp is contained by the trapped root" ;;
+    *) no "test fixtures: default mktemp escaped the trapped root ($probe)" ;;
+  esac
+}
 make_valid_stamp() {
   PYTHONPATH="$REPO/scripts" python3 - "$1" <<'PY'
 import os,sys
@@ -2019,7 +2030,7 @@ PYEOF
   fi
 }
 
-c1; c2; c3; c4; c5; c6; c7; c8; c8a; c8b; c9; c10; c11; c12; c13; c14; c14a; c15; c16; c17; c18; c19; c20; c21; c22; c23; c24; c25; c26; c27; c28; c29; c30; c31; c32; c33; c34; c35; c36; c37; c38; c39; c40; c41; c42; c42a; c43; c44; c45; c46; c47; c48; c49; c50; c51
+c0; c1; c2; c3; c4; c5; c6; c7; c8; c8a; c8b; c9; c10; c11; c12; c13; c14; c14a; c15; c16; c17; c18; c19; c20; c21; c22; c23; c24; c25; c26; c27; c28; c29; c30; c31; c32; c33; c34; c35; c36; c37; c38; c39; c40; c41; c42; c42a; c43; c44; c45; c46; c47; c48; c49; c50; c51
 shell_contract
 echo "----"
 echo "PASS=$PASS FAIL=$FAIL"
