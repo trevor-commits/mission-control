@@ -2892,6 +2892,28 @@ c53() { # nested shells keep bare BSD mktemp calls inside the owned suite root
   esac
 }
 
+c54() { # a feeder may finish before the test harness records its private group
+  local mch error
+  mch="$(newhome)"
+  DASHBOARD_TESTING=1 DASHBOARD_TEST_REGISTER_PAUSE_MS=50 \
+    DASHBOARD_CMD_GIT=/usr/bin/true MISSION_CONTROL_HOME="$mch" \
+    bash "$DASH" collect --force git >/dev/null 2>&1 || true
+  error="$(python3 - "$mch/data/git.error.json" <<'PYEOF'
+import json, sys
+try:
+    print(json.load(open(sys.argv[1])).get("error", ""))
+except (OSError, ValueError):
+    print("")
+PYEOF
+)"
+  if [ "$error" = "feeder output not JSON: Expecting value: line 1 column 1 (char 0)" ] && \
+     grep -q $'\t/usr/bin/true$' "$OWNED_GROUP_RECEIPTS"; then
+    ok "test fixtures: a completed fast feeder still records its owned group"
+  else
+    no "test fixtures: fast feeder registration failed ($error)"
+  fi
+}
+
 case "${DASHBOARD_TEST_CASE:-}" in
 fixture-reaper)
   c39a ;;
@@ -2899,9 +2921,11 @@ answered-pending-attention)
   c52 ;;
 temp-root)
   c53 ;;
+fast-feeder-registration)
+  c54 ;;
 *)
   c0; c1; c2; c3; c4; c4b; c5; c6; c7; c8; c8a; c8b; c9; c10; c11; c12; c13; c14; c14a; c15; c16; c17; c18; c19; c20; c21; c22; c23; c24; c25; c26; c27; c28; c29; c30; c31; c32; c33; c34; c35; c36; c37; c38; c39; c39a; c40; c41; c42; c42a; c43; c44; c45; c46; c47; c48; c49; c50; c51
-  c52; c53 ;;
+  c52; c53; c54 ;;
 esac
 shell_contract
 LIVE_DATA_AFTER="$(live_data_fingerprint)"

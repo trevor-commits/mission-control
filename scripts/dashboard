@@ -39,6 +39,7 @@ fi
 SYNTHETIC_CONTROL_NAME=""
 for control_name in \
   MISSION_CONTROL_NOW_EPOCH DASHBOARD_NOW_EPOCH DASHBOARD_TESTING \
+  DASHBOARD_TEST_REGISTER_PAUSE_MS \
   DASHBOARD_CMD_AUTOMATION DASHBOARD_CMD_USAGE DASHBOARD_CMD_GIT \
   DASHBOARD_CMD_CHATS DASHBOARD_CMD_DECISIONS DASHBOARD_CMD_ATTENTION \
   DASHBOARD_CMD_BRIEF
@@ -482,8 +483,25 @@ def _register_test_owned_group(proc, argv):
                 descriptor.st_uid != os.getuid() or
                 not (flags & os.O_APPEND)):
             return False
-        pgid = os.getpgid(proc.pid)
-        if pgid != proc.pid or pgid <= 1 or pgid == os.getpgrp():
+        pause_ms = os.environ.get("DASHBOARD_TEST_REGISTER_PAUSE_MS")
+        if pause_ms is not None:
+            if os.environ.get("DASHBOARD_TESTING") != "1":
+                return False
+            pause_ms = int(pause_ms, 10)
+            if pause_ms < 1 or pause_ms > 1000:
+                return False
+            time.sleep(pause_ms / 1000.0)
+        # Popen returned only after the child completed start_new_session=True,
+        # so its private process-group id is exactly its pid. A short-lived
+        # feeder may already be gone here; getpgid() cannot be the authority for
+        # a receipt whose purpose is to make that lifecycle observable.
+        pgid = proc.pid
+        try:
+            observed_pgid = os.getpgid(proc.pid)
+        except ProcessLookupError:
+            observed_pgid = None
+        if ((observed_pgid is not None and observed_pgid != pgid) or
+                pgid <= 1 or pgid == os.getpgrp()):
             return False
         expected = os.fspath(argv[0])
         if not expected or any(ch in expected for ch in "\t\r\n"):
