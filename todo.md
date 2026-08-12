@@ -101,9 +101,9 @@ Preserve a durable completion trail for verified work instead of deleting it fro
 ### 2026-08-11 — Repository selective integration
 - Problem: preserved work mixed a current V1 operator feature, reliability fixes, superseded UI experiments, and V2 autonomy/health experiments; the live Decisions timeout had healed before a source cause was proven.
 - Reasoning: merge only behavior that remains aligned with `PROJECT_INTENT.md`, reproduce each repair where possible, and classify a non-reproducible incident honestly instead of changing healthy code.
-- Fix: added pinned macOS CI; merged exact rollup source head `9185dec`; ported interrupted-feeder group reaping; reproduced and repaired the native panel click race; combined identity-bound fixture roots with group cleanup; and removed noisy expected-zero fixture reads. Preserved answer-dispatch, unified-health, memory-health, and the old visual refresh without shipping them.
+- Fix: added pinned macOS CI and its required pinned Playwright client; merged exact rollup source head `9185dec`; ported interrupted-feeder group reaping; reproduced and repaired the native panel click race; combined identity-bound fixture roots with group cleanup; and removed noisy expected-zero fixture reads. Preserved answer-dispatch, unified-health, memory-health, and the old visual refresh without shipping them.
 - Decisions evidence: copied live database plus 136-outcome snapshot completed sync in 0.532 seconds; decision tests pass; live Decisions is healthy; scheduled collector last exited zero. Historical stderr contains `ENOSPC` and simultaneous Usage/Git/Chats/Decisions timeouts, which supports but does not prove a host-pressure cause.
-- Self-audit: source-head rollup 29/29; panel RED `62/1` then GREEN `63/0`; fixture-reaper 9/9; verifier temp-root self-tests pass; chat graph, outcome extractor, and Usage suites pass. Exact integrated full verification, hosted CI, merge, install, and natural-run proof remain separate gates.
+- Self-audit: source-head rollup 29/29; panel RED `62/1` then GREEN `63/0`; fixture-reaper 9/9; fast-feeder RED `6/1` then GREEN `7/0`; full dashboard `90/0`; attention RED twice at `Answers recorded` then browser GREEN 315; integrated Outcome Extractor ALL PASS with 37 checks. Exact integrated full verification, hosted CI, merge, install, and natural-run proof remain separate gates.
 - Ripple Check: updated the convergence record, Active Next Steps, branch ledger, and Test Evidence. V2 product gates, provider delivery, live decision state, LaunchAgents, and installed runtime remain unchanged.
 - by: Codex `019ff2ae-33b3-7e50-af39-3a08efef29a8`.
 - linear: self-contained; Mission Control remains repo-only.
@@ -115,6 +115,14 @@ Preserve a durable completion trail for verified work instead of deleting it fro
 - Remaining: immutable merge commit, exact-head authoritative verifier, fresh independent same-model/max audit, final records, push, and PR #11 readback. No live store, provider send, PR merge, install, deploy, plist, or launchd action is authorized in this lane.
 - by: Codex `019f762c-c815-77b3-97c0-021c66fd3b7e`.
 - linear: self-contained; repo-only.
+
+### 2026-08-12 — Repository convergence candidate completion
+- Problem: the first convergence candidate still had a fast-feeder ownership race, omitted valid attention from Home's combined state, lacked Playwright in hosted CI, and would conflict with the global Opus 5-only launcher.
+- Fix: integrated `e6e0d09`, source `60577b78` as `bd83a30`, CI repair `e27ea08`, and source `79cff0d98ef97e6c7eeabcf9cd43be19c877cd67` as `55544cb`. The CI step installs exact `playwright@1.62.0` without downloading a browser and uses the Chrome supplied by `macos-15`.
+- Self-audit: dashboard `90/0`; dashboard browser 315; Outcome Extractor ALL PASS with 37 checks; isolated Playwright install plus system-Chrome launch pass; workflow YAML and diff checks pass. The final exact-head full verifier, hosted CI, PR merge, install, archive tags, and broker cleanup remain separate gates.
+- Ripple Check: updated the convergence record, Rollup Answer tasks/verification/retrospective, Active Branch Ledger, and Test Evidence without activating gated jobs or changing live Mission Control state.
+- by: Codex `019ff2ae-33b3-7e50-af39-3a08efef29a8` with source owners `019f762c-c815-77b3-97c0-021c66fd3b7e` and `019ff1e7-a4f1-7841-a6b7-99c783643ff5`.
+- linear: self-contained; Mission Control remains repo-only.
 
 ### 2026-07-17 — Rollup-answer state-contract investigation
 - Problem: Lane D asks one CLI action to fan an answer across equivalent rollup members while keeping every member pending until its owning task consumes that answer. The current helper guidance says to call `resolve()` for superseded members, but `resolve()` immediately closes them and the schema has no answered-pending representation.
@@ -917,19 +925,19 @@ Keep materially new suggestions here so they survive beyond the current chat.
 
 ## Active Branch Ledger
 ### `codex/repo-convergence-019ff2ae`
-- status: active — preservation, CI, rollup-answer, panel click, process reaping, and fixture containment complete; final verification and landing remain
+- status: active — preservation, CI, rollup-answer, attention, Opus 5, panel click, process reaping, and fixture containment complete; final verification and landing remain
 - created: 2026-08-11
 - base: `origin/main@43bca917871a33f3b4176117df86e15eb80a3472`
 - worktree: `/Users/gillettes/Coding Projects/mission-control-worktrees/codex/repo-convergence-019ff2ae`
 - source chat: 2026-08-11 Codex `019ff2ae-33b3-7e50-af39-3a08efef29a8`, repository recovery and convergence
-- last refreshed by chat: 2026-08-11 selective integration checkpoint
+- last refreshed by chat: 2026-08-12 final candidate assembly
 - purpose: preserve all work, stabilize current main, integrate current-value work, and safely clean obsolete Git state.
 - linked issue: `self-contained:` repository convergence; Linear repo-only mode
 - plugin mirror: none
 - merge expectation: merge verified implementation and records to `main`
 - merge target: `main`
 - review surface: focused regressions, full verifier, exact-head review, GitHub PR checks, install readback, and scheduled-run evidence
-- exit checklist: preservation, restore test, CI, rollup integration, and reliability ports complete; exact-head review, merge/install proof, archive tags, owner releases, branch cleanup, and final records remain
+- exit checklist: preservation, restore test, CI dependencies, selected integrations, and focused regressions complete; final full verifier, hosted CI, merge/install proof, archive tags, owner releases, and branch cleanup remain
 - delete when: after `origin/main` containment, final install proof, owner release, and later cleanup-broker removal
 - retain reason: active convergence owner
 - cleanup command: owner release followed in a later turn by `worktree-owner-lease.py cleanup-released` using the recorded state file and lease ID
@@ -939,7 +947,7 @@ Keep materially new suggestions here so they survive beyond the current chat.
 - owner lease: Codex `019ff2ae-33b3-7e50-af39-3a08efef29a8`; lease `c3d027bb-4fad-46d0-bc46-9ad206bb1b57`; state `/Users/gillettes/Coding Projects/mission-control/.git/codex-worktree-owners/61afdbaf8b34f98e8ddf07f6108026a5d146b484996a7f82641b65802d174221.json`
 
 ### `codex/rollup-answer-wiring`
-- status: retained source; exact head `9185dec694603b1482206b3ce9ab6d8dabc9ef7b` is integrated into the convergence candidate; source PR #11 remains stale until the convergence PR lands
+- status: retained source; exact head `60577b78fa32b48f10580796f94aacdb16a1fb19` is integrated into the convergence candidate as `bd83a30`; source PR #11 remains stale until the convergence PR lands
 - created: 2026-07-17
 - base: original `origin/main@8582e182d5db3b8964ec21738a82806d94c78a55`; current integration base `origin/main@43bca917871a33f3b4176117df86e15eb80a3472`
 - worktree: `/Users/gillettes/Coding Projects/mission-control-worktrees/rollup-answer-wiring`
@@ -949,7 +957,7 @@ Keep materially new suggestions here so they survive beyond the current chat.
 - merge expectation: land only through the exact-head convergence PR after focused/full verification and fresh review; no install or live-store exercise before main containment
 - merge target: `main`
 - review surface: `openspec/changes/rollup-answer/`, `hotl-workflow-rollup-answer.md`, implementation diff, hermetic evidence, and `STATE.md`
-- independent audits: ambiguity audit `019f7411-b995-76e2-8481-1266b1eebfa8` resolved by approval; repair audits are recorded in `records/rollup-answer-independent-codex-audit.md`; the seventh frozen-head audit was review-clean at `78672c4`; a fresh exact convergence-head review remains pending
+- independent audits: ambiguity audit `019f7411-b995-76e2-8481-1266b1eebfa8` resolved by approval; repair audits are recorded in `records/rollup-answer-independent-codex-audit.md`; the seventh frozen-head audit was review-clean at `78672c4`; the `60577b78` attention repair passed separate specification and code-quality reviews; a final convergence-head self-review remains pending because this task may not spawn reviewers
 - exit checklist:
   - [x] Existing grouping/equivalence/read paths inspected
   - [x] Existing answer, resolve, schema, and transaction paths inspected
@@ -1150,6 +1158,7 @@ If it's not here, it isn't remembered.
 
 ## Test Evidence Log
 - 2026-08-11 | commands: copied-live Decisions sync benchmark; `scripts/decision-alert.test.sh`; pinned macOS CI YAML parse and local push gate; source-head `scripts/rollup-answer.test.py`; ER-134 RED/GREEN; targeted fixture-reaper and nested-temp cases; verifier self-test; chat-graph, outcome-extractor, and Usage suites; Bash syntax and diff checks | result: Decisions 136-outcome sync 0.532s and healthy; baseline push `SUITES PASS=24 FAIL=0`, browser 307; rollup 29/29; panel click RED 62/1 then GREEN 63/0; fixture reaper 9/9; temp helper/self-tests green; chat graph ALL PASS without absent-file warnings; outcome extractor ALL PASS; Usage 24/0 | log/PR reference: `records/2026-08-11-repository-convergence.md`; branch `codex/repo-convergence-019ff2ae` | by: Codex `019ff2ae-33b3-7e50-af39-3a08efef29a8` | linear: repo-only.
+- 2026-08-12 | commands: fast-feeder repeated RED and targeted GREEN; `node scripts/dashboard-browser.test.js`; `/bin/bash scripts/outcome-extractor.test.sh`; isolated `playwright@1.62.0` install plus system-Chrome launch; workflow YAML parse; `git diff --check` | result: fast-feeder RED 4/120 and targeted `6/1`, GREEN `7/0` and dashboard `90/0`; integrated browser 315; Outcome Extractor ALL PASS with 37 checks; pinned Playwright loaded and launched Chrome; static checks pass | log/PR reference: `records/2026-08-11-repository-convergence.md`; convergence commits `e6e0d09`, `bd83a30`, `e27ea08`, `55544cb` | by: Codex `019ff2ae-33b3-7e50-af39-3a08efef29a8` | linear: repo-only.
 - 2026-08-11 | commands: current-main merge conflict review; expected RED/GREEN dashboard attention, Home hero, pending-only panel, ER-134 fixture, and synthetic-root identity regressions; full owning suites; render smoke; syntax/diff checks; two broad verifier attempts plus isolated Chrome reproduction | result: focused GREEN dashboard 86/0, rollup 29/29, browser 309, panel 13/0, ER-134 62/0, render smoke 8/8, syntax and diff checks. The second broad verifier had every code suite green but Chrome closed before its last panel case; immediate isolated panel run passed 13/0. Neither interrupted broad run is completion evidence; exact-head authoritative verification remains pending. | log/PR reference: Work Record above; pending immutable merge receipt | by: Codex `019f762c-c815-77b3-97c0-021c66fd3b7e` | linear: repo-only.
 - 2026-07-18 | commands: sixth-audit hermetic counterexamples; targeted RED/GREEN four-test command; `PYTHONDONTWRITEBYTECODE=1 python3 scripts/rollup-answer.test.py`; `node scripts/dashboard-browser.test.js`; Python/Node/diff checks | result: RED missing receipt field returned zero; RED canonical symlink remained/wedged replay; RED quarantine moved an unbound replacement; RED combined attention rendered `Answers recorded`; GREEN targeted 4/4, rollup 29/29 in 37.726s, browser 254, static checks pass; orphan symlink remains untouched and no provider sender is reachable | log/PR reference: `records/evidence/rollup-answer-final-boundaries-red-green.txt`; audit `019f77f3-4975-7f51-b296-fbdc2dbd3d47` | by: Codex `019f73d8-e5dc-73a0-acc5-8a4916ac6819` | linear: repo-only.
 - 2026-07-18 | commands: `PYTHONDONTWRITEBYTECODE=1 /bin/bash scripts/verify.sh` at exact committed `c0d0a53`; immediate HEAD/status/diff/source-artifact readback | result: authoritative `SUITES PASS=23 FAIL=0`; rollup `25/25` in 39.371s; dashboard `67/0`; ER-134 `59/0`; loose-end runner `32/0`; shared policy `2/0`; usage `24/0`; browser `253`; OpenSpec `2/0`; Python/shell/source-artifact gates pass; exact head and clean worktree unchanged | log/PR reference: `records/evidence/rollup-answer-receipt-entry-full-green.txt` | by: Codex `019f73d8-e5dc-73a0-acc5-8a4916ac6819` | linear: repo-only.

@@ -12,7 +12,8 @@
 - Sixth-audit final-boundary repair: `78672c46d94041f974ca97b0d2cfe5596c6b020a` (`fix(decisions): harden symlink quarantine for macOS O_SYMLINK gap`).
 - Pre-integration branch head: `6a75e879b6b9bd43737edce841d4268453f8a1eb`.
 - Current-main integration base: `43bca917871a33f3b4176117df86e15eb80a3472`.
-- Final branch head: pending immutable merge commit, exact-head authoritative gate, and fresh independent audit.
+- Current-main source repair: `60577b78fa32b48f10580796f94aacdb16a1fb19`.
+- Repository convergence integration: source `60577b78` is contained as `bd83a30`; final convergence head and hosted gate remain pending.
 - Environment: hermetic temporary Mission Control homes/stores, synthetic feeds, fake senders, and loopback-only fixtures.
 
 ## Evidence
@@ -35,7 +36,8 @@
 | Sixth frozen-head audit | `NOT REVIEW-CLEAN`: P1 optional receipt identity fields; P1 receipt-backed symlink replay wedge; P2 quarantine name-swap mutation; P2 global Home H1 ignored non-decision attention | `records/rollup-answer-independent-codex-audit.md` |
 | Sixth-audit final-boundary red/green | RED 2 P1 + 2 P2; GREEN targeted 4/4, rollup 29/29, browser 254, static checks | `records/evidence/rollup-answer-final-boundaries-red-green.txt` |
 | Sixth-repair authoritative verifier | `SUITES PASS=23 FAIL=0` at exact head `78672c4` (macOS 26.5); rollup 29/29; browser 254; OpenSpec 2/0; syntax/artifact pass | `records/evidence/rollup-answer-final-boundaries-full-green.txt` |
-| Current-main focused integration | dashboard 86/0; rollup 29/29; dashboard browser 309; panel browser 13/0; ER-134 62/0; render smoke 8/8; syntax and diff checks pass | current task transcript; durable receipt pending exact-head gate |
+| Current-main focused integration | dashboard 86/0; rollup 29/29; dashboard browser 309; panel browser 13/0; ER-134 62/0; render smoke 8/8; syntax and diff checks pass | current task transcript |
+| Attention-feed compatibility repair | exact RED manual attention and stale Brief both rendered `Answers recorded`; source and integrated GREEN browser 315; render smoke, JavaScript syntax, strict OpenSpec, and diff checks pass | source `60577b78`; convergence `bd83a30` |
 | Final exact-head authoritative verifier | pending immutable merge commit | pending |
 | Final same-model/max audit | pending immutable merge commit | `records/rollup-answer-independent-codex-audit.md` |
 
@@ -45,6 +47,7 @@
 - Confirmed: delivered brief identity/receipt/cursor bytes are preserved only after a complete private receipt contains and binds full Markdown, deterministic chunking, ordered chunk hashes, and exact receipt bytes; either missing identity field fails nonzero before rewrite, and pending delivery refresh fails nonzero without rewriting retry content, including after day rollover.
 - Confirmed: receipt-backed regular-file and symlink canonical collisions are fd/inode-bound and privately quarantined without symlink target traversal, while first-answer orphan conflicts remain fail-closed and untouched; a deterministic quarantine name swap restores the unbound replacement before failure.
 - Confirmed: Home's global H1 uses combined feed attention while pending decision rows retain their separate awaiting-consumption presentation.
+- Confirmed: the valid 300-second attention envelope participates in guard validation and combined Home state; exact `attention` and `attention — ...` panel states remain actionable.
 - Confirmed: exact sixth-repair head `78672c4` passes the authoritative `SUITES PASS=23 FAIL=0` gate live on macOS 26.5.
 - Confirmed: no dependency or schema migration was introduced.
-- Did not verify: the authoritative verifier or independent audit at the pending current-main merge commit; refreshed hosted PR state; PR merge; install, deploy, provider delivery, live-store behavior, plist, or launchd.
+- Did not verify: the final repository-convergence verifier or hosted CI; PR merge; install, provider delivery, live-store behavior, plist, or launchd.
