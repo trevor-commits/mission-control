@@ -25,6 +25,8 @@ The first full verifier was necessary but insufficient. Independent review found
 17. Identity-bearing receipt fields are mandatory authority, not backward-compatible hints. Missing Markdown or chunk-limit identity must fail closed rather than borrow current defaults.
 18. A global Home headline must use combined Home attention. A reassuring decision-subdomain label cannot mask actionable failures in chats, repositories, usage, automation, or brief health.
 19. A feed cannot influence combined health if the freshness contract rejects it or the aggregator omits it. Test manual attention and stale sibling feeds independently from pending decisions.
+20. SQLite read-only mode can still create WAL/shared-memory sidecars. Validation must use a complete immutable checkpoint when no WAL exists, or require the existing WAL namespace and fail closed.
+21. Debounced browser behavior needs state-based synchronization. Fixed sleeps turn runner load into false product failures and can inspect a previous render.
 
 ## Remaining boundary
 
@@ -44,5 +46,7 @@ creating locks, batch paths, or SQLite files. Convergence commits `bd83a30` and
 `4453b8e` contain both source repairs.
 
 PR review repair `db40774bbb477326989553cba703c716d857bb80`
-passes rollup `32/32` and dashboard `91/0`. Final records-head verification,
-hosted readback, merge, and installation remain outside the source branch.
+passes rollup `32/32` and dashboard `91/0`. Hosted run `31639362011`
+then exposed SQLite sidecar and search-render timing gaps. Repair
+`c988153baedfceeae68773072fb3fde032f2a8f9` is focused-green; final
+records-head verification, hosted readback, merge, and installation remain.

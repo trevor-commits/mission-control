@@ -1,10 +1,11 @@
 # Lane D state — rollup-answer CLI wiring
 
-- Status: POST-REWRITE LOCAL GATE GREEN; PUBLICATION AND LANDING PENDING. PR #16 remains at remote docs head `8b36b32`. Unpublished repair `db40774bbb477326989553cba703c716d857bb80` closes every validated review finding and removes the credential-shaped test addition that the first push gate rejected. Exact rewritten head `e34c2ed23028b31707ef581ba0bc6b1cc9e4a92e` passes `SUITES PASS=26 FAIL=0`. SHA-reconciliation records, the ordinary push-hook, hosted readback, merge, install, archive, and cleanup remain.
+- Status: SECOND HOSTED REPAIR FOCUSED GREEN; EXACT GATES AND LANDING PENDING. PR #16 is published at `be1c342817236c347820c37b4d9f3ffad66b826b`; GitGuardian is green and CodeRabbit approved it. Hosted run `31639362011` exposed macOS SQLite sidecar creation during rejected-target validation and a search-render timing race. Repair `c988153baedfceeae68773072fb3fde032f2a8f9` is focused-green locally; its records-head full verifier, push hook, hosted readback, merge, install, archive, and cleanup remain.
 - Branch: `codex/repo-convergence-019ff2ae`
 - Review base: `43bca917871a33f3b4176117df86e15eb80a3472`
 - Convergence PR: #16, `https://github.com/trevor-commits/mission-control/pull/16`
 - Source branch: `codex/rollup-answer-wiring` at `fdb838dd6d7520646541c9bf95e2a7901c8c2d58`; contained by convergence commits `bd83a30` and `4453b8e`.
+- Second hosted repair: `c988153baedfceeae68773072fb3fde032f2a8f9` (`fix(ci): close macOS validation and search races`).
 - Seventh frozen-head audit: Cursor `9db69b00-966c-43d3-b1eb-72181b949178` / packet `records/audit-packets/2026-07-24-rollup-answer-seventh-frozen-head.md`
 - Finish parent: Cursor finishing Codex `019f73d8` (`CURSOR-FINISH-019f73d8-20260724`)
 - Original implementation checkpoint: `754de932301113e81f51bbf4febe2d3fc28c01e0`
@@ -22,7 +23,7 @@
 - Executable binding: `hotl-workflow-rollup-answer.md`
 - Linear disposition: self-contained / repo-only; no Mission Control Linear team is configured
 - Project-memory convention: this repo has no separate `PROJECT_MEMORY.md`; `todo.md` is the declared operational-memory surface
-- Live/deploy actions: none
+- Live/deploy actions: none; PR publication only
 
 ## Approved contract and citation
 

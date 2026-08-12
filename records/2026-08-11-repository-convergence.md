@@ -84,6 +84,13 @@ Linear: `self-contained:` because `LINEAR.md` records repo-only mode.
 - Pre-rewrite head `94f8977eefbf8f1ec9ec150f9831f412c3625825` is preserved at local rescue ref `refs/rescue/2026-08-12/pre-credential-rewrite-94f8977`. No rejected object was published.
 - The fixture repair was autosquashed into the unpublished review repair. New repair head is `db40774bbb477326989553cba703c716d857bb80`; its descendant `e34c2ed23028b31707ef581ba0bc6b1cc9e4a92e` passed the exact 26-suite gate.
 
+## Second hosted macOS repair
+
+- SHA-reconciliation head `be1c342817236c347820c37b4d9f3ffad66b826b` passed the ordinary push hook at `SUITES PASS=26 FAIL=0` and was published. GitGuardian passed, and CodeRabbit returned an approved final review.
+- Hosted macOS run `31639362011` failed two suites. Rollup Answer showed that a read-only SQLite validation could create missing `decisions.db-wal` and `decisions.db-shm` sidecars. Dashboard Browser checked a debounced search after fixed 150-millisecond sleeps and occasionally observed the preceding render.
+- Repair `c988153baedfceeae68773072fb3fde032f2a8f9` uses an immutable checkpointed database only when no WAL exists, requires an existing shared-memory file when a WAL exists, and retains the transaction's authoritative revalidation before writes. Its regression checkpoints and removes both sidecars, then proves the exact rejected-member error and byte-for-byte state stability.
+- Browser regressions now wait for the expected accessible status output rather than elapsed wall time. Focused GREEN is Rollup Answer `32/32`, Decision Alert all pass, and Dashboard Browser 315 assertions twice; Python/JavaScript syntax and `git diff --check` pass. Exact records-head verification and hosted readback remain pending.
+
 ## No-delete gates
 
 No worktree, local branch, remote branch, PR, rescue ref, or backup is removed until all applicable checks pass:
@@ -101,7 +108,7 @@ No worktree, local branch, remote branch, PR, rescue ref, or backup is removed u
 ## Current unverified boundaries
 
 - Historical Decisions timeouts cannot be attributed more narrowly than the observed host-wide storage/timeout episode; current behavior is green and no source defect was reproduced.
-- Exact post-rewrite head `e34c2ed23028b31707ef581ba0bc6b1cc9e4a92e` is authoritative-gate green. SHA-reconciliation records still need the ordinary push-hook verifier, hosted CI/review readback, PR merge, and installed-source readback.
+- Published head `be1c342817236c347820c37b4d9f3ffad66b826b` is local-gate, push-hook, GitGuardian, and CodeRabbit green. Hosted run `31639362011` failed the two reproduced cross-platform cases repaired at `c988153`; the new records head still needs the exact full verifier, push hook, hosted readback, PR merge, and installed-source readback.
 - Existing secondary worktrees predate owner leases and require owner-bound recovery before cleanup.
 - The Rollup Answer and Opus 5 owner worktrees remain registered until their exact owners release their leases. Their source commits are contained, but physical cleanup must use the broker after each owner turn ends.
 - Natural scheduled-run proof must come from an observed scheduler firing; quiet time is not proof.

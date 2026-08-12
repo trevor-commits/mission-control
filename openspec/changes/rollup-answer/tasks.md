@@ -38,4 +38,5 @@
 - [x] 4.16 Run the authoritative full gate at initial convergence candidate `1127571`, publish PR #16, and capture the first hosted verifier plus automated review results without merging or cleaning source state.
 - [x] 4.17 Integrate source no-write repair `fdb838d`; close every validated PR review finding and the hosted timing/ripgrep failures in rewritten convergence repair `db40774`; pass the complete affected suite matrix.
 - [x] 4.18 Preserve the rejected unpublished head, remove its credential-shaped test addition, rewrite before publication, and pass all 26 suites at exact post-rewrite head `e34c2ed`.
-- [ ] 4.19 Commit the verifier receipt, push it through the ordinary hook, obtain green hosted CI and review readback, merge PR #16, install the merged source, then archive PR #11 and its source branch only after exact containment and recovery-tag readback.
+- [x] 4.19 Commit the verifier receipt, push it through the ordinary hook, and obtain GitGuardian plus CodeRabbit approval at published head `be1c342`; reproduce the two failures from hosted run `31639362011` and repair them at `c988153`.
+- [ ] 4.20 Pass the exact records-head verifier and push hook, obtain green hosted CI and review readback, merge PR #16, install the merged source, then archive PR #11 and its source branch only after exact containment and recovery-tag readback.
