@@ -1,6 +1,6 @@
 # Lane D state — rollup-answer CLI wiring
 
-- Status: CONVERGENCE PR REVIEW REPAIR COMPLETE; FINAL GATES PENDING. PR #16 contains the current-main integration through remote docs head `8b36b32`; local convergence repair `2bfda6afe0ee839dc498cf27820febfde543dbde` closes the first hosted-CI failure and every validated Codex/CodeRabbit finding. Focused affected suites are green. Exact final-head verification, push-hook and hosted readback, merge, install, archive, and cleanup remain.
+- Status: FINAL LOCAL GATE GREEN; PUBLICATION AND LANDING PENDING. PR #16 contains the current-main integration through remote docs head `8b36b32`. Repair `2bfda6a` closes the first hosted-CI failure and every validated review finding. Exact records candidate `9d3f56289619d44486721eee3f3caa691f33618a` passes `SUITES PASS=26 FAIL=0`. The docs-only receipt, push-hook, hosted readback, merge, install, archive, and cleanup remain.
 - Branch: `codex/repo-convergence-019ff2ae`
 - Review base: `43bca917871a33f3b4176117df86e15eb80a3472`
 - Convergence PR: #16, `https://github.com/trevor-commits/mission-control/pull/16`

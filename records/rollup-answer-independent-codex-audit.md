@@ -117,7 +117,8 @@ No live store, provider send, install, deployment, plist, launchd, or main-branc
 - Separate verification: exact source head `fdb838d` passed `SUITES PASS=26 FAIL=0`.
   Convergence repair passed rollup `32/32`, dashboard `91/0`, browser
   315, panel `13/0`, native summary `16/0`, and every affected owner suite.
-  Final records-head authoritative and hosted verification remain landing gates.
+  Exact records candidate `9d3f562` then passed the authoritative `26/0` gate.
+  The docs-only receipt, push hook, and hosted readback remain landing gates.
 - Work Record: `todo.md`, “2026-08-12 — PR review and hosted-CI repair.”
 - Completed index: `todo.md`, “Lane D source implementation and review repair.”
 - Issue and branch ledger: `self-contained:` repository convergence in Active

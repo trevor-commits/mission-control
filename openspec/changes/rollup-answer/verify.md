@@ -14,7 +14,7 @@
 - Current-main integration base: `43bca917871a33f3b4176117df86e15eb80a3472`.
 - Current-main source repair: `60577b78fa32b48f10580796f94aacdb16a1fb19`.
 - Source no-write repair: `fdb838dd6d7520646541c9bf95e2a7901c8c2d58`.
-- Repository convergence integration: source repairs are contained as `bd83a30` and `4453b8e`; PR review/CI repair is `2bfda6afe0ee839dc498cf27820febfde543dbde` on PR #16. The final records head and hosted gate remain pending.
+- Repository convergence integration: source repairs are contained as `bd83a30` and `4453b8e`; PR review/CI repair is `2bfda6afe0ee839dc498cf27820febfde543dbde` on PR #16. Exact records candidate `9d3f56289619d44486721eee3f3caa691f33618a` passes the authoritative gate. The receipt head, push hook, and hosted gate remain pending.
 - Environment: hermetic temporary Mission Control homes/stores, synthetic feeds, fake senders, and loopback-only fixtures.
 
 ## Evidence
@@ -41,6 +41,7 @@
 | Attention-feed compatibility repair | exact RED manual attention and stale Brief both rendered `Answers recorded`; source and integrated GREEN browser 315; render smoke, JavaScript syntax, strict OpenSpec, and diff checks pass | source `60577b78`; convergence `bd83a30` |
 | Final repository-convergence verifier | `SUITES PASS=26 FAIL=0` at exact candidate `112757172e640450f73fcd1a69f36745f6882a73`; rollup 29/29; dashboard 90/0; browser 315; OpenSpec 2/0; syntax and artifacts pass | current convergence task transcript |
 | PR review and hosted-CI repair | RED stale attention, native pending overcount, ambient abort, stale sidecar health, missing index, and whole-value validation; GREEN dashboard 91/0, rollup 32/32, browser 315, panel 13/0, native 16/0, affected shell/Python suites and static checks | convergence repair `2bfda6a`; `records/2026-08-11-repository-convergence.md` |
+| Post-review records-candidate verifier | `SUITES PASS=26 FAIL=0` at exact `9d3f56289619d44486721eee3f3caa691f33618a`; dashboard 91/0; rollup 32/32; ER-134 63/0; browser 315; panel 13/0; native suites 16/0 each; OpenSpec 2/0; syntax and artifacts pass | current convergence task transcript |
 | Final same-model/max audit | pending immutable merge commit | `records/rollup-answer-independent-codex-audit.md` |
 
 ## Claims and limits
@@ -52,4 +53,4 @@
 - Confirmed: the valid 300-second attention envelope participates in guard validation and combined Home state; exact `attention` and `attention — ...` panel states remain actionable.
 - Confirmed: exact sixth-repair head `78672c4` passes the authoritative `SUITES PASS=23 FAIL=0` gate live on macOS 26.5.
 - Confirmed: no dependency or schema migration was introduced.
-- Did not verify: the final records-head authoritative/push-hook verifier or repaired hosted CI; PR merge; install, provider delivery, live-store behavior, plist, or launchd.
+- Did not verify: the docs-only receipt head through the ordinary push-hook or repaired hosted CI; PR merge; install, provider delivery, live-store behavior, plist, or launchd.

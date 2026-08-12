@@ -74,7 +74,8 @@ Linear: `self-contained:` because `LINEAR.md` records repo-only mode.
 - PR #16 published docs head `8b36b32f0a0bb02b942672500881dbd203a62df8`. GitGuardian passed. The first hosted verifier reached `25/26`; its only failed suite used a 150-millisecond wall-clock threshold and observed 152 milliseconds on the hosted runner. Two passing suites also printed `rg: command not found` because the workflow never installed ripgrep.
 - Codex and CodeRabbit found valid gaps in attention refresh, native pending counts, Morning Brief sidecar health, rollup test isolation, failure-injection gating, process-group cleanup, model-policy accounting, SQLite indexing, identifier validation, and checkout credential persistence.
 - Repair commit `2bfda6afe0ee839dc498cf27820febfde543dbde` closes those paths. Mutation-backed RED reproduced stale attention, ambient aborts, stale sidecar health, pending native overcount, missing index coverage, and whole-value validation bypass before GREEN.
-- Focused GREEN at that commit: dashboard `91/0`; Rollup Answer `32/32`; dashboard browser 315; panel browser `13/0`; native summary `16/0`; Decision Alert, Morning Brief, Outcome Extractor, deadman sender, and loose-end runner all pass. Syntax, strict OpenSpec, and diff checks pass. The exact-head authoritative verifier and new hosted readback remain separate gates.
+- Focused GREEN at that commit: dashboard `91/0`; Rollup Answer `32/32`; dashboard browser 315; panel browser `13/0`; native summary `16/0`; Decision Alert, Morning Brief, Outcome Extractor, deadman sender, and loose-end runner all pass. Syntax, strict OpenSpec, and diff checks pass.
+- Exact post-review records candidate `9d3f56289619d44486721eee3f3caa691f33618a` passed the authoritative verifier with `SUITES PASS=26 FAIL=0`. Key totals are dashboard `91/0`, Rollup Answer `32/32`, ER-134 `63/0`, loose-end runner `32/0`, Usage `24/0`, dashboard browser 315, panel browser `13/0`, both native core suites `16/0`, and OpenSpec `2/0`. Syntax and source-artifact gates passed; immediate HEAD/status/diff readback stayed exact and clean.
 
 ## No-delete gates
 
@@ -93,7 +94,7 @@ No worktree, local branch, remote branch, PR, rescue ref, or backup is removed u
 ## Current unverified boundaries
 
 - Historical Decisions timeouts cannot be attributed more narrowly than the observed host-wide storage/timeout episode; current behavior is green and no source defect was reproduced.
-- Repair head `2bfda6afe0ee839dc498cf27820febfde543dbde` still needs the exact-head authoritative verifier, records commit, ordinary push-hook verifier, hosted CI/review readback, PR merge, and installed-source readback.
+- Exact records candidate `9d3f56289619d44486721eee3f3caa691f33618a` is authoritative-gate green. The docs-only receipt still needs the ordinary push-hook verifier, hosted CI/review readback, PR merge, and installed-source readback.
 - Existing secondary worktrees predate owner leases and require owner-bound recovery before cleanup.
 - The Rollup Answer and Opus 5 owner worktrees remain registered until their exact owners release their leases. Their source commits are contained, but physical cleanup must use the broker after each owner turn ends.
 - Natural scheduled-run proof must come from an observed scheduler firing; quiet time is not proof.
