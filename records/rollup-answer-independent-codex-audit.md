@@ -113,12 +113,13 @@ No live store, provider send, install, deployment, plist, launchd, or main-branc
   `fdb838dd6d7520646541c9bf95e2a7901c8c2d58`.
 - Convergence containment: `bd83a30` and `4453b8e` on
   `codex/repo-convergence-019ff2ae`. PR review and hosted-CI repair is
-  `2bfda6afe0ee839dc498cf27820febfde543dbde`.
+  `db40774bbb477326989553cba703c716d857bb80`.
 - Separate verification: exact source head `fdb838d` passed `SUITES PASS=26 FAIL=0`.
   Convergence repair passed rollup `32/32`, dashboard `91/0`, browser
   315, panel `13/0`, native summary `16/0`, and every affected owner suite.
-  Exact records candidate `9d3f562` then passed the authoritative `26/0` gate.
-  The docs-only receipt, push hook, and hosted readback remain landing gates.
+  The first push gate rejected a credential-shaped test addition before publication.
+  Exact rewritten head `e34c2ed` then passed the authoritative `26/0` gate.
+  SHA-reconciliation records, the push hook, and hosted readback remain landing gates.
 - Work Record: `todo.md`, “2026-08-12 — PR review and hosted-CI repair.”
 - Completed index: `todo.md`, “Lane D source implementation and review repair.”
 - Issue and branch ledger: `self-contained:` repository convergence in Active

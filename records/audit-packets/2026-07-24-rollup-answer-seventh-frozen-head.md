@@ -40,7 +40,7 @@ boundary.
 
 Source head `fdb838dd6d7520646541c9bf95e2a7901c8c2d58` passed its
 exact `26/0` verifier, and convergence repair
-`2bfda6afe0ee839dc498cf27820febfde543dbde` passed rollup `32/32` plus the full
+`db40774bbb477326989553cba703c716d857bb80` passed rollup `32/32` plus the full
 affected matrix. Owner: repository convergence task
 `019ff2ae-33b3-7e50-af39-3a08efef29a8`. Reopen only if a cleanup error leaves
 the canonical conflict durable or exact receipt-backed replay stops recovering.

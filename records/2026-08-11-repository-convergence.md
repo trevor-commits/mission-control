@@ -73,9 +73,16 @@ Linear: `self-contained:` because `LINEAR.md` records repo-only mode.
 
 - PR #16 published docs head `8b36b32f0a0bb02b942672500881dbd203a62df8`. GitGuardian passed. The first hosted verifier reached `25/26`; its only failed suite used a 150-millisecond wall-clock threshold and observed 152 milliseconds on the hosted runner. Two passing suites also printed `rg: command not found` because the workflow never installed ripgrep.
 - Codex and CodeRabbit found valid gaps in attention refresh, native pending counts, Morning Brief sidecar health, rollup test isolation, failure-injection gating, process-group cleanup, model-policy accounting, SQLite indexing, identifier validation, and checkout credential persistence.
-- Repair commit `2bfda6afe0ee839dc498cf27820febfde543dbde` closes those paths. Mutation-backed RED reproduced stale attention, ambient aborts, stale sidecar health, pending native overcount, missing index coverage, and whole-value validation bypass before GREEN.
+- Rewritten repair commit `db40774bbb477326989553cba703c716d857bb80` closes those paths. Mutation-backed RED reproduced stale attention, ambient aborts, stale sidecar health, pending native overcount, missing index coverage, and whole-value validation bypass before GREEN.
 - Focused GREEN at that commit: dashboard `91/0`; Rollup Answer `32/32`; dashboard browser 315; panel browser `13/0`; native summary `16/0`; Decision Alert, Morning Brief, Outcome Extractor, deadman sender, and loose-end runner all pass. Syntax, strict OpenSpec, and diff checks pass.
-- Exact post-review records candidate `9d3f56289619d44486721eee3f3caa691f33618a` passed the authoritative verifier with `SUITES PASS=26 FAIL=0`. Key totals are dashboard `91/0`, Rollup Answer `32/32`, ER-134 `63/0`, loose-end runner `32/0`, Usage `24/0`, dashboard browser 315, panel browser `13/0`, both native core suites `16/0`, and OpenSpec `2/0`. Syntax and source-artifact gates passed; immediate HEAD/status/diff readback stayed exact and clean.
+- Exact post-rewrite head `e34c2ed23028b31707ef581ba0bc6b1cc9e4a92e` passed the authoritative verifier with `SUITES PASS=26 FAIL=0`. Key totals are dashboard `91/0`, Rollup Answer `32/32`, ER-134 `63/0`, loose-end runner `32/0`, Usage `24/0`, dashboard browser 315, panel browser `13/0`, both native core suites `16/0`, and OpenSpec `2/0`. Syntax and source-artifact gates passed; immediate HEAD/status/diff readback stayed exact and clean.
+
+## Credential-gate containment
+
+- The first ordinary push was rejected before publication. The credential gate identified one newly added exact synthetic token check in `scripts/loose-end-runner.test.sh`; it printed only the path and line.
+- The test now reconstructs the synthetic value from non-credential-shaped fragments and still verifies its exact absence from both public output and the durable report. The focused runner passes `32/0`.
+- Pre-rewrite head `94f8977eefbf8f1ec9ec150f9831f412c3625825` is preserved at local rescue ref `refs/rescue/2026-08-12/pre-credential-rewrite-94f8977`. No rejected object was published.
+- The fixture repair was autosquashed into the unpublished review repair. New repair head is `db40774bbb477326989553cba703c716d857bb80`; its descendant `e34c2ed23028b31707ef581ba0bc6b1cc9e4a92e` passed the exact 26-suite gate.
 
 ## No-delete gates
 
@@ -94,7 +101,7 @@ No worktree, local branch, remote branch, PR, rescue ref, or backup is removed u
 ## Current unverified boundaries
 
 - Historical Decisions timeouts cannot be attributed more narrowly than the observed host-wide storage/timeout episode; current behavior is green and no source defect was reproduced.
-- Exact records candidate `9d3f56289619d44486721eee3f3caa691f33618a` is authoritative-gate green. The docs-only receipt still needs the ordinary push-hook verifier, hosted CI/review readback, PR merge, and installed-source readback.
+- Exact post-rewrite head `e34c2ed23028b31707ef581ba0bc6b1cc9e4a92e` is authoritative-gate green. SHA-reconciliation records still need the ordinary push-hook verifier, hosted CI/review readback, PR merge, and installed-source readback.
 - Existing secondary worktrees predate owner leases and require owner-bound recovery before cleanup.
 - The Rollup Answer and Opus 5 owner worktrees remain registered until their exact owners release their leases. Their source commits are contained, but physical cleanup must use the broker after each owner turn ends.
 - Natural scheduled-run proof must come from an observed scheduler firing; quiet time is not proof.

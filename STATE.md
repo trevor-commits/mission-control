@@ -1,6 +1,6 @@
 # Lane D state — rollup-answer CLI wiring
 
-- Status: FINAL LOCAL GATE GREEN; PUBLICATION AND LANDING PENDING. PR #16 contains the current-main integration through remote docs head `8b36b32`. Repair `2bfda6a` closes the first hosted-CI failure and every validated review finding. Exact records candidate `9d3f56289619d44486721eee3f3caa691f33618a` passes `SUITES PASS=26 FAIL=0`. The docs-only receipt, push-hook, hosted readback, merge, install, archive, and cleanup remain.
+- Status: POST-REWRITE LOCAL GATE GREEN; PUBLICATION AND LANDING PENDING. PR #16 remains at remote docs head `8b36b32`. Unpublished repair `db40774bbb477326989553cba703c716d857bb80` closes every validated review finding and removes the credential-shaped test addition that the first push gate rejected. Exact rewritten head `e34c2ed23028b31707ef581ba0bc6b1cc9e4a92e` passes `SUITES PASS=26 FAIL=0`. SHA-reconciliation records, the ordinary push-hook, hosted readback, merge, install, archive, and cleanup remain.
 - Branch: `codex/repo-convergence-019ff2ae`
 - Review base: `43bca917871a33f3b4176117df86e15eb80a3472`
 - Convergence PR: #16, `https://github.com/trevor-commits/mission-control/pull/16`
@@ -194,7 +194,7 @@ Receipts:
 - Confirmed: the sixth repair's focused matrix is targeted 4/4, rollup 29/29, browser 254, with syntax/diff/source-artifact checks green.
 - Confirmed: exact sixth-repair head `78672c46d94041f974ca97b0d2cfe5596c6b020a` passes the authoritative `SUITES PASS=23 FAIL=0` gate live on macOS 26.5 (evidence `records/evidence/rollup-answer-final-boundaries-full-green.txt`); the macOS `O_SYMLINK` gap was RED before this head and GREEN after.
 - Confirmed: the seventh frozen-head audit is historically `REVIEW-CLEAN / MERGE-READY` for source code head `78672c4` only (Cursor `9db69b00`; Codex Sol usage-limited). Parent re-ran rollup 29/29 before that audit.
-- Confirmed: source PR #11 is superseded for landing by convergence PR #16. Source repairs `60577b78` and `fdb838d` are contained as `bd83a30` and `4453b8e`; review repair `2bfda6a` passes the full affected matrix.
+- Confirmed: source PR #11 is superseded for landing by convergence PR #16. Source repairs `60577b78` and `fdb838d` are contained as `bd83a30` and `4453b8e`; rewritten review repair `db40774` passes the full affected matrix.
 - Did not verify: final records-head authoritative and hosted gates, merged-main install, provider delivery, or live-store behavior.
 - Do not do from the retained source branch: merge PR #11, install, deploy, send, write a live store, change plist/launchd, or resolve live decision `decision:a6f185b53cbc1278499b062d`.
 - Merge-sitting note: PR #16 owns landing. The integrator must read back the live card before changing it and must preserve provider/no-egress boundaries during verification.

@@ -43,6 +43,6 @@ Validation-before-write repair
 creating locks, batch paths, or SQLite files. Convergence commits `bd83a30` and
 `4453b8e` contain both source repairs.
 
-PR review repair `2bfda6afe0ee839dc498cf27820febfde543dbde`
+PR review repair `db40774bbb477326989553cba703c716d857bb80`
 passes rollup `32/32` and dashboard `91/0`. Final records-head verification,
 hosted readback, merge, and installation remain outside the source branch.
