@@ -9,7 +9,7 @@ Capture the current goal plus the concrete dependency-ordered steps that are sti
 - Put audit-created actionable execution items at the top of this section so audit follow-through is the next queue to execute.
 - If the current chat creates or discovers more urgent execution-ready work than the existing queue reflects, persist and move that fresher work to the top of this section before handoff so the chat is not the only durable record.
 - When a step is verified complete, move or summarize it in `## Completed` instead of deleting the history.
-- 2026-08-11 repository convergence: preserve all reachable, unreachable, detached, and dirty work; repair the current Decisions collector timeout; add CI; reconcile current-value rollup and reliability work; merge one verified outcome at a time; install and observe live scheduler evidence; then archive and clean every obsolete PR, branch, and worktree through exact-SHA and owner-lease gates. Preservation is complete through verified local and T7 bundles; implementation and cleanup remain active. | owner: Codex `019ff2ae-33b3-7e50-af39-3a08efef29a8` | plan: `records/2026-08-11-repository-convergence.md` | linear: self-contained; repo-only.
+- 2026-08-11 repository convergence: preservation, current-state classification, CI, rollup-answer integration, panel click repair, process-group reaping, and fixture containment are complete on the convergence candidate. The reported Decisions timeout is currently green and did not reproduce on a copied 136-outcome store; historical evidence points to a broader storage-pressure episode, so no speculative source change was made. Exact-head verification/review, main landing, install/live proof, archive tags, stale PR closure, and branch/worktree cleanup remain. | owner: Codex `019ff2ae-33b3-7e50-af39-3a08efef29a8` | plan: `records/2026-08-11-repository-convergence.md` | linear: self-contained; repo-only.
 - Phase 0 rollup-answer CLI (integrated into the convergence candidate): preserved source head `9185dec` includes current `origin/main@43bca917`; the convergence merge keeps the redesigned attention surfaces and answered-pending truth. Fresh source-head rollup tests pass 29/29. Next: run the exact merged-head authoritative gate and review, then land through the convergence PR before any install or live-store exercise. | source owner: Codex thread `019f762c-c815-77b3-97c0-021c66fd3b7e` | convergence owner: Codex `019ff2ae-33b3-7e50-af39-3a08efef29a8` | linear: repo-only.
 - ER-156 Telegram producer routing: source, tests, and docs now route decisions to Control,
   normal Morning Brief chunks to Briefs, and the independent deadman to Incidents without
@@ -96,6 +96,16 @@ Preserve a durable completion trail for verified work instead of deleting it fro
 - Ripple Check: preservation adds Git refs and external bundle files only. This record and the branch ledger document the active state; product code and runtime remain unchanged.
 - by: Codex `019ff2ae-33b3-7e50-af39-3a08efef29a8`.
 - led to: `records/2026-08-11-repository-convergence.md` and the owner-leased convergence worktree.
+- linear: self-contained; Mission Control remains repo-only.
+
+### 2026-08-11 — Repository selective integration
+- Problem: preserved work mixed a current V1 operator feature, reliability fixes, superseded UI experiments, and V2 autonomy/health experiments; the live Decisions timeout had healed before a source cause was proven.
+- Reasoning: merge only behavior that remains aligned with `PROJECT_INTENT.md`, reproduce each repair where possible, and classify a non-reproducible incident honestly instead of changing healthy code.
+- Fix: added pinned macOS CI; merged exact rollup source head `9185dec`; ported interrupted-feeder group reaping; reproduced and repaired the native panel click race; combined identity-bound fixture roots with group cleanup; and removed noisy expected-zero fixture reads. Preserved answer-dispatch, unified-health, memory-health, and the old visual refresh without shipping them.
+- Decisions evidence: copied live database plus 136-outcome snapshot completed sync in 0.532 seconds; decision tests pass; live Decisions is healthy; scheduled collector last exited zero. Historical stderr contains `ENOSPC` and simultaneous Usage/Git/Chats/Decisions timeouts, which supports but does not prove a host-pressure cause.
+- Self-audit: source-head rollup 29/29; panel RED `62/1` then GREEN `63/0`; fixture-reaper 9/9; verifier temp-root self-tests pass; chat graph, outcome extractor, and Usage suites pass. Exact integrated full verification, hosted CI, merge, install, and natural-run proof remain separate gates.
+- Ripple Check: updated the convergence record, Active Next Steps, branch ledger, and Test Evidence. V2 product gates, provider delivery, live decision state, LaunchAgents, and installed runtime remain unchanged.
+- by: Codex `019ff2ae-33b3-7e50-af39-3a08efef29a8`.
 - linear: self-contained; Mission Control remains repo-only.
 
 ### 2026-08-11 — Rollup-answer current-main integration
@@ -892,19 +902,19 @@ Keep materially new suggestions here so they survive beyond the current chat.
 
 ## Active Branch Ledger
 ### `codex/repo-convergence-019ff2ae`
-- status: active — preservation and CI complete; rollup-answer integrated; reliability ports and final verification remain
+- status: active — preservation, CI, rollup-answer, panel click, process reaping, and fixture containment complete; final verification and landing remain
 - created: 2026-08-11
 - base: `origin/main@43bca917871a33f3b4176117df86e15eb80a3472`
 - worktree: `/Users/gillettes/Coding Projects/mission-control-worktrees/codex/repo-convergence-019ff2ae`
 - source chat: 2026-08-11 Codex `019ff2ae-33b3-7e50-af39-3a08efef29a8`, repository recovery and convergence
-- last refreshed by chat: 2026-08-11 rollup-answer integration
+- last refreshed by chat: 2026-08-11 selective integration checkpoint
 - purpose: preserve all work, stabilize current main, integrate current-value work, and safely clean obsolete Git state.
 - linked issue: `self-contained:` repository convergence; Linear repo-only mode
 - plugin mirror: none
 - merge expectation: merge verified implementation and records to `main`
 - merge target: `main`
 - review surface: focused regressions, full verifier, exact-head review, GitHub PR checks, install readback, and scheduled-run evidence
-- exit checklist: preservation, restore test, CI, and rollup integration complete; reliability ports, exact-head review, merge/install proof, archive tags, owner releases, branch cleanup, and final records remain
+- exit checklist: preservation, restore test, CI, rollup integration, and reliability ports complete; exact-head review, merge/install proof, archive tags, owner releases, branch cleanup, and final records remain
 - delete when: after `origin/main` containment, final install proof, owner release, and later cleanup-broker removal
 - retain reason: active convergence owner
 - cleanup command: owner release followed in a later turn by `worktree-owner-lease.py cleanup-released` using the recorded state file and lease ID
@@ -1122,6 +1132,7 @@ If it's not here, it isn't remembered.
 - When a verification run closes or updates an audit finding, cross-reference the matching audit record entry and the chat or commit that performed the work.
 
 ## Test Evidence Log
+- 2026-08-11 | commands: copied-live Decisions sync benchmark; `scripts/decision-alert.test.sh`; pinned macOS CI YAML parse and local push gate; source-head `scripts/rollup-answer.test.py`; ER-134 RED/GREEN; targeted fixture-reaper and nested-temp cases; verifier self-test; chat-graph, outcome-extractor, and Usage suites; Bash syntax and diff checks | result: Decisions 136-outcome sync 0.532s and healthy; baseline push `SUITES PASS=24 FAIL=0`, browser 307; rollup 29/29; panel click RED 62/1 then GREEN 63/0; fixture reaper 9/9; temp helper/self-tests green; chat graph ALL PASS without absent-file warnings; outcome extractor ALL PASS; Usage 24/0 | log/PR reference: `records/2026-08-11-repository-convergence.md`; branch `codex/repo-convergence-019ff2ae` | by: Codex `019ff2ae-33b3-7e50-af39-3a08efef29a8` | linear: repo-only.
 - 2026-08-11 | commands: current-main merge conflict review; expected RED/GREEN dashboard attention, Home hero, pending-only panel, ER-134 fixture, and synthetic-root identity regressions; full owning suites; render smoke; syntax/diff checks; two broad verifier attempts plus isolated Chrome reproduction | result: focused GREEN dashboard 86/0, rollup 29/29, browser 309, panel 13/0, ER-134 62/0, render smoke 8/8, syntax and diff checks. The second broad verifier had every code suite green but Chrome closed before its last panel case; immediate isolated panel run passed 13/0. Neither interrupted broad run is completion evidence; exact-head authoritative verification remains pending. | log/PR reference: Work Record above; pending immutable merge receipt | by: Codex `019f762c-c815-77b3-97c0-021c66fd3b7e` | linear: repo-only.
 - 2026-07-18 | commands: sixth-audit hermetic counterexamples; targeted RED/GREEN four-test command; `PYTHONDONTWRITEBYTECODE=1 python3 scripts/rollup-answer.test.py`; `node scripts/dashboard-browser.test.js`; Python/Node/diff checks | result: RED missing receipt field returned zero; RED canonical symlink remained/wedged replay; RED quarantine moved an unbound replacement; RED combined attention rendered `Answers recorded`; GREEN targeted 4/4, rollup 29/29 in 37.726s, browser 254, static checks pass; orphan symlink remains untouched and no provider sender is reachable | log/PR reference: `records/evidence/rollup-answer-final-boundaries-red-green.txt`; audit `019f77f3-4975-7f51-b296-fbdc2dbd3d47` | by: Codex `019f73d8-e5dc-73a0-acc5-8a4916ac6819` | linear: repo-only.
 - 2026-07-18 | commands: `PYTHONDONTWRITEBYTECODE=1 /bin/bash scripts/verify.sh` at exact committed `c0d0a53`; immediate HEAD/status/diff/source-artifact readback | result: authoritative `SUITES PASS=23 FAIL=0`; rollup `25/25` in 39.371s; dashboard `67/0`; ER-134 `59/0`; loose-end runner `32/0`; shared policy `2/0`; usage `24/0`; browser `253`; OpenSpec `2/0`; Python/shell/source-artifact gates pass; exact head and clean worktree unchanged | log/PR reference: `records/evidence/rollup-answer-receipt-entry-full-green.txt` | by: Codex `019f73d8-e5dc-73a0-acc5-8a4916ac6819` | linear: repo-only.

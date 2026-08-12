@@ -48,6 +48,16 @@ Linear: `self-contained:` because `LINEAR.md` records repo-only mode.
 7. Close stale PRs, archive exact source heads, release owner leases, remove worktrees through the cleanup broker, and delete branches with exact-OID checks.
 8. Reconcile `todo.md`, OpenSpec state, branch history, recovery commands, and any remaining Trevor-owned decisions.
 
+## Selective integration checkpoint
+
+- The reported Decisions timeout is not reproducible on current source or current data. A SQLite backup plus the live 136-outcome chat snapshot completed `sync-snapshot` in 0.532 seconds, the focused decision suite passed, the live feed is healthy, and the scheduled job last exited zero. Historical stderr also records `ENOSPC` and concurrent timeouts across Usage, Git, Chats, and Decisions. That evidence supports a broader host-pressure incident, but it does not prove one exact cause, so no speculative Decisions code change was made.
+- CI commit `b370e5afd61c8d84b3558396131233c8ef807f51` adds a dependency-pinned `macos-15` workflow. The local push gate passed all 24 baseline suites and 307 dashboard-browser assertions before publication.
+- Rollup source head `9185dec694603b1482206b3ce9ab6d8dabc9ef7b` is merged into the convergence candidate. Its source-head transaction suite passed 29/29 before integration; exact merged-head full verification remains a landing gate.
+- Process-group fixes `36386f7` and `5832b16` were ported as `fb7d9e7` and `f736c10`. The current targeted matrix reaped all three interrupted feeder shapes and passed 9/9 without touching live data.
+- The menu-bar click race was reproduced as ER-134 `62 passed, 1 failed`, then repaired at `00b82a8`; the focused suite is now `63 passed, 0 failed` while retaining hover preview and pinned headroom.
+- Dirty snapshot `f2a4213` supplied the test-fixture containment design. Current commit `5566871` combines its identity-bound temp root with the stronger process-group reaper; verifier self-tests, targeted dashboard cases, chat graph, outcome extractor, and Usage all pass. The formerly noisy absent-file checks now fail silently only when the expected zero-call file is absent.
+- Answer-dispatch autonomy, unified-health, memory-health, and the old visual refresh remain preserved but excluded. They conflict with the current V1 clarity gate or are superseded by newer mainline work.
+
 ## No-delete gates
 
 No worktree, local branch, remote branch, PR, rescue ref, or backup is removed until all applicable checks pass:
@@ -64,7 +74,7 @@ No worktree, local branch, remote branch, PR, rescue ref, or backup is removed u
 
 ## Current unverified boundaries
 
-- The exact root cause of the Decisions timeout is not yet proven.
-- Local rollup head `9185dec` has not received a fresh immutable review or current full verifier in this campaign.
+- Historical Decisions timeouts cannot be attributed more narrowly than the observed host-wide storage/timeout episode; current behavior is green and no source defect was reproduced.
+- The integrated convergence head has not yet received its final full verifier, hosted CI result, or exact-head review.
 - Existing secondary worktrees predate owner leases and require owner-bound recovery before cleanup.
 - Natural scheduled-run proof must come from an observed scheduler firing; quiet time is not proof.
