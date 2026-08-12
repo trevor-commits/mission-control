@@ -772,7 +772,7 @@ html[data-theme="dark"] .mc-heat-l4 { background: #35b98a; }
 
   // --- per-feed guard: schema/staleness/skew ---------------------------------
   var EXPECTED_CADENCE = { automation: 300, usage: 1800, headroom: 60, git: 900,
-                           chats: 1800, decisions: 300, brief: 300 };
+                           chats: 1800, decisions: 300, attention: 300, brief: 300 };
   function guard(name) {
     var env = MC.feeds[name];
     var currentError = MC.feedErrors[name];
@@ -2033,14 +2033,16 @@ html[data-theme="dark"] .mc-heat-l4 { background: #35b98a; }
   }
 
   function combinedHomeState() {
-    var names = ["chats", "git", "usage", "automation", "decisions", "brief"];
+    var names = ["chats", "git", "usage", "automation", "decisions", "attention", "brief"];
     var epochs = [];
     var status = "fresh";
     names.forEach(function (name) {
       var g = guard(name);
+      var panelState = panelStatusText(name, g);
       if (g.ok && g.epoch) epochs.push(g.epoch);
       if (!g.ok || g.feedError || g.flag === "stale") status = "attention";
-      else if (status !== "attention" && panelStatusText(name, g) !== "fresh") status = "partial";
+      else if (panelState === "attention" || panelState.indexOf("attention — ") === 0) status = "attention";
+      else if (status !== "attention" && panelState !== "fresh") status = "partial";
     });
     return { epoch: epochs.length ? Math.min.apply(null, epochs) : null, status: epochs.length ? status : "no data" };
   }
