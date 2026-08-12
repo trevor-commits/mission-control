@@ -76,6 +76,14 @@ fi
 test -x "$PANEL_TEST_BIN" && pass "mc-panel binary built in isolated test state" || fail "mc-panel binary"
 grep -q 'disableAutomaticTermination' "$ROOT/scripts/mc-panel.swift" && pass "panel disables TAL" || fail "panel disables TAL"
 grep -q 'beginActivity' "$ROOT/scripts/mc-panel.swift" && pass "panel RunningBoard activity" || fail "panel RunningBoard activity"
+if grep -q 'pop.behavior = .applicationDefined' "$ROOT/scripts/mc-panel.swift" && \
+   grep -q 'DispatchQueue.main.async' "$ROOT/scripts/mc-panel.swift" && \
+   grep -q 'addLocalMonitorForEvents' "$ROOT/scripts/mc-panel.swift" && \
+   grep -q 'addGlobalMonitorForEvents' "$ROOT/scripts/mc-panel.swift"; then
+  pass "panel click opens after the status-item event and dismisses explicitly"
+else
+  fail "panel transient click race remains"
+fi
 grep -q 'mcDecide' "$ROOT/dashboard/panel.html" && pass "panel one-click bridge" || fail "panel one-click bridge"
 if grep -q 'isAnswerPending\|d\.answer_pending\|answer_pending' "$ROOT/dashboard/panel.html" && \
    grep -q 'Awaiting owner consumption' "$ROOT/dashboard/panel.html"; then

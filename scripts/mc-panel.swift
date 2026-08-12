@@ -6,7 +6,7 @@ import WebKit
 // Loads ~/.mission-control/panel.html (or argv override).
 // Disables AppKit Automatic Termination — idle accessory apps otherwise exit silently.
 
-final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler, NSWindowDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler, NSWindowDelegate, NSPopoverDelegate {
   var statusItem: NSStatusItem!
   var popover: NSPopover!
   var webView: WKWebView!
@@ -16,6 +16,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
   var pinPanel: NSPanel?
   var pinWebView: WKWebView?
   var headroomTimer: Timer?
+  // A transient popover races the status-item mouse-down that opens it. Keep
+  // explicit monitors so the opening click survives and later outside clicks
+  // still dismiss the panel.
+  var popoverEventMonitors: [Any] = []
   // Retained RunningBoard activity — anonymous menu-bar binaries otherwise get
   // Control Center "after-life.interrupted" / workspace invalidation and exit.
   var stayAliveActivity: NSObjectProtocol?
@@ -52,7 +56,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
 
     let pop = NSPopover()
     pop.contentSize = NSSize(width: 400, height: 560)
-    pop.behavior = .transient
+    pop.behavior = .applicationDefined
+    pop.delegate = self
     pop.contentViewController = NSViewController()
     pop.contentViewController!.view = web
     popover = pop
@@ -432,7 +437,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
     hoverTimer = nil
     guard let button = statusItem.button else { return }
     if popover.isShown {
-      popover.performClose(sender)
+      closePopover()
     } else {
       showPopover(over: button, activating: true)
     }
@@ -441,8 +446,61 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
   func showPopover(over button: NSStatusBarButton, activating: Bool) {
     guard !popover.isShown else { return }
     reload()
-    popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
-    if activating { NSApp.activate(ignoringOtherApps: true) }
+    // Run after the status-item event completes. Showing synchronously lets the
+    // opening mouse-down dismiss the popover before the matching mouse-up.
+    DispatchQueue.main.async { [weak self, weak button] in
+      guard let self = self, let button = button, !self.popover.isShown else { return }
+      self.popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+      if activating {
+        self.popover.contentViewController?.view.window?.makeKey()
+        NSApp.activate(ignoringOtherApps: true)
+      }
+      self.installPopoverDismissalMonitors()
+    }
+  }
+
+  func closePopover() {
+    removePopoverDismissalMonitors()
+    if popover.isShown {
+      popover.performClose(nil)
+    }
+  }
+
+  func installPopoverDismissalMonitors() {
+    removePopoverDismissalMonitors()
+    let handler: (NSEvent) -> Void = { [weak self] event in
+      guard let self = self, self.popover.isShown else { return }
+      if let button = self.statusItem.button, let window = button.window {
+        let location = window.mouseLocationOutsideOfEventStream
+        if button.frame.contains(location) { return }
+      }
+      if let popoverWindow = self.popover.contentViewController?.view.window,
+         event.window === popoverWindow {
+        return
+      }
+      self.closePopover()
+    }
+    let mask: NSEvent.EventTypeMask = [.leftMouseDown, .rightMouseDown]
+    if let local = NSEvent.addLocalMonitorForEvents(matching: mask, handler: { event in
+      handler(event)
+      return event
+    }) {
+      popoverEventMonitors.append(local)
+    }
+    if let global = NSEvent.addGlobalMonitorForEvents(matching: mask, handler: handler) {
+      popoverEventMonitors.append(global)
+    }
+  }
+
+  func removePopoverDismissalMonitors() {
+    for monitor in popoverEventMonitors {
+      NSEvent.removeMonitor(monitor)
+    }
+    popoverEventMonitors.removeAll()
+  }
+
+  func popoverDidClose(_ notification: Notification) {
+    removePopoverDismissalMonitors()
   }
 
   // Hover opens a focus-safe preview after a short dwell; leaving the icon cancels.
