@@ -395,8 +395,26 @@ function demoState() {
   return match[1].trim();
 }
 
-function homePendingState(tmp, name, nonDecisionAttention) {
+function homePendingState(tmp, name) {
   const root = installedState(path.join(tmp, name));
+  const now = Math.floor(Date.now() / 1000);
+  for (const feed of ['usage', 'headroom', 'git', 'chats', 'automation', 'decisions', 'attention', 'brief']) {
+    const feedPath = path.join(root, 'data', `${feed}.json`);
+    const envelope = JSON.parse(fs.readFileSync(feedPath, 'utf8'));
+    envelope.generated_epoch = now;
+    envelope.generated_at = new Date(now * 1000).toISOString();
+    if (feed === 'usage') envelope.data.providers = [];
+    if (feed === 'git') envelope.data.repos = [];
+    if (feed === 'chats') {
+      envelope.data.nodes = [];
+      envelope.data.edges = [];
+      envelope.data.loose_ends = [];
+      envelope.data.stale_providers = [];
+      envelope.data.counts = {};
+    }
+    if (feed === 'automation') envelope.data.jobs = [];
+    writeStateFeed(root, feed, envelope);
+  }
   const decisionsPath = path.join(root, 'data', 'decisions.json');
   const decisions = JSON.parse(fs.readFileSync(decisionsPath, 'utf8'));
   for (const row of decisions.data.pinned || []) {
@@ -405,17 +423,20 @@ function homePendingState(tmp, name, nonDecisionAttention) {
   fs.writeFileSync(decisionsPath, JSON.stringify(decisions) + '\n');
   fs.writeFileSync(path.join(root, 'data', 'decisions.js'),
     `window.MC=window.MC||{feeds:{},feedErrors:{}};window.MC.feeds.decisions=${JSON.stringify(decisions)};\n`);
-  const attention = JSON.parse(fs.readFileSync(path.join(root, 'data', 'attention.json'), 'utf8'));
+  return root;
+}
+
+function staleBriefHomeState(root) {
+  const attentionPath = path.join(root, 'data', 'attention.json');
+  const attention = JSON.parse(fs.readFileSync(attentionPath, 'utf8'));
   attention.data.board = [];
   attention.data.top5 = [];
-  attention.data.counts.decision = 0;
-  attention.data.counts.decisions_filtered_out = (decisions.data.pinned || []).length;
+  attention.data.counts = { manual: 0, decision: 0, automation: 0, decisions_filtered_out: 0 };
   writeStateFeed(root, 'attention', attention);
-  if (nonDecisionAttention) {
-    fs.writeFileSync(path.join(root, 'data', 'git.error.js'),
-      'window.MC=window.MC||{feeds:{},feedErrors:{}};window.MC.feedErrors.git="synthetic non-decision failure";\n');
-  }
-  return root;
+  const briefPath = path.join(root, 'data', 'brief.json');
+  const brief = JSON.parse(fs.readFileSync(briefPath, 'utf8'));
+  brief.data.stale_required_inputs = ['git'];
+  writeStateFeed(root, 'brief', brief);
 }
 
 function luminance(rgb) {
@@ -440,7 +461,9 @@ function contrast(a, b) {
   assert(fs.existsSync(CHROME), `Chrome executable missing: ${CHROME}`);
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mc-browser-'));
   const states = { installed: installedState(tmp), demo: demoState() };
-  const attentionState = homePendingState(tmp, 'home-attention', true);
+  const attentionState = homePendingState(tmp, 'home-attention');
+  const staleBriefState = homePendingState(tmp, 'home-stale-brief');
+  staleBriefHomeState(staleBriefState);
   const operatorState = installedState(path.join(tmp, 'operator-audit'));
   writeStateFeed(operatorState, 'chats', syntheticLargeChats());
   const operatorGit = JSON.parse(fs.readFileSync(path.join(FIXTURES, 'git.json'), 'utf8'));
@@ -547,11 +570,40 @@ function contrast(a, b) {
       { waitUntil: 'load' });
     const attentionTitle = await attentionPage.locator('.mc-glance-title').innerText();
     assert(attentionTitle === 'Needs you',
-      `home/non-decision attention: reassuring headline (${attentionTitle})`);
-    const attentionHeroNeeds = await attentionPage.locator('.mc-hero-stat-num').first().innerText();
-    assert(attentionHeroNeeds === '0',
-      `home/non-decision attention: pending receipts inflated the Needs-you stat (${attentionHeroNeeds})`);
+      `home/manual attention: global heading did not require action (${attentionTitle})`);
+    const attentionHeroNeeds = await attentionPage.locator('.mc-hero-stat').filter({
+      has: attentionPage.getByText('Needs you', { exact: true }),
+    }).locator('.mc-hero-stat-num').innerText();
+    assert(attentionHeroNeeds === '1',
+      `home/manual attention: guard rejected or hid the manual item (${attentionHeroNeeds})`);
+    assert(await attentionPage.getByText('Review morning brief delivery').count() === 1,
+      'home/manual attention: valid manual item is not visible');
+    const expandHome = attentionPage.getByRole('button', { name: 'Show more details' });
+    await expandHome.click();
+    const pendingDecisionSection = attentionPage.locator('section.mc-attention').filter({
+      has: attentionPage.getByRole('heading', { name: 'Awaiting owner consumption', exact: true }),
+    });
+    assert(await pendingDecisionSection.count() === 1,
+      'home/manual attention: answered-pending decision section is not visible');
+    assert(await pendingDecisionSection.locator('.mc-opt, .mc-copy').count() === 0,
+      'home/manual attention: answered-pending decisions expose action or copy buttons');
     await attentionPage.close();
+    const briefAttentionPage = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+    await briefAttentionPage.goto(
+      `${pathToFileURL(path.join(staleBriefState, 'index.html')).href}#home`,
+      { waitUntil: 'load' });
+    const staleBriefAttention = await briefAttentionPage.evaluate(() => ({
+      board: window.MC.feeds.attention.data.board.length,
+      top5: window.MC.feeds.attention.data.top5.length,
+    }));
+    assert(staleBriefAttention.board === 0 && staleBriefAttention.top5 === 0,
+      `home/stale brief: competing attention board is not empty (${JSON.stringify(staleBriefAttention)})`);
+    assert(await briefAttentionPage.getByText('Review morning brief delivery').count() === 0,
+      'home/stale brief: manual attention item is still visible');
+    const briefAttentionTitle = await briefAttentionPage.locator('.mc-glance-title').innerText();
+    assert(briefAttentionTitle === 'Needs you',
+      `home/stale brief: global heading did not require action (${briefAttentionTitle})`);
+    await briefAttentionPage.close();
   } finally {
     await browser.close();
     fs.rmSync(tmp, { recursive: true, force: true });
