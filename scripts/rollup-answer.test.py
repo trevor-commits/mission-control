@@ -131,6 +131,25 @@ class RollupAnswerTests(unittest.TestCase):
         return [e for e in self._history(decision_id)["events"]
                 if e["event_type"] == "answered_pending"]
 
+    def _state_snapshot(self) -> list[tuple[str, str, int, bytes | str]]:
+        snapshot = []
+        for path in sorted(self.home.rglob("*")):
+            relative = str(path.relative_to(self.home))
+            info = path.lstat()
+            mode = stat.S_IMODE(info.st_mode)
+            if path.is_symlink():
+                snapshot.append((relative, "symlink", mode, os.readlink(path)))
+            elif path.is_file():
+                # SQLite read-only WAL readers may update lock slots inside an
+                # existing -shm file. Keep its namespace and mode in scope;
+                # bind durable database and WAL bytes exactly.
+                content = b"<sqlite-shm>" if relative.endswith("-shm") \
+                    else path.read_bytes()
+                snapshot.append((relative, "file", mode, content))
+            else:
+                snapshot.append((relative, "directory", mode, b""))
+        return snapshot
+
     def _seed_brief_inputs(self) -> None:
         data_dir = self.home / "data"
         for name, cadence in (("automation", 300), ("git", 900), ("chats", 1800)):
@@ -159,6 +178,36 @@ class RollupAnswerTests(unittest.TestCase):
         self.assertRegex(plan["batch_key"], r"^rollup-[0-9a-f]{40}$")
         for decision_id in ids.values():
             self.assertEqual(self._pending_events(decision_id), [])
+
+    def test_invalid_card_or_primary_is_rejected_before_writes(self) -> None:
+        empty = self._state_snapshot()
+        self._alert(
+            "answer-rollup", "card:" + "0" * 16,
+            "decision:" + "0" * 24, "1",
+            "--expected-scope-key", "scope:" + "0" * 40,
+            "--artifact-batch-name", "rollup-" + "0" * 40,
+            "--artifact-manifest-sha256", "0" * 64, ok=False)
+        self.assertEqual(self._state_snapshot(), empty)
+
+        self._dashboard(
+            "decide", "answer-rollup", "card:" + "0" * 16,
+            "decision:" + "0" * 24, "1", ok=False)
+        self.assertEqual(self._state_snapshot(), empty)
+
+        fixture = self._three_member_card()
+        before = self._state_snapshot()
+        self._alert(
+            "answer-rollup", fixture["card"]["card_id"],
+            "decision:" + "0" * 24, "1",
+            "--expected-scope-key", "scope:" + "0" * 40,
+            "--artifact-batch-name", "rollup-" + "0" * 40,
+            "--artifact-manifest-sha256", "0" * 64, ok=False)
+        self.assertEqual(self._state_snapshot(), before)
+
+        self._dashboard(
+            "decide", "answer-rollup", fixture["card"]["card_id"],
+            "decision:" + "0" * 24, "1", ok=False)
+        self.assertEqual(self._state_snapshot(), before)
 
     def test_batch_keeps_targets_open_and_blocks_ordinary_reanswer(self) -> None:
         fixture = self._three_member_card()
