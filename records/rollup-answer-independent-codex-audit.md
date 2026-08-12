@@ -105,3 +105,23 @@ Evidence: `records/evidence/rollup-answer-occupied-parent-red-green.txt`.
 - Resolved transcript: `/Users/gillettes/.codex/sessions/2026/07/17/rollout-2026-07-17T23-10-22-019f73d8-e5dc-73a0-acc5-8a4916ac6819.jsonl`.
 
 No live store, provider send, install, deployment, plist, launchd, or main-branch merge was performed by the auditor or finish session. Branch-only PR updates and conflict resolution only.
+
+## Attempt 8 — GR-142 current-main terminal audit
+
+- Audit task: Codex `019ff6d2-dd79-7152-9b60-e5b774449c59`, supervising target Codex `019f762c-c815-77b3-97c0-021c66fd3b7e`.
+- Model/reasoning: `gpt-5.6-sol` / high.
+- Reviewed range: `43bca917871a33f3b4176117df86e15eb80a3472..fdb838dd6d7520646541c9bf95e2a7901c8c2d58`, followed by the bounded repair at `9e07ee528fafe5f7672f8df3843b37102e67490a`.
+- RED: the complete rollup suite failed 29/30 because invalid current-primary planning created a new SQLite `-shm` namespace entry despite the claimed prewrite boundary.
+- Repair: DB-only planning uses an immutable URI and binds its result to unchanged DB/WAL identity. WAL-backed planning requires an already-existing safe `-shm` entry, permits only its transient lock bytes, and fails closed when DB/WAL identity changes. The valid-plan test now compares the complete temporary-state snapshot before and after the read.
+- GREEN: invalid-card/member plus valid-plan no-write checks 2/2; rollup 30/30; decision-alert all pass; strict OpenSpec; Python/shell/diff/source-artifact checks; authoritative `SUITES PASS=26 FAIL=0`; dashboard browser 315; panel 13/0.
+- Seven-point contract: all PASS after repair. Prior current-main P1s for manual attention and prewrite semantic validation are covered by regressions. P0/P1/P2/P3 remaining: none.
+- Verdict: `REVIEW-CLEAN / MERGE-READY` for branch review. PR #11 read back open, approved, non-draft, and `MERGEABLE` at exact code/test head `9e07ee5`; GitGuardian was running. No merge or deployment was performed.
+- Did not verify: PR merge, install/deploy, provider delivery, live-store behavior, plist, or launchd.
+
+### Audited chat
+
+- Audited chat name: `🔎 Audit: Mission Control rollup-answer`.
+- Audited chat repo/cwd: `/Users/gillettes/Coding Projects/mission-control`.
+- Provider: Codex.
+- Full ID: `019f762c-c815-77b3-97c0-021c66fd3b7e`.
+- Resolved transcript: `/Users/gillettes/.codex/sessions/2026/07/18/rollout-2026-07-18T10-01-14-019f762c-c815-77b3-97c0-021c66fd3b7e.jsonl`.

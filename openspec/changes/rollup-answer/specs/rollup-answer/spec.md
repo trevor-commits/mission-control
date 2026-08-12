@@ -7,6 +7,10 @@ The system MUST accept a rollup answer only for a current open card and primary 
 - **WHEN** two open members share a presentation card but have different originating owners
 - **THEN** answering one targets only the primary and returns the other as independent
 
+#### Scenario: A current card or primary is invalid
+- **WHEN** a syntactically valid card or primary identifier is stale, absent, or not a current member
+- **THEN** the command fails before creating rollup paths, locks, or new SQLite namespace entries; an existing SQLite shared-memory file may change only transient reader-lock bytes
+
 ### Requirement: Durable answered-pending interpretation
 Every targeted member MUST remain `open` and MUST expose one current `answered_pending` event containing the choice, source/resume metadata, card, primary, batch, canonical manifest digest, member sets, and private artifact references.
 

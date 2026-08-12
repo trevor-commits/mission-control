@@ -66,14 +66,14 @@ max_iterations: 2
 verify: /bin/bash scripts/verify.sh
 gate: auto
 
-- [ ] **Step 9: Run independent same-model audit**
+- [x] **Step 9: Run independent same-model audit**
 action: Preserve the seventh review-clean history at `78672c4`, integrate current main `43bca917`, freeze the resulting merge commit, run the authoritative gate at that exact head, and require a fresh independent same-model/max review-clean verdict over the current-main candidate before closeout.
 loop: until no material novel finding remains
 max_iterations: 2
 verify: test -s records/rollup-answer-independent-codex-audit.md
 gate: auto
 
-- [ ] **Step 10: Close the branch without landing runtime**
+- [x] **Step 10: Close the branch without landing runtime**
 action: Update OpenSpec verification/retrospective, STATE, todo, Work Record, branch ledger, audit coverage disposition, claims, rollback, dirty-state proof, commits, push, and PR readback; stop before merging the PR or deploying.
 loop: until branch closeout is coherent
 max_iterations: 2

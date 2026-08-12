@@ -878,7 +878,7 @@ Keep materially new suggestions here so they survive beyond the current chat.
 
 ## Active Branch Ledger
 ### `codex/rollup-answer-wiring`
-- status: active; merging current `origin/main@43bca917871a33f3b4176117df86e15eb80a3472` into `6a75e879b6b9bd43737edce841d4268453f8a1eb`; conflicts and focused regressions are resolved, while the immutable merge commit, exact-head full gate, fresh audit, push, and PR readback remain pending
+- status: review-ready; current main `43bca917871a33f3b4176117df86e15eb80a3472` is contained, exact repair `9e07ee528fafe5f7672f8df3843b37102e67490a` is authoritative-green and fresh-review-clean, and PR #11 read back open, approved, non-draft, and mergeable; this closeout is a documentation-only descendant and no merge/deploy occurred
 - created: 2026-07-17
 - base: original `origin/main@8582e182d5db3b8964ec21738a82806d94c78a55`; current integration base `origin/main@43bca917871a33f3b4176117df86e15eb80a3472`
 - worktree: `/Users/gillettes/Coding Projects/mission-control-worktrees/rollup-answer-wiring`
@@ -888,7 +888,7 @@ Keep materially new suggestions here so they survive beyond the current chat.
 - merge expectation: review-ready PR only after focused/full verification and a fresh same-model/max-reasoning audit; do not merge or deploy
 - merge target: `main`
 - review surface: `openspec/changes/rollup-answer/`, `hotl-workflow-rollup-answer.md`, implementation diff, hermetic evidence, and `STATE.md`
-- independent audits: ambiguity audit `019f7411-b995-76e2-8481-1266b1eebfa8` resolved by approval; repair audits are recorded in `records/rollup-answer-independent-codex-audit.md`; the seventh frozen-head audit was review-clean at `78672c4`; a fresh current-main exact-head audit remains pending
+- independent audits: ambiguity audit `019f7411-b995-76e2-8481-1266b1eebfa8` resolved by approval; repair audits are recorded in `records/rollup-answer-independent-codex-audit.md`; the seventh frozen-head audit was review-clean at `78672c4`; GR-142 terminal audit reproduced the final SQLite namespace-write defect and is review-clean after repair `9e07ee5`
 - exit checklist:
   - [x] Existing grouping/equivalence/read paths inspected
   - [x] Existing answer, resolve, schema, and transaction paths inspected
@@ -906,13 +906,13 @@ Keep materially new suggestions here so they survive beyond the current chat.
   - [x] Sixth-audit targeted 4/4, rollup 29/29, and browser 254 pass
   - [x] Sixth-audit repair passes the authoritative full verifier at exact commit `78672c46d94041f974ca97b0d2cfe5596c6b020a` (`SUITES PASS=23 FAIL=0` on macOS 26.5)
   - [x] Current main `43bca917` conflicts resolved with focused integration regressions green
-  - [ ] Fresh same-model/max-reasoning implementation audit is review-clean
-  - [ ] Final records, push, and review-ready PR complete
+  - [x] Fresh same-model/high-reasoning implementation audit is review-clean
+  - [x] Final records, push, and review-ready PR complete
   - [x] Product contract confirmed by Trevor on 2026-07-18
   - [x] Untouched authoritative baseline green (`21/21` suites)
   - [x] Production implementation and hermetic tests completed
-  - [ ] Fresh same-model/max-reasoning implementation audit completed
-  - [ ] Branch pushed and review-ready PR opened without merge/deploy
+  - [x] Fresh same-model/high-reasoning implementation audit completed
+  - [x] Branch pushed and review-ready PR opened without merge/deploy
 ### `codex/er277-collector-019fb8ef`
 - status: four accepted `042b659` review blockers repaired and owning suites green at `ee54328`; fresh exact-SHA re-review pending
 - created: 2026-07-31

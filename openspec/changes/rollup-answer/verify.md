@@ -12,7 +12,8 @@
 - Sixth-audit final-boundary repair: `78672c46d94041f974ca97b0d2cfe5596c6b020a` (`fix(decisions): harden symlink quarantine for macOS O_SYMLINK gap`).
 - Pre-integration branch head: `6a75e879b6b9bd43737edce841d4268453f8a1eb`.
 - Current-main integration base: `43bca917871a33f3b4176117df86e15eb80a3472`.
-- Final branch head: pending immutable merge commit, exact-head authoritative gate, and fresh independent audit.
+- Current-main merge candidate: `9185dec` with attention repair `60577b7` and prewrite-validation repair `fdb838d`.
+- Final code/test head: `9e07ee528fafe5f7672f8df3843b37102e67490a`; the closeout record is a documentation-only descendant.
 - Environment: hermetic temporary Mission Control homes/stores, synthetic feeds, fake senders, and loopback-only fixtures.
 
 ## Evidence
@@ -36,8 +37,11 @@
 | Sixth-audit final-boundary red/green | RED 2 P1 + 2 P2; GREEN targeted 4/4, rollup 29/29, browser 254, static checks | `records/evidence/rollup-answer-final-boundaries-red-green.txt` |
 | Sixth-repair authoritative verifier | `SUITES PASS=23 FAIL=0` at exact head `78672c4` (macOS 26.5); rollup 29/29; browser 254; OpenSpec 2/0; syntax/artifact pass | `records/evidence/rollup-answer-final-boundaries-full-green.txt` |
 | Current-main focused integration | dashboard 86/0; rollup 29/29; dashboard browser 309; panel browser 13/0; ER-134 62/0; render smoke 8/8; syntax and diff checks pass | current task transcript; durable receipt pending exact-head gate |
-| Final exact-head authoritative verifier | pending immutable merge commit | pending |
-| Final same-model/max audit | pending immutable merge commit | `records/rollup-answer-independent-codex-audit.md` |
+| Terminal-audit RED | rollup 29/30; invalid current primary created a new `decisions.db-shm` namespace entry | current GR-142 supervisor transcript |
+| Terminal-audit focused GREEN | invalid-card/member + valid-plan no-write checks 2/2; rollup 30/30; decision-alert all pass | exact code/test head `9e07ee5` |
+| Final exact-head authoritative verifier | `SUITES PASS=26 FAIL=0`; browser 315; panel 13/0; OpenSpec 2/0; source artifacts pass | exact code/test head `9e07ee5` |
+| Final same-model/high audit | `REVIEW-CLEAN / MERGE-READY`; P0/P1/P2/P3 none after bounded repair | `records/rollup-answer-independent-codex-audit.md` |
+| Hosted PR #11 readback | open, approved, non-draft, `MERGEABLE`; GitGuardian running | head `9e07ee5` before documentation-only closeout |
 
 ## Claims and limits
 
@@ -47,4 +51,5 @@
 - Confirmed: Home's global H1 uses combined feed attention while pending decision rows retain their separate awaiting-consumption presentation.
 - Confirmed: exact sixth-repair head `78672c4` passes the authoritative `SUITES PASS=23 FAIL=0` gate live on macOS 26.5.
 - Confirmed: no dependency or schema migration was introduced.
-- Did not verify: the authoritative verifier or independent audit at the pending current-main merge commit; refreshed hosted PR state; PR merge; install, deploy, provider delivery, live-store behavior, plist, or launchd.
+- Confirmed: invalid current card/member planning creates no new decision-store or rollup namespace entry. A DB-only store uses an immutable read, a WAL-backed store requires its existing shared-memory entry, and a before/after DB+WAL signature fails closed on concurrent change.
+- Did not verify: PR merge; install, deploy, provider delivery, live-store behavior, plist, or launchd.
