@@ -167,10 +167,12 @@ class RollupAnswerTests(unittest.TestCase):
         fixture = self._three_member_card()
         card_id = fixture["card"]["card_id"]
         ids = fixture["ids"]
+        before = self._state_snapshot()
 
         plan = self._alert(
             "plan-rollup-answer", card_id, ids["primary"], "1")
 
+        self.assertEqual(self._state_snapshot(), before)
         self.assertEqual(plan["target_ids"], [ids["primary"], ids["equivalent"]])
         self.assertEqual(plan["independent_ids"], [ids["independent"]])
         self.assertEqual(plan["already_pending_ids"], [])
