@@ -34,4 +34,4 @@
 - [x] 4.12 Update `verify.md`, retrospective, `STATE.md`, `todo.md`, branch ledger, and fifth-audit coverage disposition.
 - [x] 4.13 Send frozen `0bf1c69` to a fresh same-model/max audit; reproduce its two P1s (optional receipt identity fields and unrecoverable receipt-backed symlink) plus two P2s (quarantine TOCTOU and global Home headline).
 - [x] 4.14 Require both receipt identity fields, bind/quarantine symlink entries without target traversal, restore raced unbound quarantine entries, derive Home H1 from combined attention, and pass the four targeted regressions plus rollup 29/29 and browser 254.
-- [ ] 4.15 Run the authoritative full gate, commit its receipt, require a fresh exact-head review-clean verdict, push the topic branch, open a review-ready PR, and stop without merging or deploying.
+- [ ] 4.15 Integrate `origin/main@43bca917`, run the authoritative full gate on the immutable merge commit, commit its receipt, require a fresh exact-head review-clean verdict, push and read back PR #11, and stop without merging or deploying.

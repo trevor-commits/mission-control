@@ -67,14 +67,14 @@ verify: /bin/bash scripts/verify.sh
 gate: auto
 
 - [ ] **Step 9: Run independent same-model audit**
-action: Six audit rounds rejected earlier candidates at publication, replay, runtime, presentation, occupied-parent, persisted-view, receipt-identity, and canonical-entry boundaries. Frozen `0bf1c69` reopened two P1s and two P2s: receipt identity fields were optional, a receipt-backed symlink wedged replay, quarantine could move a raced replacement, and Home's global H1 ignored non-decision attention. Exact repair `78672c4` also fixes a live macOS defect (Python's `os` module lacks `O_SYMLINK`/`O_PATH`; the SDK header defines `O_SYMLINK = 0x00200000`) and passes targeted 4/4, rollup 29/29, browser 254, and the authoritative `SUITES PASS=23 FAIL=0` gate; freeze the successor and require a fresh review-clean verdict before closeout.
+action: Preserve the seventh review-clean history at `78672c4`, integrate current main `43bca917`, freeze the resulting merge commit, run the authoritative gate at that exact head, and require a fresh independent same-model/max review-clean verdict over the current-main candidate before closeout.
 loop: until no material novel finding remains
 max_iterations: 2
 verify: test -s records/rollup-answer-independent-codex-audit.md
 gate: auto
 
 - [ ] **Step 10: Close the branch without landing runtime**
-action: Update OpenSpec verification/retrospective, STATE, todo, Work Record, branch ledger, audit coverage disposition, claims, rollback, dirty-state proof, commits, push, and PR; stop before merge or deploy.
+action: Update OpenSpec verification/retrospective, STATE, todo, Work Record, branch ledger, audit coverage disposition, claims, rollback, dirty-state proof, commits, push, and PR readback; stop before merging the PR or deploying.
 loop: until branch closeout is coherent
 max_iterations: 2
 verify: git status --short --branch

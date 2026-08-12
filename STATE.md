@@ -1,8 +1,8 @@
 # Lane D state — rollup-answer CLI wiring
 
-- Status: SEVENTH FROZEN-HEAD AUDIT REVIEW-CLEAN / MERGE-READY at code head `78672c46d94041f974ca97b0d2cfe5596c6b020a`; PR #11 open; main merge conflict resolved on this branch (attention-lane + answered-pending preserved). Codex Sol unavailable — Cursor independent auditor substituted. Live card `decision:a6f185b53cbc1278499b062d` remains for merge sitting only.
+- Status: CURRENT-MAIN INTEGRATION IN PROGRESS. Branch head `6a75e879b6b9bd43737edce841d4268453f8a1eb` is merging `origin/main@43bca917871a33f3b4176117df86e15eb80a3472`; all four conflicts are resolved with the redesigned attention surfaces and answered-pending semantics preserved. Focused integration gates are green; the immutable merge commit, exact-head authoritative gate, fresh independent audit, push, and PR readback remain pending. Live card `decision:a6f185b53cbc1278499b062d` remains for the merge sitting only.
 - Branch: `codex/rollup-answer-wiring`
-- Review base: `53e91392dcef3d2deeedf748c14159320a8572e0`
+- Review base: `43bca917871a33f3b4176117df86e15eb80a3472`
 - Seventh frozen-head audit: Cursor `9db69b00-966c-43d3-b1eb-72181b949178` / packet `records/audit-packets/2026-07-24-rollup-answer-seventh-frozen-head.md`
 - Finish parent: Cursor finishing Codex `019f73d8` (`CURSOR-FINISH-019f73d8-20260724`)
 - Original implementation checkpoint: `754de932301113e81f51bbf4febe2d3fc28c01e0`

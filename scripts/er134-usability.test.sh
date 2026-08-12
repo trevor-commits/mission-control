@@ -94,7 +94,8 @@ if (!match) throw new Error('panel script not found');
 function makeEl() {
   const el = { children: [], _text: '', className: '', style: {}, attrs: {},
     appendChild(child) { this.children.push(child); return child; },
-    setAttribute(key, value) { this.attrs[key] = value; }
+    setAttribute(key, value) { this.attrs[key] = value; },
+    classList: { add() {}, toggle() { return false; } }
   };
   Object.defineProperty(el, 'textContent', {
     get() { return this._text + this.children.map(c => c.textContent || '').join(''); },
@@ -103,21 +104,30 @@ function makeEl() {
   return el;
 }
 const nodes = {};
-for (const id of ['title', 'health', 'list', 'refresh', 'theme', 'open-full']) nodes[id] = makeEl();
+for (const id of ['title', 'health', 'list', 'refresh', 'theme', 'open-full',
+  'status-pill', 'status-text', 'stat-needs', 'stat-jobs', 'stat-jobs-lbl',
+  'stat-feeds', 'stat-ai', 'updated', 'needs-count', 'hr-tabs', 'hr-list',
+  'hr-motion', 'hr-pin']) nodes[id] = makeEl();
 const pending = n => ({ id: 'decision:' + String(n).repeat(24), question: 'Pending ' + n,
   options: ['A', 'B'], answer_pending: { choice: 1 } });
 const actionable = { id: 'decision:' + 'a'.repeat(24), question: 'ACTIONABLE-LATE',
   options: ['Ship', 'Wait'], answer_pending: null };
+const now = Math.floor(Date.now() / 1000);
 const sandbox = {
   window: { MC: { feeds: {
-    decisions: { ok: true, data: { pinned: [pending(1), pending(2), pending(3), actionable] } },
-    attention: { ok: false, data: null },
-    automation: { data: { jobs: [] } }
+    decisions: { schema: 1, feed: 'decisions', generated_epoch: now, cadence_s: 300,
+      ok: true, error: null, data: { pinned: [pending(1), pending(2), pending(3), actionable],
+        counts: { open: 4, structured_open: 4 } } },
+    attention: { schema: 1, feed: 'attention', generated_epoch: now, cadence_s: 300,
+      ok: false, error: 'forced-miss', data: null },
+    automation: { schema: 1, feed: 'automation', generated_epoch: now, cadence_s: 300,
+      ok: true, error: null, data: { jobs: [{ label: 'fixture', state: 'green' }],
+        counts: { green: 1 }, exceptions: 0 } }
   }, feedErrors: { attention: 'forced-miss' } } },
-  document: { documentElement: makeEl(), getElementById(id) { return nodes[id]; },
+  document: { documentElement: makeEl(), addEventListener() {}, getElementById(id) { return nodes[id]; },
     createElement() { return makeEl(); }, createTextNode(value) { const el = makeEl(); el.textContent = value; return el; } },
   localStorage: { getItem() { return null; }, setItem() {} },
-  location: { reload() {}, href: '' }, navigator: { clipboard: { writeText() { return Promise.resolve(); } } },
+  location: { reload() {}, href: '', search: '' }, navigator: { clipboard: { writeText() { return Promise.resolve(); } } },
   setTimeout() { return 0; }, Date, Promise, Math, JSON, Array, Object, String, Number,
   isFinite, console
 };

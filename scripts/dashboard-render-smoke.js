@@ -104,7 +104,7 @@ const PRIVACY_CASES = JSON.parse(fs.readFileSync(
 // --- fixtures as window.MC.feeds -------------------------------------------
 const FIX = path.join(REPO, 'dashboard', 'fixtures');
 const feeds = {};
-for (const name of ['usage', 'git', 'chats', 'automation', 'decisions', 'attention', 'brief']) {
+for (const name of ['usage', 'headroom', 'git', 'chats', 'automation', 'decisions', 'attention', 'brief']) {
   const p = path.join(FIX, name + '.json');
   if (!fs.existsSync(p)) { console.error('FAIL: missing fixture ' + p); process.exit(1); }
   feeds[name] = JSON.parse(fs.readFileSync(p, 'utf8'));
@@ -138,6 +138,18 @@ for (let i = 3; i >= 1; i--) {
 // the compose epoch <= now and the horizon in the future for ANY time of day/TZ/DST,
 // so the round-6 next-local-midnight cap doesn't make this fixture midnight-flaky.
 const NOW_S = Math.floor(Date.now() / 1000);
+if (feeds.headroom && feeds.headroom.data && Array.isArray(feeds.headroom.data.rows)) {
+  // This fixture exercises the live-provider path, so bind its collection and
+  // per-reading clocks to the test run instead of letting a committed example
+  // silently age into the honest snapshot-fallback path.
+  feeds.headroom.generated_epoch = NOW_S;
+  feeds.headroom.generated_at = new Date(NOW_S * 1000).toISOString();
+  feeds.headroom.data.rows.forEach(row => {
+    if (!row || row.health !== 'ok' || row.confidence !== 'live') return;
+    const age = Number.isFinite(row.age_s) && row.age_s >= 0 ? row.age_s : 0;
+    row.fetched_epoch = NOW_S - age;
+  });
+}
 function localMidnightOf(sec) { // 00:00 local on sec's day (DST-correct)
   const d = new Date(sec * 1000);
   return Math.floor(new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0, 0).getTime() / 1000);
@@ -193,7 +205,12 @@ const markers = {
   map: newestChatTitle(feeds.chats),
   chats: firstStr(feeds.chats, ['nodes']),
   git: firstStr(feeds.git, ['repos', 'repositories']),
-  usage: firstStr(feeds.usage, ['providers']),
+  // the usage tab renders provider LABELS ("Codex"), while the snapshot feed
+  // carries lowercase provider ids ("codex") — mirror the page's label map
+  usage: (m => ({ claude: 'Claude', codex: 'Codex', cursor: 'Cursor', copilot: 'Copilot',
+                  hermes: 'Hermes', chatgpt: 'ChatGPT', nous: 'Nous', moonshot: 'Moonshot',
+                  deepseek: 'DeepSeek', kimi_code: 'Kimi Code', x_api: 'X API' }[m] || m))(
+    firstStr(feeds.usage, ['providers'])),
   automation: firstStr(feeds.automation, ['jobs']),
   attention: 'Attention',
 };
@@ -242,8 +259,8 @@ for (const tab of TABS) {
   const txt = (main && main.textContent) || '';
   if (!txt.trim()) { console.error('FAIL: #' + tab + ' rendered EMPTY mc-main'); fails++; continue; }
   const stripTxt = (byId['mc-strip'] && byId['mc-strip'].textContent) || '';
-  if (tab === 'home' && !/Usage\s*2/.test(stripTxt)) {
-    console.error('FAIL: strip does not count normalized usage used_pct rows (strip="' + stripTxt + '")');
+  if (tab === 'home' && !/Usage\s*6/.test(stripTxt)) {
+    console.error('FAIL: strip does not count the deduplicated live-first usage states (strip="' + stripTxt + '")');
     fails++; continue;
   }
   if (tab === 'map') {
@@ -343,8 +360,27 @@ for (const tab of TABS) {
     console.error('FAIL: #git is missing branch lifecycle labels, owner/source, purpose, or close conditions');
     fails++; continue;
   }
-  if (tab === 'usage' && txt.indexOf('Decision cards') === -1) {
-    console.error('FAIL: #usage is missing the decision-card section');
+  if (tab === 'usage') {
+    // Trevor's contract (2026-08-07): GLM shows as a LIVE card with real quota
+    // numbers; the old snapshot's numberless glm health row still never renders;
+    // hidden rows stay hidden; ONE card per provider with labeled windows and
+    // held credits folded inside; X API leads with its reads count.
+    if (txt.indexOf('GLM') === -1) { console.error('FAIL: #usage is missing the live GLM card'); fails++; continue; }
+    if (/GLM doctor|live provider probe disabled/i.test(txt)) {
+      console.error('FAIL: #usage renders the old numberless glm health row'); fails++; continue;
+    }
+    if (/Kimi/.test(txt)) { console.error('FAIL: #usage shows a hidden (unconfigured) provider'); fails++; continue; }
+    for (const need of ['Weekly - GPT-5.3-Codex-Spark', '12,300 reads', 'X API', 'Copilot', 'Local estimate', 'Held credit']) {
+      if (txt.indexOf(need) === -1) { console.error('FAIL: #usage missing grouped-usage content "' + need + '"'); fails++; break; }
+    }
+    const codexMentions = (txt.match(/Codex/g) || []).length;
+    if (codexMentions > 2) { // 1 grouped live card (credit folded in) + the Spark window label
+      console.error('FAIL: #usage declares Codex ' + codexMentions + ' times — provider grouping regressed');
+      fails++; continue;
+    }
+  }
+  if (tab === 'usage' && txt.indexOf('Providers') === -1) {
+    console.error('FAIL: #usage is missing the provider-card section');
     fails++; continue;
   }
   if (tab === 'automation' &&

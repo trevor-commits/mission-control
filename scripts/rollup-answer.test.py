@@ -543,7 +543,7 @@ class RollupAnswerTests(unittest.TestCase):
             "decide", "answer-rollup", card_id, ids["primary"], "1")
         self.assertTrue(recovered["replayed"])
         self.assertTrue(Path(recovered["batch_path"]).is_dir())
-        self.assertTrue(str(Path(recovered["batch_path"])).startswith(str(parent)))
+        self.assertTrue(os.path.samefile(Path(recovered["batch_path"]).parent, parent))
         self.assertTrue(any(old_parent.glob(".rollup-quarantine.*")))
 
     def test_existing_batch_mutated_during_replay_is_quarantined(self) -> None:
@@ -636,7 +636,7 @@ class RollupAnswerTests(unittest.TestCase):
         recovered = self._dashboard(
             "decide", "answer-rollup", card_id, ids["primary"], "1")
         self.assertTrue(recovered["replayed"])
-        self.assertEqual(Path(recovered["batch_path"]).parent, parent)
+        self.assertTrue(os.path.samefile(Path(recovered["batch_path"]).parent, parent))
         self.assertTrue(Path(recovered["batch_path"]).is_dir())
 
     def test_existing_batch_parent_swap_quarantines_visible_conflict(self) -> None:
@@ -689,7 +689,7 @@ class RollupAnswerTests(unittest.TestCase):
         recovered = self._dashboard(
             "decide", "answer-rollup", card_id, ids["primary"], "1")
         self.assertTrue(recovered["replayed"])
-        self.assertEqual(Path(recovered["batch_path"]).parent, parent)
+        self.assertTrue(os.path.samefile(Path(recovered["batch_path"]).parent, parent))
         self.assertTrue(Path(recovered["batch_path"]).is_dir())
         for decision_id in (ids["primary"], ids["equivalent"]):
             self.assertEqual(len(self._pending_events(decision_id)), 1)
@@ -742,7 +742,7 @@ class RollupAnswerTests(unittest.TestCase):
         recovered = self._dashboard(
             "decide", "answer-rollup", card_id, ids["primary"], "1")
         self.assertTrue(recovered["replayed"])
-        self.assertEqual(Path(recovered["batch_path"]).parent, parent)
+        self.assertTrue(os.path.samefile(Path(recovered["batch_path"]).parent, parent))
         self.assertTrue(Path(recovered["batch_path"]).is_dir())
         for decision_id in (ids["primary"], ids["equivalent"]):
             self.assertEqual(len(self._pending_events(decision_id)), 1)

@@ -9,6 +9,7 @@
      Every declared path is materialized by collect/demo/install; renderers still
      guard malformed or unavailable payloads. -->
 <script src="data/usage.js"></script>
+<script src="data/headroom.js"></script>
 <script src="data/git.js"></script>
 <script src="data/chats.js"></script>
 <script src="data/automation.js"></script>
@@ -16,6 +17,7 @@
 <script src="data/attention.js"></script>
 <script src="data/brief.js"></script>
 <script src="data/usage.error.js"></script>
+<script src="data/headroom.error.js"></script>
 <script src="data/git.error.js"></script>
 <script src="data/chats.error.js"></script>
 <script src="data/automation.error.js"></script>
@@ -31,30 +33,30 @@
   /* light default (ER-134) — glanceable paper surface */
   --mc-bg:        #f4f5f7;
   --mc-surface-1: #ffffff;
-  --mc-surface-2: #eef0f4;
-  --mc-surface-3: #e4e7ee;
-  --mc-border:    #d5d9e2;
-  --mc-border-2:  #b8bfcc;
+  --mc-surface-2: #f0f2f6;
+  --mc-surface-3: #e6e9f0;
+  --mc-border:    #dfe3ea;
+  --mc-border-2:  #c3c9d4;
 
-  --mc-fg:        #1a1d24;
+  --mc-fg:        #16181d;
   --mc-fg-muted:  #5b6472;
   --mc-fg-dim:    #5f6978;
 
   --mc-accent:    #3b5bdb;
-  --mc-accent-bg: #e8ecfb;
-  --mc-accent-bd: #a8b6f0;
+  --mc-accent-bg: #eceffd;
+  --mc-accent-bd: #aab8f2;
 
   --mc-green:  #08734d;
   --mc-amber:  #8a5000;
-  --mc-red:    #c43c45;
+  --mc-red:    #bd353f;
   --mc-blue:   #17689d;
   --mc-grey:   #5f6978;
-  --mc-green-bg: #e6f6ef;
-  --mc-amber-bg: #fbf3e0;
-  --mc-red-bg:   #fcebec;
+  --mc-green-bg: #e5f6ee;
+  --mc-amber-bg: #fcf3df;
+  --mc-red-bg:   #fdebec;
   --mc-blue-bg:  #e7f3fb;
 
-  --mc-font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --mc-font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   --mc-mono: ui-monospace, "SF Mono", Menlo, Monaco, "Cascadia Code", Consolas, monospace;
   --mc-fs-1: 11.5px;
   --mc-fs-2: 13px;
@@ -64,8 +66,8 @@
   --mc-fs-6: 26px;
 
   --mc-r-1: 6px;
-  --mc-r-2: 9px;
-  --mc-r-3: 13px;
+  --mc-r-2: 10px;
+  --mc-r-3: 14px;
   --mc-r-pill: 999px;
 
   --mc-sp-1: 4px;
@@ -76,62 +78,105 @@
   --mc-sp-6: 32px;
   --mc-sp-7: 48px;
 
-  --mc-shadow: 0 1px 2px rgba(26,29,36,.06), 0 4px 16px -6px rgba(26,29,36,.10);
-  --mc-shadow-lift: 0 2px 4px rgba(26,29,36,.08), 0 10px 28px -8px rgba(26,29,36,.14);
+  --mc-shadow: 0 1px 2px rgba(16, 20, 28, .05), 0 6px 20px -8px rgba(16, 20, 28, .08);
+  --mc-shadow-lift: 0 2px 5px rgba(16, 20, 28, .07), 0 14px 34px -10px rgba(16, 20, 28, .14);
+  --mc-brand-grad: linear-gradient(135deg, #3b5bdb 0%, #7048e8 100%);
   --mc-ease: cubic-bezier(.22,.61,.36,1);
   --mc-dur: 160ms;
 }
 html[data-theme="dark"] {
-  --mc-bg:        #0e1013;
-  --mc-surface-1: #16181d;
-  --mc-surface-2: #1d2027;
-  --mc-surface-3: #262a33;
-  --mc-border:    #23262e;
-  --mc-border-2:  #313640;
-  --mc-fg:        #edeef1;
+  --mc-bg:        #0f1114;
+  --mc-surface-1: #171a1f;
+  --mc-surface-2: #1e2128;
+  --mc-surface-3: #272b34;
+  --mc-border:    #262a32;
+  --mc-border-2:  #343945;
+  --mc-fg:        #eceef2;
   --mc-fg-muted:  #a7adba;
   --mc-fg-dim:    #858d9c;
   --mc-accent:    #7c8cff;
-  --mc-accent-bg: #191d33;
-  --mc-accent-bd: #3a4270;
+  --mc-accent-bg: #1b2036;
+  --mc-accent-bd: #3d4573;
   --mc-green:  #35b98a;
   --mc-amber:  #e0a534;
   --mc-red:    #e5646a;
   --mc-blue:   #5aa9d6;
   --mc-grey:   #858d9c;
-  --mc-green-bg: #0f2a22;
+  --mc-green-bg: #122b24;
   --mc-amber-bg: #2c2410;
-  --mc-red-bg:   #2e1618;
-  --mc-blue-bg:  #10222e;
-  --mc-shadow: 0 1px 2px rgba(0,0,0,.30), 0 4px 16px -6px rgba(0,0,0,.45);
-  --mc-shadow-lift: 0 2px 4px rgba(0,0,0,.35), 0 10px 28px -8px rgba(0,0,0,.55);
+  --mc-red-bg:   #301a1d;
+  --mc-blue-bg:  #12232f;
+  --mc-shadow: 0 1px 2px rgba(0,0,0,.32), 0 6px 20px -8px rgba(0,0,0,.50);
+  --mc-shadow-lift: 0 2px 5px rgba(0,0,0,.38), 0 14px 34px -10px rgba(0,0,0,.60);
+  --mc-brand-grad: linear-gradient(135deg, #7c8cff 0%, #9d6bff 100%);
 }
 </style>
 
 <style>
 /* === LAYOUT CSS === */
 /* selectors bind ONLY the mc-* class vocabulary. */
+/* --- brand (global strip) --- */
+.mc-brand {
+  display: inline-flex; align-items: center; gap: var(--mc-sp-2); flex: none;
+  padding-right: var(--mc-sp-3); margin-right: var(--mc-sp-1);
+  border-right: 1px solid var(--mc-border);
+}
+.mc-brand-mark {
+  width: 24px; height: 24px; border-radius: 7px; flex: none;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--mc-brand-grad);
+  color: #fff; font-size: 10px; font-weight: 800; letter-spacing: .04em;
+  box-shadow: var(--mc-shadow);
+}
+.mc-brand-name { font-size: var(--mc-fs-3); font-weight: 700; letter-spacing: -0.01em; }
+@media (max-width: 640px) { .mc-brand { display: none; } }
+
+/* --- home hero (status headline + stat strip) --- */
+.mc-hero { display: flex; align-items: center; gap: var(--mc-sp-3); margin-bottom: var(--mc-sp-4); }
+.mc-hero-text { flex: 1 1 auto; min-width: 0; }
+.mc-hero-title { font-size: 22px; font-weight: 750; letter-spacing: -0.02em; line-height: 1.2; }
+.mc-hero-sub { color: var(--mc-fg-muted); font-size: 12.5px; margin-top: 2px; }
+.mc-hero-pill {
+  flex: none; display: inline-flex; align-items: center; gap: 6px;
+  font-size: 12px; font-weight: 650; padding: 5px 11px; border-radius: var(--mc-r-pill);
+}
+.mc-hero-pill-dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.mc-hero-pill.is-ok   { color: var(--mc-green); background: var(--mc-green-bg); }
+.mc-hero-pill.is-warn { color: var(--mc-amber); background: var(--mc-amber-bg); }
+.mc-hero-pill.is-bad  { color: var(--mc-red);   background: var(--mc-red-bg); }
+.mc-hero-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: var(--mc-sp-5); }
+.mc-hero-stat {
+  background: var(--mc-surface-1); border: 1px solid var(--mc-border);
+  border-radius: var(--mc-r-2); padding: 10px 12px 9px; box-shadow: var(--mc-shadow);
+}
+.mc-hero-stat-num { font-size: 19px; font-weight: 750; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+.mc-hero-stat-lbl { color: var(--mc-fg-muted); font-size: 11px; margin-top: 1px; }
+@media (max-width: 480px) { .mc-hero-pill { display: none; } }
+
 /* --- ER-134 glance Home --- */
 .mc-theme-toggle {
   border: 1px solid var(--mc-border); background: var(--mc-surface-1); color: var(--mc-fg);
-  border-radius: var(--mc-r-pill); padding: 4px 10px; font-size: var(--mc-fs-1); cursor: pointer;
+  border-radius: var(--mc-r-pill); padding: 4px 12px; font-size: var(--mc-fs-1); cursor: pointer;
+  transition: background var(--mc-dur) var(--mc-ease), border-color var(--mc-dur) var(--mc-ease);
 }
-.mc-theme-toggle:hover { border-color: var(--mc-border-2); background: var(--mc-surface-2); }
-.mc-glance { max-width: 720px; margin: 0 auto; padding: var(--mc-sp-5) var(--mc-sp-5) var(--mc-sp-4); }
-.mc-glance-title { font-size: var(--mc-fs-5); font-weight: 650; margin: 0 0 var(--mc-sp-3); color: var(--mc-fg); }
+.mc-theme-toggle:hover { border-color: var(--mc-accent-bd); background: var(--mc-accent-bg); }
+.mc-glance { max-width: 760px; margin: 0 auto; padding: var(--mc-sp-5) var(--mc-sp-5) var(--mc-sp-4); }
+.mc-glance-title { font-size: var(--mc-fs-5); font-weight: 700; letter-spacing: -0.02em; margin: 0 0 var(--mc-sp-3); color: var(--mc-fg); }
 .mc-glance-card {
   background: var(--mc-surface-1); border: 1px solid var(--mc-border); border-radius: var(--mc-r-3);
   box-shadow: var(--mc-shadow); padding: var(--mc-sp-4); margin-bottom: var(--mc-sp-3);
 }
 .mc-glance-item { padding: var(--mc-sp-3) 0; border-top: 1px solid var(--mc-border); }
 .mc-glance-item:first-child { border-top: 0; padding-top: 0; }
-.mc-glance-q { font-size: var(--mc-fs-3); font-weight: 600; margin-bottom: var(--mc-sp-2); }
-.mc-glance-opts { display: flex; flex-wrap: wrap; gap: var(--mc-sp-2); margin: var(--mc-sp-2) 0; }
+.mc-glance-q { font-size: var(--mc-fs-3); font-weight: 600; letter-spacing: -0.01em; margin-bottom: var(--mc-sp-2); }
+.mc-glance-opts { display: flex; flex-direction: column; gap: 6px; margin: var(--mc-sp-2) 0; }
 .mc-opt {
+  display: flex; align-items: center; gap: var(--mc-sp-2);
   border: 1px solid var(--mc-border); background: var(--mc-surface-2); color: var(--mc-fg);
-  border-radius: var(--mc-r-2); padding: 6px 10px; font-size: var(--mc-fs-2); cursor: pointer; text-align: left;
+  border-radius: var(--mc-r-2); padding: 7px 11px; font-size: var(--mc-fs-2); cursor: pointer; text-align: left;
+  transition: border-color var(--mc-dur) var(--mc-ease), background var(--mc-dur) var(--mc-ease);
 }
-.mc-opt:hover { border-color: var(--mc-accent-bd); background: var(--mc-accent-bg); }
+.mc-opt:hover { border-color: var(--mc-accent); background: var(--mc-accent-bg); }
 .mc-opt-suggested { border-color: var(--mc-accent); background: var(--mc-accent-bg); font-weight: 600; }
 .mc-glance-suggested { color: var(--mc-fg-muted); font-size: var(--mc-fs-1); margin-top: var(--mc-sp-1); }
 .mc-glance-health {
@@ -139,10 +184,12 @@ html[data-theme="dark"] {
   font-size: var(--mc-fs-2); margin: var(--mc-sp-3) 0;
 }
 .mc-expand-btn {
-  border: 1px solid var(--mc-border); background: transparent; color: var(--mc-accent);
-  border-radius: var(--mc-r-2); padding: 8px 12px; cursor: pointer; font-size: var(--mc-fs-2);
+  display: block; width: 100%; text-align: center;
+  border: 1px dashed var(--mc-border-2); background: transparent; color: var(--mc-accent);
+  border-radius: var(--mc-r-2); padding: 9px 12px; cursor: pointer; font-size: var(--mc-fs-2); font-weight: 500;
+  transition: background var(--mc-dur) var(--mc-ease), border-color var(--mc-dur) var(--mc-ease);
 }
-.mc-expand-btn:hover { background: var(--mc-accent-bg); }
+.mc-expand-btn:hover { background: var(--mc-accent-bg); border-color: var(--mc-accent-bd); }
 .mc-home-depth { margin-top: var(--mc-sp-5); }
 
 * { box-sizing: border-box; }
@@ -156,31 +203,36 @@ body {
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
 }
+::selection { background: color-mix(in srgb, var(--mc-accent) 24%, transparent); }
 .mc-num { font-variant-numeric: tabular-nums; }
 .mc-mono { font-family: var(--mc-mono); }
 .mc-card, .mc-table, .mc-strip, .mc-bar-track, .mc-svc { font-variant-numeric: tabular-nums; }
 :focus-visible { outline: 2px solid var(--mc-accent); outline-offset: 2px; border-radius: var(--mc-r-1); }
+.mc-sr-only {
+  position: absolute !important; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+}
 
 /* --- global status strip --- */
 .mc-strip {
   display: flex; align-items: center; gap: var(--mc-sp-2);
   flex-wrap: wrap;
-  background: color-mix(in srgb, var(--mc-surface-1) 85%, transparent);
-  backdrop-filter: blur(8px);
+  background: color-mix(in srgb, var(--mc-surface-1) 88%, transparent);
+  backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
   border-bottom: 1px solid var(--mc-border);
-  padding: var(--mc-sp-3) var(--mc-sp-5);
+  padding: 10px var(--mc-sp-5);
   position: sticky; top: 0; z-index: 10;
 }
 .mc-strip-seg {
-  display: inline-flex; align-items: center; gap: var(--mc-sp-2);
+  display: inline-flex; align-items: center; gap: 7px;
   background: transparent; border: 1px solid transparent;
   border-radius: var(--mc-r-pill);
-  padding: var(--mc-sp-1) var(--mc-sp-3);
+  padding: 4px 11px;
   cursor: pointer; color: var(--mc-fg);
   font-size: var(--mc-fs-2); font-weight: 500;
   transition: background var(--mc-dur) var(--mc-ease), border-color var(--mc-dur) var(--mc-ease);
 }
-.mc-strip-seg:hover { background: var(--mc-surface-2); border-color: var(--mc-border-2); }
+.mc-strip-seg:hover { background: var(--mc-surface-2); border-color: var(--mc-border); }
 .mc-strip-seg-label { color: var(--mc-fg-muted); font-weight: 400; }
 .mc-strip-spacer { flex: 1 1 auto; }
 .mc-strip-meta {
@@ -207,51 +259,50 @@ body {
 .mc-dot.mc-state-blue  { background: var(--mc-blue); color: var(--mc-blue); }
 .mc-dot.mc-state-grey  { background: var(--mc-grey); color: var(--mc-grey); }
 
-/* --- nav tabs (underline-active, accent) --- */
+/* --- nav tabs (segmented pills, accent active) --- */
 .mc-nav {
-  display: flex; gap: var(--mc-sp-1);
+  display: flex; gap: 4px;
   max-width: 100%; overflow-x: auto; overscroll-behavior-inline: contain;
   padding: 0 var(--mc-sp-5);
   border-bottom: 1px solid var(--mc-border);
   background: color-mix(in srgb, var(--mc-bg) 88%, transparent);
-  backdrop-filter: blur(8px);
-  position: sticky; top: 49px; z-index: 9;
+  backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+  position: sticky; top: 48px; z-index: 9;
+  scrollbar-width: none;
 }
+.mc-nav::-webkit-scrollbar { display: none; }
 .mc-tab {
   position: relative; flex: 0 0 auto;
-  padding: var(--mc-sp-3) var(--mc-sp-3);
+  margin: 7px 0; padding: 5px 13px;
+  border-radius: var(--mc-r-pill);
   color: var(--mc-fg-muted); cursor: pointer;
-  text-decoration: none; font-size: var(--mc-fs-3); font-weight: 500;
-  transition: color var(--mc-dur) var(--mc-ease);
+  text-decoration: none; font-size: var(--mc-fs-2); font-weight: 500;
+  transition: color var(--mc-dur) var(--mc-ease), background var(--mc-dur) var(--mc-ease);
 }
-.mc-tab::after {
-  content: ""; position: absolute; left: var(--mc-sp-3); right: var(--mc-sp-3); bottom: -1px;
-  height: 2px; border-radius: 2px 2px 0 0; background: transparent;
-  transition: background var(--mc-dur) var(--mc-ease);
-}
-.mc-tab:hover { color: var(--mc-fg); }
-.mc-tab.mc-tab-active { color: var(--mc-fg); }
-.mc-tab.mc-tab-active::after { background: var(--mc-accent); }
+.mc-tab:hover { color: var(--mc-fg); background: var(--mc-surface-2); }
+.mc-tab.mc-tab-active { color: var(--mc-accent); background: var(--mc-accent-bg); font-weight: 650; }
 
 /* --- main --- */
 .mc-main { padding: var(--mc-sp-6) var(--mc-sp-5) var(--mc-sp-7); max-width: 1160px; margin: 0 auto; }
+.mc-panel { margin-bottom: var(--mc-sp-6); }
 .mc-section-head {
   display: flex; align-items: baseline; gap: var(--mc-sp-3);
   margin: var(--mc-sp-6) 0 var(--mc-sp-3);
 }
 .mc-section-head:first-child { margin-top: 0; }
-.mc-section-head h2 { font-size: var(--mc-fs-4); margin: 0; font-weight: 600; letter-spacing: -0.01em; }
+.mc-section-head h2 { font-size: 17px; margin: 0; font-weight: 700; letter-spacing: -0.015em; }
 .mc-age { color: var(--mc-fg-dim); font-size: var(--mc-fs-1); cursor: help; }
 
 /* --- banners --- */
 .mc-banner {
-  border-radius: var(--mc-r-2); padding: var(--mc-sp-2) var(--mc-sp-3);
+  border-radius: var(--mc-r-2); padding: 9px var(--mc-sp-3);
   margin: var(--mc-sp-2) 0; font-size: var(--mc-fs-2);
   border: 1px solid var(--mc-border);
+  box-shadow: inset 3px 0 0 0 var(--mc-border-2);
 }
-.mc-banner-red   { background: var(--mc-red-bg);   border-color: color-mix(in srgb, var(--mc-red) 45%, transparent);   color: var(--mc-fg); }
-.mc-banner-amber { background: var(--mc-amber-bg); border-color: color-mix(in srgb, var(--mc-amber) 45%, transparent); color: var(--mc-fg); }
-.mc-banner-blue  { background: var(--mc-blue-bg);  border-color: color-mix(in srgb, var(--mc-blue) 45%, transparent);  color: var(--mc-fg); }
+.mc-banner-red   { background: var(--mc-red-bg);   border-color: color-mix(in srgb, var(--mc-red) 45%, transparent);   color: var(--mc-fg); box-shadow: inset 3px 0 0 0 var(--mc-red); }
+.mc-banner-amber { background: var(--mc-amber-bg); border-color: color-mix(in srgb, var(--mc-amber) 45%, transparent); color: var(--mc-fg); box-shadow: inset 3px 0 0 0 var(--mc-amber); }
+.mc-banner-blue  { background: var(--mc-blue-bg);  border-color: color-mix(in srgb, var(--mc-blue) 45%, transparent);  color: var(--mc-fg); box-shadow: inset 3px 0 0 0 var(--mc-blue); }
 
 /* stale feed desaturates so a frozen green dot can't lie */
 .mc-desaturated { filter: saturate(0.25) opacity(0.72); }
@@ -266,7 +317,7 @@ body {
 }
 .mc-card:hover { border-color: var(--mc-border-2); box-shadow: var(--mc-shadow-lift); }
 .mc-card-title { color: var(--mc-fg-muted); font-size: var(--mc-fs-2); font-weight: 500; display: flex; align-items: center; gap: var(--mc-sp-2); }
-.mc-card-headline { font-size: var(--mc-fs-6); font-weight: 650; letter-spacing: -0.02em; margin: var(--mc-sp-2) 0 2px; }
+.mc-card-headline { font-size: var(--mc-fs-6); font-weight: 700; letter-spacing: -0.02em; margin: var(--mc-sp-2) 0 2px; }
 .mc-card-secondary { color: var(--mc-fg-muted); font-size: var(--mc-fs-2); line-height: 1.7; }
 .mc-card-foot { color: var(--mc-fg-dim); font-size: var(--mc-fs-1); margin-top: var(--mc-sp-2); }
 .mc-pulse {
@@ -292,7 +343,7 @@ body {
 }
 .mc-row:hover { border-color: var(--mc-border-2); transform: translateY(-1px); }
 .mc-row-body { flex: 1 1 auto; min-width: 0; }
-.mc-row-problem { font-size: var(--mc-fs-3); font-weight: 500; }
+.mc-row-problem { font-size: var(--mc-fs-3); font-weight: 550; letter-spacing: -0.005em; }
 .mc-row-action { color: var(--mc-fg-muted); font-size: var(--mc-fs-2); margin-top: 1px; }
 .mc-row-meta { color: var(--mc-fg-dim); font-size: var(--mc-fs-1); margin-top: 2px; }
 .mc-jump {
@@ -318,10 +369,10 @@ body {
   display: inline-flex; align-items: center; gap: var(--mc-sp-1);
   background: var(--mc-surface-2); border: 1px solid var(--mc-border);
   border-radius: var(--mc-r-pill); padding: 3px var(--mc-sp-3); font-size: var(--mc-fs-1);
-  color: var(--mc-fg-muted);
+  color: var(--mc-fg-muted); font-family: inherit; line-height: inherit;
 }
 .mc-chip-btn { cursor: pointer; transition: background var(--mc-dur) var(--mc-ease), border-color var(--mc-dur) var(--mc-ease), color var(--mc-dur) var(--mc-ease); }
-.mc-chip-btn:hover { border-color: var(--mc-border-2); color: var(--mc-fg); }
+.mc-chip-btn:hover { border-color: var(--mc-accent-bd); color: var(--mc-fg); }
 .mc-chip-on { background: var(--mc-accent-bg); border-color: var(--mc-accent-bd); color: var(--mc-accent); }
 .mc-badge {
   display: inline-flex; align-items: center; border-radius: var(--mc-r-pill);
@@ -337,23 +388,28 @@ body {
 .mc-table {
   display: block; width: 100%; max-width: 100%; overflow-x: auto;
   border-collapse: collapse; font-size: var(--mc-fs-2);
+  background: var(--mc-surface-1); border: 1px solid var(--mc-border);
+  border-radius: var(--mc-r-3); box-shadow: var(--mc-shadow);
+  padding: 6px var(--mc-sp-3) 8px;
 }
 .mc-table th {
-  text-align: left; color: var(--mc-fg-dim); font-weight: 500;
+  text-align: left; color: var(--mc-fg-dim); font-weight: 650;
   border-bottom: 1px solid var(--mc-border); padding: var(--mc-sp-2) var(--mc-sp-3);
-  font-size: var(--mc-fs-1);
+  font-size: 10.5px; text-transform: uppercase; letter-spacing: .06em;
+  white-space: nowrap;
 }
-.mc-table td { padding: var(--mc-sp-2) var(--mc-sp-3); border-bottom: 1px solid var(--mc-border); vertical-align: middle; }
+.mc-table td { padding: 9px var(--mc-sp-3); border-bottom: 1px solid var(--mc-border); vertical-align: middle; }
 .mc-table tr:last-child td { border-bottom: none; }
-.mc-table tr:hover td { background: var(--mc-surface-1); }
+.mc-table tr:hover td { background: var(--mc-surface-2); }
 .mc-panel-table {
   background: var(--mc-surface-1); border: 1px solid var(--mc-border);
   border-radius: var(--mc-r-3); box-shadow: var(--mc-shadow); overflow: hidden;
 }
-.mc-action-verb { color: var(--mc-amber); font-size: var(--mc-fs-1); font-weight: 500; white-space: nowrap; }
+.mc-action-verb { color: var(--mc-amber); font-size: var(--mc-fs-1); font-weight: 600; white-space: nowrap; }
 .mc-collapse {
   cursor: pointer; color: var(--mc-fg-muted); font-size: var(--mc-fs-2);
-  padding: var(--mc-sp-3) 0; user-select: none;
+  display: block; width: 100%; padding: var(--mc-sp-3) 0; user-select: none;
+  border: 0; background: transparent; text-align: left; font-family: inherit;
   transition: color var(--mc-dur) var(--mc-ease);
 }
 .mc-collapse:hover { color: var(--mc-fg); }
@@ -368,21 +424,23 @@ body {
   transition: border-color var(--mc-dur) var(--mc-ease);
 }
 .mc-chatrow:hover { border-color: var(--mc-border-2); }
-.mc-chatrow-title { font-weight: 600; font-size: var(--mc-fs-3); max-width: 360px; }
+.mc-chatrow-title { font-weight: 600; font-size: var(--mc-fs-3); max-width: 360px; letter-spacing: -0.005em; }
 .mc-provider { font-size: var(--mc-fs-1); color: var(--mc-fg-muted); }
 .mc-repo { font-size: var(--mc-fs-1); color: var(--mc-fg-dim); }
 .mc-cmd {
   display: inline-flex; align-items: center; gap: var(--mc-sp-1);
   font-family: var(--mc-mono); font-size: var(--mc-fs-1);
   background: var(--mc-surface-2); border: 1px solid var(--mc-border);
-  border-radius: var(--mc-r-1); padding: 2px var(--mc-sp-2);
+  border-radius: var(--mc-r-1); padding: 2px 4px 2px var(--mc-sp-2);
   color: var(--mc-fg-muted); max-width: 320px;
 }
 .mc-copy {
   cursor: pointer; color: var(--mc-accent); border: none; background: none;
-  font-size: var(--mc-fs-1); padding: 4px 6px; font-weight: 500;
-  min-width: 32px; min-height: 32px;
+  font-size: var(--mc-fs-1); padding: 4px 6px; font-weight: 600;
+  min-width: 32px; min-height: 32px; border-radius: var(--mc-r-1);
+  transition: background var(--mc-dur) var(--mc-ease);
 }
+.mc-copy:hover { background: var(--mc-accent-bg); }
 .mc-edge-label {
   color: var(--mc-fg-dim); font-size: var(--mc-fs-1); font-weight: 500;
   border: 1px solid var(--mc-border); border-radius: var(--mc-r-pill);
@@ -407,17 +465,19 @@ body {
 .mc-pace { color: var(--mc-amber); font-size: var(--mc-fs-2); }
 .mc-countdown { font-family: var(--mc-mono); font-size: var(--mc-fs-1); color: var(--mc-fg-muted); }
 .mc-decision-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(255px, 1fr)); gap: var(--mc-sp-3); }
+.mc-hr-window { border-top: 1px solid var(--mc-border); margin-top: 6px; padding-top: 6px; }
+.mc-hr-window-name { font-weight: 650; }
 .mc-decision-top { display: flex; align-items: flex-start; gap: var(--mc-sp-2); }
-.mc-decision-title { font-size: var(--mc-fs-3); font-weight: 650; }
+.mc-decision-title { font-size: var(--mc-fs-3); font-weight: 650; letter-spacing: -0.01em; }
 .mc-decision-state { margin-left: auto; white-space: nowrap; }
-.mc-kpi { font-size: var(--mc-fs-5); font-weight: 650; letter-spacing: -0.02em; margin: var(--mc-sp-2) 0 0; }
+.mc-kpi { font-size: var(--mc-fs-5); font-weight: 700; letter-spacing: -0.02em; margin: var(--mc-sp-2) 0 0; }
 .mc-next-action { color: var(--mc-fg); font-size: var(--mc-fs-2); margin-top: var(--mc-sp-2); }
 .mc-mini-stack { display: flex; flex-direction: column; gap: 2px; margin-top: var(--mc-sp-2); }
 
 /* --- session monitor + heatmap --- */
 .mc-session-table td:last-child, .mc-session-table th:last-child { text-align: right; }
 .mc-heat-wrap { display: flex; flex-direction: column; gap: var(--mc-sp-2); }
-.mc-heatframe { display: grid; grid-template-columns: auto 1fr; gap: var(--mc-sp-2); align-items: start; }
+.mc-heatframe { display: grid; grid-template-columns: auto 1fr; gap: var(--mc-sp-2); align-items: start; padding: var(--mc-sp-3); }
 .mc-heatmap {
   display: grid;
   grid-auto-flow: column;
@@ -429,10 +489,14 @@ body {
   width: 14px; height: 14px; border-radius: 4px;
   background: var(--mc-surface-3); border: 1px solid transparent;
 }
-.mc-heat-l1 { background: #173427; }
-.mc-heat-l2 { background: #20523b; }
-.mc-heat-l3 { background: #2b7a58; }
-.mc-heat-l4 { background: #35b98a; }
+.mc-heat-l1 { background: #9fd8c0; }
+.mc-heat-l2 { background: #5cc493; }
+.mc-heat-l3 { background: #22a06e; }
+.mc-heat-l4 { background: #08734d; }
+html[data-theme="dark"] .mc-heat-l1 { background: #173427; }
+html[data-theme="dark"] .mc-heat-l2 { background: #20523b; }
+html[data-theme="dark"] .mc-heat-l3 { background: #2b7a58; }
+html[data-theme="dark"] .mc-heat-l4 { background: #35b98a; }
 .mc-heat-open { border-color: var(--mc-amber); }
 .mc-heat-empty { background: transparent; border-color: transparent; }
 .mc-weekdays { display: grid; grid-template-rows: repeat(7, 14px); gap: 4px; }
@@ -442,13 +506,13 @@ body {
 .mc-svc-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: var(--mc-sp-3); }
 .mc-svc {
   background: var(--mc-surface-1); border: 1px solid var(--mc-border);
-  border-radius: var(--mc-r-2); padding: var(--mc-sp-4);
+  border-radius: var(--mc-r-3); padding: var(--mc-sp-4);
   box-shadow: var(--mc-shadow);
-  transition: border-color var(--mc-dur) var(--mc-ease);
+  transition: border-color var(--mc-dur) var(--mc-ease), box-shadow var(--mc-dur) var(--mc-ease);
 }
-.mc-svc:hover { border-color: var(--mc-border-2); }
+.mc-svc:hover { border-color: var(--mc-border-2); box-shadow: var(--mc-shadow-lift); }
 .mc-svc-head { display: flex; align-items: center; gap: var(--mc-sp-2); }
-.mc-svc-name { font-weight: 600; font-size: var(--mc-fs-3); flex: 1 1 auto; }
+.mc-svc-name { font-weight: 650; font-size: var(--mc-fs-3); flex: 1 1 auto; letter-spacing: -0.005em; }
 .mc-drawer {
   margin-top: var(--mc-sp-2); font-family: var(--mc-mono);
   font-size: var(--mc-fs-1); color: var(--mc-red);
@@ -456,15 +520,39 @@ body {
   background: var(--mc-red-bg); border-radius: var(--mc-r-1); padding: var(--mc-sp-2);
 }
 
-.mc-row-click { cursor: pointer; }
+.mc-row-click {
+  cursor: pointer; width: 100%; color: inherit; font: inherit; text-align: left;
+  appearance: none; -webkit-appearance: none;
+}
 /* --- connection map (cytoscape) --- */
 .mc-map-legend { display: flex; flex-wrap: wrap; gap: var(--mc-sp-3); margin: var(--mc-sp-3) 0; }
 .mc-legend-item { display: inline-flex; align-items: center; gap: var(--mc-sp-2); font-size: var(--mc-fs-1); color: var(--mc-fg-muted); }
-.mc-legend-line { width: 20px; height: 0; border-top: 3px solid var(--mc-fg-dim); flex: none; }
+.mc-legend-line { width: 20px; height: 0; border-top: 3px solid var(--mc-fg-dim); flex: none; border-radius: 2px; }
 .mc-map-wrap { display: grid; grid-template-columns: 1fr 300px; gap: var(--mc-sp-3); }
 @media (max-width: 860px) { .mc-map-wrap { grid-template-columns: 1fr; } }
 @media (max-width: 600px) {
   .mc-copy { min-width: 44px; min-height: 44px; }
+  .mc-git-mobile-table {
+    border: 0; padding: 0; background: transparent; box-shadow: none;
+    overflow: visible;
+  }
+  .mc-git-mobile-table tr:first-child { display: none; }
+  .mc-git-mobile-table tr:not(:first-child) {
+    display: block; margin-bottom: var(--mc-sp-3); padding: var(--mc-sp-2) var(--mc-sp-3);
+    background: var(--mc-surface-1); border: 1px solid var(--mc-border);
+    border-radius: var(--mc-r-3); box-shadow: var(--mc-shadow);
+  }
+  .mc-git-mobile-table td {
+    display: grid; grid-template-columns: minmax(80px, 0.38fr) minmax(0, 1fr);
+    gap: var(--mc-sp-2); padding: 7px 0; border-bottom: 1px solid var(--mc-border);
+    max-width: none !important; white-space: normal; overflow: visible;
+    overflow-wrap: anywhere; text-overflow: clip;
+  }
+  .mc-git-mobile-table td:last-child { border-bottom: 0; }
+  .mc-git-mobile-table td::before {
+    content: attr(data-label); color: var(--mc-fg-dim); font-size: 10.5px;
+    font-weight: 650; letter-spacing: .05em; text-transform: uppercase;
+  }
 }
 .mc-graph {
   height: 68vh; min-height: 460px;
@@ -479,23 +567,34 @@ body {
   border-radius: var(--mc-r-3); box-shadow: var(--mc-shadow);
   padding: var(--mc-sp-4); align-self: start; max-height: 68vh; overflow: auto;
 }
+.mc-map-side::-webkit-scrollbar, .mc-table::-webkit-scrollbar { width: 8px; height: 8px; }
+.mc-map-side::-webkit-scrollbar-thumb, .mc-table::-webkit-scrollbar-thumb {
+  background: var(--mc-border-2); border-radius: 8px;
+}
+.mc-map-side::-webkit-scrollbar-track, .mc-table::-webkit-scrollbar-track { background: transparent; }
 .mc-map-summary { background: var(--mc-surface-2); border: 1px solid var(--mc-border); border-radius: var(--mc-r-2); padding: var(--mc-sp-3); margin-bottom: var(--mc-sp-3); }
-.mc-side-title { font-size: var(--mc-fs-3); font-weight: 650; letter-spacing: -0.01em; margin-bottom: var(--mc-sp-1); }
+.mc-side-title { font-size: var(--mc-fs-3); font-weight: 700; letter-spacing: -0.01em; margin-bottom: var(--mc-sp-1); }
 .mc-side-meta { color: var(--mc-fg-muted); font-size: var(--mc-fs-1); margin-bottom: var(--mc-sp-3); }
-.mc-side-section { font-size: var(--mc-fs-1); color: var(--mc-fg-dim); text-transform: none; margin: var(--mc-sp-3) 0 var(--mc-sp-1); }
-.mc-side-conn { display: flex; align-items: flex-start; gap: var(--mc-sp-2); font-size: var(--mc-fs-2); padding: var(--mc-sp-1) 0; color: var(--mc-fg-muted); cursor: pointer; }
+.mc-side-section { font-size: 10.5px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--mc-fg-dim); margin: var(--mc-sp-3) 0 var(--mc-sp-1); }
+.mc-side-conn { display: flex; width: 100%; align-items: flex-start; gap: var(--mc-sp-2); font-size: var(--mc-fs-2); padding: var(--mc-sp-1) 0; color: var(--mc-fg-muted); cursor: pointer; border: 0; background: transparent; text-align: left; font-family: inherit; }
 .mc-side-conn:hover { color: var(--mc-fg); }
-.mc-side-conn-body { min-width: 0; flex: 1 1 auto; }
+.mc-side-conn-body { display: block; min-width: 0; flex: 1 1 auto; }
 .mc-side-conn-meta { display: flex; flex-wrap: wrap; gap: var(--mc-sp-1); margin-top: 2px; }
+.mc-search {
+  min-width: min(320px, 100%); min-height: 32px; padding: 5px 11px;
+  border: 1px solid var(--mc-border); border-radius: var(--mc-r-pill);
+  background: var(--mc-surface-1); color: var(--mc-fg); font: inherit;
+}
 .mc-btn {
   display: inline-flex; align-items: center; gap: var(--mc-sp-1); cursor: pointer;
-  background: var(--mc-surface-2); border: 1px solid var(--mc-border-2); color: var(--mc-fg);
+  background: var(--mc-surface-2); border: 1px solid var(--mc-border); color: var(--mc-fg);
   border-radius: var(--mc-r-2); padding: var(--mc-sp-2) var(--mc-sp-3); font-size: var(--mc-fs-2); font-weight: 500;
   margin: var(--mc-sp-1) var(--mc-sp-1) 0 0; font-family: var(--mc-font);
   transition: background var(--mc-dur) var(--mc-ease), border-color var(--mc-dur) var(--mc-ease);
 }
-.mc-btn:hover { background: var(--mc-surface-3); border-color: var(--mc-accent-bd); }
+.mc-btn:hover { background: var(--mc-accent-bg); border-color: var(--mc-accent-bd); }
 .mc-btn-primary { background: var(--mc-accent-bg); border-color: var(--mc-accent-bd); color: var(--mc-accent); }
+.mc-btn-primary:hover { background: color-mix(in srgb, var(--mc-accent) 16%, var(--mc-accent-bg)); }
 .mc-map-note { color: var(--mc-fg-dim); font-size: var(--mc-fs-1); margin-top: var(--mc-sp-2); }
 
 @media (prefers-reduced-motion: reduce) {
@@ -506,7 +605,8 @@ body {
 
 <body>
 <div class="mc-strip" id="mc-strip"></div>
-<nav class="mc-nav" id="mc-nav"></nav>
+<nav class="mc-nav" id="mc-nav" aria-label="Dashboard sections"></nav>
+<div class="mc-sr-only" id="mc-tab-status" role="status" aria-live="polite" aria-atomic="true"></div>
 <main class="mc-main" id="mc-main"></main>
 
 <script>
@@ -519,6 +619,61 @@ body {
 
   var LOAD_EPOCH = Math.floor(Date.now() / 1000);
   function nowS() { return Math.floor(Date.now() / 1000); }
+  var OPERATOR_STATE_KEY = "mc-operator-state-v1";
+  function loadOperatorState() {
+    try {
+      var raw = sessionStorage.getItem(OPERATOR_STATE_KEY);
+      var parsed = raw ? JSON.parse(raw) : {};
+      return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+    } catch (e) { return {}; }
+  }
+  var OPERATOR_STATE = loadOperatorState();
+  var DISCLOSURES = OPERATOR_STATE.disclosures && typeof OPERATOR_STATE.disclosures === "object"
+    ? OPERATOR_STATE.disclosures : {};
+  var PENDING_SCROLL = OPERATOR_STATE.scroll && typeof OPERATOR_STATE.scroll === "object"
+    ? OPERATOR_STATE.scroll : null;
+  function saveOperatorState() {
+    try { sessionStorage.setItem(OPERATOR_STATE_KEY, JSON.stringify(OPERATOR_STATE)); } catch (e) {}
+  }
+  function setOperatorState(key, value) {
+    OPERATOR_STATE[key] = value;
+    saveOperatorState();
+  }
+  function disclosureOpen(key) { return DISCLOSURES[key] === true; }
+  function setDisclosureOpen(key, open) {
+    DISCLOSURES[key] = open === true;
+    setOperatorState("disclosures", DISCLOSURES);
+  }
+  var SEARCH_RENDER_TIMER = null;
+  var SEARCH_FOCUS = null;
+  function scheduleSearchRender(input) {
+    SEARCH_FOCUS = { id: input.id, start: input.selectionStart, end: input.selectionEnd };
+    if (SEARCH_RENDER_TIMER) clearTimeout(SEARCH_RENDER_TIMER);
+    SEARCH_RENDER_TIMER = setTimeout(function () { SEARCH_RENDER_TIMER = null; rerender(); }, 100);
+  }
+  function restoreSearchFocus() {
+    if (!SEARCH_FOCUS) return;
+    var saved = SEARCH_FOCUS;
+    SEARCH_FOCUS = null;
+    setTimeout(function () {
+      var input = document.getElementById(saved.id);
+      if (!input || typeof input.focus !== "function") return;
+      input.focus();
+      if (typeof input.setSelectionRange === "function" && saved.start != null) {
+        input.setSelectionRange(saved.start, saved.end == null ? saved.start : saved.end);
+      }
+    }, 0);
+  }
+  function normalizedQuery(value) { return String(value || "").trim().toLowerCase(); }
+  function textMatchesQuery(values, query) {
+    var q = normalizedQuery(query);
+    if (!q) return true;
+    return (values || []).some(function (value) { return String(value || "").toLowerCase().indexOf(q) >= 0; });
+  }
+  function searchCountText(matches, total, cap, noun) {
+    if (matches > cap) return "Showing " + cap + " of " + matches + " matches across " + total + " " + noun;
+    return matches + " match" + (matches === 1 ? "" : "es") + " across " + total + " " + noun;
+  }
   // Epoch of 00:00 local on the day AFTER `sec`'s local day — a daily product's
   // validity horizon. new Date(y, mon, day+1) normalizes the rollover and picks
   // the right local/DST offset, mirroring Python next_local_midnight (mktime).
@@ -616,7 +771,7 @@ body {
   }
 
   // --- per-feed guard: schema/staleness/skew ---------------------------------
-  var EXPECTED_CADENCE = { automation: 300, usage: 1800, git: 900,
+  var EXPECTED_CADENCE = { automation: 300, usage: 1800, headroom: 60, git: 900,
                            chats: 1800, decisions: 300, brief: 300 };
   function guard(name) {
     var env = MC.feeds[name];
@@ -773,7 +928,6 @@ body {
     if (key.indexOf("rollout-rate_limits") === 0) return "local rate-limit log";
     if (key.indexOf("ccusage-blocks") === 0) return "Claude local block estimate";
     if (key.indexOf("ccusage-weekly") === 0) return "Claude weekly estimate";
-    if (key.indexOf("claude-glm-doctor") === 0) return "GLM doctor health check";
     if (key.indexOf("session-store") === 0) return "local Copilot store";
     if (key.indexOf("binary") === 0) return "local binary check";
     if (key.indexOf("credits.json") === 0) return "held credits file";
@@ -888,7 +1042,7 @@ body {
       map: "chat-graph export",
       chats: "chat-graph export",
       git: "scan-unfinished-work + watcher notes",
-      usage: "usage snapshot + local adapters",
+      usage: "1-minute live headroom + 30-minute snapshots",
       automation: "automation-status + launchctl evidence",
       decisions: "transactional decision queue",
       brief: "deterministic Morning Brief sidecar"
@@ -936,7 +1090,10 @@ body {
       return "fresh";
     }
     if (name === "decisions") {
-      return ((g.data && g.data.pinned) || []).length ? "attention" : "fresh";
+      var decisionRows = (g.data && g.data.pinned) || [];
+      return decisionRows.some(function (decision) {
+        return !isAnswerPending(decision);
+      }) ? "attention" : "fresh";
     }
     if (name === "attention") {
       return (((g.data && g.data.top5) || []).length) ? "attention" : "fresh";
@@ -950,6 +1107,17 @@ body {
   function appendPanelProvenance(container, name, g, extra) {
     if (!container) return;
     var epoch = g && g.ok ? g.epoch : 0;
+    if (name === "usage") {
+      var live = guard("headroom");
+      container.appendChild(chipsLine([
+        { label: "Sources", value: panelSourceName(name) },
+        { label: "Trust", value: panelTrustText(name, g) },
+        { label: "Live checked", value: live.ok && live.epoch ? fmtAge(live.epoch) : "not available" },
+        { label: "Snapshot checked", value: epoch ? fmtAge(epoch) : "no data" },
+        { label: "Status", value: extra || panelStatusText(name, g) }
+      ]));
+      return;
+    }
     var items = [
       { label: "Source", value: panelSourceName(name) },
       { label: "Trust", value: panelTrustText(name, g) },
@@ -1096,6 +1264,48 @@ body {
     if (value == null || value === "") return NaN;
     return +value;
   }
+  function readingAgeSeconds(row, fallbackEpoch) {
+    if (row && typeof row.fetched_epoch === "number" && isFinite(row.fetched_epoch)) {
+      return nowS() - row.fetched_epoch;
+    }
+    if (row && typeof row.age_s === "number" && isFinite(row.age_s)) {
+      return Math.max(0, row.age_s + (fallbackEpoch ? nowS() - fallbackEpoch : 0));
+    }
+    return fallbackEpoch ? nowS() - fallbackEpoch : null;
+  }
+  function readingAgeText(row, fallbackEpoch) {
+    var seconds = readingAgeSeconds(row, fallbackEpoch);
+    return seconds == null ? "age unavailable" : seconds < 0 ? "clock skew" : fmtAgeS(seconds);
+  }
+  function dailyReadsSummary(detail) {
+    var byDate = {};
+    ((detail && detail.daily_reads) || []).forEach(function (row) {
+      if (!row || typeof row.date !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(row.date)) return;
+      if (!Number.isSafeInteger(row.reads) || row.reads < 0) return;
+      var parsed = new Date(row.date + "T00:00:00Z");
+      if (!isFinite(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== row.date) return;
+      byDate[row.date] = row.reads;
+    });
+    var today = new Date();
+    var todayEpoch = Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate());
+    var earliestEpoch = todayEpoch - 6 * 86400000;
+    var dates = Object.keys(byDate).filter(function (date) {
+      var epoch = Date.parse(date + "T00:00:00Z");
+      return epoch >= earliestEpoch && epoch <= todayEpoch;
+    }).sort();
+    if (!dates.length) return null;
+    var total = dates.reduce(function (sum, date) { return sum + byDate[date]; }, 0);
+    if (!Number.isSafeInteger(total)) return null;
+    var latest = dates[dates.length - 1];
+    return "7-day activity: " + Number(total).toLocaleString() + " read" + (total === 1 ? "" : "s") +
+      " total · latest " + latest + ": " + Number(byDate[latest]).toLocaleString();
+  }
+  var ACTION_STATE_RANK = { red: 0, amber: 1, blue: 2, green: 3, grey: 4 };
+  function actionStateRank(state) { return ACTION_STATE_RANK[state] != null ? ACTION_STATE_RANK[state] : 4; }
+  function usageRemaining(item) {
+    var pct = numericPct(item && item.pct);
+    return isFinite(pct) ? 100 - pct : null;
+  }
   function isCreditWindow(item) {
     return String(item && item.window || "").indexOf("credit") === 0;
   }
@@ -1107,7 +1317,10 @@ body {
     return "no numeric read";
   }
   function usageItems(data) {
-    return ((data && data.providers) || []).map(function (pr) {
+    // GLM is a routing fallback, not a surface Trevor watches — never render it.
+    return ((data && data.providers) || []).filter(function (pr) {
+      return String((pr && pr.provider) || "").toLowerCase() !== "glm";
+    }).map(function (pr) {
       if (pr.name != null || pr.pct != null) {
         return { title: pr.name || "provider", pct: pr.pct, confidence: pr.confidence || "unknown",
                  source: pr.source || "local", used: pr.used, unit: pr.unit, resets_in_min: pr.resets_in_min,
@@ -1173,7 +1386,9 @@ body {
     var meta = h("div", { class: "mc-mini-stack" });
     meta.appendChild(chipsLine([
       { label: "Trust", value: confidenceLabel(item.confidence) },
-      { label: "Source", value: sourceLabel(item.source) }
+      { label: "Source", value: sourceLabel(item.source) },
+      { label: "Reading", value: readingAgeText(item, epoch) },
+      { label: "Cadence", value: "snapshot · every 30 min" }
     ]));
     if (item.resets_in_min != null) {
       var cd = h("span", { class: "mc-countdown" });
@@ -1192,6 +1407,7 @@ body {
   function normUsageProviders(data) {
     var rows = [], credits = [], no_data = [];
     ((data && data.providers) || []).forEach(function (pr) {
+      if (String((pr && pr.provider) || "").toLowerCase() === "glm") return;
       if (pr.name != null || pr.pct != null) { rows.push(pr); return; }
       var win = String(pr.window || "");
       if (win.indexOf("credit") === 0) {
@@ -1268,11 +1484,32 @@ body {
       s.git = { state: worstTone(worst, guardTone(gg)), count: bad.length };
     } else s.git = { state: "grey", count: 0 };
 
-    var gu = guard("usage");
+    var gu = guard("usage"), gh = guard("headroom");
     if (gu.ok && gu.data && Array.isArray(gu.data.providers)) {
-      var states = normUsageProviders(gu.data).rows.map(usageState);
+      // The strip must summarize the same live-first provider set as the Usage
+      // tab. Counting only the slower snapshot can show a green "Usage 0" while
+      // a trusted one-minute window is exhausted on the page below it.
+      var states = [], covered = {}, liveGroups = {};
+      var headroomTrusted = gh.ok && !gh.feedError && !gh.flag && gh.data &&
+        Array.isArray(gh.data.rows) && gh.data.rows.every(function (r) {
+          return r && typeof r === "object" && !Array.isArray(r);
+        });
+      if (headroomTrusted) {
+        gh.data.rows.filter(function (r) { return r.health !== "hidden"; }).forEach(function (r) {
+          var key = String(r.provider || r.label || "?").toLowerCase();
+          covered[key] = true;
+          (liveGroups[key] = liveGroups[key] || { rows: [] }).rows.push(r);
+        });
+        Object.keys(liveGroups).forEach(function (key) {
+          states.push(headroomGroupState(liveGroups[key], gh.epoch));
+        });
+      }
+      normUsageProviders(gu.data).rows.forEach(function (item) {
+        if (!covered[String(item.provider || "").toLowerCase()]) states.push(usageState(item));
+      });
       var w = states.indexOf("red") >= 0 ? "red" : (states.indexOf("amber") >= 0 ? "amber" : "green");
-      s.usage = { state: worstTone(w, guardTone(gu)), count: states.filter(function (x) { return x === "red" || x === "amber"; }).length };
+      var guardState = worstTone(guardTone(gu), guardTone(gh));
+      s.usage = { state: worstTone(w, guardState), count: states.filter(function (x) { return x === "red" || x === "amber"; }).length };
     } else s.usage = { state: "grey", count: 0 };
 
     var ga = guard("automation");
@@ -1366,6 +1603,9 @@ body {
     var strip = document.getElementById("mc-strip");
     strip.textContent = "";
     var sum = feedSummary();
+    strip.appendChild(h("span", { class: "mc-brand" },
+      h("span", { class: "mc-brand-mark" }, "MC"),
+      h("span", { class: "mc-brand-name" }, "Mission Control")));
     var segs = [["chats", "Open work"], ["git", "Git"], ["usage", "Usage"], ["automation", "Jobs"]];
     segs.forEach(function (pair) {
       var k = pair[0], label = pair[1], d = sum[k];
@@ -1690,6 +1930,25 @@ body {
       Array.isArray(decisionGuard.data.pinned) ? decisionGuard.data.pinned : [];
     var homeActionable = homePinned.filter(function (d) { return !isAnswerPending(d); }).length;
     var homeNeedsAction = home.status === "attention" || homeActionable > 0;
+    var hero = homeHeroState();
+    var heroTone = hero.tone === "red" ? "mc-state-red" : hero.tone === "amber" ? "mc-state-amber" : "mc-state-green";
+    glance.appendChild(h("div", { class: "mc-hero" },
+      h("div", { class: "mc-hero-text" },
+        h("div", { class: "mc-hero-title " + heroTone }, hero.title),
+        h("div", { class: "mc-hero-sub" }, hero.sub)),
+      h("span", { class: "mc-hero-pill is-" + (hero.tone === "red" ? "bad" : hero.tone === "amber" ? "warn" : "ok") },
+        h("span", { class: "mc-hero-pill-dot" }), hero.pill)));
+    glance.appendChild(h("div", { class: "mc-hero-stats" },
+      h("div", { class: "mc-hero-stat" },
+        h("div", { class: "mc-hero-stat-num " + (hero.needs ? "mc-state-amber" : "mc-state-green") }, String(hero.needs)),
+        h("div", { class: "mc-hero-stat-lbl" }, "Needs you")),
+      h("div", { class: "mc-hero-stat" },
+        h("div", { class: "mc-hero-stat-num " + (hero.red ? "mc-state-red" : hero.yellow ? "mc-state-amber" : hero.total ? "mc-state-green" : "") },
+          hero.total ? hero.healthy + "/" + hero.total : "–"),
+        h("div", { class: "mc-hero-stat-lbl" }, hero.red ? "jobs red" : hero.yellow ? "jobs warning" : "Jobs healthy")),
+      h("div", { class: "mc-hero-stat" },
+        h("div", { class: "mc-hero-stat-num" }, hero.ageShort),
+        h("div", { class: "mc-hero-stat-lbl" }, "Feed age"))));
     glance.appendChild(h("h1", { class: "mc-glance-title" },
       homeNeedsAction ? "Needs you" : (homePinned.length ? "Answers recorded" : "Needs you")));
     var count = renderAttentionGlance(glance, 5);
@@ -1744,12 +2003,13 @@ body {
       var shown = exc.slice(0, 7);
       shown.forEach(function (e) {
         var goTo = function () {
-          if (e.tab === "map" && e.focus) FOCUS_CHAT = e.focus;
-          if (e.openId) FOCUS_OPEN_END = e.openId;
+          if (e.tab === "map" && e.focus) setMapFocus(e.focus);
+          if (e.openId) { FOCUS_OPEN_END = e.openId; persistChatState(); }
           location.hash = "#" + e.tab;
           if (e.focus || e.openId) rerender();
         };
-        var row = h("div", { class: "mc-row mc-row-click", onclick: goTo },
+        var row = h("button", { class: "mc-row mc-row-click", type: "button", onclick: goTo,
+          "aria-label": e.problem + ". " + (e.openId ? "Show item" : (e.focus ? "Show chat" : "Open tab")) },
           glyphSpan(e.state),
           h("div", { class: "mc-row-body" },
             h("div", { class: "mc-row-problem mc-ellipsis" }, e.problem),
@@ -1783,6 +2043,51 @@ body {
       else if (status !== "attention" && panelStatusText(name, g) !== "fresh") status = "partial";
     });
     return { epoch: epochs.length ? Math.min.apply(null, epochs) : null, status: epochs.length ? status : "no data" };
+  }
+  // Home hero: the one-line answer (all clear / N need you / N red jobs) plus
+  // the three numbers Trevor checks first. Pure read over existing guards.
+  function homeHeroState() {
+    var needs = 0;
+    var gAt = guard("attention");
+    if (gAt.ok && gAt.data && gAt.flag !== "stale") {
+      var bd = Array.isArray(gAt.data.board) ? gAt.data.board : [];
+      var tp = Array.isArray(gAt.data.top5) ? gAt.data.top5 : [];
+      needs = bd.length || tp.length;
+    }
+    if (!needs) {
+      var gd = guard("decisions");
+      if (gd.ok && gd.data && Array.isArray(gd.data.pinned)) {
+        needs = gd.data.pinned.filter(function (decision) {
+          return !isAnswerPending(decision);
+        }).length;
+      }
+    }
+    var red = 0, yellow = 0, total = 0, healthy = 0;
+    var gj = guard("automation");
+    if (gj.ok && gj.data && Array.isArray(gj.data.jobs)) {
+      total = gj.data.jobs.length;
+      red = gj.data.jobs.filter(function (j) { return j.state === "red"; }).length;
+      yellow = gj.data.jobs.filter(function (j) { return j.state === "yellow" || j.state === "degraded"; }).length;
+      healthy = total - red - yellow;
+    }
+    var epochs = [];
+    ["attention", "decisions", "automation", "usage", "git", "chats", "brief"].forEach(function (n) {
+      var g = guard(n);
+      if (g.ok && g.epoch) epochs.push(g.epoch);
+    });
+    var newest = epochs.length ? Math.max.apply(null, epochs) : null;
+    var ageShort = newest ? fmtAge(newest).replace(/ ago$/, "") : "–";
+    var tone = red ? "red" : (needs || yellow) ? "amber" : "green";
+    var title = red ? (red === 1 ? "1 red job needs repair" : red + " red jobs need repair")
+      : needs ? (needs === 1 ? "1 thing needs you" : needs + " things need you")
+      : "All clear";
+    var pill = red ? (red + " red job" + (red === 1 ? "" : "s"))
+      : needs ? (needs + " need" + (needs === 1 ? "s" : "") + " you")
+      : yellow ? (yellow + " warning" + (yellow === 1 ? "" : "s"))
+      : "All clear";
+    var sub = "Chats, git, usage, and jobs · feeds updated " + (newest ? fmtAge(newest) : "never");
+    return { needs: needs, red: red, yellow: yellow, healthy: healthy, total: total,
+             ageShort: ageShort, tone: tone, title: title, pill: pill, sub: sub };
   }
   function changedSinceText() {
     var gc = guard("chats");
@@ -1963,9 +2268,20 @@ body {
   // ===========================================================================
   //  MAP TAB — the connection diagram (chats = dots, lines = how they connect)
   // ===========================================================================
-  var FOCUS_CHAT = null;                 // set by a "go" deep-link; focuses one chat's neighbourhood
-  var mapRepo = "";                      // repo filter
+  var savedMapState = OPERATOR_STATE.map && typeof OPERATOR_STATE.map === "object" ? OPERATOR_STATE.map : {};
+  var FOCUS_CHAT = savedMapState.focus || null; // set by a "go" deep-link; focuses one chat's neighbourhood
+  var mapRepo = String(savedMapState.repo || "");
+  var mapQuery = String(savedMapState.query || "");
   var _cy = null;
+
+  function persistMapState() {
+    setOperatorState("map", { focus: FOCUS_CHAT || null, repo: mapRepo || "", query: mapQuery || "" });
+  }
+  function setMapFocus(key) { FOCUS_CHAT = key || null; persistMapState(); }
+  function mapNodeMatches(n, query) {
+    var openText = (n.open_ends || []).map(function (item) { return (item && item.text) || ""; });
+    return textMatchesQuery([titleLabel(n.title, n.id), n.id, n.repo, providerLabel(n.provider)].concat(openText), query);
+  }
 
   var PROVIDER_COLOR = { claude: "#7c8cff", codex: "#35b98a", cursor: "#e0a534",
     copilot: "#5aa9d6", hermes: "#b07cff", chatgpt: "#9aa0ab" };
@@ -1999,8 +2315,8 @@ body {
         h("span", { class: "mc-chatrow-title mc-ellipsis", title: titleLabel(n.title, n.id) }, titleLabel(n.title, n.id)),
         h("span", { class: "mc-provider" }, "AI: " + providerLabel(n.provider)),
         n.repo ? h("span", { class: "mc-repo" }, "Repo: " + n.repo) : null,
-        h("span", { class: "mc-chip mc-chip-btn", onclick: function () {
-          FOCUS_CHAT = n.key; rerender();
+        h("button", { class: "mc-chip mc-chip-btn", type: "button", onclick: function () {
+          setMapFocus(n.key); rerender();
         } }, "Show connections")));
     });
     main.appendChild(list);
@@ -2053,16 +2369,35 @@ body {
     // controls: repo filter + reset-focus
     var repos = uniq(nodes.map(function (n) { return n.repo; }).filter(Boolean)).sort();
     var controls = h("div", { class: "mc-filters" });
-    var sel = h("select", { class: "mc-chip", onchange: function () { mapRepo = sel.value; FOCUS_CHAT = null; rerender(); } });
+    controls.appendChild(h("label", { class: "mc-sr-only", for: "mc-map-search" }, "Search map chats"));
+    var search = h("input", { class: "mc-search", id: "mc-map-search", type: "search",
+      value: mapQuery, placeholder: "Search every connected chat", autocomplete: "off",
+      oninput: function () {
+        mapQuery = search.value; FOCUS_CHAT = null; persistMapState(); scheduleSearchRender(search);
+      }, onkeydown: function (event) {
+        if (event.key !== "Enter") return;
+        if (SEARCH_RENDER_TIMER) { clearTimeout(SEARCH_RENDER_TIMER); SEARCH_RENDER_TIMER = null; }
+        mapQuery = search.value;
+        var matches = nodes.filter(function (n) { return (!mapRepo || n.repo === mapRepo) && mapNodeMatches(n, mapQuery); });
+        if (matches.length) setMapFocus(matches[0].key);
+        if (typeof event.preventDefault === "function") event.preventDefault();
+        rerender();
+      } });
+    controls.appendChild(search);
+    controls.appendChild(h("label", { class: "mc-sr-only", for: "mc-map-repo-filter" }, "Filter map by repo"));
+    var sel = h("select", { class: "mc-chip", id: "mc-map-repo-filter", onchange: function () {
+      mapRepo = sel.value; FOCUS_CHAT = null; persistMapState(); rerender();
+    } });
     sel.appendChild(h("option", { value: "" }, "All repos"));
     repos.forEach(function (r) { var o = h("option", { value: r }, r); if (r === mapRepo) o.selected = true; sel.appendChild(o); });
     controls.appendChild(sel);
-    if (FOCUS_CHAT) controls.appendChild(h("span", { class: "mc-chip mc-chip-btn mc-chip-on",
-      onclick: function () { FOCUS_CHAT = null; rerender(); } }, "showing one chat's connections — show all ✕"));
+    if (FOCUS_CHAT) controls.appendChild(h("button", { class: "mc-chip mc-chip-btn mc-chip-on", type: "button",
+      onclick: function () { setMapFocus(null); rerender(); } }, "showing one chat's connections — show all ✕"));
     main.appendChild(controls);
 
     // scope the graph (perf: never dump 7,500 nodes into the engine)
     var scoped = scopeGraph(nodes, edges, byKey);
+    main.appendChild(h("output", { id: "mc-map-search-status", class: "mc-card-foot", role: "status", "aria-live": "polite" }, scoped.searchStatus));
     var wrap = h("div", { class: "mc-map-wrap" });
     var cont = h("div", { class: "mc-graph", id: "mc-graph" });
     var side = h("div", { class: "mc-map-side", id: "mc-map-side" },
@@ -2085,6 +2420,13 @@ body {
       (adj[e.src] = adj[e.src] || []).push(e.dst);
       (adj[e.dst] = adj[e.dst] || []).push(e.src);
     });
+    var connectedKeys = Object.keys(adj).filter(inRepo);
+    var matchingKeys = normalizedQuery(mapQuery) ? connectedKeys.filter(function (k) {
+      return byKey[k] && mapNodeMatches(byKey[k], mapQuery);
+    }) : [];
+    var searchStatus = normalizedQuery(mapQuery)
+      ? searchCountText(matchingKeys.length, connectedKeys.length, 260, "connected chats")
+      : "Showing up to 260 of " + connectedKeys.length + " connected chats";
     var keep = {};
     if (FOCUS_CHAT && byKey[FOCUS_CHAT]) {
       // breadth-first neighbourhood, depth 2, capped
@@ -2096,18 +2438,36 @@ body {
         frontier = next; depth++;
       }
       keep = seen;
-      return { keys: keep, note: "Showing this chat and what it connects to. Pick a repo or click another dot to explore." };
+      return { keys: keep, matchKeys: matchingKeys, searchStatus: searchStatus,
+        note: "Showing this chat and what it connects to. Pick a repo or click another dot to explore." };
     }
     // default: the most-connected chats in scope, capped for readability
     var CAP = 260;
-    var deg = Object.keys(adj).filter(inRepo).map(function (k) { return { k: k, d: adj[k].length }; })
+    if (normalizedQuery(mapQuery)) {
+      matchingKeys.slice(0, CAP).forEach(function (k) { keep[k] = true; });
+      // Keep nearby context after every matching record has had first claim on
+      // the cap. A uniquely named old chat therefore remains reachable even if
+      // it was outside the default most-connected set.
+      matchingKeys.slice(0, CAP).forEach(function (k) {
+        (adj[k] || []).some(function (neighbor) {
+          if (Object.keys(keep).length >= CAP) return true;
+          if (inRepo(neighbor)) keep[neighbor] = true;
+          return false;
+        });
+      });
+      return { keys: keep, matchKeys: matchingKeys, searchStatus: searchStatus,
+        note: matchingKeys.length
+          ? "Search found " + matchingKeys.length + " connected chat" + (matchingKeys.length === 1 ? "" : "s") + ". Press Enter to focus the first match."
+          : "No connected chats match this search." };
+    }
+    var deg = connectedKeys.map(function (k) { return { k: k, d: adj[k].length }; })
       .sort(function (a, b) { return b.d - a.d; });
     deg.slice(0, CAP).forEach(function (x) { keep[x.k] = true; });
     var total = deg.length;
     var note = total > CAP
       ? "Showing the " + CAP + " most-connected chats" + (mapRepo ? " in " + mapRepo : "") + " of " + total + " with connections — filter by repo or click a chat to focus its connections."
       : (total ? "Showing all " + total + " connected chats" + (mapRepo ? " in " + mapRepo : "") + "." : "No connections to show" + (mapRepo ? " in " + mapRepo : "") + " yet.");
-    return { keys: keep, note: note };
+    return { keys: keep, matchKeys: matchingKeys, searchStatus: searchStatus, note: note };
   }
 
   function buildCy(container, scoped, byKey, side, edges, data) {
@@ -2222,11 +2582,11 @@ body {
         groupEdges.slice(0, GROUP_ROW_CAP).forEach(function (e) {
           var otherKey = e.src === key ? e.dst : e.src;
           var other = byKey[otherKey];
-          var row = h("div", { class: "mc-side-conn", onclick: function () { FOCUS_CHAT = otherKey; rerender(); } },
+          var row = h("button", { class: "mc-side-conn", type: "button", onclick: function () { setMapFocus(otherKey); rerender(); } },
             h("span", { class: "mc-dot", style: "background:" + provColor(other && other.provider) }),
-            h("div", { class: "mc-side-conn-body" },
-              h("div", { class: "mc-ellipsis", title: other ? titleLabel(other.title, other.id) : otherKey }, other ? titleLabel(other.title, other.id) : otherKey),
-              h("div", { class: "mc-side-conn-meta" },
+            h("span", { class: "mc-side-conn-body" },
+              h("span", { class: "mc-ellipsis", title: other ? titleLabel(other.title, other.id) : otherKey }, other ? titleLabel(other.title, other.id) : otherKey),
+              h("span", { class: "mc-side-conn-meta" },
                 h("span", { class: "mc-chip" }, "source: " + sourceLabel(e.source)),
                 h("span", { class: "mc-chip" }, "confidence: " + Math.round((+e.confidence || 0) * 100) + "%"))));
           side.appendChild(row);
@@ -2235,11 +2595,11 @@ body {
       });
     }
     side.appendChild(h("div", { class: "mc-side-section" }, ""));
-    side.appendChild(h("span", { class: "mc-chip mc-chip-btn", onclick: function () { FOCUS_CHAT = key; rerender(); } }, "Show only this chat's connections"));
+    side.appendChild(h("button", { class: "mc-chip mc-chip-btn", type: "button", onclick: function () { setMapFocus(key); rerender(); } }, "Show only this chat's connections"));
   }
 
   function cmdBtn(label, cmd, primary) {
-    return h("button", { class: "mc-btn" + (primary ? " mc-btn-primary" : ""),
+    return h("button", { class: "mc-btn" + (primary ? " mc-btn-primary" : ""), type: "button",
       title: cmd, onclick: function (ev) {
         var b = ev.target; var old = b.textContent; b.disabled = true;
         clipboardWrite(cmd).then(function () {
@@ -2257,8 +2617,26 @@ body {
   // ===========================================================================
   //  CHATS TAB
   // ===========================================================================
-  var chatFilter = { repo: "", openOnly: false, providers: {} };
-  var FOCUS_OPEN_END = null;
+  var savedChatState = OPERATOR_STATE.chats && typeof OPERATOR_STATE.chats === "object" ? OPERATOR_STATE.chats : {};
+  var chatFilter = { repo: String(savedChatState.repo || ""), openOnly: savedChatState.openOnly === true, providers: {} };
+  if (savedChatState.providers && typeof savedChatState.providers === "object") {
+    Object.keys(savedChatState.providers).forEach(function (key) { chatFilter.providers[key] = savedChatState.providers[key] === true; });
+  }
+  var chatQuery = String(savedChatState.query || "");
+  var FOCUS_OPEN_END = savedChatState.focusOpen || null;
+
+  function persistChatState() {
+    setOperatorState("chats", { repo: chatFilter.repo || "", openOnly: chatFilter.openOnly === true,
+      providers: chatFilter.providers, query: chatQuery || "", focusOpen: FOCUS_OPEN_END || null });
+  }
+  function chatNodeMatches(n, query) {
+    var openText = (n.open_ends || []).map(function (item) { return (item && item.text) || ""; });
+    return textMatchesQuery([titleLabel(n.title, n.id), n.id, n.repo, providerLabel(n.provider)].concat(openText), query);
+  }
+  function openItemMatches(item, node, query) {
+    return textMatchesQuery([item.title, item.text, item.action_hint, item.kind, item.repo,
+      node && titleLabel(node.title, node.id), node && node.id], query);
+  }
 
   function renderChats(main) {
     var g = guard("chats");
@@ -2280,21 +2658,31 @@ body {
     var repos = uniq(nodes.map(function (n) { return n.repo; }).filter(Boolean)).sort();
     var providers = uniq(nodes.map(function (n) { return providerGroup(n.provider); }).filter(Boolean)).sort();
     var filters = h("div", { class: "mc-filters" });
-    var sel = h("select", { class: "mc-chip", onchange: function () { chatFilter.repo = sel.value; rerender(); } });
+    filters.appendChild(h("label", { class: "mc-sr-only", for: "mc-chat-search" }, "Search chats and open work"));
+    var search = h("input", { class: "mc-search", id: "mc-chat-search", type: "search",
+      value: chatQuery, placeholder: "Search every chat and open item", autocomplete: "off",
+      oninput: function () { chatQuery = search.value; persistChatState(); scheduleSearchRender(search); } });
+    filters.appendChild(search);
+    filters.appendChild(h("label", { class: "mc-sr-only", for: "mc-chat-repo-filter" }, "Filter chats by repo"));
+    var sel = h("select", { class: "mc-chip", id: "mc-chat-repo-filter", onchange: function () {
+      chatFilter.repo = sel.value; persistChatState(); rerender();
+    } });
     sel.appendChild(h("option", { value: "" }, "All repos"));
     repos.forEach(function (r) { var o = h("option", { value: r }, r); if (r === chatFilter.repo) o.selected = true; sel.appendChild(o); });
     filters.appendChild(sel);
-    filters.appendChild(h("span", { class: "mc-chip mc-chip-btn" + (chatFilter.openOnly ? " mc-chip-on" : ""),
-      onclick: function () { chatFilter.openOnly = !chatFilter.openOnly; rerender(); } }, "Only chats with unfinished work"));
+    filters.appendChild(h("button", { class: "mc-chip mc-chip-btn" + (chatFilter.openOnly ? " mc-chip-on" : ""),
+      type: "button", "aria-pressed": chatFilter.openOnly ? "true" : "false",
+      onclick: function () { chatFilter.openOnly = !chatFilter.openOnly; persistChatState(); rerender(); } }, "Only chats with unfinished work"));
     providers.forEach(function (pr) {
       var on = !chatFilter.providers[pr];
-      filters.appendChild(h("span", { class: "mc-chip mc-chip-btn" + (on ? " mc-chip-on" : ""),
-        onclick: function () { chatFilter.providers[pr] = !chatFilter.providers[pr]; rerender(); } }, providerLabel(pr)));
+      filters.appendChild(h("button", { class: "mc-chip mc-chip-btn" + (on ? " mc-chip-on" : ""),
+        type: "button", "aria-pressed": on ? "true" : "false",
+        onclick: function () { chatFilter.providers[pr] = !chatFilter.providers[pr]; persistChatState(); rerender(); } }, providerLabel(pr)));
     });
     p.body.appendChild(filters);
 
-    if (FOCUS_OPEN_END) p.body.appendChild(h("span", { class: "mc-chip mc-chip-btn mc-chip-on",
-      onclick: function () { FOCUS_OPEN_END = null; rerender(); } }, "showing one open item — show all"));
+    if (FOCUS_OPEN_END) p.body.appendChild(h("button", { class: "mc-chip mc-chip-btn mc-chip-on", type: "button",
+      onclick: function () { FOCUS_OPEN_END = null; persistChatState(); rerender(); } }, "showing one open item — show all"));
 
     renderOpenWork(p.body, openItems, nodes, edges);
 
@@ -2302,6 +2690,7 @@ body {
       if (chatFilter.repo && n.repo !== chatFilter.repo) return false;
       if (chatFilter.openOnly && !openCountByNode[n.key] && !(n.open_ends || []).length) return false;
       if (chatFilter.providers[providerGroup(n.provider)]) return false; // toggled off
+      if (!chatNodeMatches(n, chatQuery)) return false;
       return true;
     });
 
@@ -2313,6 +2702,10 @@ body {
     var ROW_CAP = 100;
     visible.sort(function (a, b) { return String(b.last_activity || "") < String(a.last_activity || "") ? -1 : 1; });
     p.body.appendChild(h("div", { class: "mc-section-head" }, h("h2", { text: "Recent chats" })));
+    p.body.appendChild(h("output", { id: "mc-chat-search-status", class: "mc-card-foot", role: "status", "aria-live": "polite" },
+      normalizedQuery(chatQuery)
+        ? searchCountText(visible.length, nodes.length, 100, "chats")
+        : "Showing " + Math.min(100, visible.length) + " of " + visible.length + " chats after filters"));
     var list = h("div", { class: "mc-list" });
     var byId = {}; nodes.forEach(function (n) { byId[n.key] = n; });
     visible.slice(0, ROW_CAP).forEach(function (n) { list.appendChild(chatRow(n, edges, byId)); });
@@ -2328,6 +2721,7 @@ body {
       var n = byKey[o.source_node || ""];
       if (chatFilter.repo && (o.repo || (n && n.repo) || "") !== chatFilter.repo) return false;
       if (n && chatFilter.providers[providerGroup(n.provider)]) return false;
+      if (!openItemMatches(o, n, chatQuery)) return false;
       return true;
     }).sort(function (a, b) {
       if (FOCUS_OPEN_END && a.id === FOCUS_OPEN_END) return -1;
@@ -2339,6 +2733,10 @@ body {
     });
     parent.appendChild(h("div", { class: "mc-section-head" }, h("h2", { text: "Open work" })));
     parent.appendChild(h("div", { class: "mc-card-foot" }, "One list of unfinished items from chats, repo todo files, nightly notes, Git state, and the request register."));
+    parent.appendChild(h("output", { id: "mc-open-search-status", class: "mc-card-foot", role: "status", "aria-live": "polite" },
+      normalizedQuery(chatQuery)
+        ? searchCountText(items.length, (openItems || []).length, 50, "open work items")
+        : "Showing " + Math.min(50, items.length) + " of " + items.length + " open work items after filters"));
     var list = h("div", { class: "mc-list" });
     if (!items.length) list.appendChild(h("div", { class: "mc-card-foot" }, "No open work found in the chat graph."));
     items.slice(0, 50).forEach(function (item) { list.appendChild(openWorkRow(item, byKey, edges)); });
@@ -2356,8 +2754,8 @@ body {
         h("div", { class: "mc-row-action mc-ellipsis", title: item.text || "" }, item.action_hint || openEndHuman(item)),
         h("div", { class: "mc-row-meta mc-ellipsis" },
           (item.repo ? "Repo: " + item.repo + " · " : "") + ((item.age_days || 0) ? item.age_days + "d old" : "new"))));
-    if (item.source_node && n) row.appendChild(h("span", { class: "mc-chip mc-chip-btn", onclick: function () {
-      FOCUS_CHAT = item.source_node; location.hash = "#map"; rerender();
+    if (item.source_node && n) row.appendChild(h("button", { class: "mc-chip mc-chip-btn", type: "button", onclick: function () {
+      setMapFocus(item.source_node); location.hash = "#map"; rerender();
     } }, "Show chat"));
     if (item.resolve_cmd) row.appendChild(copyable(item.resolve_cmd, "Hide until refresh"));
     return row;
@@ -2420,18 +2818,18 @@ body {
     // scan-unfinished-work table (unfinished repos only; clean collapse)
     var bad = acts.filter(function (x) { return x.a.state !== "green"; });
     var clean = acts.filter(function (x) { return x.a.state === "green"; });
-    var table = h("table", { class: "mc-table" });
+    var table = h("table", { class: "mc-table mc-git-mobile-table" });
     table.appendChild(h("tr", null,
       h("th", null, "Project"), h("th", null, "Branch"), h("th", null, "GitHub"),
       h("th", null, "Problem"), h("th", null, "Next action")));
     bad.forEach(function (x) {
       var relCls = REL_CLASS[x.a.rel] || "mc-state-grey";
       table.appendChild(h("tr", null,
-        h("td", { class: "mc-ellipsis", title: x.r.repo, style: "max-width:220px" }, x.r.repo),
-        h("td", { class: relCls }, x.r.branch || "?"),
-        h("td", { class: relCls }, relSymbol(x.a.rel) + " " + (REL_TEXT[x.a.rel] || x.a.rel)),
-        h("td", null, glyphSpan(x.a.state), " ", x.a.summary),
-        h("td", { class: "mc-action-verb" }, x.a.verb)));
+        h("td", { class: "mc-ellipsis", title: x.r.repo, style: "max-width:220px", "data-label": "Project" }, x.r.repo),
+        h("td", { class: relCls, "data-label": "Branch" }, x.r.branch || "?"),
+        h("td", { class: relCls, "data-label": "GitHub" }, relSymbol(x.a.rel) + " " + (REL_TEXT[x.a.rel] || x.a.rel)),
+        h("td", { "data-label": "Problem" }, glyphSpan(x.a.state), " ", x.a.summary),
+        h("td", { class: "mc-action-verb", "data-label": "Next action" }, x.a.verb)));
     });
     p.body.appendChild(table);
 
@@ -2439,9 +2837,9 @@ body {
     repos.forEach(function (r) { repoDecisionRows(r).forEach(function (row) { decisions.push({ repo: r.repo, row: row }); }); });
     if (decisions.length) {
       p.body.appendChild(h("div", { class: "mc-section-head" }, h("h2", { text: "Branch decisions" })));
-      var dt = h("table", { class: "mc-table" });
+      var dt = h("table", { class: "mc-table mc-git-mobile-table" });
       dt.appendChild(h("tr", null, h("th", null, "Project"), h("th", null, "Decision"), h("th", null, "Detail"), h("th", null, "Next action")));
-      decisions.forEach(function (d) { var tone = d.row.state || "amber"; dt.appendChild(h("tr", null, h("td", { class: "mc-ellipsis", title: d.repo, style: "max-width:180px" }, d.repo), h("td", null, glyphSpan(tone), " ", d.row.label || "Git decision"), h("td", { class: "mc-ellipsis", title: d.row.detail || "", style: "max-width:320px" }, d.row.detail || ""), h("td", { class: "mc-action-verb" }, d.row.action || decisionRowAction(d.row)))); });
+      decisions.forEach(function (d) { var tone = d.row.state || "amber"; dt.appendChild(h("tr", null, h("td", { class: "mc-ellipsis", title: d.repo, style: "max-width:180px", "data-label": "Project" }, d.repo), h("td", { "data-label": "Decision" }, glyphSpan(tone), " ", d.row.label || "Git decision"), h("td", { class: "mc-ellipsis", title: d.row.detail || "", style: "max-width:320px", "data-label": "Detail" }, d.row.detail || ""), h("td", { class: "mc-action-verb", "data-label": "Next action" }, d.row.action || decisionRowAction(d.row)))); });
       p.body.appendChild(dt);
     }
 
@@ -2449,30 +2847,39 @@ body {
     if (lifecycle.length) {
       p.body.appendChild(h("div", { class: "mc-section-head" }, h("h2", { text: "Branch lifecycle" })));
       p.body.appendChild(h("div", { class: "mc-card-foot" }, "Purpose, source chat, merge condition, and delete/retain condition come only from repo todo.md ledger entries."));
-      var lt = h("table", { class: "mc-table" });
+      var lt = h("table", { class: "mc-table mc-git-mobile-table" });
       lt.appendChild(h("tr", null, h("th", null, "Project"), h("th", null, "Kind"), h("th", null, "Branch/worktree"), h("th", null, "Metadata"), h("th", null, "Purpose"), h("th", null, "Owner/source"), h("th", null, "Merge"), h("th", null, "Close condition")));
-      lifecycle.forEach(function (repoRows) { repoRows.rows.forEach(function (row) { var tone = metadataTone(row.status); lt.appendChild(h("tr", null, h("td", { class: "mc-ellipsis", title: repoRows.repo, style: "max-width:170px" }, repoRows.repo), h("td", null, row.kind), h("td", { class: "mc-ellipsis", title: row.name, style: "max-width:180px" }, row.name), h("td", { class: STATE_CLASS[tone] || "" }, glyphSpan(tone), " ", metadataLabel(row.status)), h("td", { class: "mc-ellipsis", title: row.purpose || "", style: "max-width:220px" }, row.purpose || "not recorded"), h("td", { class: "mc-ellipsis", title: row.owner || "", style: "max-width:180px" }, row.owner || "not recorded"), h("td", { class: "mc-ellipsis", title: row.merge || "", style: "max-width:180px" }, row.merge || "not recorded"), h("td", { class: "mc-ellipsis", title: row.close || "", style: "max-width:220px" }, row.close || row.action || "not recorded"))); }); });
+      lifecycle.forEach(function (repoRows) { repoRows.rows.forEach(function (row) { var tone = metadataTone(row.status); lt.appendChild(h("tr", null, h("td", { class: "mc-ellipsis", title: repoRows.repo, style: "max-width:170px", "data-label": "Project" }, repoRows.repo), h("td", { "data-label": "Kind" }, row.kind), h("td", { class: "mc-ellipsis", title: row.name, style: "max-width:180px", "data-label": "Branch/worktree" }, row.name), h("td", { class: STATE_CLASS[tone] || "", "data-label": "Metadata" }, glyphSpan(tone), " ", metadataLabel(row.status)), h("td", { class: "mc-ellipsis", title: row.purpose || "", style: "max-width:220px", "data-label": "Purpose" }, row.purpose || "not recorded"), h("td", { class: "mc-ellipsis", title: row.owner || "", style: "max-width:180px", "data-label": "Owner/source" }, row.owner || "not recorded"), h("td", { class: "mc-ellipsis", title: row.merge || "", style: "max-width:180px", "data-label": "Merge" }, row.merge || "not recorded"), h("td", { class: "mc-ellipsis", title: row.close || "", style: "max-width:220px", "data-label": "Close condition" }, row.close || row.action || "not recorded"))); }); });
       p.body.appendChild(lt);
     }
     if (clean.length) {
-      var expanded = { on: false };
-      var line = h("div", { class: "mc-collapse" }, glyphSpan("green"), " " + clean.length + " projects are clean (click to show)");
-      var sub = h("div", { style: "display:none" });
+      var cleanDisclosureKey = "git-clean-projects";
+      var expanded = { on: disclosureOpen(cleanDisclosureKey) };
+      var subId = "mc-git-clean-projects";
+      var line = h("button", { class: "mc-collapse", type: "button", "aria-expanded": expanded.on ? "true" : "false",
+        "aria-controls": subId }, glyphSpan("green"), " " + clean.length + " projects are clean (" + (expanded.on ? "hide" : "show") + ")");
+      var sub = h("div", { id: subId, style: "display:" + (expanded.on ? "block" : "none") });
       clean.forEach(function (x) { sub.appendChild(h("div", { class: "mc-card-secondary" }, x.r.repo + " - " + (x.r.branch || "") + " matches GitHub")); });
-      line.addEventListener("click", function () { expanded.on = !expanded.on; sub.style.display = expanded.on ? "block" : "none"; });
+      line.addEventListener("click", function () {
+        expanded.on = !expanded.on; setDisclosureOpen(cleanDisclosureKey, expanded.on);
+        sub.style.display = expanded.on ? "block" : "none";
+        line.setAttribute("aria-expanded", expanded.on ? "true" : "false");
+        line.textContent = ""; line.appendChild(glyphSpan("green"));
+        line.appendChild(document.createTextNode(" " + clean.length + " projects are clean (" + (expanded.on ? "hide" : "show") + ")"));
+      });
       p.body.appendChild(line); p.body.appendChild(sub);
     }
 
     // separate watcher-flags list
     if (flags.length) {
       p.body.appendChild(h("div", { class: "mc-section-head" }, h("h2", { text: "Watcher notes" })));
-      var ft = h("table", { class: "mc-table" });
+      var ft = h("table", { class: "mc-table mc-git-mobile-table" });
       ft.appendChild(h("tr", null, h("th", null, "Project"), h("th", null, "Problem"), h("th", null, "Detail")));
       flags.forEach(function (f) {
         ft.appendChild(h("tr", null,
-          h("td", null, f.repo || "?"),
-          h("td", null, glyphSpan(f.state || "amber"), " ", f.flag || ""),
-          h("td", { class: "mc-ellipsis", title: f.detail || "", style: "max-width:420px" }, f.detail || "")));
+          h("td", { "data-label": "Project" }, f.repo || "?"),
+          h("td", { "data-label": "Problem" }, glyphSpan(f.state || "amber"), " ", f.flag || ""),
+          h("td", { class: "mc-ellipsis", title: f.detail || "", style: "max-width:420px", "data-label": "Detail" }, f.detail || "")));
       });
       p.body.appendChild(ft);
     }
@@ -2502,6 +2909,95 @@ body {
   // ===========================================================================
   var countdowns = []; // {el, targetEpoch}
 
+  // --- live headroom groups: one card per provider, labeled windows inside ---
+  function bandToState(r, feedEpoch) {
+    if (r.health === "down") return "red";
+    if (r.health === "auth") return "amber";
+    if (r.band === "red") return "red";
+    if (r.band === "orange" || r.band === "yellow") return "amber";
+    if (r.confidence === "stale") return "amber";
+    var readingAge = readingAgeSeconds(r, feedEpoch);
+    if (readingAge == null || readingAge < 0 || readingAge > 300) return "amber";
+    return "green";
+  }
+  function headroomGroupState(grp, feedEpoch) {
+    var order = { red: 0, amber: 1, green: 2 };
+    return grp.rows.map(function (r) { return bandToState(r, feedEpoch); })
+      .sort(function (a, b) { return order[a] - order[b]; })[0] || "amber";
+  }
+  function headroomGroupRemaining(grp) {
+    var values = grp.rows.map(function (r) { return numericPct(r.remaining_pct); }).filter(isFinite);
+    return values.length ? Math.min.apply(Math, values) : null;
+  }
+  function renderHeadroomGroupCard(grp, credits, snapshotEpoch, liveEpoch) {
+    var worst = headroomGroupState(grp, liveEpoch);
+    var chip = { red: "Wait", amber: "Watch", green: "Can use" }[worst];
+    var card = h("div", { class: "mc-card" });
+    card.appendChild(h("div", { class: "mc-decision-top" },
+      h("div", { class: "mc-decision-title" }, grp.label),
+      h("span", { class: "mc-chip mc-decision-state " + (worst === "green" ? "mc-badge-live" : "") }, chip)));
+    grp.rows.forEach(function (r) {
+      var st = bandToState(r, liveEpoch);
+      var sub = h("div", { class: "mc-hr-window" });
+      var valTxt = r.value_label ? r.value_label
+                 : r.remaining_pct != null ? Math.round(r.remaining_pct) + "% left"
+                 : r.balance_usd != null ? "$" + Number(r.balance_usd).toFixed(2) + " left" : "no reading yet";
+      sub.appendChild(h("div", { class: "mc-decision-top" },
+        h("span", { class: "mc-hr-window-name" }, (r.window_label && r.window_label !== "-") ? r.window_label : "Status"),
+        h("span", { class: "mc-num " + (STATE_CLASS[st] || "") }, valTxt)));
+      if (r.remaining_pct != null && !r.value_label) {
+        sub.appendChild(h("div", { class: "mc-bar-track" },
+          h("div", { class: "mc-bar-fill " + (STATE_CLASS[st] || ""), style: "--mc-w:" + Math.max(0, Math.min(100, r.remaining_pct)) + "%" })));
+      }
+      var chips = [
+        { label: "Trust", value: confidenceLabel(r.confidence) },
+        { label: "Source", value: sourceLabel(r.source) },
+        { label: "Reading", value: readingAgeText(r, liveEpoch) },
+        { label: "Cadence", value: "live · every 1 min" }
+      ];
+      if (r.active) chips.push({ label: "Now", value: "in use" });
+      if (r.health === "auth") chips.push({ label: "Flag", value: "token wait" });
+      if (r.health === "down") chips.push({ label: "Flag", value: "source down" });
+      if (r.burn_per_hour != null && r.burn_per_hour > 0) {
+        chips.push({ label: "Burn", value: (r.kind === "balance" ? "$" + r.burn_per_hour.toFixed(2) : r.burn_per_hour.toFixed(1) + "%") + "/h" });
+      }
+      sub.appendChild(chipsLine(chips));
+      if (r.resets_epoch) {
+        var cd = h("span", { class: "mc-countdown" });
+        countdowns.push({ el: cd, target: +r.resets_epoch });
+        sub.appendChild(cd);
+      }
+      var d = r.detail || {};
+      if (d.local_estimate && d.local_estimate.tokens_used != null) {
+        sub.appendChild(h("div", { class: "mc-card-secondary" },
+          "Local estimate: " + Number(d.local_estimate.tokens_used).toLocaleString() + " tokens this block" +
+          (d.local_estimate.burn_tpm ? " · " + Number(d.local_estimate.burn_tpm).toLocaleString() + " tok/min" : "")));
+      }
+      if (d.project_usage != null && d.project_cap != null) {
+        sub.appendChild(h("div", { class: "mc-card-secondary" },
+          Number(d.project_usage).toLocaleString() + " of " + Number(d.project_cap).toLocaleString() + " posts read this month"));
+      }
+      var dailyReads = dailyReadsSummary(d);
+      if (dailyReads) sub.appendChild(h("div", { class: "mc-card-secondary mc-num" }, dailyReads));
+      if (r.note) sub.appendChild(h("div", { class: "mc-card-secondary mc-ellipsis", title: r.note }, r.note));
+      card.appendChild(sub);
+    });
+    (credits || []).forEach(function (item) {
+      var sub = h("div", { class: "mc-hr-window" });
+      sub.appendChild(h("div", { class: "mc-decision-top" },
+        h("span", { class: "mc-hr-window-name" }, "Held credit"),
+        h("span", { class: "mc-num" }, String(item.window || "").replace(/^credit:?/, "") || "credit")));
+      sub.appendChild(chipsLine([
+        { label: "Trust", value: confidenceLabel(item.confidence) },
+        { label: "Source", value: sourceLabel(item.source) },
+        { label: "Reading", value: readingAgeText(item, snapshotEpoch) },
+        { label: "Cadence", value: "snapshot · every 30 min" }
+      ]));
+      if (item.notes) sub.appendChild(h("div", { class: "mc-card-secondary mc-ellipsis", title: item.notes }, item.notes));
+      card.appendChild(sub);
+    });
+    return card;
+  }
   function renderUsage(main) {
     countdowns = [];
     var g = guard("usage");
@@ -2511,11 +3007,75 @@ body {
     appendPanelProvenance(p.body, "usage", g);
     var data = g.data || {};
     var nu = normUsageProviders(data);
-    p.body.appendChild(h("div", { class: "mc-section-head" }, h("h2", { text: "Decision cards" })));
-    p.body.appendChild(h("div", { class: "mc-card-foot" }, "Each card answers whether you can use that source now, how trustworthy the reading is, and what to do next."));
+    p.body.appendChild(h("div", { class: "mc-section-head" }, h("h2", { text: "Providers" })));
+    p.body.appendChild(h("div", { class: "mc-card-foot" },
+      "Providers needing action or running low appear first. Live provider cards update every 1 minute; fallback snapshot cards update every 30 minutes. Each window shows its own reading age and source."));
     var grid = h("div", { class: "mc-decision-grid" });
-    usageItems(data).forEach(function (item) { grid.appendChild(renderUsageDecisionCard(item, g.epoch)); });
+    // The 60-second headroom collector owns providers it covers; the 30-minute
+    // snapshot supplies fallbacks and held credits. The combined list is sorted
+    // by operator actionability, then lowest remaining headroom.
+    var hg = guard("headroom");
+    var headroomTrusted = hg.ok && !hg.feedError && !hg.flag && hg.data &&
+      Array.isArray(hg.data.rows) && hg.data.rows.every(function (r) {
+        return r && typeof r === "object" && !Array.isArray(r);
+      });
+    var hrRows = headroomTrusted
+      ? hg.data.rows.filter(function (r) { return r.health !== "hidden"; }) : [];
+    var covered = {};
+    var creditsByProv = {};
+    var snapshotItems = usageItems(data);
+    snapshotItems.forEach(function (item) {
+      if (isCreditWindow(item) && item.provider) {
+        var ck = String(item.provider).toLowerCase();
+        (creditsByProv[ck] = creditsByProv[ck] || []).push(item);
+      }
+    });
+    var cards = [];
+    if (hrRows.length) {
+      var hrGroups = [], byProv = {};
+      hrRows.forEach(function (r) {
+        var key = String(r.provider || r.label || "?").toLowerCase();
+        covered[key] = true;
+        var grp = byProv[key];
+        if (!grp) { grp = { label: r.label || key, key: key, rows: [] }; byProv[key] = grp; hrGroups.push(grp); }
+        grp.rows.push(r);
+      });
+      hrGroups.forEach(function (grp) {
+        cards.push({ kind: "live", group: grp, state: headroomGroupState(grp, hg.epoch),
+          remaining: headroomGroupRemaining(grp), label: grp.label || grp.key });
+      });
+    }
+    snapshotItems.forEach(function (item) {
+      var provKey = String(item.provider || "").toLowerCase();
+      // credits whose provider has a live card were folded into it above
+      if (isCreditWindow(item) && covered[provKey]) return;
+      if (!isCreditWindow(item) && item.provider && covered[provKey]) return;
+      var decision = usageDecision(item);
+      cards.push({ kind: "snapshot", item: item, state: decision.state,
+        remaining: usageRemaining(item), label: item.title || item.provider || "provider" });
+    });
+    cards.sort(function (a, b) {
+      var stateDiff = actionStateRank(a.state) - actionStateRank(b.state);
+      if (stateDiff) return stateDiff;
+      var ar = a.remaining == null ? ((a.state === "red" || a.state === "amber") ? -1 : 101) : a.remaining;
+      var br = b.remaining == null ? ((b.state === "red" || b.state === "amber") ? -1 : 101) : b.remaining;
+      if (ar !== br) return ar - br;
+      return String(a.label).localeCompare(String(b.label));
+    });
+    cards.forEach(function (card) {
+      grid.appendChild(card.kind === "live"
+        ? renderHeadroomGroupCard(card.group, creditsByProv[card.group.key], g.epoch, hg.epoch)
+        : renderUsageDecisionCard(card.item, g.epoch));
+    });
     p.body.appendChild(grid);
+    if (!headroomTrusted && hg.ok && (hg.feedError || hg.flag)) {
+      p.body.appendChild(h("div", { class: "mc-banner mc-banner-amber" },
+        "Live usage feed is not trusted (" + (hg.feedError || hg.flag) + ") — showing snapshot cards until a fresh collector pass succeeds."));
+    }
+    if (!hrRows.length) {
+      p.body.appendChild(h("div", { class: "mc-card-foot" },
+        "Live collector feed unavailable — showing 30-minute snapshot cards only. scripts/install-ai-headroom in global-implementations sets it up."));
+    }
 
     // waste table
     if ((nu.waste || []).length) {
@@ -2585,7 +3145,7 @@ body {
     if (data.launchctl_note) p.body.appendChild(h("div", { class: "mc-banner mc-banner-amber" }, data.launchctl_note));
     if (data.t7_mounted === false) p.body.appendChild(h("div", { class: "mc-banner mc-banner-blue" }, "T7 offload drive not mounted — media-backed evidence shows offline, not failed"));
     var grid = h("div", { class: "mc-svc-grid" });
-    (data.jobs || []).forEach(function (jb) {
+    (data.jobs || []).forEach(function (jb, jobIndex) {
       var card = h("div", { class: "mc-svc" });
       var head = h("div", { class: "mc-svc-head" },
         glyphSpan(jb.state),
@@ -2624,10 +3184,18 @@ body {
       }
       if (jb.run_cmd) card.appendChild(copyable(jb.run_cmd, "Run now"));
       if (jb.err_log_tail) {
-        var d = { on: false };
-        var toggle = h("div", { class: "mc-collapse" }, "Show last error");
-        var drawer = h("div", { class: "mc-drawer", style: "display:none" }, String(jb.err_log_tail));
-        toggle.addEventListener("click", function () { d.on = !d.on; drawer.style.display = d.on ? "block" : "none"; toggle.textContent = (d.on ? "Hide last error" : "Show last error"); });
+        var disclosureKey = "automation-error:" + String(jb.name || jb.label || jobIndex);
+        var d = { on: disclosureOpen(disclosureKey) };
+        var drawerId = "mc-automation-error-" + String(jobIndex);
+        var toggle = h("button", { class: "mc-collapse", type: "button", "aria-expanded": d.on ? "true" : "false",
+          "aria-controls": drawerId }, d.on ? "Hide last error" : "Show last error");
+        var drawer = h("div", { class: "mc-drawer", id: drawerId, style: "display:" + (d.on ? "block" : "none") }, String(jb.err_log_tail));
+        toggle.addEventListener("click", function () {
+          d.on = !d.on; setDisclosureOpen(disclosureKey, d.on);
+          drawer.style.display = d.on ? "block" : "none";
+          toggle.textContent = d.on ? "Hide last error" : "Show last error";
+          toggle.setAttribute("aria-expanded", d.on ? "true" : "false");
+        });
         card.appendChild(toggle); card.appendChild(drawer);
       }
       grid.appendChild(card);
@@ -2667,6 +3235,7 @@ body {
   //  ROUTER + lifecycle
   // ===========================================================================
   var TABS = [["home", "Home"], ["brief", "Brief"], ["map", "Map"], ["chats", "Chats"], ["git", "Git"], ["usage", "Usage"], ["automation", "Automation"], ["attention", "Attention"]];
+  var LAST_ANNOUNCED_TAB = null;
   // pure render functions, spec shape render.<tab>(feed, el) reading window.MC.feeds.*
   var render = {
     home:       function (feed, el) { renderHome(el); },
@@ -2684,6 +3253,21 @@ body {
     var h0 = (location.hash || "").replace(/^#/, "");
     return RENDER[h0] ? h0 : "home";
   }
+  function captureScrollContext() {
+    var x = typeof window.scrollX === "number" ? window.scrollX : 0;
+    var y = typeof window.scrollY === "number" ? window.scrollY : 0;
+    OPERATOR_STATE.scroll = { tab: currentTab(), x: x, y: y };
+    saveOperatorState();
+  }
+  function restoreScrollContext() {
+    if (!PENDING_SCROLL) return;
+    var saved = PENDING_SCROLL;
+    PENDING_SCROLL = null;
+    delete OPERATOR_STATE.scroll;
+    saveOperatorState();
+    if (saved.tab !== currentTab() || typeof window.scrollTo !== "function") return;
+    setTimeout(function () { window.scrollTo(+saved.x || 0, +saved.y || 0); }, 0);
+  }
   function renderNav() {
     var nav = document.getElementById("mc-nav");
     nav.textContent = "";
@@ -2691,10 +3275,17 @@ body {
     var active = null;
     TABS.forEach(function (t) {
       var tab = h("a", { class: "mc-tab" + (t[0] === cur ? " mc-tab-active" : ""),
-        href: "#" + t[0] }, t[1]);
+        href: "#" + t[0], "aria-current": t[0] === cur ? "page" : null }, t[1]);
       if (t[0] === cur) active = tab;
       nav.appendChild(tab);
     });
+    var currentLabel = (TABS.filter(function (t) { return t[0] === cur; })[0] || [cur, cur])[1];
+    document.title = currentLabel + " — Mission Control";
+    if (LAST_ANNOUNCED_TAB !== cur) {
+      var status = document.getElementById("mc-tab-status");
+      if (status) status.textContent = currentLabel + " view";
+      LAST_ANNOUNCED_TAB = cur;
+    }
     if (active && typeof active.offsetLeft === "number" && nav.clientWidth) {
       nav.scrollLeft = Math.max(0,
         active.offsetLeft - (nav.clientWidth - active.offsetWidth) / 2);
@@ -2707,14 +3298,60 @@ body {
     main.textContent = "";
     var cur = currentTab();
     render[cur](MC.feeds[cur], main);
+    restoreSearchFocus();
+    restoreScrollContext();
   }
 
   window.addEventListener("hashchange", rerender);
 
-  // 60s reload, paused while hidden; reload on focus if page stale >60s
-  setInterval(function () { if (!document.hidden) location.reload(); }, 60000);
-  window.addEventListener("focus", function () { if (nowS() - LOAD_EPOCH > 60) location.reload(); });
-  document.addEventListener("visibilitychange", function () { if (!document.hidden && nowS() - LOAD_EPOCH > 60) location.reload(); });
+  // Static file:// feeds require a page reload to pick up new script payloads.
+  // Save the operator's context first and defer that disruptive reload while a
+  // search field is active or a control was just used.
+  var LAST_TRANSIENT_INTERACTION = 0;
+  var REFRESH_PENDING = false;
+  var REFRESH_RETRY_TIMER = null;
+  function noteTransientInteraction() { LAST_TRANSIENT_INTERACTION = nowS(); }
+  function transientInteractionActive() {
+    return LAST_TRANSIENT_INTERACTION && nowS() - LAST_TRANSIENT_INTERACTION < 15;
+  }
+  function scheduleRefreshRetry() {
+    if (REFRESH_RETRY_TIMER != null) return;
+    REFRESH_RETRY_TIMER = setTimeout(function () {
+      REFRESH_RETRY_TIMER = null;
+      if (REFRESH_PENDING && !document.hidden) requestPageRefresh();
+    }, 16000);
+  }
+  function requestPageRefresh() {
+    if (document.hidden || transientInteractionActive()) {
+      REFRESH_PENDING = true;
+      if (!document.hidden) scheduleRefreshRetry();
+      return false;
+    }
+    REFRESH_PENDING = false;
+    captureScrollContext();
+    location.reload();
+    return true;
+  }
+  // Tiny observable seam for deterministic browser checks and support
+  // diagnostics; it exposes no mutable dashboard data.
+  window.MC_refreshGate = {
+    noteInteraction: noteTransientInteraction,
+    interactionActive: transientInteractionActive,
+    request: requestPageRefresh
+  };
+  ["input", "keydown", "pointerdown", "focusin"].forEach(function (eventName) {
+    document.addEventListener(eventName, noteTransientInteraction, true);
+  });
+  document.addEventListener("focusout", function () {
+    if (!REFRESH_PENDING) return;
+    setTimeout(function () { if (REFRESH_PENDING && nowS() - LOAD_EPOCH > 60) requestPageRefresh(); }, 15000);
+  }, true);
+  window.addEventListener("beforeunload", captureScrollContext);
+  // 60s reload, paused while hidden or interacting; focus/visibility reuse the
+  // same preservation and interaction gate.
+  setInterval(function () { if (!document.hidden) requestPageRefresh(); }, 60000);
+  window.addEventListener("focus", function () { if (nowS() - LOAD_EPOCH > 60) requestPageRefresh(); });
+  document.addEventListener("visibilitychange", function () { if (!document.hidden && nowS() - LOAD_EPOCH > 60) requestPageRefresh(); });
   // countdowns tick every second
   setInterval(tickCountdowns, 1000);
 

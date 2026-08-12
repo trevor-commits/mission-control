@@ -15,8 +15,8 @@ The page lives at `~/.mission-control/index.html` (installed copy), refreshes it
 
 | Tool | Job |
 |---|---|
-| `scripts/dashboard` | The CLI: `open`, `collect`, `refresh`, `status`, `install`, `demo`. Builds the Automation, Usage, Git, Chats, Decisions, and Brief feeds and serves the page. |
-| `scripts/chat-graph` | Records how AI chats connect (audits, spawned workers, signals, shared issues) into `~/.chat-graph/graph.db`; `link`/`unlink`/`show`/`export`/`doctor`/`rebuild`. |
+| `scripts/dashboard` | The CLI: `open`, `collect`, `refresh`, `status`, `install`, `demo`. Builds the Automation, Usage, Git, Chats, Decisions, and Brief feeds and serves the page. Failed feeds keep last-good data and use bounded per-feed retry backoff; sibling feeds continue and `--force` bypasses the retry window. Synthetic clocks/test seams/feeder overrides fail before writes unless `MISSION_CONTROL_HOME` resolves outside the canonical default state tree. |
+| `scripts/chat-graph` | Records how AI chats connect (audits, spawned workers, signals, shared issues) into `~/.chat-graph/graph.db`; `link`/`unlink`/`show`/`export`/`doctor`/`rebuild`. Missing session metadata is enriched through one bounded `chat-source metadata --jsonl` batch, with partial/failed enrichment exported as degraded health rather than blocking the graph. |
 | `scripts/automation-status` | Reads the background-job registry (`dashboard/jobs.json`) + the scheduler and reports each job green/amber/red. |
 | `scripts/usage-snapshot`, `scripts/scan-unfinished-work` | Vendored data sources for the usage + git tabs. Upstream copies live in the `global-implementations` repo; keep these in sync when the upstream changes. |
 | `dashboard/index.html` | The page — one self-contained file (design tokens + layout CSS + renderers). |

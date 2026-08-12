@@ -547,31 +547,120 @@ def journal_replay(con):
 # ---- chat-source bridge (best-effort, degraded never fatal) ---------------
 _STALE_PROVIDERS = set()
 
-def chat_source(*args, timeout=8):
-    exe = CHAT_SOURCE()
-    if not (exe and os.path.exists(exe)):
-        return None
-    try:
-        out = subprocess.run([exe] + list(args), capture_output=True, text=True,
-                             timeout=timeout)
-        if out.returncode != 0:
-            return None
-        return out.stdout
-    except Exception:
-        return None
+# True while a BOUNDED (`--limit-files`) catch-up ingest is running, i.e. the
+# lane the five-minute launchd collector drives through `export --catchup-limit`.
+# Cosmetic metadata enrichment is skipped in that lane so a scheduled tick makes
+# ZERO external metadata-store calls regardless of how the callee is implemented.
+# Unbounded ingest (nightly/manual) still enriches.
+_CATCHUP_INGEST = False
 
-def describe(sid):
-    """Return dict of chat-source describe fields, or None (degraded)."""
-    out = chat_source("describe", sid)
-    if out is None:
-        _STALE_PROVIDERS.add("chat-source")
-        return None
-    meta = {}
-    for ln in out.splitlines():
-        if ":" in ln:
-            k, _, v = ln.partition(":")
-            meta[k.strip()] = v.strip()
-    return meta
+def _metadata_timeout_s():
+    # Live `chat-source metadata --jsonl` pays a large fixed CCI startup cost
+    # (~60-70s) before per-id rows arrive. The old 20s default timed out every
+    # unbounded enrich (requested>0, found=0), stamped metadata_enrichment_status
+    # =degraded, and left the five-minute catch-up lane re-exporting that sticky
+    # health forever because catch-up never re-enriches.
+    try:
+        return max(0.1, float(os.environ.get("CHAT_GRAPH_METADATA_TIMEOUT_S", "180")))
+    except (TypeError, ValueError):
+        return 180.0
+
+def _stop_metadata_group(proc):
+    """Bounded cleanup for the metadata command's independently owned group."""
+    # Do not poll/wait the session leader before the final group signal. Reaping
+    # it first releases the PID that names the group and permits an unrelated
+    # process to reuse that identity between cleanup operations.
+    if proc.returncode is not None:
+        return
+    try:
+        os.killpg(proc.pid, signal.SIGTERM)
+    except ProcessLookupError:
+        pass
+    except OSError:
+        pass
+    try:
+        time.sleep(0.25)
+    except BaseException:
+        pass
+    try:
+        os.killpg(proc.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    except OSError:
+        pass
+
+    # An escaped descendant can keep inherited stdout/stderr descriptors open
+    # after leaving the process group. Close our read ends before waiting so it
+    # cannot turn timeout cleanup into an unbounded communicate().
+    for pipe in (proc.stdout, proc.stderr):
+        if pipe is not None:
+            try:
+                pipe.close()
+            except OSError:
+                pass
+    try:
+        proc.wait(timeout=1)
+    except subprocess.TimeoutExpired:
+        try:
+            proc.kill()
+        except OSError:
+            pass
+        try:
+            proc.wait(timeout=1)
+        except subprocess.TimeoutExpired:
+            pass
+
+def _metadata_batch(ids):
+    """Return ordered metadata rows and a degradation reason.
+
+    One metadata-only subprocess serves the entire batch. There is deliberately
+    no per-session `describe` fallback: an absent or partial API remains a
+    compatibility degradation and never multiplies transcript-store scans.
+    """
+    exe = CHAT_SOURCE()
+    if not (exe and os.path.isfile(exe) and os.access(exe, os.X_OK)):
+        return [None] * len(ids), "metadata API unavailable"
+    proc = None
+    try:
+        proc = subprocess.Popen(
+            [exe, "metadata", "--jsonl"] + list(ids),
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+            start_new_session=True)
+        try:
+            stdout, _stderr = proc.communicate(timeout=_metadata_timeout_s())
+        except subprocess.TimeoutExpired:
+            _stop_metadata_group(proc)
+            return [None] * len(ids), "metadata API timeout"
+        if proc.returncode != 0:
+            _stop_metadata_group(proc)
+            return [None] * len(ids), "metadata API exit %s" % proc.returncode
+    except BaseException:
+        if proc is not None:
+            _stop_metadata_group(proc)
+        if isinstance(sys.exc_info()[1], (KeyboardInterrupt, SystemExit)):
+            raise
+        return [None] * len(ids), "metadata API launch failed"
+
+    by_request = {}
+    malformed = False
+    for line in stdout.splitlines():
+        if not line.strip():
+            continue
+        try:
+            row = json.loads(line)
+        except ValueError:
+            malformed = True
+            continue
+        request = row.get("request") if isinstance(row, dict) else None
+        if request not in ids or request in by_request:
+            malformed = True
+            continue
+        by_request[request] = row
+    ordered = [by_request.get(sid) for sid in ids]
+    degraded = malformed or len(by_request) != len(ids) or any(
+        not isinstance(row, dict) or row.get("status") != "found"
+        for row in ordered)
+    return ordered, ("metadata API partial response" if degraded else None)
 
 # ---- collectors -----------------------------------------------------------
 def _iter_json(paths):
@@ -655,8 +744,8 @@ def collect_titles(con):
                     titles[r["id"]] = r["thread_name"]
     for sid, title in titles.items():
         touch_session(con, sid, title=title)
-    # carry-over fix: NEVER call the >2-min `chat-source list`. Lazily enrich a
-    # small batch of sessions missing title/repo via per-session `describe`.
+    # Carry-over fix: NEVER call the >2-min `chat-source list`. Lazily enrich a
+    # small batch of sessions missing title/repo through one metadata-only batch.
     _enrich_sessions(con)
     # 2. match title-drift patterns against the title index.
     tindex = _title_index(con)
@@ -713,9 +802,16 @@ def _looks_resolvable(sid):
     return bool(sid and _RESOLVABLE_ID_RE.match(sid))
 
 def _enrich_sessions(con, limit=50):
-    """Lazy per-session `chat-source describe` enrichment (carry-over fix for the
-    dead `list` bridge). ≤`limit` newest sessions missing title/repo, refreshed at
-    most weekly; abort after 3 consecutive describe failures -> degraded."""
+    """Enrich at most `limit` sessions with one metadata-only chat-source call.
+
+    Skipped entirely during a bounded catch-up ingest. Titles/repos here are
+    cosmetic: the graph, its edges, and the export are all complete without
+    them, and the next unbounded ingest fills them in. The scheduled collector
+    therefore performs zero metadata-store traversals per run, so a stale feed
+    can never turn the five-minute launchd tick into repeated store-wide scans.
+    """
+    if _CATCHUP_INGEST:
+        return
     now = int(time.time())
     week_ago = now - 7 * 24 * 3600
     rows = con.execute(
@@ -723,7 +819,7 @@ def _enrich_sessions(con, limit=50):
         "WHERE ((title IS NULL OR title='') OR (repo IS NULL OR repo='')) "
         "AND (enriched_at IS NULL OR enriched_at < ?) "
         "ORDER BY first_seen_at DESC LIMIT ?", (week_ago, limit)).fetchall()
-    fails = 0
+    resolvable = []
     for r in rows:
         # sweep FIX 4: synthetic / non-resolvable ids (e.g. workflow 'agent-*' ids)
         # will NEVER resolve via chat-source -> without this they re-enter the pool
@@ -732,27 +828,41 @@ def _enrich_sessions(con, limit=50):
         if not _looks_resolvable(r["id"]):
             con.execute("UPDATE sessions SET enriched_at=? WHERE id=?", (now, r["id"]))
             continue
-        meta = describe(r["id"])
-        if meta is None:
-            fails += 1
-            # backoff: stamp enriched_at so a persistently-unresolvable REAL id is not
-            # retried EVERY run (weekly cadence via the enriched_at<week_ago filter) —
-            # otherwise the same failures re-trip 'degraded' on every ingest (sweep FIX 4).
-            con.execute("UPDATE sessions SET enriched_at=? WHERE id=?", (now, r["id"]))
-            if fails >= 3:
-                _STALE_PROVIDERS.add("chat-source")
-                break
+        resolvable.append(r["id"])
+    if not resolvable:
+        return
+
+    metadata, degraded_reason = _metadata_batch(resolvable)
+    updates = []
+    found_count = 0
+    for sid, meta in zip(resolvable, metadata):
+        # Stamp every attempt so partial/unavailable metadata cannot create a
+        # tight retry loop; the existing weekly eligibility window remains.
+        if (not isinstance(meta, dict) or meta.get("status") != "found" or
+                str(meta.get("id", "")).lower() != sid.lower()):
+            updates.append((None, None, None, now, sid))
+            degraded_reason = degraded_reason or "metadata API invalid identity"
             continue
-        fails = 0
-        con.execute(
-            "UPDATE sessions SET title=COALESCE(NULLIF(title,''),?), "
-            "repo=COALESCE(NULLIF(repo,''),?), provider=COALESCE(NULLIF(provider,''),?), "
-            "enriched_at=? WHERE id=?",
-            (_safe_optional(meta.get("title"), NARRATIVE),
-             _safe_optional(meta.get("repo"), ACTION),
-             (None if meta.get("provider") is None else
-              _safe_provider(meta.get("provider"))), now, r["id"]))
-    con.commit()
+        found_count += 1
+        provider = (None if meta.get("provider") is None else
+                    _safe_provider(meta.get("provider")))
+        updates.append((
+            _safe_optional(meta.get("title"), NARRATIVE),
+            _safe_optional(meta.get("repo"), ACTION),
+            provider, now, sid))
+    con.executemany(
+        "UPDATE sessions SET title=COALESCE(NULLIF(title,''),?), "
+        "repo=COALESCE(NULLIF(repo,''),?), provider=COALESCE(NULLIF(provider,''),?), "
+        "enriched_at=? WHERE id=?", updates)
+    status = "degraded" if degraded_reason else "ok"
+    _set_meta(con, "metadata_enrichment_status", status)
+    _set_meta(con, "metadata_enrichment_attempted_at", now)
+    _set_meta(con, "metadata_enrichment_requested", len(resolvable))
+    _set_meta(con, "metadata_enrichment_found", found_count)
+    if degraded_reason:
+        _STALE_PROVIDERS.add("chat-source")
+    else:
+        _STALE_PROVIDERS.discard("chat-source")
 
 COLLECTORS = {
     "delegations": collect_delegations,
@@ -2157,6 +2267,10 @@ def _outcome_export(con, cutoff):
 def _build_export(con, ingest_skipped=False):
     now = int(time.time())
     last_full = _last_full_ingest_epoch()
+    metadata_status = _get_meta(con, "metadata_enrichment_status", "unknown")
+    stale_providers = set(_STALE_PROVIDERS)
+    if metadata_status == "degraded":
+        stale_providers.add("chat-source")
     session_identity = {
         r["id"]: (_safe_provider(r["provider"], r["node_kind"]),
                   r["node_kind"] or _node_kind(r["id"], r["provider"]))
@@ -2309,6 +2423,13 @@ def _build_export(con, ingest_skipped=False):
         "outcome_updates": len(outcome_updates),
         "unknown_outcome_providers": sum(1 for card in outcomes
                                          if card.get("provider") == "unknown"),
+        "metadata_enrichment_status": metadata_status,
+        "metadata_enrichment_attempted_at": (
+            int(_get_meta(con, "metadata_enrichment_attempted_at", 0) or 0) or None),
+        "metadata_enrichment_requested": int(
+            _get_meta(con, "metadata_enrichment_requested", 0) or 0),
+        "metadata_enrichment_found": int(
+            _get_meta(con, "metadata_enrichment_found", 0) or 0),
     }
     # The producer stamps the effective nightly SLA plus its derived state. Each
     # consumer can therefore verify that the raw age and derived flags agree
@@ -2326,7 +2447,7 @@ def _build_export(con, ingest_skipped=False):
                  "outcome_extraction_health": outcome_health,
                  "loose_ends": loose_ends, "loose_end_changes": loose_end_changes,
                  "repo_annotations": repo_annotations or [],
-                 "stale_providers": sorted(_STALE_PROVIDERS), "notes": notes, "counts": counts},
+                 "stale_providers": sorted(stale_providers), "notes": notes, "counts": counts},
     }
 
 def cmd_export(args):
@@ -2526,11 +2647,15 @@ def _acquire_ingest_lock():
         return False
 
 def cmd_ingest(args):
-    global _INGEST_SKIPPED
+    global _INGEST_SKIPPED, _CATCHUP_INGEST
     _INGEST_SKIPPED = False
     only = args[args.index("--collector") + 1] if "--collector" in args else None
     full = "--full" in args
     limit = int(args[args.index("--limit-files") + 1]) if "--limit-files" in args else None
+    # Same predicate that gates the completion marker below: a bounded pass is a
+    # catch-up, an unbounded pass is the authoritative ingest. Reused here so the
+    # two lanes can never disagree about which run is the scheduled one.
+    _CATCHUP_INGEST = limit is not None
     ensure_dir(HOME_DIR())
     ensure_dir(os.path.dirname(journal_path()))  # healthy home always has journal/ + logs/
     ensure_dir(os.path.dirname(scanlog_path()))

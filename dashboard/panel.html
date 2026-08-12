@@ -7,60 +7,316 @@
 <script src="data/attention.js"></script>
 <script src="data/decisions.js"></script>
 <script src="data/automation.js"></script>
+<script src="data/headroom.js"></script>
 <script src="data/attention.error.js"></script>
 <script src="data/decisions.error.js"></script>
 <script src="data/automation.error.js"></script>
+<script src="data/headroom.error.js"></script>
 <style>
 :root {
-  --bg: #f4f5f7; --card: #fff; --fg: #1a1d24; --muted: #5b6472;
-  --border: #d5d9e2; --accent: #3b5bdb; --accent-bg: #e8ecfb;
-  --green: #0f8a5f; --red: #c43c45; --amber: #b86e0a;
-  --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --bg: #f4f5f7; --card: #ffffff; --card-2: #fafbfc; --fg: #171a21; --muted: #68707e;
+  --faint: #626b78; --border: #e2e5ea; --border-soft: #eceef2;
+  --accent: #3b5bdb; --accent-soft: #eef1fd; --accent-fg: #3451c6;
+  --green: #08734e; --green-soft: #e5f5ee;
+  --red: #bd353f; --red-soft: #fdeaea;
+  --amber: #895200; --amber-soft: #fdf3e2;
+  --shadow: 0 1px 2px rgba(16, 20, 28, .05), 0 4px 14px rgba(16, 20, 28, .06);
+  --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
 }
 html[data-theme="dark"] {
-  --bg: #0e1013; --card: #16181d; --fg: #edeef1; --muted: #a7adba;
-  --border: #23262e; --accent: #7c8cff; --accent-bg: #191d33;
-  --green: #35b98a; --red: #e5646a; --amber: #e0a534;
+  --bg: #101215; --card: #191c21; --card-2: #1e2127; --fg: #eceef2; --muted: #a2aab8;
+  --faint: #9aa3b2; --border: #2a2e36; --border-soft: #23262d;
+  --accent: #8b9dff; --accent-soft: #20263f; --accent-fg: #a5b2ff;
+  --green: #3fc794; --green-soft: #16302a;
+  --red: #f0767c; --red-soft: #3a1d20;
+  --amber: #e8b04b; --amber-soft: #38290f;
+  --shadow: 0 1px 2px rgba(0, 0, 0, .3), 0 6px 18px rgba(0, 0, 0, .35);
 }
 * { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
 body {
-  margin: 0; padding: 14px 16px 18px; background: var(--bg); color: var(--fg);
+  background: var(--bg); color: var(--fg);
   font: 13px/1.45 var(--font); -webkit-font-smoothing: antialiased;
+  display: flex; flex-direction: column; min-height: 100vh;
 }
-h1 { font-size: 18px; margin: 0 0 10px; font-weight: 650; }
-.card {
-  background: var(--card); border: 1px solid var(--border); border-radius: 12px;
-  padding: 12px 14px; margin-bottom: 10px;
+
+/* ── Header ─────────────────────────────────────────────── */
+.topbar {
+  position: sticky; top: 0; z-index: 5;
+  display: flex; align-items: center; gap: 10px;
+  padding: 13px 16px 11px;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border-soft);
 }
-.item { padding: 10px 0; border-top: 1px solid var(--border); }
-.item:first-child { border-top: 0; padding-top: 0; }
-.q { font-weight: 600; margin-bottom: 8px; }
-.opts { display: flex; flex-wrap: wrap; gap: 6px; }
+.mark {
+  width: 30px; height: 30px; border-radius: 8px; flex: none;
+  display: flex; align-items: center; justify-content: center;
+  background: linear-gradient(135deg, var(--accent), #7048e8);
+  color: #fff; font-size: 12px; font-weight: 800; letter-spacing: .04em;
+  box-shadow: var(--shadow);
+}
+.titles { min-width: 0; flex: 1; }
+h1 { font-size: 14.5px; margin: 0; font-weight: 700; letter-spacing: -.01em; }
+.sub {
+  color: var(--muted); font-size: 12px; margin-top: 1px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.pill {
+  flex: none; display: inline-flex; align-items: center; gap: 5px;
+  font-size: 12px; font-weight: 650; padding: 4px 9px; border-radius: 999px;
+  border: 1px solid transparent;
+}
+.pill .pdot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.pill.ok   { color: var(--green); background: var(--green-soft); border-color: transparent; }
+.pill.warn { color: var(--amber); background: var(--amber-soft); }
+.pill.bad  { color: var(--red);   background: var(--red-soft); }
+
+/* ── Stat strip ─────────────────────────────────────────── */
+.stats {
+  display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px;
+  padding: 12px 16px 4px;
+}
+.stat {
+  background: var(--card); border: 1px solid var(--border-soft);
+  border-radius: 10px; padding: 8px 10px 7px; box-shadow: var(--shadow);
+}
+.stat .num { font-size: 17px; font-weight: 750; letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
+.stat .num.ok   { color: var(--green); }
+.stat .num.warn { color: var(--amber); }
+.stat .num.bad  { color: var(--red); }
+.stat .lbl { color: var(--muted); font-size: 12px; margin-top: 1px; }
+
+/* ── Section label ──────────────────────────────────────── */
+.section-head {
+  display: flex; align-items: baseline; justify-content: space-between;
+  padding: 14px 18px 6px;
+  color: var(--faint); font-size: 12px; font-weight: 700;
+  letter-spacing: .08em; text-transform: uppercase;
+}
+.section-head .count { color: var(--muted); font-weight: 600; letter-spacing: 0; text-transform: none; }
+
+/* ── Item cards ─────────────────────────────────────────── */
+#list { padding: 0 16px 12px; flex: 1; }
+.item {
+  background: var(--card); border: 1px solid var(--border-soft);
+  border-radius: 12px; padding: 11px 12px 10px; margin-bottom: 8px;
+  box-shadow: var(--shadow);
+}
+.item-head { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
+.badge {
+  font-size: 12px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase;
+  padding: 2.5px 7px; border-radius: 6px;
+  color: var(--muted); background: var(--card-2); border: 1px solid var(--border-soft);
+}
+.badge.decision { color: var(--accent-fg); background: var(--accent-soft); border-color: transparent; }
+.sev { margin-left: auto; display: inline-flex; align-items: center; gap: 4px; font-size: 12px; font-weight: 650; }
+.sev i { width: 6px; height: 6px; border-radius: 50%; display: inline-block; }
+.sev.s1 { color: var(--red); }   .sev.s1 i { background: var(--red); }
+.sev.s2 { color: var(--amber); } .sev.s2 i { background: var(--amber); }
+.sev.s3 { color: var(--faint); } .sev.s3 i { background: var(--faint); }
+.q {
+  font-size: 13.5px; font-weight: 650; letter-spacing: -.01em; margin-bottom: 3px;
+  display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden;
+}
+.why {
+  color: var(--muted); font-size: 12px; margin-bottom: 2px;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+
+.opts { display: flex; flex-direction: column; gap: 5px; margin-top: 9px; }
 .opt {
-  border: 1px solid var(--border); background: var(--bg); color: var(--fg);
-  border-radius: 8px; padding: 6px 9px; cursor: pointer; font: inherit; text-align: left;
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  border: 1px solid var(--border); background: var(--card-2); color: var(--fg);
+  border-radius: 9px; padding: 7px 9px; cursor: pointer;
+  font: inherit; font-size: 12.5px; text-align: left;
+  transition: border-color .12s ease, background .12s ease;
 }
-.opt:hover, .opt.suggested { border-color: var(--accent); background: var(--accent-bg); }
-.meta { color: var(--muted); font-size: 11.5px; margin-top: 6px; }
-.health { display: flex; gap: 8px; align-items: center; color: var(--muted); margin: 8px 0 12px; }
-.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); display: inline-block; }
-.dot.green { background: var(--green); } .dot.red { background: var(--red); } .dot.amber { background: var(--amber); }
-.row { display: flex; gap: 8px; flex-wrap: wrap; }
-button.linkish, a.linkish {
-  border: 1px solid var(--border); background: transparent; color: var(--accent);
-  border-radius: 8px; padding: 7px 10px; cursor: pointer; font: inherit; text-decoration: none;
+.opt:hover { border-color: var(--accent); background: var(--accent-soft); }
+.opt .key {
+  flex: none; width: 18px; height: 18px; border-radius: 5px;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--bg); border: 1px solid var(--border);
+  color: var(--muted); font-size: 12px; font-weight: 700;
 }
+.opt .opt-label { flex: 1; min-width: 0; }
+.opt .tag {
+  flex: none; font-size: 12px; font-weight: 750; letter-spacing: .05em; text-transform: uppercase;
+  color: var(--accent-fg); background: var(--accent-soft);
+  padding: 2px 6px; border-radius: 5px;
+}
+.opt.suggested { border-color: var(--accent); background: var(--accent-soft); }
+.opt.ghost { justify-content: center; color: var(--muted); font-size: 12px; }
+.opt.ghost:hover { color: var(--accent-fg); }
+.meta { color: var(--faint); font-size: 12px; margin-top: 8px; }
+.more { color: var(--muted); font-size: 12px; text-align: center; padding: 4px 0 2px; }
+
+/* ── Empty state ────────────────────────────────────────── */
+.empty { text-align: center; padding: 30px 20px 26px; }
+.empty .ring {
+  width: 44px; height: 44px; margin: 0 auto 10px; border-radius: 50%;
+  background: var(--green-soft); color: var(--green);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 20px; font-weight: 700;
+}
+.empty .t { font-size: 14px; font-weight: 700; }
+.empty .s { color: var(--muted); font-size: 12px; margin-top: 2px; }
+.empty.unknown .ring { background: var(--amber-soft); color: var(--amber); }
+
+/* ── AI Headroom ────────────────────────────────────────── */
+:root {
+  --hr-green: #08734e; --hr-yellow: #7a5a00; --hr-orange: #9a4c00; --hr-red: #bd353f;
+  --hr-cash: #3b5bdb;
+}
+html[data-theme="dark"] {
+  --hr-green: #3fc794; --hr-yellow: #e3c04b; --hr-orange: #f0a35e; --hr-red: #f0767c;
+  --hr-cash: #8b9dff;
+}
+.hr-head { display: flex; align-items: center; gap: 6px; padding: 14px 18px 6px; }
+.hr-head .t {
+  color: var(--faint); font-size: 12px; font-weight: 700;
+  letter-spacing: .08em; text-transform: uppercase;
+}
+.hr-tabs {
+  display: flex; gap: 2px; margin-left: auto;
+  background: var(--card-2); border: 1px solid var(--border-soft);
+  border-radius: 7px; padding: 2px;
+}
+.hr-tab {
+  border: 0; background: transparent; color: var(--muted);
+  font: inherit; font-size: 12px; font-weight: 650;
+  padding: 2.5px 7px; border-radius: 5px; cursor: pointer;
+}
+.hr-tab.on { background: var(--card); color: var(--fg); box-shadow: var(--shadow); }
+.hr-pin {
+  border: 0; background: transparent; color: var(--muted); cursor: pointer;
+  font-size: 13px; padding: 2px 5px; border-radius: 5px;
+}
+.hr-pin:hover { color: var(--accent-fg); background: var(--accent-soft); }
+.hr-pin.off { opacity: .35; }
+#hr-list { padding: 0 16px 4px; }
+.hr-row {
+  background: var(--card); border: 1px solid var(--border-soft);
+  border-radius: 11px; padding: 8px 10px; margin-bottom: 5px;
+  box-shadow: var(--shadow);
+}
+.hr-disclosure {
+  width: 100%; border: 0; padding: 0; background: transparent; color: inherit;
+  font: inherit; text-align: left; cursor: pointer;
+}
+.hr-disclosure:focus-visible, .hr-tab:focus-visible, .hr-pin:focus-visible,
+.opt:focus-visible, .tbtn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.hr-row.stale { border-style: dashed; }
+.hr-wline { display: flex; align-items: center; gap: 7px; margin-top: 5px; }
+.hr-wline.stale { opacity: .75; }
+.hr-wname { color: var(--muted); font-size: 12px; min-width: 74px; }
+.hr-wbarwrap { position: relative; flex: 1; height: 11px; }
+.hr-wbarwrap .hr-track { bottom: 2px; height: 5px; }
+.hr-wval { font-size: 12px; font-weight: 750; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.hr-wcd { color: var(--faint); font-size: 12px; white-space: nowrap; }
+.hr-note-line { color: var(--muted); font-size: 12px; margin-top: 4px; }
+.hr-top { display: flex; align-items: baseline; gap: 6px; }
+.hr-name { font-size: 12.5px; font-weight: 700; letter-spacing: -.01em; }
+.hr-win { color: var(--muted); font-size: 12px; }
+.hr-flag {
+  font-size: 12px; font-weight: 750; letter-spacing: .05em; text-transform: uppercase;
+  padding: 1.5px 5px; border-radius: 5px;
+}
+.hr-flag.stale { color: var(--amber); background: var(--amber-soft); }
+.hr-flag.down { color: var(--red); background: var(--red-soft); }
+.hr-flag.auth { color: var(--muted); background: var(--card-2); border: 1px solid var(--border-soft); }
+.hr-flag.live { color: var(--green); background: var(--green-soft); }
+.hr-val {
+  margin-left: auto; font-size: 14.5px; font-weight: 750;
+  font-variant-numeric: tabular-nums; letter-spacing: -.02em;
+}
+.hr-val .unit { font-size: 12px; font-weight: 650; color: var(--muted); margin-left: 2px; }
+.hr-barwrap { position: relative; height: 17px; margin-top: 4px; }
+.hr-track {
+  position: absolute; left: 0; right: 0; bottom: 3px; height: 6px;
+  border-radius: 3px; background: var(--border-soft); overflow: hidden;
+}
+.hr-fill { height: 100%; border-radius: 3px; transition: width .6s ease; }
+.hr-fill.cash { opacity: .3; }
+.hr-fill.pulse { animation: hr-pulse 1.6s ease-in-out infinite; }
+@keyframes hr-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .55; } }
+.hr-bricks { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+.hr-sub { display: flex; align-items: baseline; gap: 8px; margin-top: 3px; color: var(--faint); font-size: 12px; }
+.hr-sub .sp { flex: 1; }
+.hr-pace { font-weight: 650; }
+.hr-pace.unusual { color: var(--red); }
+.hr-pace.fast { color: var(--amber); }
+.hr-detail {
+  display: none; margin-top: 7px; padding-top: 7px;
+  border-top: 1px solid var(--border-soft); font-size: 12px; color: var(--muted);
+}
+.hr-row.open .hr-detail { display: grid; grid-template-columns: auto 1fr; gap: 2px 10px; }
+.hr-detail b { color: var(--fg); font-weight: 650; }
+.hr-note { padding: 2px 16px 8px; color: var(--faint); font-size: 12px; text-align: center; }
+body.pin .topbar, body.pin .stats, body.pin .section-head,
+body.pin #list, body.pin .toolbar { display: none; }
+body.pin .hr-head { padding-top: 10px; }
+@media (prefers-reduced-motion: reduce) {
+  .hr-fill { transition: none; }
+  .hr-fill.pulse { animation: none; }
+}
+
+/* ── Footer ─────────────────────────────────────────────── */
+.toolbar {
+  position: sticky; bottom: 0; z-index: 5;
+  display: flex; align-items: center; gap: 6px;
+  padding: 9px 12px;
+  background: var(--bg); border-top: 1px solid var(--border-soft);
+}
+.tbtn {
+  border: 1px solid var(--border); background: var(--card); color: var(--muted);
+  border-radius: 8px; padding: 5px 10px; cursor: pointer;
+  font: inherit; font-size: 12px; font-weight: 600;
+  transition: color .12s ease, border-color .12s ease;
+}
+.tbtn:hover { color: var(--accent-fg); border-color: var(--accent); }
+.tbtn.icon { padding: 5px 8px; }
+.spacer { flex: 1; }
+.tbtn.primary {
+  border-color: transparent; background: var(--accent); color: #fff;
+}
+.tbtn.primary:hover { filter: brightness(1.08); color: #fff; }
 </style>
 </head>
 <body>
-<h1>Needs you</h1>
-<div id="health" class="health"></div>
-<div id="list" class="card"></div>
-<div class="row">
-  <button class="linkish" type="button" id="refresh">Refresh</button>
-  <button class="linkish" type="button" id="theme">Dark mode</button>
-  <button class="linkish" type="button" id="open-full">Open full Mission Control</button>
+<header class="topbar">
+  <span class="mark">MC</span>
+  <div class="titles">
+    <h1>Mission Control</h1>
+    <div class="sub" id="updated">Loading…</div>
+  </div>
+  <span class="pill ok" id="status-pill" role="status" aria-live="polite"><span class="pdot"></span><span id="status-text">Checking</span></span>
+</header>
+
+<section class="stats" id="stats" style="grid-template-columns: repeat(4, 1fr);">
+  <div class="stat"><div class="num" id="stat-needs">–</div><div class="lbl">Needs you</div></div>
+  <div class="stat"><div class="num" id="stat-jobs">–</div><div class="lbl" id="stat-jobs-lbl">Jobs healthy</div></div>
+  <div class="stat"><div class="num" id="stat-feeds">–</div><div class="lbl">Feed age</div></div>
+  <div class="stat"><div class="num" id="stat-ai">–</div><div class="lbl">AI headroom</div></div>
+</section>
+
+<div class="hr-head">
+  <span class="t">AI Headroom</span>
+  <div class="hr-tabs" id="hr-tabs" role="tablist" aria-label="AI headroom views"></div>
+  <button class="hr-pin" type="button" id="hr-motion" title="Toggle burn animation" aria-label="Toggle burn animation" aria-pressed="false">≋</button>
+  <button class="hr-pin" type="button" id="hr-pin" title="Pin as always-on-top corner card" aria-label="Pin panel as an always-on-top corner card">⇱</button>
 </div>
+<div id="hr-list" role="tabpanel" aria-label="AI headroom results"></div>
+
+<div class="section-head"><span id="title">Needs you</span><span class="count" id="needs-count"></span></div>
+<div id="list"></div>
+
+<footer class="toolbar">
+  <button class="tbtn" type="button" id="refresh">↻ Refresh</button>
+  <button class="tbtn icon" type="button" id="theme" title="Toggle dark mode" aria-label="Toggle color theme">◐</button>
+  <span class="spacer"></span>
+  <button class="tbtn primary" type="button" id="open-full">Open Mission Control →</button>
+</footer>
+
 <script>
 (function () {
   function theme() {
@@ -70,7 +326,7 @@ button.linkish, a.linkish {
     t = t === "dark" ? "dark" : "light";
     document.documentElement.setAttribute("data-theme", t);
     try { localStorage.setItem("mc-theme", t); } catch (e) {}
-    document.getElementById("theme").textContent = t === "dark" ? "Light mode" : "Dark mode";
+    document.getElementById("theme").textContent = t === "dark" ? "◑" : "◐";
   }
   applyTheme(theme());
   document.getElementById("theme").onclick = function () {
@@ -130,13 +386,121 @@ button.linkish, a.linkish {
   }
 
   function attentionFresh(attn) {
-    if (!attn || !attn.ok || attn.data == null) return false;
-    if (window.MC && window.MC.feedErrors && window.MC.feedErrors.attention) return false;
-    var epoch = attn.generated_epoch;
-    if (typeof epoch !== "number" || !isFinite(epoch) || epoch <= 0) return true;
-    var age = (Date.now() / 1000) - epoch;
-    // Stale after ~3x cadence (300s) — fall back to decisions so the panel never blanks.
-    return age < 900;
+    return coreFeedState("attention").ok;
+  }
+
+  function el(tag, className, text) {
+    var n = document.createElement(tag);
+    if (className) n.className = className;
+    if (text != null) n.textContent = text;
+    return n;
+  }
+  function sevChip(severity) {
+    var s = +severity || 2;
+    var label = s === 1 ? "High" : s === 3 ? "Low" : "Med";
+    var chip = el("span", "sev s" + (s === 1 ? 1 : s === 3 ? 3 : 2));
+    chip.appendChild(el("i"));
+    chip.appendChild(document.createTextNode(label));
+    return chip;
+  }
+  function fmtAge(epoch) {
+    if (typeof epoch !== "number" || !isFinite(epoch) || epoch <= 0) return null;
+    var s = Math.max(0, Math.round(Date.now() / 1000 - epoch));
+    if (s < 60) return s + "s";
+    if (s < 3600) return Math.round(s / 60) + "m";
+    if (s < 86400) return Math.round(s / 3600) + "h";
+    return Math.round(s / 86400) + "d";
+  }
+  function feedEpoch(f, name) {
+    var feed = f[name] || {};
+    var e = feed.generated_epoch;
+    return (typeof e === "number" && isFinite(e) && e > 0) ? e : null;
+  }
+  function plainObject(value) {
+    return !!value && typeof value === "object" && !Array.isArray(value);
+  }
+  function markedPartial(value) {
+    return plainObject(value) &&
+      (value.partial === true || value.incomplete === true || value.complete === false);
+  }
+  function coreFeedState(name) {
+    var f = feeds();
+    var env = f[name];
+    var epoch = plainObject(env) && typeof env.generated_epoch === "number" &&
+      isFinite(env.generated_epoch) ? env.generated_epoch : null;
+    function fail(reason) { return { ok: false, reason: reason, epoch: epoch }; }
+    var currentError = window.MC && window.MC.feedErrors && window.MC.feedErrors[name];
+    if (currentError && (!plainObject(currentError) || currentError.ok === false || currentError.error)) {
+      return fail(name + " error");
+    }
+    if (!plainObject(env)) return fail(name + " missing");
+    if (env.schema !== 1 || env.feed !== name || env.ok !== true ||
+        (env.error != null && env.error !== "")) return fail(name + " malformed");
+    if (env.cadence_s !== 300 || !Number.isInteger(env.cadence_s) ||
+        !Number.isInteger(epoch) || epoch <= 0) return fail(name + " malformed");
+    var age = Date.now() / 1000 - epoch;
+    if (age < 0 || age > env.cadence_s * 3) return fail(name + " stale");
+    if (!plainObject(env.data) || markedPartial(env) || markedPartial(env.data)) {
+      return fail(name + " partial");
+    }
+    if (name === "decisions") {
+      if (!Array.isArray(env.data.pinned) || !env.data.pinned.every(plainObject)) return fail("decisions partial");
+      var decisionCounts = env.data.counts;
+      if (!plainObject(decisionCounts) || !Number.isInteger(decisionCounts.open) ||
+          !Number.isInteger(decisionCounts.structured_open) || decisionCounts.open < 0 ||
+          decisionCounts.structured_open < 0 || decisionCounts.open !== env.data.pinned.length ||
+          decisionCounts.structured_open !== env.data.pinned.length) return fail("decisions counts disagree");
+      if (plainObject(env.data.sync) && +env.data.sync.dropped > 0) return fail("decisions partial");
+    }
+    if (name === "attention") {
+      if (!Array.isArray(env.data.board) || !env.data.board.every(plainObject) ||
+          !Array.isArray(env.data.top5) || !env.data.top5.every(plainObject) ||
+          env.data.top5.length > 5) return fail("attention partial");
+      var attentionCounts = env.data.counts;
+      var attentionKinds = { manual: 0, decision: 0, automation: 0 };
+      if (!plainObject(attentionCounts) || !Number.isInteger(attentionCounts.decisions_filtered_out) ||
+          attentionCounts.decisions_filtered_out < 0 || Object.keys(attentionKinds).some(function (kind) {
+            return !Number.isInteger(attentionCounts[kind]) || attentionCounts[kind] < 0;
+          })) return fail("attention counts disagree");
+      if (env.data.board.some(function (item) {
+        if (attentionKinds[item.kind] == null) return true;
+        attentionKinds[item.kind] += 1;
+        return false;
+      }) || Object.keys(attentionKinds).some(function (kind) {
+        return attentionKinds[kind] !== attentionCounts[kind];
+      })) return fail("attention counts disagree");
+      var expectedTop = env.data.board.slice(0, 5).map(function (item) { return item.id; });
+      var actualTop = env.data.top5.map(function (item) { return item.id; });
+      if (expectedTop.length !== actualTop.length || expectedTop.some(function (id, index) {
+        return id !== actualTop[index];
+      })) return fail("attention summary disagrees");
+    }
+    if (name === "automation") {
+      var knownStates = { green: true, yellow: true, red: true, degraded: true,
+                          never: true, retired: true, "offline-media": true,
+                          "awaiting-activation": true };
+      if (!Array.isArray(env.data.jobs) || !env.data.jobs.every(function (job) {
+        return plainObject(job) && knownStates[job.state] === true;
+      })) return fail("automation partial");
+      var automationCounts = env.data.counts;
+      if (!plainObject(automationCounts) || Object.keys(automationCounts).some(function (state) {
+        return knownStates[state] !== true || !Number.isInteger(automationCounts[state]) || automationCounts[state] < 0;
+      }) || Object.keys(knownStates).some(function (state) {
+        var actual = env.data.jobs.filter(function (job) { return job.state === state; }).length;
+        return actual !== (automationCounts[state] || 0);
+      })) return fail("automation counts disagree");
+      var expectedExceptions = env.data.jobs.filter(function (job) {
+        return job.state === "red" || job.state === "yellow" || job.state === "degraded";
+      }).length;
+      if (!Number.isInteger(env.data.exceptions) || env.data.exceptions !== expectedExceptions) {
+        return fail("automation exceptions disagree");
+      }
+      if ((env.data.unregistered != null && (!Array.isArray(env.data.unregistered) || env.data.unregistered.length > 0)) ||
+          (env.data.launchctl_note != null && String(env.data.launchctl_note).trim() !== "")) {
+        return fail("automation partial");
+      }
+    }
+    return { ok: true, reason: null, epoch: epoch };
   }
 
   function isAnswerPending(d) {
@@ -158,60 +522,59 @@ button.linkish, a.linkish {
       opts: d.options.slice(0, 3),
       suggested: d.recommended == null ? null : +d.recommended
     } : parseOptions(d.text || d.title || "");
-    var item = document.createElement("div");
-    item.className = "item";
-    var q = document.createElement("div");
-    q.className = "q";
-    q.textContent = (i + 1) + ". " + parsed.q;
-    item.appendChild(q);
+    var item = el("div", "item");
+    var head = el("div", "item-head");
+    head.appendChild(el("span", "badge decision", "Decision"));
+    if (d.dupCount > 1) head.appendChild(el("span", "badge", "asked in " + d.dupCount + " chats"));
+    head.appendChild(sevChip(1));
+    item.appendChild(head);
+    var qd = el("div", "q", parsed.q);
+    qd.title = parsed.q;
+    item.appendChild(qd);
     if (isAnswerPending(d)) {
-      var pending = document.createElement("div");
-      pending.className = "meta";
-      pending.textContent = answerPendingText(d);
-      item.appendChild(pending);
+      item.appendChild(el("div", "meta", answerPendingText(d)));
       list.appendChild(item);
       return;
     }
     if (parsed.opts.length && d.id && /^decision:[0-9a-f]{24}$/.test(String(d.id))) {
-      var row = document.createElement("div");
-      row.className = "opts";
+      var row = el("div", "opts");
       parsed.opts.forEach(function (label, oi) {
         var n = oi + 1;
-        var btn = document.createElement("button");
+        var btn = el("button", "opt" + (parsed.suggested === n ? " suggested" : ""));
         btn.type = "button";
-        btn.className = "opt" + (parsed.suggested === n ? " suggested" : "");
-        btn.textContent = n + " — " + label;
         btn.title = "Record choice " + n + " (or copies: dashboard decide answer " + d.id + " " + n + ")";
+        btn.appendChild(el("span", "key", String(n)));
+        btn.appendChild(el("span", "opt-label", label));
+        if (parsed.suggested === n) btn.appendChild(el("span", "tag", "Suggested"));
         btn.onclick = function () {
           var cmd = "dashboard decide answer " + d.id + " " + n;
           if (window.webkit && window.webkit.messageHandlers &&
               window.webkit.messageHandlers.mcDecide) {
-            btn.textContent = "Recording…";
+            var lbl = btn.querySelector(".opt-label");
+            if (lbl) lbl.textContent = "Recording…";
             window.webkit.messageHandlers.mcDecide.postMessage({ id: d.id, n: n });
-            setTimeout(function () { btn.textContent = n + " — " + label; }, 1600);
+            setTimeout(function () { if (lbl) lbl.textContent = label; }, 1600);
             return;
           }
-          var old = btn.textContent;
+          var old = btn.querySelector(".opt-label");
+          var oldText = old ? old.textContent : "";
           btn.disabled = true;
           clipboardWrite(cmd).then(function () {
-            btn.textContent = "Copied command";
+            if (old) old.textContent = "Copied command";
           }, function () {
-            btn.textContent = "Copy failed — select command";
+            if (old) old.textContent = "Copy failed — select command";
           }).then(function () {
-            setTimeout(function () { btn.textContent = old; btn.disabled = false; }, 1600);
+            setTimeout(function () { if (old) old.textContent = oldText; btn.disabled = false; }, 1600);
           });
         };
         row.appendChild(btn);
       });
       item.appendChild(row);
-      if (parsed.suggested) {
-        var sug = document.createElement("div");
-        sug.className = "meta";
-        sug.textContent = "Suggested: " + parsed.suggested + " — " +
-          (parsed.opts[parsed.suggested - 1] || "");
-        item.appendChild(sug);
-      }
     }
+    var metaBits = [];
+    if (d.provenance) metaBits.push(String(d.provenance));
+    if (d.trust) metaBits.push(String(d.trust) + " trust");
+    if (metaBits.length) item.appendChild(el("div", "meta", metaBits.join(" · ")));
     list.appendChild(item);
   }
 
@@ -221,116 +584,617 @@ button.linkish, a.linkish {
       renderDecisionItem(list, d, i);
       return;
     }
-    var item = document.createElement("div");
-    item.className = "item";
-    var q = document.createElement("div");
-    q.className = "q";
-    q.textContent = (i + 1) + ". " + (d.title || "Needs attention");
-    item.appendChild(q);
-    if (d.why) {
-      var why = document.createElement("div");
-      why.className = "meta";
-      why.textContent = d.why;
-      item.appendChild(why);
-    }
-    var meta = document.createElement("div");
-    meta.className = "meta";
-    meta.textContent = "severity " + (d.severity || "?") + " · " + kind +
-      (d.source ? (" · " + d.source) : "");
-    item.appendChild(meta);
+    var item = el("div", "item");
+    var head = el("div", "item-head");
+    head.appendChild(el("span", "badge", kind.charAt(0).toUpperCase() + kind.slice(1)));
+    if (d.dupCount > 1) head.appendChild(el("span", "badge", "asked in " + d.dupCount + " chats"));
+    head.appendChild(sevChip(d.severity));
+    item.appendChild(head);
+    var qa = el("div", "q", d.title || "Needs attention");
+    qa.title = d.title || "";
+    item.appendChild(qa);
+    if (d.why) item.appendChild(el("div", "why", d.why));
     if (d.id) {
-      var row = document.createElement("div");
-      row.className = "opts";
-      var btn = document.createElement("button");
+      var row = el("div", "opts");
+      var btn = el("button", "opt ghost", null);
       btn.type = "button";
-      btn.className = "opt";
       var cmd = "dashboard attention resolve " + d.id;
-      btn.textContent = "Copy resolve command";
       btn.title = cmd;
+      btn.appendChild(el("span", "opt-label", "Copy resolve command"));
       btn.onclick = function () {
-        var old = btn.textContent;
+        var lbl = btn.querySelector(".opt-label");
+        var old = lbl ? lbl.textContent : "";
         btn.disabled = true;
         clipboardWrite(cmd).then(function () {
-          btn.textContent = "Copied command";
+          if (lbl) lbl.textContent = "Copied command";
         }, function () {
-          btn.textContent = "Copy failed — select command";
+          if (lbl) lbl.textContent = "Copy failed — select command";
         }).then(function () {
-          setTimeout(function () { btn.textContent = old; btn.disabled = false; }, 1600);
+          setTimeout(function () { if (lbl) lbl.textContent = old; btn.disabled = false; }, 1600);
         });
       };
       row.appendChild(btn);
       item.appendChild(row);
     }
+    var metaBits = [];
+    if (d.due) metaBits.push("due " + d.due);
+    if (d.source) metaBits.push(String(d.source));
+    if (metaBits.length) item.appendChild(el("div", "meta", metaBits.join(" · ")));
     list.appendChild(item);
+  }
+
+  function renderEmpty(list) {
+    var box = el("div", "empty");
+    box.appendChild(el("div", "ring", "✓"));
+    box.appendChild(el("div", "t", "All clear"));
+    box.appendChild(el("div", "s", "Nothing is waiting on you right now."));
+    list.appendChild(box);
+  }
+
+  function renderUnverified(list) {
+    var box = el("div", "empty unknown");
+    box.appendChild(el("div", "ring", "!"));
+    box.appendChild(el("div", "t", "Status incomplete"));
+    box.appendChild(el("div", "s", "Decision or job status is missing, stale, or incomplete."));
+    list.appendChild(box);
   }
 
   function renderFromDecisions(list) {
     var f = feeds();
     var dec = f.decisions || {};
-    var pinned = ((dec.data || {}).pinned) || [];
-    var actionable = pinned.filter(function (d) { return !isAnswerPending(d); });
-    var pending = pinned.filter(isAnswerPending);
+    var pinned = Array.isArray((dec.data || {}).pinned) ? dec.data.pinned : [];
+    if (!pinned.length) return { rendered: 0, actionable: 0 };
+    // The same question captured from several chats is ONE ask — show it once
+    // with a count instead of three identical cards (seen live 2026-08-07).
+    var seen = {}, deduped = [];
+    pinned.forEach(function (d) {
+      var key = String(d.question || d.title || d.id || "").replace(/\s+/g, " ").trim().toLowerCase().slice(0, 160);
+      if (seen[key]) { seen[key].dupCount += 1; return; }
+      seen[key] = d;
+      d.dupCount = 1;
+      deduped.push(d);
+    });
+    var actionable = deduped.filter(function (d) { return !isAnswerPending(d); });
+    var pending = deduped.filter(isAnswerPending);
     document.getElementById("title").textContent = actionable.length ? "Needs you" :
-      (pinned.length ? "Awaiting owner consumption" : "Needs you");
-    if (!pinned.length) {
-      list.appendChild(document.createTextNode("Nothing waiting on you right now."));
-      return 0;
+      "Awaiting owner consumption";
+    // Bounded views keep actionable controls ahead of recorded receipts while
+    // preserving the source order within both groups.
+    actionable.concat(pending).slice(0, 5).forEach(function (d, i) {
+      renderDecisionItem(list, d, i);
+    });
+    if (deduped.length > 5) {
+      list.appendChild(el("div", "more", "+" + (deduped.length - 5) + " more in full Mission Control"));
     }
-    // Actionable rows must lead bounded views; preserve order within each group.
-    var shown = actionable.concat(pending).slice(0, 5);
-    shown.forEach(function (d, i) { renderDecisionItem(list, d, i); });
-    if (pinned.length > 5) {
-      var more = document.createElement("div");
-      more.className = "meta";
-      more.textContent = "+" + (pinned.length - 5) + " more in full Mission Control";
-      list.appendChild(more);
-    }
-    return pinned.length;
+    return { rendered: deduped.length, actionable: actionable.length };
   }
 
   function render() {
     var f = feeds();
     var list = document.getElementById("list");
     list.textContent = "";
+    document.getElementById("title").textContent = "Needs you";
     var attn = f.attention || {};
-    var usedAttention = false;
-    if (attentionFresh(attn)) {
+    var attentionState = coreFeedState("attention");
+    var decisionsState = coreFeedState("decisions");
+    var automationState = coreFeedState("automation");
+    var rawJobs = ((f.automation || {}).data || {}).jobs;
+    var jobs = Array.isArray(rawJobs) ? rawJobs.filter(plainObject) : [];
+    var coreVerified = attentionState.ok && decisionsState.ok && automationState.ok;
+    var allClearVerified = coreVerified && jobs.length > 0;
+    var needsTotal = 0;
+    var renderedTotal = 0;
+    if (attentionState.ok) {
       var top5 = ((attn.data || {}).top5) || [];
       var board = ((attn.data || {}).board) || [];
-      var total = board.length || top5.length;
-      if (top5.length) {
-        usedAttention = true;
+      // The same ask captured from several chats is ONE card with a count,
+      // not identical repeats (the triple Safe-Mode card, live 2026-08-07).
+      var seenA = {}, dedupA = [];
+      (board.length ? board : top5).forEach(function (d) {
+        var key = String(d.question || d.title || d.text || d.id || "")
+          .replace(/\s+/g, " ").trim().toLowerCase().slice(0, 200);
+        if (seenA[key]) { seenA[key].dupCount += 1; return; }
+        seenA[key] = d;
+        d.dupCount = 1;
+        dedupA.push(d);
+      });
+      var total = dedupA.length;
+      if (dedupA.length) {
         document.getElementById("title").textContent = "Needs you";
-        top5.slice(0, 5).forEach(function (d, i) { renderAttentionItem(list, d, i); });
+        dedupA.slice(0, 5).forEach(function (d, i) { renderAttentionItem(list, d, i); });
         if (total > 5) {
-          var moreA = document.createElement("div");
-          moreA.className = "meta";
-          moreA.textContent = "+" + (total - 5) + " more in full Mission Control";
-          list.appendChild(moreA);
+          list.appendChild(el("div", "more", "+" + (total - 5) + " more in full Mission Control"));
         }
-      } else {
-        usedAttention = true;
-        document.getElementById("title").textContent = "Needs you";
-        list.appendChild(document.createTextNode("Nothing waiting on you right now."));
       }
+      needsTotal = total;
+      renderedTotal = total;
+      if (needsTotal === 0 && decisionsState.ok) {
+        var decisionResult = renderFromDecisions(list);
+        renderedTotal = decisionResult.rendered;
+        needsTotal = decisionResult.actionable;
+      }
+    } else {
+      var fallbackResult = decisionsState.ok ? renderFromDecisions(list) :
+        { rendered: 0, actionable: 0 };
+      renderedTotal = fallbackResult.rendered;
+      needsTotal = fallbackResult.actionable;
     }
-    if (!usedAttention) {
-      renderFromDecisions(list);
+    if (renderedTotal === 0) {
+      if (allClearVerified) renderEmpty(list);
+      else renderUnverified(list);
     }
-    var jobs = ((f.automation || {}).data || {}).jobs || [];
+
+    // Automation health + status pill.
     var red = jobs.filter(function (j) { return j.state === "red"; }).length;
     var yellow = jobs.filter(function (j) {
       return j.state === "yellow" || j.state === "degraded"; }).length;
-    var h = document.getElementById("health");
-    h.textContent = "";
-    var dot = document.createElement("span");
-    dot.className = "dot " + (red ? "red" : yellow ? "amber" : "green");
-    h.appendChild(dot);
-    h.appendChild(document.createTextNode(
-      red ? ("Automation: " + red + " red") :
-      yellow ? ("Automation: " + yellow + " warning") : "Machinery healthy"));
+    var healthy = jobs.length - red - yellow;
+
+    var pill = document.getElementById("status-pill");
+    var pillText = document.getElementById("status-text");
+    if (red > 0) {
+      pill.className = "pill bad";
+      pillText.textContent = red + " red job" + (red > 1 ? "s" : "");
+    } else if (needsTotal > 0 || yellow > 0) {
+      pill.className = "pill warn";
+      pillText.textContent = needsTotal > 0
+        ? needsTotal + " need" + (needsTotal > 1 ? "" : "s") + " you"
+        : yellow + " job warning" + (yellow > 1 ? "s" : "");
+    } else if (renderedTotal > 0 && coreVerified) {
+      pill.className = "pill ok";
+      pillText.textContent = "Answers recorded";
+    } else if (allClearVerified) {
+      pill.className = "pill ok";
+      pillText.textContent = "All clear";
+    } else {
+      pill.className = "pill warn";
+      pillText.textContent = "Status incomplete";
+    }
+
+    // Stat strip.
+    var needsEl = document.getElementById("stat-needs");
+    var needsVerified = attentionState.ok && decisionsState.ok;
+    needsEl.textContent = needsTotal > 0 ? String(needsTotal) : needsVerified ? "0" : "–";
+    needsEl.className = "num" + (needsTotal > 0 || !needsVerified ? " warn" : " ok");
+    var jobsEl = document.getElementById("stat-jobs");
+    jobsEl.textContent = automationState.ok && jobs.length ? (healthy + "/" + jobs.length) : "–";
+    jobsEl.className = "num" + (!automationState.ok || !jobs.length ? " warn" : red > 0 ? " bad" : yellow > 0 ? " warn" : " ok");
+    document.getElementById("stat-jobs-lbl").textContent = !automationState.ok || !jobs.length
+      ? "Jobs unverified" : red > 0 ? (red + " red") : yellow > 0 ? (yellow + " warning") : "Jobs healthy";
+
+    var epochs = [feedEpoch(f, "attention"), feedEpoch(f, "decisions"), feedEpoch(f, "automation")]
+      .filter(function (e) { return e != null; });
+    var oldest = epochs.length ? Math.min.apply(null, epochs) : null;
+    var age = oldest ? fmtAge(oldest) : null;
+    var stale = !attentionState.ok || !decisionsState.ok || !automationState.ok;
+    var feedsEl = document.getElementById("stat-feeds");
+    feedsEl.textContent = age || "–";
+    feedsEl.className = "num" + (stale ? " warn" : " ok");
+    document.getElementById("updated").textContent = !stale && age ? "Updated " + age + " ago"
+      : age ? "Feed check needed — oldest update " + age + " ago" : "Feed data incomplete";
+    document.getElementById("needs-count").textContent =
+      needsTotal > 0 ? (needsTotal + " open") : renderedTotal > 0 ? "answers recorded" :
+        needsVerified ? "" : "status unknown";
   }
   render();
+
+  /* ── AI Headroom section ─────────────────────────────── */
+  function hrInitialMotion() {
+    try {
+      var saved = localStorage.getItem("mc-hr-motion");
+      if (saved === "on" || saved === "off") return saved;
+    } catch (e) {}
+    return window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches
+      ? "off" : "on";
+  }
+  var HR = {
+    view: (function () { try { return localStorage.getItem("mc-hr-view") || "active"; } catch (e) { return "active"; } })(),
+    motion: hrInitialMotion(),
+    anims: [], raf: null, lastT: 0
+  };
+  Object.defineProperty(HR, "reduced", { get: function () { return HR.motion !== "on"; } });
+  var HR_VIEWS = [["active", "Active", "Active and critical providers"],
+                  ["lowest", "Low", "Providers sorted by lowest headroom"],
+                  ["5h", "5h", "Five-hour usage windows"],
+                  ["week", "Wk", "Weekly usage windows"],
+                  ["month", "Mo", "Monthly usage windows"],
+                  ["all", "All", "All providers and windows"]];
+  var HR_BAND = { green: "--hr-green", yellow: "--hr-yellow", orange: "--hr-orange",
+                  red: "--hr-red", cash: "--hr-cash", none: "--hr-cash" };
+
+  if (/[?&]mode=pin/.test(location.search)) document.body.classList.add("pin");
+
+  function hrColor(band) {
+    return getComputedStyle(document.documentElement)
+      .getPropertyValue(HR_BAND[band] || "--hr-cash").trim() || "#3b5bdb";
+  }
+  function hrFeed() { return feeds().headroom || null; }
+  function hrLiveSummaryRow(feed) {
+    var currentError = window.MC && window.MC.feedErrors && window.MC.feedErrors.headroom;
+    if (!plainObject(feed) || currentError || feed.schema !== 1 || feed.feed !== "headroom" ||
+        feed.ok !== true || (feed.error != null && feed.error !== "") || feed.cadence_s !== 60 ||
+        !Number.isInteger(feed.generated_epoch) || markedPartial(feed) || !plainObject(feed.data) ||
+        markedPartial(feed.data) || !Array.isArray(feed.data.rows) || !plainObject(feed.data.summary)) return null;
+    var now = Date.now() / 1000;
+    var age = now - feed.generated_epoch;
+    if (age < 0 || age > 300) return null;
+    var low = feed.data.summary.lowest_quota;
+    if (!plainObject(low) || !low.id || typeof low.remaining_pct !== "number" ||
+        !isFinite(low.remaining_pct) || low.remaining_pct < 0 || low.remaining_pct > 100) return null;
+    var matches = feed.data.rows.filter(function (candidate) { return candidate && candidate.id === low.id; });
+    if (matches.length !== 1) return null;
+    function trustedQuota(candidate) {
+      if (!candidate || candidate.kind !== "quota" || candidate.confidence !== "live" || candidate.health !== "ok" ||
+          typeof candidate.remaining_pct !== "number" || !isFinite(candidate.remaining_pct) ||
+          candidate.remaining_pct < 0 || candidate.remaining_pct > 100 ||
+          typeof candidate.fetched_epoch !== "number" || !isFinite(candidate.fetched_epoch)) return false;
+      var fetchedAge = now - candidate.fetched_epoch;
+      if (fetchedAge < 0 || fetchedAge > 300) return false;
+      return candidate.age_s == null || (typeof candidate.age_s === "number" && isFinite(candidate.age_s) &&
+        candidate.age_s >= 0 && candidate.age_s <= 300);
+    }
+    var row = matches[0];
+    if (!trustedQuota(row) || Math.abs(row.remaining_pct - low.remaining_pct) > 0.01) return null;
+    if (feed.data.rows.some(function (candidate) {
+      return trustedQuota(candidate) && candidate.remaining_pct < row.remaining_pct - 0.01;
+    })) return null;
+    return row;
+  }
+  function hrCountdown(epoch, monthly) {
+    if (typeof epoch !== "number" || !isFinite(epoch) || epoch <= 0) return null;
+    var s = Math.round(epoch - Date.now() / 1000);
+    if (s <= 0) return monthly ? "renewing…" : "resetting…";
+    var d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600), m = Math.floor((s % 3600) / 60);
+    var txt = d > 0 ? d + "d " + h + "h" : h > 0 ? h + "h " + m + "m" : m + "m";
+    return (monthly ? "renews in " : "resets in ") + txt;
+  }
+  function hrSorted(rows) {
+    var vis = rows.filter(function (r) { return r.health !== "hidden"; });
+    var quota = vis.filter(function (r) { return r.kind === "quota" && r.remaining_pct != null; });
+    var rest = vis.filter(function (r) { return !(r.kind === "quota" && r.remaining_pct != null); });
+    quota.sort(function (a, b) { return a.remaining_pct - b.remaining_pct; });
+    rest.sort(function (a, b) { return (a.runway_hours || 1e9) - (b.runway_hours || 1e9); });
+    return quota.concat(rest);
+  }
+  function hrCritical(r) {
+    if (!r || r.health === "hidden") return false;
+    var text = String(r.value_label || "") + " " + String(r.note || "");
+    return r.band === "red" ||
+      (r.kind === "quota" && typeof r.remaining_pct === "number" && isFinite(r.remaining_pct) && r.remaining_pct <= 0) ||
+      /\b(exhausted|depleted|empty)\b/i.test(text);
+  }
+  function hrFilter(rows) {
+    var sorted = hrSorted(rows), v = HR.view;
+    if (v === "all") return { rows: sorted, note: null };
+    if (v === "5h" || v === "week" || v === "month") {
+      var f = sorted.filter(function (r) { return r.window_class === v; });
+      return { rows: f, note: f.length ? null : "No " + (v === "5h" ? "5-hour" : v === "week" ? "weekly" : "monthly") + " windows right now." };
+    }
+    if (v === "lowest") return { rows: sorted, note: null };
+    var act = sorted.filter(function (r) { return r.active || hrCritical(r); });
+    if (act.length) return { rows: act, note: null };
+    return { rows: sorted, note: "Nothing is running — showing lowest headroom instead." };
+  }
+
+  function hrValText(r) {
+    if (r.value_label) return r.value_label;
+    if (r.kind === "quota" && r.remaining_pct != null) return Math.round(r.remaining_pct) + "%";
+    if (r.balance_usd != null) return "$" + Number(r.balance_usd).toFixed(2);
+    return "\u2013";
+  }
+  function hrRowColor(r) {
+    return hrColor(r.kind === "balance" ? (r.band === "cash" ? "cash" : r.band) : r.band);
+  }
+  function hrHeadlineRow(rows) {
+    var quota = rows.filter(function (r) { return r.kind === "quota" && r.remaining_pct != null; });
+    if (quota.length) return quota.reduce(function (a, b) { return a.remaining_pct <= b.remaining_pct ? a : b; });
+    return rows[0];
+  }
+  function hrDailyReadsSummary(value) {
+    if (!Array.isArray(value)) return null;
+    var byDate = {};
+    value.forEach(function (entry) {
+      if (!plainObject(entry) || typeof entry.date !== "string" ||
+          !Number.isSafeInteger(entry.reads) || entry.reads < 0) return;
+      var match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(entry.date);
+      if (!match) return;
+      var year = +match[1], month = +match[2], day = +match[3];
+      var parsed = new Date(Date.UTC(year, month - 1, day));
+      if (parsed.getUTCFullYear() !== year || parsed.getUTCMonth() !== month - 1 ||
+          parsed.getUTCDate() !== day) return;
+      byDate[entry.date] = entry.reads;
+    });
+    var today = new Date();
+    var todayEpoch = Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate());
+    var earliestEpoch = todayEpoch - 6 * 86400000;
+    var dates = Object.keys(byDate).filter(function (date) {
+      var epoch = Date.parse(date + "T00:00:00Z");
+      return epoch >= earliestEpoch && epoch <= todayEpoch;
+    }).sort();
+    if (!dates.length) return null;
+    var total = dates.reduce(function (sum, date) { return sum + byDate[date]; }, 0);
+    if (!Number.isSafeInteger(total)) return null;
+    var latest = dates[dates.length - 1];
+    return total.toLocaleString() + " reads total · latest " + latest + ": " + byDate[latest].toLocaleString();
+  }
+  function hrWindowLine(r, showName) {
+    var line = el("div", "hr-wline" + (r.confidence === "stale" ? " stale" : ""));
+    if (showName) line.appendChild(el("span", "hr-wname",
+      (r.window_label && r.window_label !== "-") ? r.window_label : "Status"));
+    var wrap = el("div", "hr-wbarwrap");
+    var track = el("div", "hr-track");
+    var fill = el("div", "hr-fill");
+    var color = hrRowColor(r);
+    fill.style.background = color;
+    if (r.kind === "quota" && r.remaining_pct != null) {
+      fill.style.width = Math.max(0, Math.min(100, r.remaining_pct)) + "%";
+    } else {
+      fill.style.width = "100%";
+      if (r.band === "cash") fill.className += " cash";
+    }
+    if (r.active && !(r.burn_per_hour > 0) && !HR.reduced) fill.className += " pulse";
+    track.appendChild(fill);
+    wrap.appendChild(track);
+    if (!HR.reduced) {
+      var canvas = el("canvas", "hr-bricks");
+      wrap.appendChild(canvas);
+      HR.anims.push({ canvas: canvas, row: r, color: color, parts: [], acc: 0 });
+    }
+    line.appendChild(wrap);
+    var right = el("span", "hr-wval", hrValText(r));
+    right.style.color = color;
+    line.appendChild(right);
+    var cd = hrCountdown(r.resets_epoch, r.window_class === "month");
+    if (cd) line.appendChild(el("span", "hr-wcd", cd.replace("resets in ", "").replace("renews in ", "")));
+    return line;
+  }
+  function hrProviderCard(grp, groupIndex) {
+    var rows = grp.rows;
+    var head = hrHeadlineRow(rows);
+    var anyStale = rows.some(function (r) { return r.confidence === "stale"; });
+    var card = el("div", "hr-row hr-card" + (anyStale ? " stale" : ""));
+    var top = el("button", "hr-top hr-disclosure");
+    var detailId = "hr-detail-" + groupIndex;
+    top.type = "button";
+    top.setAttribute("aria-expanded", "false");
+    top.setAttribute("aria-controls", detailId);
+    top.appendChild(el("span", "hr-name", grp.label));
+    if (rows.length === 1 && rows[0].window_label && rows[0].window_label !== "-") {
+      top.appendChild(el("span", "hr-win", rows[0].window_label));
+    }
+    if (rows.some(function (r) { return r.active; })) top.appendChild(el("span", "hr-flag live", "In use"));
+    if (anyStale) top.appendChild(el("span", "hr-flag stale", "Stale"));
+    if (rows.some(function (r) { return r.health === "down"; })) top.appendChild(el("span", "hr-flag down", "Source down"));
+    if (rows.some(function (r) { return r.health === "auth"; })) top.appendChild(el("span", "hr-flag auth", "Token wait"));
+    var val = el("span", "hr-val", hrValText(head));
+    val.style.color = hrRowColor(head);
+    if (head.kind === "quota" && head.remaining_pct != null && !head.value_label) {
+      val.appendChild(el("span", "unit", "left"));
+    }
+    top.appendChild(val);
+    card.appendChild(top);
+    rows.forEach(function (r) {
+      if (r.remaining_pct != null || r.balance_usd != null || r.value_label) {
+        card.appendChild(hrWindowLine(r, rows.length > 1));
+      }
+    });
+    rows.forEach(function (r) {
+      var le = (r.detail || {}).local_estimate;
+      if (le && le.tokens_used != null) {
+        card.appendChild(el("div", "hr-note-line",
+          Number(le.tokens_used).toLocaleString() + " tokens this block" +
+          (le.burn_tpm ? " \u00b7 " + Number(le.burn_tpm).toLocaleString() + " tok/min (local estimate)" : "")));
+      } else if (r.health !== "ok" && r.note && !(r.remaining_pct != null || r.balance_usd != null || r.value_label)) {
+        card.appendChild(el("div", "hr-note-line", r.note));
+      }
+    });
+    var sub = el("div", "hr-sub");
+    var ages = rows.map(function (r) { return r.age_s || 0; });
+    var oldest = Math.max.apply(null, ages);
+    if (oldest > 600) sub.appendChild(el("span", null, "updated " + (oldest < 3600 ? Math.round(oldest / 60) + "m" : Math.round(oldest / 3600) + "h") + " ago"));
+    sub.appendChild(el("span", "sp"));
+    if (head.burn_per_hour != null && head.burn_per_hour > 0) {
+      sub.appendChild(el("span", null, (head.kind === "quota" ? head.burn_per_hour.toFixed(1) + "%/h" : "$" + head.burn_per_hour.toFixed(2) + "/h")));
+    }
+    if (head.pace === "unusual") sub.appendChild(el("span", "hr-pace unusual", "Unusually fast"));
+    if (sub.children.length > 1) card.appendChild(sub);
+    var det = el("div", "hr-detail");
+    det.id = detailId;
+    det.setAttribute("aria-hidden", "true");
+    function drow(k, v) {
+      if (v == null || v === "") return;
+      det.appendChild(el("span", null, k));
+      var b = el("b"); b.textContent = String(v); det.appendChild(b);
+    }
+    rows.forEach(function (r) {
+      var prefix = rows.length > 1 && r.window_label && r.window_label !== "-" ? r.window_label + " \u2014 " : "";
+      drow(prefix + "Source", r.source || "\u2013");
+      if (r.note) drow(prefix + "Note", r.note);
+      if (r.forecast_exhaust_epoch) {
+        var hLeft = Math.max(0, (r.forecast_exhaust_epoch - Date.now() / 1000) / 3600);
+        drow(prefix + "Forecast", "empty in ~" + hLeft.toFixed(1) + "h \u2014 before reset");
+      }
+      if (r.baseline_median != null) drow(prefix + "Normal burn", (r.kind === "quota" ? r.baseline_median + "%/h" : "$" + r.baseline_median + "/h"));
+      if (r.runway_hours != null) drow(prefix + "Runway", (r.runway_hours / 24).toFixed(1) + " days at current burn");
+      var d = r.detail || {};
+      if (d.membership) drow(prefix + "Plan", d.membership);
+      if (d.plan) drow(prefix + "Plan", d.plan + (d.tier ? " (tier " + d.tier + ")" : ""));
+      if (d.included != null) drow(prefix + "Included", d.included + " + " + (d.bonus || 0) + " bonus");
+      if (d.auto_pct_used != null) drow(prefix + "Auto models", d.auto_pct_used + "% used");
+      if (d.project_cap != null) drow(prefix + "Monthly cap", Number(d.project_cap).toLocaleString() + " reads");
+      var dailyReads = hrDailyReadsSummary(d.daily_reads);
+      if (dailyReads) drow(prefix + "7-day activity", dailyReads);
+      if (d.voucher != null && d.voucher > 0) drow(prefix + "Voucher", "$" + d.voucher);
+      if (d.granted != null && d.granted > 0) drow(prefix + "Granted", "$" + d.granted);
+    });
+    card.appendChild(det);
+    top.onclick = function () {
+      var open = card.classList.toggle("open");
+      top.setAttribute("aria-expanded", open ? "true" : "false");
+      det.setAttribute("aria-hidden", open ? "false" : "true");
+    };
+    return card;
+  }
+
+  function hrTick(t) {
+    HR.raf = null;
+    var dt = Math.min(0.1, (t - (HR.lastT || t)) / 1000);
+    HR.lastT = t;
+    var alive = false;
+    HR.anims.forEach(function (a) {
+      var c = a.canvas, r = a.row;
+      if (!c.isConnected) return;
+      var dpr = window.devicePixelRatio || 1;
+      var w = c.clientWidth, h = c.clientHeight;
+      if (!w || !h) return;
+      if (c.width !== w * dpr) { c.width = w * dpr; c.height = h * dpr; }
+      var ctx = c.getContext("2d");
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, w, h);
+      var burn = r.burn_per_hour;
+      var rate = (r.active && burn > 0)
+        ? Math.max(2, Math.min(14, r.kind === "quota" ? 2 + burn * 0.8 : 2 + burn * 4)) : 0;
+      if (rate > 0) {
+        a.acc += rate * dt;
+        var edgeX = r.kind === "quota" ? (w * Math.max(0, Math.min(100, r.remaining_pct)) / 100) : w * 0.55;
+        while (a.acc >= 1) {
+          a.acc -= 1;
+          a.parts.push({ x: edgeX, y: h - 6, vx: 22 + Math.random() * 34,
+                         vy: -(16 + Math.random() * 26), life: 0.85 });
+        }
+      }
+      a.parts = a.parts.filter(function (p) { return p.life > 0; });
+      a.parts.forEach(function (p) {
+        p.life -= dt; p.vy += 95 * dt; p.x += p.vx * dt; p.y += p.vy * dt;
+        ctx.globalAlpha = Math.max(0, p.life / 0.85) * 0.9;
+        ctx.fillStyle = a.color;
+        ctx.fillRect(p.x, p.y, 2.5, 2);
+      });
+      ctx.globalAlpha = 1;
+      if (a.parts.length || rate > 0) alive = true;
+    });
+    if (alive && !document.hidden) HR.raf = requestAnimationFrame(hrTick);
+  }
+  function hrKick() {
+    if (!HR.reduced && !HR.raf && HR.anims.length) HR.raf = requestAnimationFrame(hrTick);
+  }
+
+  function renderHeadroom(focusView) {
+    var tabs = document.getElementById("hr-tabs");
+    var list = document.getElementById("hr-list");
+    if (!tabs || !list) return;
+    if (!HR_VIEWS.some(function (view) { return view[0] === HR.view; })) HR.view = "active";
+    tabs.textContent = "";
+    HR_VIEWS.forEach(function (v, index) {
+      var b = el("button", "hr-tab" + (HR.view === v[0] ? " on" : ""), v[1]);
+      b.type = "button";
+      b.id = "hr-tab-" + v[0];
+      b.setAttribute("role", "tab");
+      b.setAttribute("aria-label", v[2]);
+      b.setAttribute("aria-controls", "hr-list");
+      b.setAttribute("aria-selected", HR.view === v[0] ? "true" : "false");
+      b.setAttribute("data-hr-view", v[0]);
+      b.tabIndex = HR.view === v[0] ? 0 : -1;
+      b.onclick = function () {
+        HR.view = v[0];
+        try { localStorage.setItem("mc-hr-view", v[0]); } catch (e) {}
+        renderHeadroom(v[0]);
+      };
+      b.onkeydown = function (event) {
+        var next = null;
+        if (event.key === "ArrowRight" || event.key === "ArrowDown") next = (index + 1) % HR_VIEWS.length;
+        else if (event.key === "ArrowLeft" || event.key === "ArrowUp") next = (index + HR_VIEWS.length - 1) % HR_VIEWS.length;
+        else if (event.key === "Home") next = 0;
+        else if (event.key === "End") next = HR_VIEWS.length - 1;
+        if (next == null) return;
+        event.preventDefault();
+        HR.view = HR_VIEWS[next][0];
+        try { localStorage.setItem("mc-hr-view", HR.view); } catch (e) {}
+        renderHeadroom(HR.view);
+      };
+      tabs.appendChild(b);
+    });
+    list.setAttribute("aria-labelledby", "hr-tab-" + HR.view);
+    if (focusView) {
+      var focused = tabs.querySelector('[data-hr-view="' + focusView + '"]');
+      if (focused) focused.focus();
+    }
+    var motion = document.getElementById("hr-motion");
+    motion.classList.toggle("off", HR.motion !== "on");
+    motion.title = HR.motion === "on" ? "Burn animation on — click to turn off" : "Burn animation off — click to turn on";
+    motion.setAttribute("aria-label", HR.motion === "on" ? "Turn burn animation off" : "Turn burn animation on");
+    motion.setAttribute("aria-pressed", HR.motion === "on" ? "true" : "false");
+    motion.onclick = function () {
+      HR.motion = HR.motion === "on" ? "off" : "on";
+      try { localStorage.setItem("mc-hr-motion", HR.motion); } catch (e) {}
+      if (HR.raf) { cancelAnimationFrame(HR.raf); HR.raf = null; }
+      renderHeadroom();
+    };
+    var pin = document.getElementById("hr-pin");
+    var inPanel = !!(window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.mcPin);
+    pin.style.display = inPanel ? "" : "none";
+    pin.onclick = function () { window.webkit.messageHandlers.mcPin.postMessage({}); };
+
+    if (HR.raf) { cancelAnimationFrame(HR.raf); HR.raf = null; }
+    HR.anims = [];
+    list.textContent = "";
+    var feed = hrFeed();
+    var statAi = document.getElementById("stat-ai");
+    var renderableRows = plainObject(feed) && plainObject(feed.data) &&
+      Array.isArray(feed.data.rows) && feed.data.rows.every(plainObject) ? feed.data.rows : null;
+    if (!renderableRows) {
+      list.appendChild(el("div", "hr-note",
+        "Headroom collector not running — scripts/install-ai-headroom in global-implementations sets it up."));
+      if (statAi) { statAi.textContent = "–"; statAi.className = "num"; statAi.style.color = ""; statAi.title = "Live bottleneck unavailable"; }
+      return;
+    }
+    var res = hrFilter(renderableRows);
+    if (!res.rows.length) {
+      list.appendChild(el("div", "hr-note", res.note || "No usage rows."));
+    } else {
+      // ONE white card per provider; every window is a compact line inside it
+      var groups = [], byProv = {};
+      res.rows.forEach(function (r) {
+        var key = r.provider || r.label || "?";
+        var grp = byProv[key];
+        if (!grp) { grp = { label: r.label || key, rows: [] }; byProv[key] = grp; groups.push(grp); }
+        grp.rows.push(r);
+      });
+      groups.forEach(function (grp, index) { list.appendChild(hrProviderCard(grp, index)); });
+      if (res.note) list.appendChild(el("div", "hr-note", res.note));
+      if (HR.view === "all") {
+        renderableRows.filter(function (r) { return r.health === "hidden"; }).forEach(function (r) {
+          list.appendChild(el("div", "hr-note", r.label + ": " + (r.note || "not configured")));
+        });
+      }
+    }
+    var low = hrLiveSummaryRow(feed);
+    if (statAi) {
+      if (low && low.remaining_pct != null) {
+        statAi.textContent = Math.round(low.remaining_pct) + "%";
+        statAi.style.color = hrColor(low.band);
+        statAi.className = "num";
+        statAi.title = low.label + " " + low.window_label;
+      } else {
+        statAi.textContent = "–"; statAi.className = "num"; statAi.style.color = ""; statAi.title = "Live bottleneck unavailable";
+      }
+    }
+    var age = Date.now() / 1000 - (feed.generated_epoch || 0);
+    if (feed.generated_epoch && age > 300) {
+      list.appendChild(el("div", "hr-note", "Collector data is " + Math.round(age / 60) + " min old."));
+    }
+    hrKick();
+  }
+
+  window.MC_updateHeadroom = function (feed) {
+    if (!feed || typeof feed !== "object") return;
+    window.MC = window.MC || { feeds: {} };
+    window.MC.feeds = window.MC.feeds || {};
+    window.MC.feeds.headroom = feed;
+    renderHeadroom();
+  };
+  document.addEventListener("visibilitychange", hrKick);
+  renderHeadroom();
 })();
 </script>
 </body>

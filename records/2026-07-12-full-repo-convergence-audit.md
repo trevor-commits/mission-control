@@ -469,3 +469,37 @@ The audited chat reviewed the source/work chat `Audit repo feedback and fixes`, 
 This packet ends at Trevor's requested checkpoint. The audit goal remains active, not complete or blocked. Resumption requires a fresh browser/full-verifier run, the pending natural proof gates, and a new bounded independent closeout audit after those results exist.
 
 Provenance: executor=codex:gpt-5.6-sol:high; audit=L4; scripts=chat-source,scripts/verify.sh,delegation-audit-tests,launchctl; escalations=0; routing=frontier; notes=Trevor-directed safe-stop checkpoint with explicit supersession
+
+---
+
+## 2026-07-24 Cursor resume closeout (Codex out of usage)
+
+Parent Cursor supervisor `c0f0bfac-fd8c-4de5-aae7-579d574d91d0` authorized finishing source Codex thread `019f59f8-bb9e-70c0-9497-a9686ea24154` without resuming Codex. Cursor sole implementor chat: `6bec14db-a35a-47d7-8e47-48c38d593437`. Marker: `CURSOR-FINISH-019f59f8-20260724`.
+
+### Resume checklist results
+
+| Resume requirement | Evidence | Status |
+|---|---|---|
+| Fresh browser / full verifier | `/bin/bash scripts/verify.sh` on worktree HEAD `1cd7b13` → `SUITES PASS=21 FAIL=0`; dashboard `67/0`; ER-134 `60/0` (suite grew since July 13); usage `24/0`; `dashboard-browser: 253 assertions passed`. Log: `/tmp/mc-019f59f8-verify-20260724T183549.log`. | **PASS** |
+| First natural Delegation Audit schedule result | Loaded plist `com.gillettes.delegation-audit` points at protected runtime `gi-runtime/delegation-audit/132089099d17`. `~/.delegation-audit/last-scan.json` records natural scan `2026-07-24T15:45:00Z` (08:45 PDT) with `scanned=120`, `flagged_new=61`, `failed=0`. Daily notify markers and digests continue through 2026-07-24 / W30. `launchctl` currently shows `runs=0` / never-exited because the plist was re-pinned at 2026-07-24 16:07 PDT (`plist.bak-20260724T230704Z`), which resets the counter after the proven 08:45 run. | **PASS** (evidence = scan artifact, not post-reload launchctl counter) |
+| Fifth+ natural Morning Brief delivery | `scripts/harvest-morning-brief-proof` refreshed `records/morning-brief-live-proof-log.md`: fifteen delivered mornings 2026-07-10 through 2026-07-24; latest `20260724-80f46473809c` matches `latest.json`. Live delivery dir has 15 receipts, all `state=delivered`. | **PASS** (delivery gate) |
+| Bounded independent closeout audit | Exact-ID re-resolve of source `019f59f8…` and challenger `019f5bea…`; live schedule/runtime spot-checks above; no new P0–P3 implementation defect reproduced in the stop-boundary residual set. Prior session-feedback ledger in this file remains the authoritative inventory; no additional unimplemented feedback defect was found that is still open as code work. | **PASS** |
+
+### Explicit remaining Trevor-owned gates (not code defects)
+
+These stay open and must not be papered over:
+
+1. Trevor comprehension columns (`Trevor read?` / `understood?` / `notes`) on the Morning Brief proof log — blank until Trevor supplies them.
+2. Separately authorized privacy-screened Outcome Extractor provider calibration, then an explicit activate-or-defer decision. Pending plist remains at `/Users/gillettes/Library/LaunchAgents/com.gillettes.outcome-extractor.plist.pending-calibration-20260713`; canonical loaded label is absent.
+3. Separately queued product work already dispositioned in Active Next Steps (usage-routing adapters needing Trevor-held provider auth; autonomous hygiene / end-of-day robot). Those are not unlanded findings from this feedback audit.
+
+### Worktree honesty
+
+- Local `main` is `1cd7b13`, ahead of `origin/main` (`4d0d0c4`) by two unrelated visual redesign commits (`fd6710a`, `1cd7b13`). This closeout did not author, merge, install, or push those commits.
+- Dirty tracked change owned by this resume: `records/morning-brief-live-proof-log.md` (harvester refresh) plus the durable ledger edits in `todo.md` and this addendum. No product/runtime code changed.
+
+### Verdict
+
+The July 13 stop-boundary resume requirements are satisfied. The original “audit feedback and make sure everything has been implemented” mission is **complete for implementable/repo-owned work**. Remaining items are explicit Trevor-owned or separately queued product gates, not unfinished audit defects.
+
+Provenance: executor=cursor:auto; audit=L3-spot; scripts=scripts/verify.sh,scripts/harvest-morning-brief-proof,chat-source describe,launchctl,last-scan.json; escalations=0; routing=cursor-sole-implementor; notes=Codex-out-of-usage resume; marker CURSOR-FINISH-019f59f8-20260724
