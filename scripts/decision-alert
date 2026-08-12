@@ -119,9 +119,22 @@ def _connect():
 
 
 def _connect_readonly():
-    """Open the current decision store without migration or journal writes."""
+    """Open the decision store without creating SQLite journal sidecars."""
     path = os.path.abspath(_db_path())
-    uri = "file:%s?mode=ro" % urllib.parse.quote(path, safe="/")
+    params = "mode=ro"
+    wal_path = path + "-wal"
+    shm_path = path + "-shm"
+    if os.path.isfile(wal_path):
+        # A WAL reader needs the existing shared-memory index. Refuse an
+        # incomplete namespace instead of creating it during validation.
+        if not os.path.isfile(shm_path):
+            raise DecisionError("decision store journal is incomplete; retry")
+    else:
+        # With no WAL, the checkpointed database is complete. Immutable mode
+        # avoids macOS SQLite creating empty -wal/-shm files for a rejected
+        # card or member while the later write transaction still revalidates.
+        params += "&immutable=1"
+    uri = "file:%s?%s" % (urllib.parse.quote(path, safe="/"), params)
     con = sqlite3.connect(uri, uri=True, timeout=10)
     con.row_factory = sqlite3.Row
     con.execute("PRAGMA busy_timeout=10000")

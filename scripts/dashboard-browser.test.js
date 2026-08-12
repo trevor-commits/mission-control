@@ -38,6 +38,13 @@ function assert(ok, message) {
   passed++;
 }
 
+async function waitForText(page, selector, expected) {
+  await page.waitForFunction(({ selector: query, expected: text }) => {
+    const node = document.querySelector(query);
+    return node && (node.textContent || '').includes(text);
+  }, { selector, expected });
+}
+
 function installedState(tmp) {
   const home = path.join(tmp, 'home');
   const state = path.join(tmp, 'installed');
@@ -232,25 +239,27 @@ async function operatorUxAudit(browser, root) {
       await page.goto(url('chats'), { waitUntil: 'load' });
       const search = page.getByLabel('Search chats and open work');
       await search.fill('Synthetic');
-      await page.waitForTimeout(150);
+      await waitForText(page, '#mc-open-search-status',
+        'Showing 50 of 90 matches across 90 open work items');
       check(/Showing 100 of 320 matches across 321 chats/.test(await page.locator('#mc-chat-search-status').innerText()),
         'Chats broad-search count does not distinguish matches shown from matches found');
       check(/Showing 50 of 90 matches across 90 open work items/.test(await page.locator('#mc-open-search-status').innerText()),
         'Open-work broad-search count does not distinguish matches shown from matches found');
       await search.fill('Map Needle beyond the old cap');
-      await page.waitForTimeout(150);
+      await waitForText(page, '#mc-chat-search-status', '1 match across 321 chats');
       check(await page.locator('.mc-chatrow-title', { hasText: 'Map Needle beyond the old cap' }).count() === 1,
         'Chats search cannot reach a chat beyond the old 100-row cap');
       check(/1 match across 321 chats/.test(await page.locator('#mc-chat-search-status').innerText()),
         'Chats search does not expose a visible result/total count');
       await search.fill('Open Needle beyond the old cap');
-      await page.waitForTimeout(150);
+      await waitForText(page, '#mc-open-search-status', '1 match across 90 open work items');
       check(await page.locator('.mc-row-problem', { hasText: 'Open Needle beyond the old cap' }).count() === 1,
         'Open-work search cannot reach an item beyond the old 50-row cap');
       check(/1 match across 90 open work items/.test(await page.locator('#mc-open-search-status').innerText()),
         'Open-work search does not expose a visible result/total count');
 
       await search.fill('Needle');
+      await waitForText(page, '#mc-open-search-status', '1 match across 90 open work items');
       await page.locator('#mc-chat-repo-filter').selectOption('repo-b');
       const openOnly = page.getByRole('button', { name: 'Only chats with unfinished work' });
       await openOnly.click();
@@ -290,14 +299,14 @@ async function operatorUxAudit(browser, root) {
 
     await block('large Map search and native controls', async () => {
       await page.goto(url('map'), { waitUntil: 'load' });
-      await page.waitForTimeout(150);
       const search = page.getByLabel('Search map chats');
       await search.fill('Synthetic chat');
-      await page.waitForTimeout(150);
+      await waitForText(page, '#mc-map-search-status',
+        'Showing 260 of 320 matches across 321 connected chats');
       check(/Showing 260 of 320 matches across 321 connected chats/.test(await page.locator('#mc-map-search-status').innerText()),
         'Map broad-search count does not distinguish matches shown from matches found');
       await search.fill('Map Needle beyond the old cap');
-      await page.waitForTimeout(150);
+      await waitForText(page, '#mc-map-search-status', '1 match across 321 connected chats');
       check(/1 match across 321 connected chats/.test(await page.locator('#mc-map-search-status').innerText()),
         'Map search does not expose a visible result/total count');
       await page.locator('#mc-map-repo-filter').selectOption('repo-b');

@@ -172,6 +172,19 @@ class RollupAnswerTests(unittest.TestCase):
                 snapshot.append((relative, "directory", mode, b""))
         return snapshot
 
+    def _checkpoint_without_sidecars(self) -> None:
+        """Leave a valid WAL-mode database with no journal namespace."""
+        path = self.home / "decisions" / "decisions.db"
+        con = sqlite3.connect(path)
+        try:
+            checkpoint = con.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+            self.assertIsNotNone(checkpoint)
+            self.assertEqual(checkpoint[0], 0)
+        finally:
+            con.close()
+        for suffix in ("-wal", "-shm"):
+            Path(str(path) + suffix).unlink(missing_ok=True)
+
     def _seed_brief_inputs(self) -> None:
         data_dir = self.home / "data"
         for name, cadence in (("automation", 300), ("git", 900), ("chats", 1800)):
@@ -217,13 +230,17 @@ class RollupAnswerTests(unittest.TestCase):
         self.assertEqual(self._state_snapshot(), empty)
 
         fixture = self._three_member_card()
+        self._checkpoint_without_sidecars()
         before = self._state_snapshot()
-        self._alert(
+        invalid = self._alert(
             "answer-rollup", fixture["card"]["card_id"],
             "decision:" + "0" * 24, "1",
             "--expected-scope-key", "scope:" + "0" * 40,
             "--artifact-batch-name", "rollup-" + "0" * 40,
             "--artifact-manifest-sha256", "0" * 64, ok=False)
+        self.assertEqual(
+            json.loads(invalid["stderr"])["error"],
+            "primary decision is not a current card member")
         self.assertEqual(self._state_snapshot(), before)
 
         self._dashboard(
