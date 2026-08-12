@@ -38,6 +38,13 @@ function assert(ok, message) {
   passed++;
 }
 
+async function waitForText(page, selector, expected) {
+  await page.waitForFunction(({ selector: query, expected: text }) => {
+    const node = document.querySelector(query);
+    return node && (node.textContent || '').includes(text);
+  }, { selector, expected });
+}
+
 function installedState(tmp) {
   const home = path.join(tmp, 'home');
   const state = path.join(tmp, 'installed');
@@ -232,25 +239,27 @@ async function operatorUxAudit(browser, root) {
       await page.goto(url('chats'), { waitUntil: 'load' });
       const search = page.getByLabel('Search chats and open work');
       await search.fill('Synthetic');
-      await page.waitForTimeout(150);
+      await waitForText(page, '#mc-open-search-status',
+        'Showing 50 of 90 matches across 90 open work items');
       check(/Showing 100 of 320 matches across 321 chats/.test(await page.locator('#mc-chat-search-status').innerText()),
         'Chats broad-search count does not distinguish matches shown from matches found');
       check(/Showing 50 of 90 matches across 90 open work items/.test(await page.locator('#mc-open-search-status').innerText()),
         'Open-work broad-search count does not distinguish matches shown from matches found');
       await search.fill('Map Needle beyond the old cap');
-      await page.waitForTimeout(150);
+      await waitForText(page, '#mc-chat-search-status', '1 match across 321 chats');
       check(await page.locator('.mc-chatrow-title', { hasText: 'Map Needle beyond the old cap' }).count() === 1,
         'Chats search cannot reach a chat beyond the old 100-row cap');
       check(/1 match across 321 chats/.test(await page.locator('#mc-chat-search-status').innerText()),
         'Chats search does not expose a visible result/total count');
       await search.fill('Open Needle beyond the old cap');
-      await page.waitForTimeout(150);
+      await waitForText(page, '#mc-open-search-status', '1 match across 90 open work items');
       check(await page.locator('.mc-row-problem', { hasText: 'Open Needle beyond the old cap' }).count() === 1,
         'Open-work search cannot reach an item beyond the old 50-row cap');
       check(/1 match across 90 open work items/.test(await page.locator('#mc-open-search-status').innerText()),
         'Open-work search does not expose a visible result/total count');
 
       await search.fill('Needle');
+      await waitForText(page, '#mc-open-search-status', '1 match across 90 open work items');
       await page.locator('#mc-chat-repo-filter').selectOption('repo-b');
       const openOnly = page.getByRole('button', { name: 'Only chats with unfinished work' });
       await openOnly.click();
@@ -290,14 +299,14 @@ async function operatorUxAudit(browser, root) {
 
     await block('large Map search and native controls', async () => {
       await page.goto(url('map'), { waitUntil: 'load' });
-      await page.waitForTimeout(150);
       const search = page.getByLabel('Search map chats');
       await search.fill('Synthetic chat');
-      await page.waitForTimeout(150);
+      await waitForText(page, '#mc-map-search-status',
+        'Showing 260 of 320 matches across 321 connected chats');
       check(/Showing 260 of 320 matches across 321 connected chats/.test(await page.locator('#mc-map-search-status').innerText()),
         'Map broad-search count does not distinguish matches shown from matches found');
       await search.fill('Map Needle beyond the old cap');
-      await page.waitForTimeout(150);
+      await waitForText(page, '#mc-map-search-status', '1 match across 321 connected chats');
       check(/1 match across 321 connected chats/.test(await page.locator('#mc-map-search-status').innerText()),
         'Map search does not expose a visible result/total count');
       await page.locator('#mc-map-repo-filter').selectOption('repo-b');
@@ -395,6 +404,50 @@ function demoState() {
   return match[1].trim();
 }
 
+function homePendingState(tmp, name) {
+  const root = installedState(path.join(tmp, name));
+  const now = Math.floor(Date.now() / 1000);
+  for (const feed of ['usage', 'headroom', 'git', 'chats', 'automation', 'decisions', 'attention', 'brief']) {
+    const feedPath = path.join(root, 'data', `${feed}.json`);
+    const envelope = JSON.parse(fs.readFileSync(feedPath, 'utf8'));
+    envelope.generated_epoch = now;
+    envelope.generated_at = new Date(now * 1000).toISOString();
+    if (feed === 'usage') envelope.data.providers = [];
+    if (feed === 'git') envelope.data.repos = [];
+    if (feed === 'chats') {
+      envelope.data.nodes = [];
+      envelope.data.edges = [];
+      envelope.data.loose_ends = [];
+      envelope.data.stale_providers = [];
+      envelope.data.counts = {};
+    }
+    if (feed === 'automation') envelope.data.jobs = [];
+    writeStateFeed(root, feed, envelope);
+  }
+  const decisionsPath = path.join(root, 'data', 'decisions.json');
+  const decisions = JSON.parse(fs.readFileSync(decisionsPath, 'utf8'));
+  for (const row of decisions.data.pinned || []) {
+    row.answer_pending = { choice: 1, choice_label: 'Recorded choice' };
+  }
+  fs.writeFileSync(decisionsPath, JSON.stringify(decisions) + '\n');
+  fs.writeFileSync(path.join(root, 'data', 'decisions.js'),
+    `window.MC=window.MC||{feeds:{},feedErrors:{}};window.MC.feeds.decisions=${JSON.stringify(decisions)};\n`);
+  return root;
+}
+
+function staleBriefHomeState(root) {
+  const attentionPath = path.join(root, 'data', 'attention.json');
+  const attention = JSON.parse(fs.readFileSync(attentionPath, 'utf8'));
+  attention.data.board = [];
+  attention.data.top5 = [];
+  attention.data.counts = { manual: 0, decision: 0, automation: 0, decisions_filtered_out: 0 };
+  writeStateFeed(root, 'attention', attention);
+  const briefPath = path.join(root, 'data', 'brief.json');
+  const brief = JSON.parse(fs.readFileSync(briefPath, 'utf8'));
+  brief.data.stale_required_inputs = ['git'];
+  writeStateFeed(root, 'brief', brief);
+}
+
 function luminance(rgb) {
   let values;
   const hex = rgb.trim().match(/^#([0-9a-f]{6})$/i);
@@ -417,6 +470,9 @@ function contrast(a, b) {
   assert(fs.existsSync(CHROME), `Chrome executable missing: ${CHROME}`);
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mc-browser-'));
   const states = { installed: installedState(tmp), demo: demoState() };
+  const attentionState = homePendingState(tmp, 'home-attention');
+  const staleBriefState = homePendingState(tmp, 'home-stale-brief');
+  staleBriefHomeState(staleBriefState);
   const operatorState = installedState(path.join(tmp, 'operator-audit'));
   writeStateFeed(operatorState, 'chats', syntheticLargeChats());
   const operatorGit = JSON.parse(fs.readFileSync(path.join(FIXTURES, 'git.json'), 'utf8'));
@@ -517,6 +573,46 @@ function contrast(a, b) {
         await page.close();
       }
     }
+    const attentionPage = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+    await attentionPage.goto(
+      `${pathToFileURL(path.join(attentionState, 'index.html')).href}#home`,
+      { waitUntil: 'load' });
+    const attentionTitle = await attentionPage.locator('.mc-glance-title').innerText();
+    assert(attentionTitle === 'Needs you',
+      `home/manual attention: global heading did not require action (${attentionTitle})`);
+    const attentionHeroNeeds = await attentionPage.locator('.mc-hero-stat').filter({
+      has: attentionPage.getByText('Needs you', { exact: true }),
+    }).locator('.mc-hero-stat-num').innerText();
+    assert(attentionHeroNeeds === '1',
+      `home/manual attention: guard rejected or hid the manual item (${attentionHeroNeeds})`);
+    assert(await attentionPage.getByText('Review morning brief delivery').count() === 1,
+      'home/manual attention: valid manual item is not visible');
+    const expandHome = attentionPage.getByRole('button', { name: 'Show more details' });
+    await expandHome.click();
+    const pendingDecisionSection = attentionPage.locator('section.mc-attention').filter({
+      has: attentionPage.getByRole('heading', { name: 'Awaiting owner consumption', exact: true }),
+    });
+    assert(await pendingDecisionSection.count() === 1,
+      'home/manual attention: answered-pending decision section is not visible');
+    assert(await pendingDecisionSection.locator('.mc-opt, .mc-copy').count() === 0,
+      'home/manual attention: answered-pending decisions expose action or copy buttons');
+    await attentionPage.close();
+    const briefAttentionPage = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+    await briefAttentionPage.goto(
+      `${pathToFileURL(path.join(staleBriefState, 'index.html')).href}#home`,
+      { waitUntil: 'load' });
+    const staleBriefAttention = await briefAttentionPage.evaluate(() => ({
+      board: window.MC.feeds.attention.data.board.length,
+      top5: window.MC.feeds.attention.data.top5.length,
+    }));
+    assert(staleBriefAttention.board === 0 && staleBriefAttention.top5 === 0,
+      `home/stale brief: competing attention board is not empty (${JSON.stringify(staleBriefAttention)})`);
+    assert(await briefAttentionPage.getByText('Review morning brief delivery').count() === 0,
+      'home/stale brief: manual attention item is still visible');
+    const briefAttentionTitle = await briefAttentionPage.locator('.mc-glance-title').innerText();
+    assert(briefAttentionTitle === 'Needs you',
+      `home/stale brief: global heading did not require action (${briefAttentionTitle})`);
+    await briefAttentionPage.close();
   } finally {
     await browser.close();
     fs.rmSync(tmp, { recursive: true, force: true });

@@ -1,0 +1,48 @@
+Lane D fresh-audit RED/GREEN evidence
+Date: 2026-07-18
+Branch: codex/rollup-answer-wiring
+Rejected head: 708031f603e2c53ba9a8a8375e9f23a42ed123f4
+Repair commit: 8613d25
+Auditor: Codex 019f7680-90ce-7392-a991-5a76a3bae61b, gpt-5.6-sol/max
+
+RED — tests added before production repair
+
+1. PYTHONDONTWRITEBYTECODE=1 python3 scripts/rollup-answer.test.py
+   - 17 tests discovered.
+   - FAIL: existing published batch mutated during replay was not removed from its canonical name.
+   - FAIL: existing published batch in a replaced parent was not quarantined under the descriptor-pinned old parent.
+   - FAIL: an executable stale reader under the temporary Mission Control home was invoked and omitted answer_pending from the refreshed feed.
+
+2. node scripts/dashboard-render-smoke.js
+   - FAIL: Home Needs-you glance hid a later actionable decision behind three pending rows.
+   - The remaining six tabs and non-ordering browser guards passed.
+
+3. /bin/bash scripts/er134-usability.test.sh
+   - FAIL: panel rendered pending rows 1-3 and hid ACTIONABLE-LATE.
+   - Summary: er134-usability: 58 passed, 1 failed.
+
+GREEN — exact focused repair
+
+1. PYTHONDONTWRITEBYTECODE=1 python3 scripts/rollup-answer.test.py
+   - Ran 17 tests in 28.699s.
+   - OK.
+
+2. node scripts/dashboard-render-smoke.js
+   - PASS: all 7 tabs render over fixtures.
+   - PASS: the Needs-you glance contains the later actionable decision.
+
+3. /bin/bash scripts/er134-usability.test.sh
+   - PASS: panel shows actionable rows before answered-pending rows.
+   - Summary: er134-usability: 59 passed, 0 failed.
+
+4. git diff --check; /bin/bash -n scripts/dashboard; Python in-memory AST syntax
+   - PASS.
+
+Claims
+
+- Receipt-backed cleanup now uses the exact artifact name bound to the held directory fd, including replay of an already-published batch.
+- The strict decisions collector uses the same runtime directory as the answer writer; the planted stale installed reader is not invoked.
+- Home and panel preserve relative order while placing actionable rows ahead of pending rows in bounded views.
+- Every probe used a temporary Mission Control home/store. No provider send, live-store write, install, deploy, plist, launchd, main-branch, or release action occurred.
+
+Did not verify: the records-complete authoritative full gate, final exact-head audit verdict, hosted PR checks, merge/main state, installation/deployment, provider delivery, live-store behavior, plist/launchd, or the live pending decision.

@@ -25,8 +25,8 @@ from outcome_sources import PROVIDERS, read_messages, recent_sources
 EXTRACTOR_VERSION = 1
 PROMPT_VERSION = 3
 EGRESS_POLICY_VERSION = 3
-DEFAULT_MODEL = "claude-haiku-4-5-20251001"
-DEFAULT_ESCALATION_MODEL = "claude-sonnet-4-6"
+DEFAULT_MODEL = "claude-opus-5"
+DEFAULT_ESCALATION_MODEL = "claude-opus-5"
 DEFAULT_CLAUDE = os.path.expanduser("~/.local/bin/claude")
 DEFAULT_MAX_OUTPUT_TOKENS = 512
 MAX_MODEL_OUTPUT_BYTES = 16 * 1024
@@ -522,6 +522,11 @@ def _set_enabled(enabled):
             "escalation_model": DEFAULT_ESCALATION_MODEL,
             "providers": {provider: True for provider in PROVIDERS},
         }
+    # A state toggle is also a deliberate selector-normalization boundary.
+    # Reapply the supported defaults so stale private config cannot reactivate
+    # an earlier model when an operator enables or disables the extractor.
+    config["model"] = DEFAULT_MODEL
+    config["escalation_model"] = DEFAULT_ESCALATION_MODEL
     config["enabled"] = bool(enabled)
     config["updated_at"] = int(time.time())
     _atomic_json(_config_path(), config, private_parent=True)
@@ -529,6 +534,8 @@ def _set_enabled(enabled):
 
 
 def _invoke_model(prompt, model, timeout_s):
+    if model != DEFAULT_MODEL:
+        return {"status": "model_policy", "latency_ms": 0}
     command = _model_command()
     if not (os.path.isfile(command) and os.access(command, os.X_OK)):
         return {"status": "unavailable", "latency_ms": 0}
@@ -926,10 +933,13 @@ def run(graph, args):
         config = _set_enabled(parsed.set_enabled == "1")
         result = {
             "schema": 1, "mode": "set_enabled", "enabled": config["enabled"],
+            "model": config["model"],
             "config_path": _config_path(),
         }
         print(json.dumps(result, sort_keys=True) if parsed.json else
-              "chat-graph: Tier 2 %s" % ("enabled" if config["enabled"] else "disabled"))
+              "chat-graph: Tier 2 %s with %s" % (
+                  "enabled" if config["enabled"] else "disabled",
+                  config["model"]))
         return 0
     sample_mode = parsed.sample_per_provider > 0
     testing_mode = _flag("MORNING_BRIEF_LLM_TESTING", False)
@@ -1013,8 +1023,8 @@ def run(graph, args):
         selected = persisted
         timeout_s = _int_env("MORNING_BRIEF_LLM_TIMEOUT", 120, minimum=6, maximum=900)
         max_output = DEFAULT_MAX_OUTPUT_TOKENS
-        haiku_model = DEFAULT_MODEL
-        sonnet_model = DEFAULT_ESCALATION_MODEL
+        primary_model = DEFAULT_MODEL
+        escalation_model = DEFAULT_ESCALATION_MODEL
         prompt_version = _prompt_version()
 
         for provider, sid, _source, _mtime_ns, tier1, messages in selected:
@@ -1034,7 +1044,8 @@ def run(graph, args):
                 "extractor": EXTRACTOR_VERSION, "prompt": prompt_version,
                 "egress_policy": EGRESS_POLICY_VERSION, "session_id": sid,
                 "provider": provider, "tail": metadata["sanitized_tail_hash"],
-                "haiku": haiku_model, "sonnet": sonnet_model,
+                "primary_model": primary_model,
+                "escalation_model": escalation_model,
             }, sort_keys=True))
             cached = _cache_lookup(graph, cache_key)
             if cached:
@@ -1079,11 +1090,11 @@ def run(graph, args):
                     summary["uncalibrated_skips"] += 1
                 break
             summary["calls"] += 1
-            response = _invoke_model(prompt, haiku_model, timeout_s)
+            response = _invoke_model(prompt, primary_model, timeout_s)
             if response["status"] == "deferred":
                 if sample_mode:
                     sample_observations.append(_sample_row(
-                        provider, haiku_model, response, estimated_input))
+                        provider, primary_model, response, estimated_input))
                 summary["deferred"] += 1
                 _finish_call(graph, "deferred", estimated_input,
                              latency_ms=response["latency_ms"], deferred=1)
@@ -1091,10 +1102,21 @@ def run(graph, args):
                                 "deferred", DEFER_RETRY_S)
                 _observe_tier1(graph, sid, tier1["tail_hash"])
                 continue
+            if response["status"] == "model_policy":
+                if sample_mode:
+                    sample_observations.append(_sample_row(
+                        provider, primary_model, response, estimated_input))
+                summary["provider_skips"] += 1
+                _finish_call(
+                    graph, "model_policy_skip", estimated_input,
+                    actual_input=0, latency_ms=response.get("latency_ms", 0),
+                    provider_skips=1)
+                _observe_tier1(graph, sid, tier1["tail_hash"])
+                continue
             if response["status"] != "success":
                 if sample_mode:
                     sample_observations.append(_sample_row(
-                        provider, haiku_model, response, estimated_input))
+                        provider, primary_model, response, estimated_input))
                 summary["failures"] += 1
                 _finish_call(graph, response["status"], estimated_input,
                              latency_ms=response.get("latency_ms", 0), failures=1)
@@ -1106,7 +1128,7 @@ def run(graph, args):
             if clean is None:
                 if sample_mode:
                     sample_observations.append(_sample_row(
-                        provider, haiku_model, response, estimated_input,
+                        provider, primary_model, response, estimated_input,
                         status="invalid_result"))
                 summary["failures"] += 1
                 _finish_call(graph, "invalid_result", estimated_input,
@@ -1119,7 +1141,7 @@ def run(graph, args):
                 continue
             actual_input = response.get("input_tokens") or estimated_input
             actual_output = response.get("output_tokens") or 0
-            model = haiku_model
+            model = primary_model
 
             if clean["ambiguity"]:
                 _finish_call(graph, "ambiguous", estimated_input,
@@ -1127,7 +1149,7 @@ def run(graph, args):
                              latency_ms=response["latency_ms"])
                 if sample_mode:
                     sample_observations.append(_sample_row(
-                        provider, haiku_model, response, estimated_input,
+                        provider, primary_model, response, estimated_input,
                         status="ambiguous"))
                 if summary["calls"] >= parsed.limit:
                     summary["deferred"] += 1
@@ -1152,11 +1174,22 @@ def run(graph, args):
                 summary["calls"] += 1
                 summary["escalations"] += 1
                 _health(graph, "escalating", escalations=1)
-                second = _invoke_model(prompt, sonnet_model, timeout_s)
+                second = _invoke_model(prompt, escalation_model, timeout_s)
+                if second["status"] == "model_policy":
+                    if sample_mode:
+                        sample_observations.append(_sample_row(
+                            provider, escalation_model, second, second_estimate))
+                    summary["provider_skips"] += 1
+                    _finish_call(
+                        graph, "model_policy_skip", second_estimate,
+                        actual_input=0, latency_ms=second.get("latency_ms", 0),
+                        provider_skips=1)
+                    _observe_tier1(graph, sid, tier1["tail_hash"])
+                    continue
                 if second["status"] == "deferred":
                     if sample_mode:
                         sample_observations.append(_sample_row(
-                            provider, sonnet_model, second, second_estimate))
+                            provider, escalation_model, second, second_estimate))
                     summary["deferred"] += 1
                     _finish_call(graph, "deferred", second_estimate,
                                  latency_ms=second["latency_ms"], deferred=1)
@@ -1172,7 +1205,7 @@ def run(graph, args):
                                       second["status"])
                     if sample_mode:
                         sample_observations.append(_sample_row(
-                            provider, sonnet_model, second, second_estimate,
+                            provider, escalation_model, second, second_estimate,
                             status=failure_status))
                     summary["failures"] += 1
                     _finish_call(
@@ -1187,20 +1220,20 @@ def run(graph, args):
                     continue
                 if sample_mode:
                     sample_observations.append(_sample_row(
-                        provider, sonnet_model, second, second_estimate,
+                        provider, escalation_model, second, second_estimate,
                         status="success"))
                 _finish_call(
                     graph, "success", second_estimate,
                     actual_input=second.get("input_tokens") or second_estimate,
                     actual_output=second.get("output_tokens") or 0,
                     latency_ms=second["latency_ms"])
-                clean, model = second_clean, sonnet_model
+                clean, model = second_clean, escalation_model
             else:
                 _finish_call(graph, "success", estimated_input, actual_input=actual_input,
                              actual_output=actual_output, latency_ms=response["latency_ms"])
                 if sample_mode:
                     sample_observations.append(_sample_row(
-                        provider, haiku_model, response, estimated_input,
+                        provider, primary_model, response, estimated_input,
                         status="success"))
 
             clean["model"] = model
@@ -1236,8 +1269,8 @@ def run(graph, args):
                 "daily_call_cap": recommended_calls,
                 "daily_token_cap": recommended_tokens,
             },
-            "default_model": haiku_model,
-            "escalation_model": sonnet_model,
+            "default_model": primary_model,
+            "escalation_model": escalation_model,
             "basis": "bounded provider sample plus two-times modeled headroom",
         }
         _atomic_json(parsed.calibration_out, calibration)

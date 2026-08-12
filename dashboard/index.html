@@ -772,7 +772,7 @@ html[data-theme="dark"] .mc-heat-l4 { background: #35b98a; }
 
   // --- per-feed guard: schema/staleness/skew ---------------------------------
   var EXPECTED_CADENCE = { automation: 300, usage: 1800, headroom: 60, git: 900,
-                           chats: 1800, decisions: 300, brief: 300 };
+                           chats: 1800, decisions: 300, attention: 300, brief: 300 };
   function guard(name) {
     var env = MC.feeds[name];
     var currentError = MC.feedErrors[name];
@@ -1090,7 +1090,10 @@ html[data-theme="dark"] .mc-heat-l4 { background: #35b98a; }
       return "fresh";
     }
     if (name === "decisions") {
-      return ((g.data && g.data.pinned) || []).length ? "attention" : "fresh";
+      var decisionRows = (g.data && g.data.pinned) || [];
+      return decisionRows.some(function (decision) {
+        return !isAnswerPending(decision);
+      }) ? "attention" : "fresh";
     }
     if (name === "attention") {
       return (((g.data && g.data.top5) || []).length) ? "attention" : "fresh";
@@ -1691,6 +1694,17 @@ html[data-theme="dark"] .mc-heat-l4 { background: #35b98a; }
     p.body.appendChild(list);
     p.body.appendChild(h("a", { class: "mc-jump", href: "#brief" }, "Read the full brief →"));
   }
+  function isAnswerPending(decision) {
+    return !!(decision && decision.answer_pending != null);
+  }
+  function answerPendingText(decision) {
+    var raw = decision && decision.answer_pending && decision.answer_pending.choice;
+    var choice = +raw;
+    if (isFinite(choice) && choice > 0 && Math.floor(choice) === choice) {
+      return "Awaiting owner consumption · choice " + choice + " recorded";
+    }
+    return "Awaiting owner consumption · choice recorded";
+  }
   function renderPinnedDecisions(main, limit, opts) {
     var g = guard("decisions");
     if (!g.ok || !g.data) return 0;
@@ -1698,14 +1712,23 @@ html[data-theme="dark"] .mc-heat-l4 { background: #35b98a; }
     if (!pinned.length) return 0;
     limit = limit == null ? 3 : limit;
     opts = opts || {};
+    var pendingCount = pinned.filter(isAnswerPending).length;
+    var actionableCount = pinned.length - pendingCount;
+    var heading = actionableCount ?
+      (opts.glance ? "Needs you" : "Decisions waiting for you") :
+      "Awaiting owner consumption";
     var section = h("section", { class: opts.glance ? "mc-glance-card" : "mc-attention" });
     section.appendChild(h("div", { class: "mc-section-head" },
-      h("h2", { text: opts.glance ? "Needs you" : "Decisions waiting for you" }), ageSpan(g.epoch)));
+      h("h2", { text: heading }), ageSpan(g.epoch)));
     if (!opts.glance) {
       appendPanelProvenance(section, "decisions", g,
-        pinned.length + " confirmed open decision(s)");
+        actionableCount + " awaiting answer; " + pendingCount + " answer(s) recorded");
     }
-    var shown = pinned.slice(0, limit);
+    // A bounded "Needs you" surface must show actionable rows before durable
+    // answered-pending receipts while preserving order within both groups.
+    var shown = pinned.filter(function (decision) {
+      return !isAnswerPending(decision);
+    }).concat(pinned.filter(isAnswerPending)).slice(0, limit);
     shown.forEach(function (decision, idx) {
       var id = decision.id || "";
       var parsed = (Array.isArray(decision.options) && decision.question) ? {
@@ -1717,7 +1740,10 @@ html[data-theme="dark"] .mc-heat-l4 { background: #35b98a; }
         var item = h("div", { class: "mc-glance-item" });
         item.appendChild(h("div", { class: "mc-glance-q" },
           (idx + 1) + ". " + parsed.question));
-        if (parsed.options.length) {
+        if (isAnswerPending(decision)) {
+          item.appendChild(h("div", { class: "mc-row-meta" },
+            answerPendingText(decision)));
+        } else if (parsed.options.length) {
           var row = h("div", { class: "mc-glance-opts" });
           parsed.options.forEach(function (label, oi) {
             var n = oi + 1;
@@ -1749,23 +1775,28 @@ html[data-theme="dark"] .mc-heat-l4 { background: #35b98a; }
             "Confirmed · " + (decision.provenance || decision.source_kind || "structured source")));
           if (id) item.appendChild(copyable("dashboard decide dismiss " + id, "Copy dismiss command"));
         }
-        var receipt = decision.alert_receipt;
-        var attempt = decision.alert_attempt;
-        if (receipt && receipt.succeeded_at) {
-          item.appendChild(h("div", { class: "mc-row-meta" }, "Alert receipt on file"));
-        } else if (attempt && attempt.state === "failed") {
-          item.appendChild(h("div", { class: "mc-row-meta" }, "Alert attempt failed — will retry"));
-        } else {
-          item.appendChild(h("div", { class: "mc-row-meta" }, "Alert pending"));
+        if (!isAnswerPending(decision)) {
+          var receipt = decision.alert_receipt;
+          var attempt = decision.alert_attempt;
+          if (receipt && receipt.succeeded_at) {
+            item.appendChild(h("div", { class: "mc-row-meta" }, "Alert receipt on file"));
+          } else if (attempt && attempt.state === "failed") {
+            item.appendChild(h("div", { class: "mc-row-meta" }, "Alert attempt failed — will retry"));
+          } else {
+            item.appendChild(h("div", { class: "mc-row-meta" }, "Alert pending"));
+          }
         }
         section.appendChild(item);
       } else {
-        var row2 = h("div", { class: "mc-row" }, glyphSpan("red"),
+        var pending = isAnswerPending(decision);
+        var row2 = h("div", { class: "mc-row" }, glyphSpan(pending ? "amber" : "red"),
           h("div", { class: "mc-row-body" },
-            h("div", { class: "mc-row-problem" }, decision.text || "Decision needs review"),
-            h("div", { class: "mc-row-meta" }, "Confirmed · " +
-              (decision.provenance || decision.source_kind || "structured source"))));
-        if (id) row2.appendChild(copyable("dashboard decide dismiss " + id, "Copy dismiss command"));
+            h("div", { class: "mc-row-problem" },
+              pending ? parsed.question : (decision.text || "Decision needs review")),
+            h("div", { class: "mc-row-meta" }, pending ? answerPendingText(decision) :
+              ("Confirmed · " +
+               (decision.provenance || decision.source_kind || "structured source")))));
+        if (id && !pending) row2.appendChild(copyable("dashboard decide dismiss " + id, "Copy dismiss command"));
         section.appendChild(row2);
       }
     });
@@ -1894,6 +1925,11 @@ html[data-theme="dark"] .mc-heat-l4 { background: #35b98a; }
   function renderHome(main) {
     var home = combinedHomeState();
     var glance = h("div", { class: "mc-glance" });
+    var decisionGuard = guard("decisions");
+    var homePinned = decisionGuard.ok && decisionGuard.data &&
+      Array.isArray(decisionGuard.data.pinned) ? decisionGuard.data.pinned : [];
+    var homeActionable = homePinned.filter(function (d) { return !isAnswerPending(d); }).length;
+    var homeNeedsAction = home.status === "attention" || homeActionable > 0;
     var hero = homeHeroState();
     var heroTone = hero.tone === "red" ? "mc-state-red" : hero.tone === "amber" ? "mc-state-amber" : "mc-state-green";
     glance.appendChild(h("div", { class: "mc-hero" },
@@ -1913,7 +1949,8 @@ html[data-theme="dark"] .mc-heat-l4 { background: #35b98a; }
       h("div", { class: "mc-hero-stat" },
         h("div", { class: "mc-hero-stat-num" }, hero.ageShort),
         h("div", { class: "mc-hero-stat-lbl" }, "Feed age"))));
-    glance.appendChild(h("h1", { class: "mc-glance-title" }, "Needs you"));
+    glance.appendChild(h("h1", { class: "mc-glance-title" },
+      homeNeedsAction ? "Needs you" : (homePinned.length ? "Answers recorded" : "Needs you")));
     var count = renderAttentionGlance(glance, 5);
     if (!count) count = renderPinnedDecisions(glance, 5, { glance: true });
     if (!count) {
@@ -1996,14 +2033,16 @@ html[data-theme="dark"] .mc-heat-l4 { background: #35b98a; }
   }
 
   function combinedHomeState() {
-    var names = ["chats", "git", "usage", "automation", "decisions", "brief"];
+    var names = ["chats", "git", "usage", "automation", "decisions", "attention", "brief"];
     var epochs = [];
     var status = "fresh";
     names.forEach(function (name) {
       var g = guard(name);
+      var panelState = panelStatusText(name, g);
       if (g.ok && g.epoch) epochs.push(g.epoch);
       if (!g.ok || g.feedError || g.flag === "stale") status = "attention";
-      else if (status !== "attention" && panelStatusText(name, g) !== "fresh") status = "partial";
+      else if (panelState === "attention" || panelState.indexOf("attention — ") === 0) status = "attention";
+      else if (status !== "attention" && panelState !== "fresh") status = "partial";
     });
     return { epoch: epochs.length ? Math.min.apply(null, epochs) : null, status: epochs.length ? status : "no data" };
   }
@@ -2019,7 +2058,11 @@ html[data-theme="dark"] .mc-heat-l4 { background: #35b98a; }
     }
     if (!needs) {
       var gd = guard("decisions");
-      if (gd.ok && gd.data && Array.isArray(gd.data.pinned)) needs = gd.data.pinned.length;
+      if (gd.ok && gd.data && Array.isArray(gd.data.pinned)) {
+        needs = gd.data.pinned.filter(function (decision) {
+          return !isAnswerPending(decision);
+        }).length;
+      }
     }
     var red = 0, yellow = 0, total = 0, healthy = 0;
     var gj = guard("automation");

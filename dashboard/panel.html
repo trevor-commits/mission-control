@@ -307,7 +307,7 @@ body.pin .hr-head { padding-top: 10px; }
 </div>
 <div id="hr-list" role="tabpanel" aria-label="AI headroom results"></div>
 
-<div class="section-head"><span>Needs you</span><span class="count" id="needs-count"></span></div>
+<div class="section-head"><span id="title">Needs you</span><span class="count" id="needs-count"></span></div>
 <div id="list"></div>
 
 <footer class="toolbar">
@@ -503,6 +503,19 @@ body.pin .hr-head { padding-top: 10px; }
     return { ok: true, reason: null, epoch: epoch };
   }
 
+  function isAnswerPending(d) {
+    return !!(d && d.answer_pending != null);
+  }
+
+  function answerPendingText(d) {
+    var raw = d && d.answer_pending && d.answer_pending.choice;
+    var choice = +raw;
+    if (isFinite(choice) && choice > 0 && Math.floor(choice) === choice) {
+      return "Awaiting owner consumption · choice " + choice + " recorded";
+    }
+    return "Awaiting owner consumption · choice recorded";
+  }
+
   function renderDecisionItem(list, d, i) {
     var parsed = (Array.isArray(d.options) && (d.question || d.title)) ? {
       q: d.question || d.title,
@@ -518,6 +531,11 @@ body.pin .hr-head { padding-top: 10px; }
     var qd = el("div", "q", parsed.q);
     qd.title = parsed.q;
     item.appendChild(qd);
+    if (isAnswerPending(d)) {
+      item.appendChild(el("div", "meta", answerPendingText(d)));
+      list.appendChild(item);
+      return;
+    }
     if (parsed.opts.length && d.id && /^decision:[0-9a-f]{24}$/.test(String(d.id))) {
       var row = el("div", "opts");
       parsed.opts.forEach(function (label, oi) {
@@ -625,7 +643,7 @@ body.pin .hr-head { padding-top: 10px; }
     var f = feeds();
     var dec = f.decisions || {};
     var pinned = Array.isArray((dec.data || {}).pinned) ? dec.data.pinned : [];
-    if (!pinned.length) return 0;
+    if (!pinned.length) return { rendered: 0, actionable: 0 };
     // The same question captured from several chats is ONE ask — show it once
     // with a count instead of three identical cards (seen live 2026-08-07).
     var seen = {}, deduped = [];
@@ -636,25 +654,36 @@ body.pin .hr-head { padding-top: 10px; }
       d.dupCount = 1;
       deduped.push(d);
     });
-    deduped.slice(0, 5).forEach(function (d, i) { renderDecisionItem(list, d, i); });
+    var actionable = deduped.filter(function (d) { return !isAnswerPending(d); });
+    var pending = deduped.filter(isAnswerPending);
+    document.getElementById("title").textContent = actionable.length ? "Needs you" :
+      "Awaiting owner consumption";
+    // Bounded views keep actionable controls ahead of recorded receipts while
+    // preserving the source order within both groups.
+    actionable.concat(pending).slice(0, 5).forEach(function (d, i) {
+      renderDecisionItem(list, d, i);
+    });
     if (deduped.length > 5) {
       list.appendChild(el("div", "more", "+" + (deduped.length - 5) + " more in full Mission Control"));
     }
-    return deduped.length;
+    return { rendered: deduped.length, actionable: actionable.length };
   }
 
   function render() {
     var f = feeds();
     var list = document.getElementById("list");
     list.textContent = "";
+    document.getElementById("title").textContent = "Needs you";
     var attn = f.attention || {};
     var attentionState = coreFeedState("attention");
     var decisionsState = coreFeedState("decisions");
     var automationState = coreFeedState("automation");
     var rawJobs = ((f.automation || {}).data || {}).jobs;
     var jobs = Array.isArray(rawJobs) ? rawJobs.filter(plainObject) : [];
-    var allClearVerified = attentionState.ok && decisionsState.ok && automationState.ok && jobs.length > 0;
+    var coreVerified = attentionState.ok && decisionsState.ok && automationState.ok;
+    var allClearVerified = coreVerified && jobs.length > 0;
     var needsTotal = 0;
+    var renderedTotal = 0;
     if (attentionState.ok) {
       var top5 = ((attn.data || {}).top5) || [];
       var board = ((attn.data || {}).board) || [];
@@ -671,17 +700,26 @@ body.pin .hr-head { padding-top: 10px; }
       });
       var total = dedupA.length;
       if (dedupA.length) {
+        document.getElementById("title").textContent = "Needs you";
         dedupA.slice(0, 5).forEach(function (d, i) { renderAttentionItem(list, d, i); });
         if (total > 5) {
           list.appendChild(el("div", "more", "+" + (total - 5) + " more in full Mission Control"));
         }
       }
       needsTotal = total;
-      if (needsTotal === 0 && decisionsState.ok) needsTotal = renderFromDecisions(list);
+      renderedTotal = total;
+      if (needsTotal === 0 && decisionsState.ok) {
+        var decisionResult = renderFromDecisions(list);
+        renderedTotal = decisionResult.rendered;
+        needsTotal = decisionResult.actionable;
+      }
     } else {
-      needsTotal = decisionsState.ok ? renderFromDecisions(list) : 0;
+      var fallbackResult = decisionsState.ok ? renderFromDecisions(list) :
+        { rendered: 0, actionable: 0 };
+      renderedTotal = fallbackResult.rendered;
+      needsTotal = fallbackResult.actionable;
     }
-    if (needsTotal === 0) {
+    if (renderedTotal === 0) {
       if (allClearVerified) renderEmpty(list);
       else renderUnverified(list);
     }
@@ -702,6 +740,9 @@ body.pin .hr-head { padding-top: 10px; }
       pillText.textContent = needsTotal > 0
         ? needsTotal + " need" + (needsTotal > 1 ? "" : "s") + " you"
         : yellow + " job warning" + (yellow > 1 ? "s" : "");
+    } else if (renderedTotal > 0 && coreVerified) {
+      pill.className = "pill ok";
+      pillText.textContent = "Answers recorded";
     } else if (allClearVerified) {
       pill.className = "pill ok";
       pillText.textContent = "All clear";
@@ -732,7 +773,8 @@ body.pin .hr-head { padding-top: 10px; }
     document.getElementById("updated").textContent = !stale && age ? "Updated " + age + " ago"
       : age ? "Feed check needed — oldest update " + age + " ago" : "Feed data incomplete";
     document.getElementById("needs-count").textContent =
-      needsTotal > 0 ? (needsTotal + " open") : needsVerified ? "" : "status unknown";
+      needsTotal > 0 ? (needsTotal + " open") : renderedTotal > 0 ? "answers recorded" :
+        needsVerified ? "" : "status unknown";
   }
   render();
 

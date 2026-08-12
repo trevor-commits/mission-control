@@ -131,6 +131,19 @@ def main() -> int:
         )
 
         feeds = valid_feeds(now)
+        feeds["decisions"] = envelope(
+            "decisions", now, {"pinned": [
+                {"id": "decision:pending", "answer_pending": {"choice": 1}},
+                {"id": "decision:actionable", "answer_pending": None},
+            ]},
+        )
+        run_case(
+            "pending receipts do not inflate the native action count",
+            feeds,
+            "1|0||",
+        )
+
+        feeds = valid_feeds(now)
         del feeds["decisions"]
         run_case("missing decisions fails closed", feeds, "0|0|decisions|")
 

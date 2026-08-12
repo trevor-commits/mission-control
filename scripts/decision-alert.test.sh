@@ -45,6 +45,19 @@ PY
 then pass "stable identity and duplicate ingest are idempotent"
 else fail "stable identity and duplicate ingest are idempotent"; fi
 
+if python3 - "$MISSION_CONTROL_HOME/decisions/decisions.db" <<'PY'
+import sqlite3, sys
+con = sqlite3.connect(sys.argv[1])
+indexes = {
+    row[1]: [column[2] for column in con.execute("PRAGMA index_info(%s)" % row[1])]
+    for row in con.execute("PRAGMA index_list(decision_events)")
+}
+assert ["decision_id", "event_type", "evidence_fingerprint", "event_id"] \
+    in indexes.values(), indexes
+PY
+then pass "answered-pending lookup has a covering decision-events index"
+else fail "answered-pending lookup has a covering decision-events index"; fi
+
 INF="$(run_json ingest --source-kind model --source-key maybe-1 \
   --text 'Maybe choose a deployment region' --evidence 'model only' \
   --trust inferred --provenance tier2)" || INF=""

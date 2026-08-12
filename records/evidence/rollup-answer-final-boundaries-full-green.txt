@@ -1,0 +1,77 @@
+Lane D sixth-audit boundary repair — authoritative full-gate receipt
+Date: 2026-07-18
+Exact head: 78672c46d94041f974ca97b0d2cfe5596c6b020a
+Worktree: /Users/gillettes/Coding Projects/mission-control-worktrees/rollup-answer-wiring
+Host: macOS 26.5.2 (Python os module exposes neither O_SYMLINK nor O_PATH)
+Scope: hermetic temporary Mission Control homes only; no provider send, live store, install, deploy, plist, launchd, merge, or main mutation.
+
+Authoritative verifier (scripts/verify.sh at exact head)
+
+Command:
+  bash scripts/verify.sh
+
+Result (exit 0):
+  SUITES PASS=23 FAIL=0
+  - verify aggregator self-test: PASS
+  - automation status: PASS
+  - chat graph: PASS
+  - dashboard: PASS
+  - decision alert: PASS
+  - rollup answer: 29 tests, OK
+  - ER-134 usability: PASS
+  - loose-end runner: PASS
+  - shared Mission Control policy: PASS
+  - Morning Brief: PASS
+  - Morning Brief proof harvester: PASS
+  - Morning Brief delivery: PASS
+  - Morning Brief deadman: PASS
+  - Morning Brief sender: PASS
+  - outcome coverage: PASS
+  - outcome extractor: PASS
+  - usage snapshot: PASS (24 PASS / 0 FAIL across its embedded matrix)
+  - dashboard browser: 254 assertions passed
+  - unfinished-work scanner: SELF-TEST PASS
+  - OpenSpec strict: 2 passed, 0 failed (change/morning-brief, change/rollup-answer)
+  - Python syntax: PASS
+  - shell syntax: PASS
+  - source tree artifacts: PASS
+  Wall time: ~5m21s on this host.
+
+Repair summary (single commit at this head)
+
+The sixth-audit symlink regression test_receipt_backed_canonical_symlink_is_quarantined_and_rebuilt
+FAILED on macOS in the staged tree because _open_existing_quarantine_entry selected the symlink
+branch, but Python's os module does not expose O_SYMLINK and O_PATH is Linux-only; the branch
+therefore raised "unsafe published batch conflict entry" and never pinned the receipt-backed symlink.
+The staged evidence receipt had incorrectly claimed all four boundary regressions passed without
+this defect being observed or fixed.
+
+Fix: fall back to the raw Darwin constant O_SYMLINK = 0x00200000 (confirmed in the macOS 26.5 SDK
+header sys/fcntl.h and verified to open a symlink without following its target via ctypes) when
+sys.platform == 'darwin', ahead of the Linux O_PATH branch; fail closed on any platform with
+neither flag. Linux behavior is unchanged.
+
+After fix, live on macOS 26.5:
+  - targeted sixth-audit regressions: 4/4 OK (receipt-backed symlink quarantine+rebuild,
+    orphan first-answer symlink untouched, quarantine name-swap rollback, missing
+    markdown_sha256/chunk_bytes rejection)
+  - full rollup-answer suite: 29 tests, OK
+  - dashboard browser: 254 assertions
+
+Claims
+
+- Confirmed: the authoritative verifier is exit 0 / SUITES PASS=23 FAIL=0 at exact head 78672c4.
+- Confirmed: the macOS symlink-quarantine defect reproduced RED before this head and is GREEN after.
+- Confirmed: no schema migration, dependency, live-store write, provider send, main touch, install,
+  deploy, release, plist, or launchd action occurred while running the gate or producing this receipt.
+
+Did not verify in this receipt
+
+- Fresh independent (same-model/max or other) frozen-head audit at 78672c4. The authoritative
+  verifier is green, but the packet's per-lane two-attempt rule allowed only one repair attempt,
+  which succeeded; a successor audit is out of scope for this gate receipt and must be commissioned
+  before claiming review-clean.
+- Hosted PR checks / merge state: no Lane D PR exists yet.
+- Merged-main, installed runtime, provider delivery, live-store behavior, plist/launchd.
+- The live pending decision decision:a6f185b53cbc1278499b062d (must be resolved by the integrator
+  at the merge sitting, not by this branch).

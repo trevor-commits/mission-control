@@ -35,6 +35,9 @@ write("usage", {"providers": [
 write("decisions", {"pinned": [
     {"id": "decision:" + "1"*24, "text": "Choose the rollout window",
      "trust": "structured", "provenance": "chat-graph tier1"},
+    {"id": "decision:" + "4"*24, "text": "Pending rollup answer must stay out of NEEDS YOU",
+     "trust": "structured", "provenance": "chat-graph tier1",
+     "answer_pending": {"choice": 2, "batch_key": "b"*64}},
     {"id": "decision:" + "3"*24,
      "text": "DECISION NEEDED: Which rollout path? " + "| Option | Meaning " * 12,
      "trust": "structured", "provenance": "chat-graph tier1"}],
@@ -155,6 +158,7 @@ assert long_line["text"].endswith("(options in dashboard)"), long_line["text"]
 short_line=next(r for r in needs["lines"] if r["text"]=="Choose the rollout window")
 assert "options in dashboard" not in short_line["text"]
 assert all("Trevor needs to review the evidence" not in row["text"] for row in needs["lines"])
+assert all("Pending rollup answer" not in row["text"] for row in needs["lines"]), needs["lines"]
 assert any("Trevor needs to review the evidence" in row["text"] for row in possible["lines"])
 assert "Morning Brief implementation" in md and "Implemented the verified outcome" in md
 assert "Audit: OAuth handling [global-implementations]" in md
@@ -174,6 +178,28 @@ assert not list(os.path.dirname(sys.argv[1]) for _ in [] )
 PY
 then pass "sidecar preserves order, freshness, equal-timestamp cursor, Git and open deltas"
 else fail "sidecar preserves order, freshness, equal-timestamp cursor, Git and open deltas"; fi
+
+if PYTHONPATH="$ROOT/scripts" python3 - "$BRIEF" <<'PY'
+import importlib.machinery, sys
+m = importlib.machinery.SourceFileLoader("mb_pending_null", sys.argv[1]).load_module()
+snapshot = {name: None for name in m.INPUTS}
+snapshot["decisions"] = {"data": {"pinned": [{
+    "id": "decision:" + "5" * 24,
+    "text": "Explicit null pending marker stays actionable",
+    "trust": "structured",
+    "provenance": "chat-graph tier1",
+    "answer_pending": None,
+}]}}
+health = {
+    name: {"required": config["required"], "state": "fresh"}
+    for name, config in m.INPUTS.items()
+}
+needs, _, _ = m._needs_you(snapshot, health, 3)
+assert any(row["text"] == "Explicit null pending marker stays actionable"
+           for row in needs), needs
+PY
+then pass "explicit null answer_pending remains actionable in NEEDS YOU"
+else fail "explicit null answer_pending was hidden from NEEDS YOU"; fi
 
 if find "$MISSION_CONTROL_HOME/morning-brief" -name '*.tmp.*' -print | grep -q .; then
   fail "atomic compose leaves no temp files"

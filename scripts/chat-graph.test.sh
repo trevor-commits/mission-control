@@ -7,6 +7,9 @@ export PYTHONDONTWRITEBYTECODE=1
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 CG="$HERE/chat-graph"
+# shellcheck source=scripts/test-temp-root.sh
+source "$HERE/test-temp-root.sh"
+mission_test_temp_init chat-graph-test || exit 1
 FAILS=0
 pass() { echo "PASS: $1"; }
 fail() { echo "FAIL: $1"; FAILS=$((FAILS + 1)); }
@@ -621,13 +624,15 @@ chmod +x "$STUB19E"; export CHAT_GRAPH_CHAT_SOURCE="$STUB19E"
 mk_delegation d19e aaaaaaaa-1111-2222-3333-444444444444 bbbbbbbb-5555-6666-7777-888888888888 yes
 # a) direct bounded catch-up ingest
 "$CG" ingest --limit-files 5 >/dev/null 2>&1; RC19E=$?
-CALLS19E="$(wc -l < "$CHAT_GRAPH_HOME/ALL_CALLS" 2>/dev/null | tr -d ' ')"; CALLS19E="${CALLS19E:-0}"
+CALLS19E=0
+[ ! -f "$CHAT_GRAPH_HOME/ALL_CALLS" ] || CALLS19E="$(wc -l < "$CHAT_GRAPH_HOME/ALL_CALLS" | tr -d ' ')"
 if [ "$RC19E" -eq 0 ] && [ "$CALLS19E" = 0 ]; then
   pass "bounded catch-up ingest makes zero chat-source metadata-store calls"
 else fail "bounded catch-up ingest called chat-source (rc=$RC19E calls=$CALLS19E)"; fi
 # b) the real scheduled shape: a stale export drives its own bounded catch-up
 "$CG" export --json --catchup-limit 5 >/dev/null 2>&1; EX19E=$?
-CALLS19E2="$(wc -l < "$CHAT_GRAPH_HOME/ALL_CALLS" 2>/dev/null | tr -d ' ')"; CALLS19E2="${CALLS19E2:-0}"
+CALLS19E2=0
+[ ! -f "$CHAT_GRAPH_HOME/ALL_CALLS" ] || CALLS19E2="$(wc -l < "$CHAT_GRAPH_HOME/ALL_CALLS" | tr -d ' ')"
 if [ "$EX19E" -eq 0 ] && [ "$CALLS19E2" = 0 ] && [ -f "$CHAT_GRAPH_HOME/export/graph.json" ]; then
   pass "export --catchup-limit exports without any metadata-store traversal"
 else fail "scheduled export traversed the metadata store (rc=$EX19E calls=$CALLS19E2)"; fi
@@ -635,7 +640,8 @@ ok "" "$(q "SELECT COALESCE(title,'') FROM sessions WHERE id='bbbbbbbb-5555-6666
    "catch-up leaves cosmetic title unset instead of fanning out to fetch it"
 # c) the authoritative unbounded ingest still enriches — exactly one batch
 "$CG" ingest >/dev/null 2>&1
-CALLS19E3="$(wc -l < "$CHAT_GRAPH_HOME/ALL_CALLS" 2>/dev/null | tr -d ' ')"; CALLS19E3="${CALLS19E3:-0}"
+CALLS19E3=0
+[ ! -f "$CHAT_GRAPH_HOME/ALL_CALLS" ] || CALLS19E3="$(wc -l < "$CHAT_GRAPH_HOME/ALL_CALLS" | tr -d ' ')"
 ok "1" "$CALLS19E3" "unbounded ingest still enriches with exactly one metadata batch"
 ok "Late Title" "$(q "SELECT title FROM sessions WHERE id='bbbbbbbb-5555-6666-7777-888888888888'")" \
    "deferred enrichment lands on the next unbounded ingest"

@@ -239,6 +239,27 @@ async function main() {
       });
     });
 
+    await test('answered-pending decisions remain read-only receipts and do not inflate Needs-you metrics', async () => {
+      const receipt = {
+        id: 'decision:333333333333333333333333',
+        question: 'Choose the recorded rollout window',
+        options: ['Proceed', 'Wait'],
+        recommended: 1,
+        answer_pending: { choice: 2 },
+      };
+      await withPanel(state({
+        attention: healthyCore().attention,
+        decisions: envelope('decisions', { pinned: [receipt], counts: { open: 1, structured_open: 1 } }),
+        automation: healthyCore().automation,
+      }), {}, async page => {
+        assert.strictEqual(await page.locator('#title').textContent(), 'Awaiting owner consumption');
+        assert.match(await page.locator('#list').innerText(), /Awaiting owner consumption · choice 2 recorded/);
+        assert.strictEqual(await page.locator('#list button').count(), 0, 'pending receipt exposed an action');
+        assert.strictEqual(await page.locator('#stat-needs').innerText(), '0');
+        assert.strictEqual(await page.locator('#status-text').innerText(), 'Answers recorded');
+      });
+    });
+
     await test('default Active view keeps active and critical or exhausted providers visible', async () => {
       const active = quotaRow({ id: 'active:week', provider: 'active', label: 'Active Provider' });
       const exhausted = quotaRow({ id: 'empty:week', provider: 'empty', label: 'Exhausted Provider',

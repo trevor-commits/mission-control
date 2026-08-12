@@ -5,28 +5,137 @@
 set -uo pipefail
 export PYTHONDONTWRITEBYTECODE=1
 
-# Every nested dashboard invocation must use the same interpreter as this test
-# process.  Calling bare `bash` otherwise follows PATH and silently switches a
-# `/bin/bash` (macOS 3.2) gate back to Homebrew Bash 5.x.
-DASHBOARD_TEST_BASH="$BASH"
-bash() { command "$DASHBOARD_TEST_BASH" "$@"; }
+# Pin nested dashboard invocations to the system shell. Run them behind an
+# interruptible shell wait so TERM can enter this suite's cleanup trap even
+# while a dashboard child is blocked in a synchronous feeder collection.
+DASHBOARD_TEST_BASH=/bin/bash
+run_pinned_bash() {
+  local child rc=0 separator=0
+  local -a env_args
+  while [ "$#" -gt 0 ]; do
+    if [ "$1" = --dashboard-command ]; then separator=1; shift; break; fi
+    env_args[${#env_args[@]}]="$1"
+    shift
+  done
+  [ "$separator" = 1 ] && [ "$#" -gt 0 ] || return 64
+  if [ "${#env_args[@]}" -gt 0 ]; then
+    /usr/bin/env "${env_args[@]}" "$DASHBOARD_TEST_BASH" "$@" &
+  else
+    /usr/bin/env "$DASHBOARD_TEST_BASH" "$@" &
+  fi
+  child=$!
+  register_owned_process "$child" 2>/dev/null || true
+  wait "$child" || rc=$?
+  return "$rc"
+}
+bash() { run_pinned_bash --dashboard-command "$@"; }
+
+# `/usr/bin/env ... bash dashboard` cannot invoke a shell function itself.
+# Route that exact test pattern back through the one interruptible launcher;
+# preserve every other env invocation byte-for-byte through the system tool.
+env() {
+  local candidate
+  local -a original env_args
+  original=("$@")
+  while [ "$#" -gt 0 ]; do
+    if [ "$1" = bash ]; then
+      shift
+      candidate="${1:-}"
+      case "$candidate" in
+        "${DASH:-}"|*/scripts/dashboard|*/bin/dashboard)
+          if [ "${#env_args[@]}" -gt 0 ]; then
+            run_pinned_bash "${env_args[@]}" --dashboard-command "$@"
+          else
+            run_pinned_bash --dashboard-command "$@"
+          fi
+          return $?
+          ;;
+      esac
+      break
+    fi
+    env_args[${#env_args[@]}]="$1"
+    shift
+  done
+  if [ "${#original[@]}" -gt 0 ]; then
+    command /usr/bin/env "${original[@]}"
+  else
+    command /usr/bin/env
+  fi
+}
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 REPO="$(dirname "$HERE")"
 DASH="$HERE/dashboard"
 REQUIRE_SHELL="${1:-}"
+# shellcheck source=scripts/test-temp-root.sh
+source "$HERE/test-temp-root.sh"
+mission_test_temp_init mc-test || exit 1
 
 PASS=0
 FAIL=0
 ok() { echo "PASS: $1"; PASS=$((PASS + 1)); }
 no() { echo "FAIL: $1"; FAIL=$((FAIL + 1)); }
 
-ROOT="$(mktemp -d "${TMPDIR:-/tmp}/mc-test.XXXXXX")"
+SUITE_PGID="$(/bin/ps -p "$$" -o pgid= 2>/dev/null | /usr/bin/awk '{$1=$1; print}')"
+case "$SUITE_PGID" in ''|*[!0-9]*) echo "dashboard.test: cannot prove suite process group" >&2; exit 70 ;; esac
+ROOT="$MISSION_TEST_TEMP_ROOT"
 OWNED_PROCESS_REGISTRY="$ROOT/owned-processes.tsv"
+OWNED_GROUP_RECEIPTS="$ROOT/owned-group-receipts.tsv"
+OWNED_GROUP_REGISTRY="$ROOT/owned-groups.tsv"
 : > "$OWNED_PROCESS_REGISTRY"
+: > "$OWNED_GROUP_RECEIPTS"
+: > "$OWNED_GROUP_REGISTRY"
+exec 9>>"$OWNED_GROUP_RECEIPTS"
+export DASHBOARD_TEST_OWNED_GROUP_FD=9
+export DASHBOARD_TEST_OWNED_GROUP_RECEIPTS="$OWNED_GROUP_RECEIPTS"
 
 fixture_process_identity() {
   /bin/ps -p "$1" -o lstart= 2>/dev/null | /usr/bin/awk '{$1=$1; print}'
+}
+
+fixture_process_pgid() {
+  /bin/ps -p "$1" -o pgid= 2>/dev/null | /usr/bin/awk '{$1=$1; print}'
+}
+
+fixture_group_has_members() {
+  /bin/ps -axo pgid= 2>/dev/null | /usr/bin/awk -v expected="$1" \
+    '$1 == expected { found=1 } END { exit(found ? 0 : 1) }'
+}
+
+fixture_group_matches() {
+  local leader="${1:-}" pgid="${2:-}" identity="${3:-}" expected="${4:-}" current_pgid command_line
+  [ -n "$leader" ] && [ -n "$pgid" ] && [ -n "$identity" ] || return 1
+  case "$leader:$pgid" in *[!0-9:]*) return 1 ;; esac
+  current_pgid="$(fixture_process_pgid "$$")"
+  case "$current_pgid" in ''|*[!0-9]*) return 1 ;; esac
+  [ "$leader" = "$pgid" ] && [ "$pgid" != "$SUITE_PGID" ] && \
+    [ "$pgid" != "$current_pgid" ] && \
+    [ "$pgid" -gt 1 ] && [ "$(fixture_process_pgid "$leader")" = "$pgid" ] && \
+    [ "$(fixture_process_identity "$leader")" = "$identity" ] || return 1
+  if [ -n "$expected" ]; then
+    command_line="$(/bin/ps -p "$leader" -o command= 2>/dev/null)"
+    case "$command_line" in *"$expected"*) ;; *) return 1 ;; esac
+  fi
+  return 0
+}
+
+signal_fixture_group() {
+  case "${4:-}" in TERM|KILL) ;; *) return 1 ;; esac
+  fixture_group_matches "$1" "$2" "$3" || return 1
+  kill -"$4" -- "-$2" 2>/dev/null
+}
+
+wait_owned_child_bounded() {
+  local pid="$1" identity="$2" i=0 state
+  while [ "$i" -lt 250 ]; do
+    state="$(/bin/ps -p "$pid" -o state= 2>/dev/null | /usr/bin/awk '{$1=$1; print}')"
+    case "$state" in ''|Z*) wait "$pid" 2>/dev/null || true; return 0 ;; esac
+    sleep 0.02
+    i=$((i + 1))
+  done
+  if fixture_process_matches "$pid" "$identity"; then kill -KILL "$pid" 2>/dev/null || true; fi
+  wait "$pid" 2>/dev/null || true
+  return 1
 }
 
 register_owned_process() {
@@ -35,6 +144,49 @@ register_owned_process() {
   identity="$(fixture_process_identity "$pid")"
   [ -n "$identity" ] || return 1
   printf '%s\t%s\n' "$pid" "$identity" >> "$OWNED_PROCESS_REGISTRY"
+}
+
+record_owned_group_receipt() {
+  local leader="${1:-}" pgid="${2:-}" expected="${3:-}"
+  [ -n "$leader" ] && [ -n "$pgid" ] && [ -n "$expected" ] || return 1
+  case "$leader:$pgid" in *[!0-9:]*) return 1 ;; esac
+  case "$expected" in *$'\t'*|*$'\r'*|*$'\n'*) return 1 ;; esac
+  [ "$leader" = "$pgid" ] && [ "$pgid" -gt 1 ] || return 1
+  printf '%s\t%s\t%s\n' "$leader" "$pgid" "$expected" >&9
+}
+
+owned_group_registered() {
+  local expected_leader="$1" expected_pgid="$2" leader pgid identity marker
+  while IFS="$(printf '\t')" read -r leader pgid identity marker; do
+    [ "$leader" = "$expected_leader" ] && [ "$pgid" = "$expected_pgid" ] && return 0
+  done < "$OWNED_GROUP_REGISTRY"
+  return 1
+}
+
+register_owned_groups() {
+  local leader pgid expected identity command_line current_pgid invalid=0
+  current_pgid="$(fixture_process_pgid "$$")"
+  case "$current_pgid" in ''|*[!0-9]*) return 1 ;; esac
+  while IFS="$(printf '\t')" read -r leader pgid expected; do
+    [ -n "$leader" ] && [ -n "$pgid" ] && [ -n "$expected" ] || { invalid=1; continue; }
+    case "$leader:$pgid" in *[!0-9:]*) invalid=1; continue ;; esac
+    [ "$leader" = "$pgid" ] && [ "$pgid" -gt 1 ] && \
+      [ "$pgid" != "$SUITE_PGID" ] && [ "$pgid" != "$current_pgid" ] || {
+        invalid=1; continue;
+      }
+    owned_group_registered "$leader" "$pgid" && continue
+    # A completed receipt needs no cleanup. A live receipt is authorized only
+    # when both its private group and expected launch command still match.
+    if ! fixture_group_has_members "$pgid"; then continue; fi
+    command_line="$(/bin/ps -p "$leader" -o command= 2>/dev/null)"
+    if [ "$(fixture_process_pgid "$leader")" != "$pgid" ]; then invalid=1; continue; fi
+    case "$command_line" in *"$expected"*) ;; *) invalid=1; continue ;; esac
+    identity="$(fixture_process_identity "$leader")"
+    [ -n "$identity" ] || { invalid=1; continue; }
+    printf '%s\t%s\t%s\t%s\n' "$leader" "$pgid" "$identity" "$expected" \
+      >> "$OWNED_GROUP_REGISTRY"
+  done < "$OWNED_GROUP_RECEIPTS"
+  [ "$invalid" = 0 ]
 }
 
 register_owned_pidfiles() {
@@ -75,15 +227,74 @@ cleanup_owned_processes() {
   while IFS="$(printf '\t')" read -r pid identity; do
     fixture_process_matches "$pid" "$identity" || continue
     kill -KILL "$pid" 2>/dev/null || true
+    wait "$pid" 2>/dev/null || true
   done < "$OWNED_PROCESS_REGISTRY"
+}
+
+owned_groups_absent() {
+  local leader pgid identity expected
+  while IFS="$(printf '\t')" read -r leader pgid identity expected; do
+    fixture_group_has_members "$pgid" && return 1
+  done < "$OWNED_GROUP_REGISTRY"
+  return 0
+}
+
+wait_owned_groups_absent() {
+  local i=0
+  while [ "$i" -lt 100 ]; do
+    owned_groups_absent && return 0
+    sleep 0.01
+    i=$((i + 1))
+  done
+  owned_groups_absent
+}
+
+cleanup_owned_groups() {
+  local leader pgid identity expected i alive unsafe=0 registration_failed=0
+  register_owned_groups || registration_failed=1
+  while IFS="$(printf '\t')" read -r leader pgid identity expected; do
+    fixture_group_matches "$leader" "$pgid" "$identity" "$expected" || continue
+    kill -TERM -- "-$pgid" 2>/dev/null || true
+  done < "$OWNED_GROUP_REGISTRY"
+  i=0
+  while [ "$i" -lt 50 ]; do
+    alive=0
+    while IFS="$(printf '\t')" read -r leader pgid identity expected; do
+      if fixture_group_matches "$leader" "$pgid" "$identity" "$expected"; then
+        alive=1; break
+      fi
+    done < "$OWNED_GROUP_REGISTRY"
+    [ "$alive" = 1 ] || break
+    sleep 0.01
+    i=$((i + 1))
+  done
+  while IFS="$(printf '\t')" read -r leader pgid identity expected; do
+    if fixture_group_matches "$leader" "$pgid" "$identity" "$expected"; then
+      kill -KILL -- "-$pgid" 2>/dev/null || true
+    elif fixture_group_has_members "$pgid"; then
+      unsafe=1
+    fi
+  done < "$OWNED_GROUP_REGISTRY"
+  [ "$unsafe" = 0 ] && [ "$registration_failed" = 0 ]
 }
 
 SUITE_CLEANED=0
 cleanup_suite() {
+  local groups_clean=0 cleanup_failed=0
   [ "$SUITE_CLEANED" = 0 ] || return
   SUITE_CLEANED=1
+  cleanup_owned_groups || groups_clean=1
   cleanup_owned_processes
-  rm -rf "$ROOT"
+  if [ "$groups_clean" = 0 ]; then
+    wait_owned_groups_absent || groups_clean=1
+  fi
+  exec 9>&-
+  if [ "$groups_clean" = 0 ]; then
+    mission_test_temp_cleanup || cleanup_failed=1
+  else
+    cleanup_failed=1
+  fi
+  [ "$cleanup_failed" = 0 ]
 }
 
 suite_signal() {
@@ -93,7 +304,7 @@ suite_signal() {
   exit "$code"
 }
 
-trap 'rc=$?; trap - EXIT INT TERM HUP; cleanup_suite; exit "$rc"' EXIT
+trap 'rc=$?; trap - EXIT INT TERM HUP; cleanup_suite || { [ "$rc" -ne 0 ] || rc=1; }; exit "$rc"' EXIT
 trap 'suite_signal 130' INT
 trap 'suite_signal 143' TERM
 trap 'suite_signal 129' HUP
@@ -110,34 +321,94 @@ mktemp() {
   fi
 }
 
-# Hidden probe used only by c39a. It reproduces an interrupted outer runner
-# with a TERM/INT-ignoring synthetic grandchild whose command is rooted below
-# this suite's unique temporary directory.
+# Hidden probes used only by c39a. They reproduce the two externally
+# interrupted feeder shapes that previously escaped the outer suite.
 if [ -n "${DASHBOARD_TEST_INTERRUPT_PROBE_READY:-}" ]; then
   probe_dir="$(mktemp -d)"
-  probe_script="$probe_dir/stubborn-feeder"
-  probe_launcher="$probe_dir/launcher"
-  cat > "$probe_script" <<'EOF'
+  probe_home="$probe_dir/state"
+  probe_kind="${DASHBOARD_TEST_INTERRUPT_PROBE_KIND:-}"
+  case "$probe_kind" in
+    c0) probe_script="$probe_dir/guard-swap-feeder" ;;
+    c4b) probe_script="$probe_dir/backoff-git" ;;
+    env) probe_script="$probe_dir/env-scrubbed-git" ;;
+    *) exit 64 ;;
+  esac
+  if [ "$probe_kind" = c0 ]; then
+    cat > "$probe_script" <<'PY'
+import os, signal, sys, time
+signal.signal(signal.SIGTERM, signal.SIG_IGN)
+signal.signal(signal.SIGINT, signal.SIG_IGN)
+child = os.fork()
+if child == 0:
+    signal.signal(signal.SIGTERM, signal.SIG_IGN)
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
+    while True:
+        time.sleep(1)
+while not os.path.exists(os.environ["FIXTURE_PROBE_RECEIPT_READY"]):
+    time.sleep(0.01)
+with open(os.environ["FIXTURE_PROBE_READY"], "w") as handle:
+    handle.write("%s\n%s\n%s\n" % (os.getpid(), child, os.environ["FIXTURE_PROBE_ROOT"]))
+while True:
+    time.sleep(1)
+PY
+  else
+    cat > "$probe_script" <<'EOF'
 #!/bin/sh
 trap '' TERM INT
-printf '%s\n' "$$" > "$FIXTURE_PROBE_PIDFILE"
-while :; do sleep 1; done
-EOF
-  chmod +x "$probe_script"
-  cat > "$probe_launcher" <<'EOF'
-#!/bin/sh
-FIXTURE_PROBE_PIDFILE="$FIXTURE_PROBE_PIDFILE" /bin/sh "$FIXTURE_PROBE_SCRIPT" &
+receipt_seen=0
+while [ "$receipt_seen" -eq 0 ]; do
+  while IFS="$(printf '\t')" read -r leader pgid expected; do
+    if [ "$leader" = "$$" ] && [ "$pgid" = "$$" ]; then receipt_seen=1; break; fi
+  done < "$DASHBOARD_TEST_OWNED_GROUP_RECEIPTS"
+  [ "$receipt_seen" -eq 1 ] || sleep 0.01
+done
+: > "$FIXTURE_PROBE_READY.entered"
+(
+  trap '' TERM INT
+  while :; do sleep 1; done
+) &
+descendant=$!
+printf '%s\n%s\n%s\n' "$$" "$descendant" "$FIXTURE_PROBE_ROOT" > "$FIXTURE_PROBE_READY"
 wait
 EOF
-  chmod +x "$probe_launcher"
-  FIXTURE_PROBE_PIDFILE="$probe_dir/feeder.pid" FIXTURE_PROBE_SCRIPT="$probe_script" \
-    /bin/sh "$probe_launcher" &
-  probe_runner=$!
-  register_owned_process "$probe_runner"
-  for _ in $(seq 1 100); do [ -f "$probe_dir/feeder.pid" ] && break; sleep 0.01; done
-  probe_feeder="$(sed -n '1p' "$probe_dir/feeder.pid" 2>/dev/null || true)"
-  printf '%s\n%s\n' "$probe_feeder" "$ROOT" > "$DASHBOARD_TEST_INTERRUPT_PROBE_READY"
-  wait "$probe_runner"
+    chmod +x "$probe_script"
+  fi
+  if [ "$probe_kind" = c0 ]; then
+    probe_receipt_ready="$probe_dir/receipt-ready"
+    FIXTURE_PROBE_READY="$DASHBOARD_TEST_INTERRUPT_PROBE_READY" \
+      FIXTURE_PROBE_RECEIPT_READY="$probe_receipt_ready" \
+      FIXTURE_PROBE_ROOT="$ROOT" /usr/bin/python3 - "$probe_script" <<'PY' &
+import os, sys
+os.setsid()
+os.execv("/usr/bin/python3", ["/usr/bin/python3", sys.argv[1]])
+PY
+    probe_runner=$!
+    register_owned_process "$probe_runner"
+    probe_pgid=""
+    for _ in $(seq 1 100); do
+      probe_pgid="$(fixture_process_pgid "$probe_runner")"
+      [ "$probe_pgid" = "$probe_runner" ] && break
+      sleep 0.01
+    done
+    record_owned_group_receipt "$probe_runner" "$probe_pgid" "$probe_script" || exit 70
+    : > "$probe_receipt_ready"
+    wait "$probe_runner"
+    exit $?
+  fi
+  if [ "$probe_kind" = env ]; then
+    PATH=/usr/bin:/bin env -u DASHBOARD_CMD_USAGE \
+      FIXTURE_PROBE_READY="$DASHBOARD_TEST_INTERRUPT_PROBE_READY" \
+      FIXTURE_PROBE_ROOT="$ROOT" MISSION_CONTROL_HOME="$probe_home" \
+      DASHBOARD_CMD_GIT="$probe_script" bash "$DASH" collect --force git \
+      >"$DASHBOARD_TEST_INTERRUPT_PROBE_READY.dashboard.out" \
+      2>"$DASHBOARD_TEST_INTERRUPT_PROBE_READY.dashboard.err"
+  else
+    FIXTURE_PROBE_READY="$DASHBOARD_TEST_INTERRUPT_PROBE_READY" \
+      FIXTURE_PROBE_ROOT="$ROOT" MISSION_CONTROL_HOME="$probe_home" \
+      DASHBOARD_CMD_GIT="$probe_script" run_pinned_bash --dashboard-command "$DASH" collect --force git \
+      >"$DASHBOARD_TEST_INTERRUPT_PROBE_READY.dashboard.out" \
+      2>"$DASHBOARD_TEST_INTERRUPT_PROBE_READY.dashboard.err"
+  fi
   exit $?
 fi
 export MISSION_CONTROL_HOME="$ROOT/default-mission-control-home"
@@ -1689,7 +1960,7 @@ EOF
 
 c31() { # the real macOS Bash 3.2 path executes embedded Python, not EOF
   local h count rc; h="$(newhome)"
-  MISSION_CONTROL_HOME="$h" /bin/bash "$DASH" collect --force >/dev/null 2>&1; rc=$?
+  MISSION_CONTROL_HOME="$h" bash "$DASH" collect --force >/dev/null 2>&1; rc=$?
   count="$(find "$h/data" -type f \( -name '*.json' -o -name '*.js' \) 2>/dev/null | wc -l | tr -d ' ')"
   # Seven feeds emit canonical JSON + JS plus a healthy error sidecar. Keeping the
   # sidecar present prevents browsers from logging a missing resource on success.
@@ -2030,36 +2301,88 @@ PY
   fi
 }
 
-c39a() { # interrupting the outer suite reaps its stubborn synthetic descendant
-  local probe_tmp ready harness feeder fixture_root completed=0 alive=0
-  probe_tmp="$(mktemp -d)"
-  ready="$probe_tmp/ready"
-  TMPDIR="$probe_tmp" DASHBOARD_TEST_INTERRUPT_PROBE_READY="$ready" \
-    bash "$REPO/scripts/dashboard.test.sh" >/dev/null 2>&1 &
-  harness=$!
-  register_owned_process "$harness"
-  for _ in $(seq 1 100); do
-    if [ -f "$ready" ]; then completed=1; break; fi
-    if ! kill -0 "$harness" 2>/dev/null; then break; fi
-    sleep 0.02
-  done
-  if [ "$completed" = 0 ]; then
+c39a() { # external interruption reaps background and synchronous feeder groups
+  local kind probe_tmp ready harness harness_identity completed leader pgid identity descendant descendant_identity
+  local fixture_root canary_script canary_ready canary canary_pgid canary_identity bounded group_alive canary_alive
+  local leader_alive descendant_alive
+  for kind in c0 c4b env; do
+    probe_tmp="$(mktemp -d)"; ready="$probe_tmp/$kind.ready"
+    canary_script="$probe_tmp/unrelated-canary"; canary_ready="$probe_tmp/canary.ready"
+    cat > "$canary_script" <<'EOF'
+#!/bin/sh
+trap '' TERM INT
+printf '%s\n' "$$" > "$FIXTURE_CANARY_READY"
+while :; do sleep 1; done
+EOF
+    chmod +x "$canary_script"
+    FIXTURE_CANARY_READY="$canary_ready" /usr/bin/python3 - "$canary_script" <<'PY' &
+import os, sys
+os.setsid()
+os.execv("/bin/sh", ["/bin/sh", sys.argv[1]])
+PY
+    canary=$!; register_owned_process "$canary"
+    for _ in $(seq 1 100); do [ -f "$canary_ready" ] && break; sleep 0.01; done
+    canary_pgid="$(fixture_process_pgid "$canary")"
+    canary_identity="$(fixture_process_identity "$canary")"
+
+    TMPDIR="$probe_tmp" DASHBOARD_TEST_INTERRUPT_PROBE_KIND="$kind" \
+      DASHBOARD_TEST_INTERRUPT_PROBE_READY="$ready" \
+      /bin/bash "$REPO/scripts/dashboard.test.sh" >"$probe_tmp/$kind.out" 2>"$probe_tmp/$kind.err" &
+    harness=$!; register_owned_process "$harness"
+    harness_identity="$(fixture_process_identity "$harness")"; completed=0
+    for _ in $(seq 1 750); do
+      if [ -f "$ready" ]; then completed=1; break; fi
+      if ! kill -0 "$harness" 2>/dev/null; then break; fi
+      sleep 0.02
+    done
+    if [ "$completed" = 0 ]; then
+      kill -TERM "$harness" 2>/dev/null || true
+      wait_owned_child_bounded "$harness" "$harness_identity" || true
+      signal_fixture_group "$canary" "$canary_pgid" "$canary_identity" KILL || true
+      wait "$canary" 2>/dev/null || true
+      no "fixture lifecycle $kind: interruption probe did not become ready ($(tail -1 "$ready.dashboard.err" 2>/dev/null))"
+      continue
+    fi
+
+    leader="$(sed -n '1p' "$ready")"; pgid="$(fixture_process_pgid "$leader")"
+    identity="$(fixture_process_identity "$leader")"; descendant="$(sed -n '2p' "$ready")"
+    descendant_identity="$(fixture_process_identity "$descendant")"
+    fixture_root="$(sed -n '3p' "$ready")"
     kill -TERM "$harness" 2>/dev/null || true
-    wait "$harness" 2>/dev/null || true
-    no "fixture lifecycle: interruption probe did not become ready"
-    return
-  fi
-  feeder="$(sed -n '1p' "$ready")"
-  fixture_root="$(sed -n '2p' "$ready")"
-  kill -TERM "$harness" 2>/dev/null || true
-  wait "$harness" 2>/dev/null || true
-  if [ -n "$feeder" ] && kill -0 "$feeder" 2>/dev/null; then alive=1; fi
-  [ "$alive" = 0 ] || kill -KILL "$feeder" 2>/dev/null || true
-  if [ "$alive" = 0 ] && [ -n "$fixture_root" ] && [ ! -e "$fixture_root" ]; then
-    ok "fixture lifecycle: outer interruption reaps the exact stubborn descendant and temp root"
-  else
-    no "fixture lifecycle: outer interruption left residue (feeder_alive=$alive root=$fixture_root)"
-  fi
+    bounded=1; wait_owned_child_bounded "$harness" "$harness_identity" || bounded=0
+    for _ in $(seq 1 100); do
+      fixture_group_has_members "$pgid" || break
+      sleep 0.02
+    done
+    group_alive=0; fixture_group_has_members "$pgid" && group_alive=1
+    canary_alive=0; fixture_group_matches "$canary" "$canary_pgid" "$canary_identity" && canary_alive=1
+    if [ "$group_alive" = 1 ]; then
+      if ! signal_fixture_group "$leader" "$pgid" "$identity" KILL; then
+        if [ "$(fixture_process_pgid "$descendant")" = "$pgid" ] && \
+           [ "$(fixture_process_identity "$descendant")" = "$descendant_identity" ]; then
+          kill -KILL "$descendant" 2>/dev/null || true
+        fi
+      fi
+      for _ in $(seq 1 100); do
+        fixture_group_has_members "$pgid" || break
+        sleep 0.02
+      done
+    fi
+    if [ "$canary_alive" = 1 ]; then
+      signal_fixture_group "$canary" "$canary_pgid" "$canary_identity" KILL || true
+    fi
+    wait "$canary" 2>/dev/null || true
+    leader_alive=0; fixture_process_matches "$leader" "$identity" && leader_alive=1
+    descendant_alive=0
+    fixture_process_matches "$descendant" "$descendant_identity" && descendant_alive=1
+    if [ "$bounded" = 1 ] && [ "$group_alive" = 0 ] && [ "$leader_alive" = 0 ] && \
+       [ "$descendant_alive" = 0 ] && [ "$canary_alive" = 1 ] && \
+       [ -n "$descendant" ] && [ -n "$fixture_root" ] && [ ! -e "$fixture_root" ]; then
+      ok "fixture lifecycle $kind: bounded outer interruption reaps the owned feeder group only"
+    else
+      no "fixture lifecycle $kind: residue or overreach (bounded=$bounded group_alive=$group_alive leader_alive=$leader_alive descendant_alive=$descendant_alive canary_alive=$canary_alive root=$fixture_root)"
+    fi
+  done
 }
 
 c40() { # post-reap invalid bytes cannot authorize false group cleanup
@@ -2520,11 +2843,138 @@ PYEOF
   fi
 }
 
-if [ "${DASHBOARD_TEST_CASE:-}" = "fixture-reaper" ]; then
-  c39a
-else
+c52() { # answered-pending decisions are receipts, not attention requests
+  local mch now; mch="$(newhome)"; now="$(date +%s)"
+  mkdir -p "$mch/data"
+  python3 - "$mch/data/decisions.json" "$now" <<'PYEOF'
+import json, sys
+path, now = sys.argv[1], int(sys.argv[2])
+rows = [
+    {"id": "decision:" + "1" * 24,
+     "question": "Recorded rollout choice awaits owner consumption.",
+     "first_seen": now,
+     "answer_pending": {"choice": 1}},
+    {"id": "decision:" + "2" * 24,
+     "question": "Choose the remaining rollout window for production.",
+     "first_seen": now,
+     "answer_pending": None},
+]
+json.dump({
+    "schema": 1, "feed": "decisions", "generated_epoch": now,
+    "cadence_s": 300, "ok": True, "error": None,
+    "data": {"pinned": rows, "counts": {"open": 2, "structured_open": 2}},
+}, open(path, "w"))
+PYEOF
+  if env -u DASHBOARD_CMD_ATTENTION REPO_ROOT="$REPO" MISSION_CONTROL_HOME="$mch" \
+       bash "$DASH" collect --force attention >/dev/null 2>&1 \
+     && python3 - "$mch/data/attention.json" <<'PYEOF'
+import json, sys
+data = json.load(open(sys.argv[1]))["data"]
+assert [row["id"] for row in data["board"]] == ["decision:" + "2" * 24], data
+assert data["counts"]["decision"] == 1, data["counts"]
+assert data["counts"]["decisions_filtered_out"] == 1, data["counts"]
+PYEOF
+  then
+    ok "attention: answered-pending receipts stay out while actionable decisions remain"
+  else
+    no "attention: answered-pending receipt resurfaced as an actionable request"
+  fi
+}
+
+c53() { # nested shells keep bare BSD mktemp calls inside the owned suite root
+  local probe
+  probe="$(/bin/bash -c 'mktemp -d')"
+  case "$probe" in
+    "$MISSION_TEST_TMPDIR"/*)
+      ok "test fixtures: nested bare mktemp is contained by the owned root" ;;
+    *)
+      no "test fixtures: nested bare mktemp escaped the owned root ($probe)" ;;
+  esac
+}
+
+c54() { # a feeder may finish before the test harness records its private group
+  local mch error error_ok
+  mch="$(newhome)"
+  DASHBOARD_TESTING=1 DASHBOARD_TEST_REGISTER_PAUSE_MS=50 \
+    DASHBOARD_CMD_GIT=/usr/bin/true MISSION_CONTROL_HOME="$mch" \
+    bash "$DASH" collect --force git >/dev/null 2>&1 || true
+  error="$(python3 - "$mch/data/git.error.json" <<'PYEOF'
+import json, sys
+try:
+    print(json.load(open(sys.argv[1])).get("error", ""))
+except (OSError, ValueError):
+    print("")
+PYEOF
+)"
+  case "$error" in
+    "feeder output not JSON:"*) error_ok=1 ;;
+    *) error_ok=0 ;;
+  esac
+  if [ "$error_ok" = 1 ] && \
+     grep -q $'\t/usr/bin/true$' "$OWNED_GROUP_RECEIPTS"; then
+    ok "test fixtures: a completed fast feeder still records its owned group"
+  else
+    no "test fixtures: fast feeder registration failed ($error)"
+  fi
+}
+
+c55() { # one invalid receipt must not keep a separately valid group alive
+  local probe ready child pgid="" cleanup_status=0
+  probe="$ROOT/group-cleanup-probe.py"
+  ready="$ROOT/group-cleanup-probe.ready"
+  cat > "$probe" <<'PY'
+import os, signal, sys, time
+signal.signal(signal.SIGTERM, signal.SIG_IGN)
+with open(sys.argv[1], "w") as handle:
+    handle.write("ready\n")
+while True:
+    time.sleep(1)
+PY
+  /usr/bin/python3 - "$probe" "$ready" <<'PY' &
+import os, sys
+os.setsid()
+os.execv("/usr/bin/python3", ["/usr/bin/python3", sys.argv[1], sys.argv[2]])
+PY
+  child=$!
+  register_owned_process "$child" 2>/dev/null || true
+  for _ in $(seq 1 100); do
+    pgid="$(fixture_process_pgid "$child")"
+    [ "$pgid" = "$child" ] && [ -e "$ready" ] && break
+    sleep 0.01
+  done
+  if [ "$pgid" != "$child" ] || [ ! -e "$ready" ] ||
+     ! record_owned_group_receipt "$child" "$pgid" "$probe"; then
+    no "test fixtures: invalid receipt setup reached a valid private group"
+    return
+  fi
+  printf '%s\n' 'invalid-receipt' >&9
+  cleanup_owned_groups || cleanup_status=$?
+  wait_owned_groups_absent || true
+  wait "$child" 2>/dev/null || true
+  if [ "$cleanup_status" -ne 0 ] && ! fixture_group_has_members "$pgid"; then
+    ok "test fixtures: invalid receipt reports failure after valid groups are reaped"
+  else
+    no "test fixtures: invalid receipt skipped valid-group cleanup"
+  fi
+  : > "$OWNED_GROUP_RECEIPTS"
+  : > "$OWNED_GROUP_REGISTRY"
+}
+
+case "${DASHBOARD_TEST_CASE:-}" in
+fixture-reaper)
+  c39a ;;
+answered-pending-attention)
+  c52 ;;
+temp-root)
+  c53 ;;
+fast-feeder-registration)
+  c54 ;;
+invalid-group-receipt-cleanup)
+  c55 ;;
+*)
   c0; c1; c2; c3; c4; c4b; c5; c6; c7; c8; c8a; c8b; c9; c10; c11; c12; c13; c14; c14a; c15; c16; c17; c18; c19; c20; c21; c22; c23; c24; c25; c26; c27; c28; c29; c30; c31; c32; c33; c34; c35; c36; c37; c38; c39; c39a; c40; c41; c42; c42a; c43; c44; c45; c46; c47; c48; c49; c50; c51
-fi
+  c52; c53; c54; c55 ;;
+esac
 shell_contract
 LIVE_DATA_AFTER="$(live_data_fingerprint)"
 if [ "$LIVE_DATA_BEFORE" = "$LIVE_DATA_AFTER" ]; then
