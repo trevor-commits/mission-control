@@ -616,6 +616,61 @@ class RollupAnswerTests(unittest.TestCase):
         self.assertEqual(Path(recovered["batch_path"]).parent, parent)
         self.assertTrue(Path(recovered["batch_path"]).is_dir())
 
+    def test_existing_batch_parent_swap_quarantines_visible_conflict(self) -> None:
+        fixture = self._three_member_card()
+        ids = fixture["ids"]
+        card_id = fixture["card"]["card_id"]
+        initial = self._dashboard(
+            "decide", "answer-rollup", card_id, ids["primary"], "1")
+        batch_name = Path(initial["batch_path"]).name
+
+        env = dict(self.env)
+        env.update({
+            "DASHBOARD_TESTING": "1",
+            "DASHBOARD_TEST_ROLLUP_PAUSE_AFTER_COMMIT": "1",
+        })
+        proc = subprocess.Popen(
+            ["/bin/bash", str(DASHBOARD), "decide", "answer-rollup",
+             card_id, ids["primary"], "1"],
+            env=env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        ready = self.home / ".rollup-answer-postcommit-test-ready"
+        deadline = time.monotonic() + 5
+        while not ready.exists() and time.monotonic() < deadline:
+            if proc.poll() is not None:
+                break
+            time.sleep(0.01)
+        if not ready.exists():
+            stdout, stderr = proc.communicate(timeout=2)
+            self.fail("replay did not reach postcommit pause: %s %s" % (
+                stdout, stderr))
+
+        parent = self.home / "answer-batches"
+        old_parent = self.home / "answer-batches-old-visible-conflict"
+        parent.rename(old_parent)
+        parent.mkdir(mode=0o700)
+        conflict = parent / batch_name
+        conflict.mkdir(mode=0o700)
+        manifest = conflict / "manifest.json"
+        manifest.write_text("{}\n")
+        manifest.chmod(0o600)
+        (self.home / ".rollup-answer-postcommit-test-continue").touch(mode=0o600)
+        stdout, stderr = proc.communicate(timeout=10)
+        self.assertNotEqual(proc.returncode, 0, (stdout, stderr))
+        self.assertFalse((old_parent / batch_name).exists())
+        self.assertTrue(any(old_parent.glob(".rollup-quarantine.*")))
+        self.assertFalse(conflict.exists())
+        self.assertTrue(any(parent.glob(".rollup-quarantine.*")))
+        for decision_id in (ids["primary"], ids["equivalent"]):
+            self.assertEqual(len(self._pending_events(decision_id)), 1)
+
+        recovered = self._dashboard(
+            "decide", "answer-rollup", card_id, ids["primary"], "1")
+        self.assertTrue(recovered["replayed"])
+        self.assertEqual(Path(recovered["batch_path"]).parent, parent)
+        self.assertTrue(Path(recovered["batch_path"]).is_dir())
+        for decision_id in (ids["primary"], ids["equivalent"]):
+            self.assertEqual(len(self._pending_events(decision_id)), 1)
+
     def test_public_answer_refreshes_feed_without_provider_send(self) -> None:
         fixture = self._three_member_card()
         ids = fixture["ids"]
