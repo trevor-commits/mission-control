@@ -48,5 +48,6 @@ creating locks, batch paths, or SQLite files. Convergence commits `bd83a30` and
 PR review repair `db40774bbb477326989553cba703c716d857bb80`
 passes rollup `32/32` and dashboard `91/0`. Hosted run `31639362011`
 then exposed SQLite sidecar and search-render timing gaps. Repair
-`c988153baedfceeae68773072fb3fde032f2a8f9` is focused-green; final
-records-head verification, hosted readback, merge, and installation remain.
+`c988153baedfceeae68773072fb3fde032f2a8f9` is focused-green. Exact records
+head `7a2ae1af7264df830b48cfb622c1f71a1b85029a` passes all 26 suites. Its
+receipt push, hosted readback, merge, and installation remain.

@@ -43,6 +43,7 @@
 | PR review and hosted-CI repair | RED stale attention, native pending overcount, ambient abort, stale sidecar health, missing index, and whole-value validation; GREEN dashboard 91/0, rollup 32/32, browser 315, panel 13/0, native 16/0, affected shell/Python suites and static checks | rewritten convergence repair `db40774`; `records/2026-08-11-repository-convergence.md` |
 | Post-rewrite authoritative verifier | `SUITES PASS=26 FAIL=0` at exact `e34c2ed23028b31707ef581ba0bc6b1cc9e4a92e`; dashboard 91/0; rollup 32/32; ER-134 63/0; browser 315; panel 13/0; native suites 16/0 each; OpenSpec 2/0; syntax and artifacts pass | current convergence task transcript |
 | Second hosted macOS repair | RED read-only invalid-member validation created WAL/shared-memory sidecars; hosted search observed an earlier debounced render. GREEN at `c988153`: rollup 32/32, Decision Alert all pass, browser 315 twice, syntax and diff checks pass | hosted run `31639362011`; convergence record |
+| Second-hosted exact verifier | `SUITES PASS=26 FAIL=0` at exact records head `7a2ae1af7264df830b48cfb622c1f71a1b85029a`; dashboard 91/0; rollup 32/32; browser 315; panel 13/0; native suites 16/0 each; OpenSpec 2/0; syntax and artifacts pass | current convergence task transcript |
 | Final same-model/max audit | pending immutable merge commit | `records/rollup-answer-independent-codex-audit.md` |
 
 ## Claims and limits
@@ -54,4 +55,4 @@
 - Confirmed: the valid 300-second attention envelope participates in guard validation and combined Home state; exact `attention` and `attention — ...` panel states remain actionable.
 - Confirmed: exact sixth-repair head `78672c4` passes the authoritative `SUITES PASS=23 FAIL=0` gate live on macOS 26.5.
 - Confirmed: no dependency or schema migration was introduced.
-- Did not verify: the second-hosted repair's records head through the exact full verifier, ordinary push hook, or repaired hosted CI; PR merge; install, provider delivery, live-store behavior, plist, or launchd.
+- Did not verify: the second-hosted verifier receipt through the ordinary push hook or repaired hosted CI; PR merge; install, provider delivery, live-store behavior, plist, or launchd.

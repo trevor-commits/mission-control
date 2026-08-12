@@ -1,6 +1,6 @@
 # Lane D state — rollup-answer CLI wiring
 
-- Status: SECOND HOSTED REPAIR FOCUSED GREEN; EXACT GATES AND LANDING PENDING. PR #16 is published at `be1c342817236c347820c37b4d9f3ffad66b826b`; GitGuardian is green and CodeRabbit approved it. Hosted run `31639362011` exposed macOS SQLite sidecar creation during rejected-target validation and a search-render timing race. Repair `c988153baedfceeae68773072fb3fde032f2a8f9` is focused-green locally; its records-head full verifier, push hook, hosted readback, merge, install, archive, and cleanup remain.
+- Status: SECOND HOSTED REPAIR EXACT-LOCAL GREEN; PUBLICATION AND LANDING PENDING. PR #16 is published at `be1c342817236c347820c37b4d9f3ffad66b826b`; GitGuardian is green and CodeRabbit approved it. Hosted run `31639362011` exposed two cross-platform gaps repaired at `c988153baedfceeae68773072fb3fde032f2a8f9`. Exact records head `7a2ae1af7264df830b48cfb622c1f71a1b85029a` passes `SUITES PASS=26 FAIL=0`; its receipt commit, push hook, hosted readback, merge, install, archive, and cleanup remain.
 - Branch: `codex/repo-convergence-019ff2ae`
 - Review base: `43bca917871a33f3b4176117df86e15eb80a3472`
 - Convergence PR: #16, `https://github.com/trevor-commits/mission-control/pull/16`
