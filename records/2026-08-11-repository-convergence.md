@@ -61,6 +61,13 @@ Linear: `self-contained:` because `LINEAR.md` records repo-only mode.
 - Source commit `79cff0d98ef97e6c7eeabcf9cd43be19c877cd67`, integrated as `55544cb`, pins both Outcome Extractor attempts to exact `claude-opus-5` and rejects another selector before command lookup. The source owner passed the 37-case extractor suite and two complete `SUITES PASS=24 FAIL=0` runs, including the push hook. The combined branch independently passes all 37 extractor checks and its slow-call transaction test. No live Claude call was made.
 - Answer-dispatch autonomy, unified-health, memory-health, and the old visual refresh remain preserved but excluded. They conflict with the current V1 clarity gate or are superseded by newer mainline work.
 
+## Final candidate verification
+
+- Exact candidate `112757172e640450f73fcd1a69f36745f6882a73` passed `PYTHONDONTWRITEBYTECODE=1 /bin/bash scripts/verify.sh` with `SUITES PASS=26 FAIL=0`.
+- Key totals: dashboard `90/0`; Rollup Answer `29/29`; ER-134 `63/0`; loose-end runner `32/0`; shared policy `2/0`; Usage `24/0`; dashboard browser 315; panel browser `13/0`; native panel suites `16/0` and `15/0`; OpenSpec `2/0`.
+- Python syntax, shell syntax, source-artifact checks, `git diff --check`, and immediate commit/status readback passed. The worktree remained clean at the exact candidate.
+- The required technical-prose check was run over the five changed record/OpenSpec files. It reported 1,765 errors and 227 warnings across their full historical contents. No prose-clean claim is made, and a wholesale historical rewrite is outside this convergence change.
+
 ## No-delete gates
 
 No worktree, local branch, remote branch, PR, rescue ref, or backup is removed until all applicable checks pass:
@@ -78,7 +85,7 @@ No worktree, local branch, remote branch, PR, rescue ref, or backup is removed u
 ## Current unverified boundaries
 
 - Historical Decisions timeouts cannot be attributed more narrowly than the observed host-wide storage/timeout episode; current behavior is green and no source defect was reproduced.
-- The integrated convergence head has not yet received its final full verifier, hosted CI result, PR merge, or installed-source readback.
+- The records-complete convergence head still needs the ordinary push-hook verifier, hosted CI result, PR merge, and installed-source readback.
 - Existing secondary worktrees predate owner leases and require owner-bound recovery before cleanup.
 - The Rollup Answer and Opus 5 owner worktrees remain registered until their exact owners release their leases. Their source commits are contained, but physical cleanup must use the broker after each owner turn ends.
 - Natural scheduled-run proof must come from an observed scheduler firing; quiet time is not proof.
