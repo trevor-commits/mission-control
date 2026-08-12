@@ -67,6 +67,9 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 REPO="$(dirname "$HERE")"
 DASH="$HERE/dashboard"
 REQUIRE_SHELL="${1:-}"
+# shellcheck source=scripts/test-temp-root.sh
+source "$HERE/test-temp-root.sh"
+mission_test_temp_init mc-test || exit 1
 
 PASS=0
 FAIL=0
@@ -75,7 +78,7 @@ no() { echo "FAIL: $1"; FAIL=$((FAIL + 1)); }
 
 SUITE_PGID="$(/bin/ps -p "$$" -o pgid= 2>/dev/null | /usr/bin/awk '{$1=$1; print}')"
 case "$SUITE_PGID" in ''|*[!0-9]*) echo "dashboard.test: cannot prove suite process group" >&2; exit 70 ;; esac
-ROOT="$(mktemp -d "${TMPDIR:-/tmp}/mc-test.XXXXXX")"
+ROOT="$MISSION_TEST_TEMP_ROOT"
 OWNED_PROCESS_REGISTRY="$ROOT/owned-processes.tsv"
 OWNED_GROUP_RECEIPTS="$ROOT/owned-group-receipts.tsv"
 OWNED_GROUP_REGISTRY="$ROOT/owned-groups.tsv"
@@ -277,7 +280,7 @@ cleanup_owned_groups() {
 
 SUITE_CLEANED=0
 cleanup_suite() {
-  local groups_clean=0
+  local groups_clean=0 cleanup_failed=0
   [ "$SUITE_CLEANED" = 0 ] || return
   SUITE_CLEANED=1
   cleanup_owned_groups || groups_clean=1
@@ -287,8 +290,11 @@ cleanup_suite() {
   fi
   exec 9>&-
   if [ "$groups_clean" = 0 ]; then
-    rm -rf "$ROOT"
+    mission_test_temp_cleanup || cleanup_failed=1
+  else
+    cleanup_failed=1
   fi
+  [ "$cleanup_failed" = 0 ]
 }
 
 suite_signal() {
@@ -298,7 +304,7 @@ suite_signal() {
   exit "$code"
 }
 
-trap 'rc=$?; trap - EXIT INT TERM HUP; cleanup_suite; exit "$rc"' EXIT
+trap 'rc=$?; trap - EXIT INT TERM HUP; cleanup_suite || { [ "$rc" -ne 0 ] || rc=1; }; exit "$rc"' EXIT
 trap 'suite_signal 130' INT
 trap 'suite_signal 143' TERM
 trap 'suite_signal 129' HUP
@@ -2875,14 +2881,27 @@ PYEOF
   fi
 }
 
+c53() { # nested shells keep bare BSD mktemp calls inside the owned suite root
+  local probe
+  probe="$(/bin/bash -c 'mktemp -d')"
+  case "$probe" in
+    "$MISSION_TEST_TMPDIR"/*)
+      ok "test fixtures: nested bare mktemp is contained by the owned root" ;;
+    *)
+      no "test fixtures: nested bare mktemp escaped the owned root ($probe)" ;;
+  esac
+}
+
 case "${DASHBOARD_TEST_CASE:-}" in
 fixture-reaper)
   c39a ;;
 answered-pending-attention)
   c52 ;;
+temp-root)
+  c53 ;;
 *)
   c0; c1; c2; c3; c4; c4b; c5; c6; c7; c8; c8a; c8b; c9; c10; c11; c12; c13; c14; c14a; c15; c16; c17; c18; c19; c20; c21; c22; c23; c24; c25; c26; c27; c28; c29; c30; c31; c32; c33; c34; c35; c36; c37; c38; c39; c39a; c40; c41; c42; c42a; c43; c44; c45; c46; c47; c48; c49; c50; c51
-  c52 ;;
+  c52; c53 ;;
 esac
 shell_contract
 LIVE_DATA_AFTER="$(live_data_fingerprint)"

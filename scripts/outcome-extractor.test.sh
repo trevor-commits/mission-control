@@ -5,6 +5,9 @@ set -u
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 CG="$HERE/chat-graph"
+# shellcheck source=scripts/test-temp-root.sh
+source "$HERE/test-temp-root.sh"
+mission_test_temp_init outcome-extractor-test || exit 1
 FAILS=0
 
 pass() { echo "PASS: $1"; }
