@@ -37,6 +37,7 @@ cp "$ROOT/scripts/mission_control_common.py" "$MISSION_CONTROL_HOME/bin/mission_
 cp "$ROOT/scripts/queue_admission.py" "$MISSION_CONTROL_HOME/bin/queue_admission.py"
 cp "$ROOT/scripts/dashboard" "$MISSION_CONTROL_HOME/bin/dashboard"
 cp "$COMPOSE" "$MISSION_CONTROL_HOME/bin/compose-decision-prompt.py"
+cp "$ROOT/scripts/morning-brief" "$MISSION_CONTROL_HOME/bin/morning-brief"
 chmod +x "$MISSION_CONTROL_HOME/bin/"*
 
 python3 - <<'PY'
@@ -76,9 +77,69 @@ test -x "$PANEL_TEST_BIN" && pass "mc-panel binary built in isolated test state"
 grep -q 'disableAutomaticTermination' "$ROOT/scripts/mc-panel.swift" && pass "panel disables TAL" || fail "panel disables TAL"
 grep -q 'beginActivity' "$ROOT/scripts/mc-panel.swift" && pass "panel RunningBoard activity" || fail "panel RunningBoard activity"
 grep -q 'mcDecide' "$ROOT/dashboard/panel.html" && pass "panel one-click bridge" || fail "panel one-click bridge"
+if grep -q 'isAnswerPending\|d\.answer_pending\|answer_pending' "$ROOT/dashboard/panel.html" && \
+   grep -q 'Awaiting owner consumption' "$ROOT/dashboard/panel.html"; then
+  pass "panel renders answered-pending decisions read-only"
+else
+  fail "panel answered-pending read-only state"
+fi
 grep -q 'data/attention.js' "$ROOT/dashboard/panel.html" && pass "panel loads attention.js" || fail "panel loads attention.js"
 grep -q 'slice(0, 5)' "$ROOT/dashboard/panel.html" && pass "panel top-5 cap" || fail "panel top-5 cap"
 grep -q 'renderFromDecisions\|attentionFresh' "$ROOT/dashboard/panel.html" && pass "panel attention fallback" || fail "panel attention fallback"
+if node - "$ROOT/dashboard/panel.html" <<'JS'
+const fs = require('fs'), vm = require('vm');
+const html = fs.readFileSync(process.argv[2], 'utf8');
+const match = html.match(/<script>\s*([\s\S]*?)<\/script>/);
+if (!match) throw new Error('panel script not found');
+function makeEl() {
+  const el = { children: [], _text: '', className: '', style: {}, attrs: {},
+    appendChild(child) { this.children.push(child); return child; },
+    setAttribute(key, value) { this.attrs[key] = value; },
+    classList: { add() {}, toggle() { return false; } }
+  };
+  Object.defineProperty(el, 'textContent', {
+    get() { return this._text + this.children.map(c => c.textContent || '').join(''); },
+    set(value) { this._text = String(value == null ? '' : value); this.children = []; }
+  });
+  return el;
+}
+const nodes = {};
+for (const id of ['title', 'health', 'list', 'refresh', 'theme', 'open-full',
+  'status-pill', 'status-text', 'stat-needs', 'stat-jobs', 'stat-jobs-lbl',
+  'stat-feeds', 'stat-ai', 'updated', 'needs-count', 'hr-tabs', 'hr-list',
+  'hr-motion', 'hr-pin']) nodes[id] = makeEl();
+const pending = n => ({ id: 'decision:' + String(n).repeat(24), question: 'Pending ' + n,
+  options: ['A', 'B'], answer_pending: { choice: 1 } });
+const actionable = { id: 'decision:' + 'a'.repeat(24), question: 'ACTIONABLE-LATE',
+  options: ['Ship', 'Wait'], answer_pending: null };
+const now = Math.floor(Date.now() / 1000);
+const sandbox = {
+  window: { MC: { feeds: {
+    decisions: { schema: 1, feed: 'decisions', generated_epoch: now, cadence_s: 300,
+      ok: true, error: null, data: { pinned: [pending(1), pending(2), pending(3), actionable],
+        counts: { open: 4, structured_open: 4 } } },
+    attention: { schema: 1, feed: 'attention', generated_epoch: now, cadence_s: 300,
+      ok: false, error: 'forced-miss', data: null },
+    automation: { schema: 1, feed: 'automation', generated_epoch: now, cadence_s: 300,
+      ok: true, error: null, data: { jobs: [{ label: 'fixture', state: 'green' }],
+        counts: { green: 1 }, exceptions: 0 } }
+  }, feedErrors: { attention: 'forced-miss' } } },
+  document: { documentElement: makeEl(), addEventListener() {}, getElementById(id) { return nodes[id]; },
+    createElement() { return makeEl(); }, createTextNode(value) { const el = makeEl(); el.textContent = value; return el; } },
+  localStorage: { getItem() { return null; }, setItem() {} },
+  location: { reload() {}, href: '', search: '' }, navigator: { clipboard: { writeText() { return Promise.resolve(); } } },
+  setTimeout() { return 0; }, Date, Promise, Math, JSON, Array, Object, String, Number,
+  isFinite, console
+};
+sandbox.window.window = sandbox.window;
+vm.runInNewContext(match[1], sandbox, { timeout: 2000 });
+const shown = nodes.list.textContent;
+if (nodes.title.textContent !== 'Needs you' || shown.indexOf('ACTIONABLE-LATE') === -1 ||
+    shown.indexOf('ACTIONABLE-LATE') > shown.indexOf('Pending 1')) {
+  throw new Error(JSON.stringify({ title: nodes.title.textContent, shown }));
+}
+JS
+then pass "panel shows actionable rows before answered-pending rows"; else fail "panel hides actionable rows behind answered-pending rows"; fi
 grep -q 'mcDecide' "$ROOT/scripts/mc-panel.swift" && pass "swift mcDecide handler" || fail "swift mcDecide handler"
 grep -q '\^decision:\[0-9a-f\].*24' "$ROOT/scripts/mc-panel.swift" && pass "swift exact decision id contract" || fail "swift exact decision id contract"
 grep -q 'terminationHandler' "$ROOT/scripts/mc-panel.swift" && pass "swift decision bridge is asynchronous" || fail "swift decision bridge async"

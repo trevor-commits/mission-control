@@ -1,0 +1,46 @@
+Lane D independent-audit repair authoritative full-green evidence
+Date: 2026-07-18
+Branch: codex/rollup-answer-wiring
+Code candidate: 34687c9 (`fix(decisions): bind rollup publication to receipts`)
+Command: `PYTHONDONTWRITEBYTECODE=1 /bin/bash scripts/verify.sh`
+Environment: exact code/test worktree later committed as 34687c9 plus temporary homes/stores, synthetic feeds, test stubs, and loopback-only fixtures; no live Mission Control store, provider send, install, deploy, release, plist, launchd, or main-branch action
+
+Terminal receipt:
+```
+== dashboard browser ==
+dashboard-browser: 253 assertions passed
+
+== unfinished-work scanner ==
+SELF-TEST PASS
+
+== OpenSpec strict ==
+✓ change/morning-brief
+✓ change/rollup-answer
+Totals: 2 passed, 0 failed (2 items)
+
+== Python syntax ==
+== shell syntax ==
+== source tree artifacts ==
+
+====
+SUITES PASS=23 FAIL=0
+```
+
+Selected changed-scope receipts:
+- Rollup answer: 14/14.
+- Dashboard/browser: full dashboard suite green; browser 253 assertions.
+- Decision alert and Morning Brief: ALL PASS.
+- Usage snapshot: PASS=24 FAIL=0.
+- Strict OpenSpec: 2/0.
+- Python syntax, macOS Bash 3.2 syntax, unfinished-work scanner, and final source-artifact gate: pass.
+
+Diff summary for 34687c9:
+- `scripts/compose-decision-prompt.py`: deterministic rollup bytes, held batch fd, canonical digest verification, quarantine, exact replay, final-path binding.
+- `scripts/decision-alert`: persist and exact-compare digest, member sets, metadata, and per-member artifact references.
+- `scripts/dashboard`: strict decisions-feed refresh with `DECISION_ALERT_AUTO=0` and loud committed-but-degraded failure.
+- `scripts/rollup-answer.test.py`: seven new/strengthened mutation, replay, feed, Morning Brief, and no-send contracts.
+
+Claims:
+- Confirmed: the authoritative verifier passed all 23 suites on the exact code/test content committed as 34687c9.
+- Confirmed: no source-tree Python artifact remained after the verifier.
+- Did not verify: the required final fresh same-model/max audit, hosted PR checks, merge, install, deploy, provider delivery, or live-store behavior.

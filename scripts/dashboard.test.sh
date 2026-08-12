@@ -2520,11 +2520,53 @@ PYEOF
   fi
 }
 
-if [ "${DASHBOARD_TEST_CASE:-}" = "fixture-reaper" ]; then
-  c39a
-else
+c52() { # answered-pending decisions are receipts, not attention requests
+  local mch now; mch="$(newhome)"; now="$(date +%s)"
+  mkdir -p "$mch/data"
+  python3 - "$mch/data/decisions.json" "$now" <<'PYEOF'
+import json, sys
+path, now = sys.argv[1], int(sys.argv[2])
+rows = [
+    {"id": "decision:" + "1" * 24,
+     "question": "Recorded rollout choice awaits owner consumption.",
+     "first_seen": now,
+     "answer_pending": {"choice": 1}},
+    {"id": "decision:" + "2" * 24,
+     "question": "Choose the remaining rollout window for production.",
+     "first_seen": now,
+     "answer_pending": None},
+]
+json.dump({
+    "schema": 1, "feed": "decisions", "generated_epoch": now,
+    "cadence_s": 300, "ok": True, "error": None,
+    "data": {"pinned": rows, "counts": {"open": 2, "structured_open": 2}},
+}, open(path, "w"))
+PYEOF
+  if env -u DASHBOARD_CMD_ATTENTION REPO_ROOT="$REPO" MISSION_CONTROL_HOME="$mch" \
+       bash "$DASH" collect --force attention >/dev/null 2>&1 \
+     && python3 - "$mch/data/attention.json" <<'PYEOF'
+import json, sys
+data = json.load(open(sys.argv[1]))["data"]
+assert [row["id"] for row in data["board"]] == ["decision:" + "2" * 24], data
+assert data["counts"]["decision"] == 1, data["counts"]
+assert data["counts"]["decisions_filtered_out"] == 1, data["counts"]
+PYEOF
+  then
+    ok "attention: answered-pending receipts stay out while actionable decisions remain"
+  else
+    no "attention: answered-pending receipt resurfaced as an actionable request"
+  fi
+}
+
+case "${DASHBOARD_TEST_CASE:-}" in
+fixture-reaper)
+  c39a ;;
+answered-pending-attention)
+  c52 ;;
+*)
   c0; c1; c2; c3; c4; c4b; c5; c6; c7; c8; c8a; c8b; c9; c10; c11; c12; c13; c14; c14a; c15; c16; c17; c18; c19; c20; c21; c22; c23; c24; c25; c26; c27; c28; c29; c30; c31; c32; c33; c34; c35; c36; c37; c38; c39; c39a; c40; c41; c42; c42a; c43; c44; c45; c46; c47; c48; c49; c50; c51
-fi
+  c52 ;;
+esac
 shell_contract
 LIVE_DATA_AFTER="$(live_data_fingerprint)"
 if [ "$LIVE_DATA_BEFORE" = "$LIVE_DATA_AFTER" ]; then

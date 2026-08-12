@@ -1,0 +1,33 @@
+Lane D rollup-answer focused green evidence
+Date: 2026-07-18
+Branch: codex/rollup-answer-wiring
+Base checkpoint: 53e91392dcef3d2deeedf748c14159320a8572e0 plus the uncommitted implementation candidate
+Environment: temporary Mission Control homes/stores and synthetic dashboard feeds only; no provider, network, install, deploy, launchd, or live-store path
+
+Focused behavior:
+- `python3 scripts/rollup-answer.test.py` -> 10 tests, OK.
+- `/bin/bash scripts/decision-alert.test.sh` -> ALL PASS.
+- `python3 scripts/queue_admission.test.py` -> 24 tests, OK.
+- `/bin/bash scripts/dashboard.test.sh --require-shell` -> PASS=67 FAIL=0.
+- `/bin/bash scripts/er134-usability.test.sh` -> 58 passed, 0 failed.
+- `/bin/bash scripts/morning-brief.test.sh` -> ALL PASS.
+- `node scripts/dashboard-render-smoke.js .` -> all 7 tabs and adversarial cases pass.
+
+Static and governance checks:
+- Python AST syntax -> pass for decision-alert, composer, queue, Morning Brief, and rollup tests.
+- `/bin/bash -n` under macOS Bash 3.2 -> pass for every changed shell surface and focused shell test.
+- Node syntax -> pass.
+- `openspec validate rollup-answer --strict` and `openspec validate --all --strict` -> 2 passed, 0 failed.
+- HOTL document lint -> pass.
+- `git diff --check` -> pass.
+- generated Python bytecode -> absent after cleanup.
+
+Negative and mutation coverage:
+- Missing staged-artifact proof, malformed/secret metadata, partial pending sets, conflicting choices, tampered/orphaned batches, database partial-insert failure, pre/post-commit publication failure, symlinked parent, and renamed batch-parent paths all fail closed in temporary state.
+- Exact replay is idempotent; changed evidence unlocks a new answer; graph-verified consumption resolves only the exact member.
+- Pending decisions remain open and visible while ordinary alert, dismiss, single-answer, Morning Brief, Home, and panel action paths suppress duplicate owner action.
+
+Did not verify at this checkpoint:
+- The authoritative 22-suite candidate verifier has not yet run against a committed implementation SHA.
+- The required fresh same-model/max-reasoning audit has not yet reviewed a frozen implementation SHA.
+- No PR exists yet, and no merge, install, deployment, provider send, live-store write, plist, or launchd action was attempted.

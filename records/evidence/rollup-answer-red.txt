@@ -1,0 +1,37 @@
+Lane D rollup-answer TDD failure evidence
+Date: 2026-07-18
+Branch: codex/rollup-answer-wiring
+Candidate before production implementation: 53e9139
+Environment: temporary Mission Control homes only; no provider, network, install, deploy, or live-store path
+
+$ python3 scripts/rollup-answer.test.py
+test_batch_keeps_targets_open_and_blocks_ordinary_reanswer ... FAIL
+test_batch_parent_symlink_and_rename_swap_fail_closed ... FAIL
+test_changed_evidence_unlocks_a_new_answer ... FAIL
+test_database_atomicity_and_postcommit_publication_recovery ... FAIL
+test_plan_targets_only_strict_equivalents_without_writes ... FAIL
+test_verified_consumption_resolves_only_the_exact_member ... FAIL
+
+Ran 6 tests in 3.025s
+FAILED (failures=6)
+
+Representative missing-behavior evidence:
+
+- `decision-alert plan-rollup-answer ...` -> exit 2, `{"error": "invalid command arguments", "ok": false}`.
+- `dashboard decide answer-rollup ...` -> exit 2 and the usage surface lists only `decide answer`, `decide dismiss`, and `decide alert-backfill`.
+- The fd-pinned rename-swap test cannot reach its stage boundary because the rollup transaction does not exist.
+
+Interpretation: the failures are the expected pre-implementation absence of the approved Lane D commands and semantics. The existing untouched baseline immediately before this red cycle was `SUITES PASS=21 FAIL=0`; these six failures are new contract tests, not regressions in prior behavior.
+
+Additional transaction-boundary red checks discovered during the first green review:
+
+$ python3 scripts/rollup-answer.test.py RollupAnswerTests.test_internal_writer_requires_staged_artifact_proof RollupAnswerTests.test_rollup_metadata_is_rejected_before_batch_writes
+test_internal_writer_requires_staged_artifact_proof ... FAIL
+Evidence: direct `decision-alert answer-rollup` succeeded and inserted pending events without any staged-artifact receipt.
+test_rollup_metadata_is_rejected_before_batch_writes ... FAIL
+Evidence: a resume identifier containing a newline and injected instruction text was persisted into the private batch instead of being rejected before filesystem writes.
+
+Ran 2 tests in 3.269s
+FAILED (failures=2)
+
+Interpretation: the first minimal implementation met the public happy path but left two root-boundary gaps against its own approved transaction design: the internal writer did not prove artifacts existed, and resume/source identifiers were not structurally bounded before prompt staging. Both failures used temporary homes only.

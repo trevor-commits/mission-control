@@ -1,0 +1,80 @@
+Lane D sixth-audit boundary repair — RED/GREEN evidence
+Date: 2026-07-18
+Worktree: /Users/gillettes/Coding Projects/mission-control-worktrees/rollup-answer-wiring
+Rejected frozen head: 0bf1c6905a880bf26233db777d8d35aa3985cf19
+Scope: hermetic temporary Mission Control homes only; no provider, live store, install, deploy, plist, launchd, merge, or main mutation.
+
+RED — exact audit counterexamples before production repair
+
+Command:
+  PYTHONDONTWRITEBYTECODE=1 python3 scripts/rollup-answer.test.py \
+    RollupAnswerTests.test_receipt_backed_canonical_symlink_is_quarantined_and_rebuilt \
+    RollupAnswerTests.test_orphan_first_answer_symlink_is_untouched \
+    RollupAnswerTests.test_quarantine_name_swap_rolls_back_unbound_replacement \
+    RollupAnswerTests.test_public_answer_rejects_missing_delivery_binding_fields
+
+Result:
+  FAILED (failures=2, errors=1), 3.375s
+  - receipt-backed canonical symlink: replay exit 1, canonical symlink remained, no quarantine
+  - missing markdown_sha256: public answer unexpectedly returned 0 and rewrote local views
+  - quarantine name swap: unbound replacement was renamed and canonical became absent
+  - orphan first-answer symlink negative control: PASS and untouched
+
+Command:
+  node scripts/dashboard-browser.test.js
+
+Result:
+  FAIL: home/non-decision attention: reassuring headline (Answers recorded)
+
+GREEN — after minimal boundary repair (attempt 1 of 2 per lane rules)
+
+Command:
+  PYTHONDONTWRITEBYTECODE=1 python3 scripts/rollup-answer.test.py \
+    RollupAnswerTests.test_receipt_backed_canonical_symlink_is_quarantined_and_rebuilt \
+    RollupAnswerTests.test_orphan_first_answer_symlink_is_untouched \
+    RollupAnswerTests.test_quarantine_name_swap_rolls_back_unbound_replacement \
+    RollupAnswerTests.test_public_answer_rejects_missing_delivery_binding_fields
+
+Result (attempt 1, pre-O_SYMLINK fix):
+  FAILED (failures=1), 5.739s
+  - test_receipt_backed_canonical_symlink_is_quarantined_and_rebuilt FAILED:
+    `decide answer-rollup: unsafe published batch conflict entry`
+    Root cause: `_open_existing_quarantine_entry` selected the symlink branch but
+    Python's `os` module does NOT expose `O_SYMLINK` and `O_PATH` is Linux-only,
+    so on macOS the branch raised "unsafe entry" and the receipt-backed symlink
+    was never pinned/quarantined. (Confirmed: `hasattr(os,'O_SYMLINK')==False`,
+    `hasattr(os,'O_PATH')==False` on macOS 26.5; SDK header fcntl.h defines
+    `O_SYMLINK = 0x00200000`.)
+  - the other three tests passed in attempt 1.
+
+Repair: add a macOS fallback (`sys.platform == 'darwin'` -> `o_symlink = 0x00200000`)
+  before the `O_PATH` branch, so the symlink entry itself is pinned via the real
+  macOS O_SYMLINK flag without following its target. Linux still uses O_PATH.
+
+Result (attempt 1 after the O_SYMLINK fix):
+  Ran 4 tests in 6.600s — OK
+  - both markdown_sha256 and chunk_bytes omission subtests fail closed before local rewrite
+  - receipt-backed symlink is fd-pinned without target traversal (macOS O_SYMLINK),
+    privately quarantined, rebuilt, and later replayed
+  - orphan first-answer symlink remains untouched with zero pending events
+  - a raced unbound replacement is verified and restored to the canonical name; no quarantine residue remains
+
+Command:
+  PYTHONDONTWRITEBYTECODE=1 python3 scripts/rollup-answer.test.py
+
+Result (full suite after O_SYMLINK fix, live on macOS 26.5):
+  Ran 29 tests in 50.963s — OK
+
+Command:
+  node scripts/dashboard-browser.test.js
+
+Result:
+  dashboard-browser: 254 assertions passed
+  Synthetic all-pending decisions plus non-decision feed failure renders Home H1 "Needs you".
+
+Static checks:
+  git diff --check — pass
+  Python in-memory/bytecode-disabled syntax — pass
+  Node syntax — pass
+
+Did not verify in this receipt: authoritative scripts/verify.sh, fresh repaired-head audit, hosted PR checks, merged/main state, install/deploy, provider delivery, live-store behavior, plist/launchd, or the live pending decision.
