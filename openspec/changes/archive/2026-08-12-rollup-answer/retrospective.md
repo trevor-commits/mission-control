@@ -28,7 +28,7 @@ The first full verifier was necessary but insufficient. Independent review found
 20. SQLite read-only mode can still create WAL/shared-memory sidecars. Validation must use a complete immutable checkpoint when no WAL exists, or require the existing WAL namespace and fail closed.
 21. Debounced browser behavior needs state-based synchronization. Fixed sleeps turn runner load into false product failures and can inspect a previous render.
 
-## Remaining boundary
+## Landed boundary
 
 Fresh audit of frozen `0bf1c69` reopened receipt identity, canonical symlink,
 quarantine rollback, and global Home headline boundaries. Exact repair
@@ -48,6 +48,16 @@ creating locks, batch paths, or SQLite files. Convergence commits `bd83a30` and
 PR review repair `db40774bbb477326989553cba703c716d857bb80`
 passes rollup `32/32` and dashboard `91/0`. Hosted run `31639362011`
 then exposed SQLite sidecar and search-render timing gaps. Repair
-`c988153baedfceeae68773072fb3fde032f2a8f9` is focused-green. Exact records
-head `7a2ae1af7264df830b48cfb622c1f71a1b85029a` passes all 26 suites. Its
-receipt push, hosted readback, merge, and installation remain.
+`c988153baedfceeae68773072fb3fde032f2a8f9` closes both.
+
+Receipt head `e0b60f7c545c5ec2612e3aa6aa124c59b53c4f7c` passed the ordinary
+push hook, hosted run `31642058664`, GitGuardian, and CodeRabbit. PR #16
+merged as `ddc8700cccab5586663703faab3ac782104085b5`. That exact source is
+installed and has natural scheduled exit-zero proof.
+
+Six exact recovery tags are published, and stale PRs #10 and #11 are closed.
+Remote source branches remain retained because no separately audited CAS deletion
+route exists. Two released worktrees also remain: one has an active Codex writer
+lock, and the other source head is patch-contained rather than a mainline ancestor.
+The broker rejected both removals without changing them. These retained recovery
+surfaces do not leave the feature implementation or OpenSpec acceptance incomplete.

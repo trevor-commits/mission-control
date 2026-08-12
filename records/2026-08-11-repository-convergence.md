@@ -92,6 +92,18 @@ Linear: `self-contained:` because `LINEAR.md` records repo-only mode.
 - Browser regressions now wait for the expected accessible status output rather than elapsed wall time. Focused GREEN is Rollup Answer `32/32`, Decision Alert all pass, and Dashboard Browser 315 assertions twice; Python/JavaScript syntax and `git diff --check` pass.
 - Exact records head `7a2ae1af7264df830b48cfb622c1f71a1b85029a` passes the authoritative verifier with `SUITES PASS=26 FAIL=0`. Dashboard is `91/0`, Rollup Answer `32/32`, Dashboard Browser 315, both native core suites `16/0`, and strict OpenSpec `2/0`; syntax and source-artifact gates pass. Receipt publication and hosted readback remain pending.
 
+## Landing, installation, and archival closeout
+
+- Receipt commit `e0b60f7c545c5ec2612e3aa6aa124c59b53c4f7c` passed the ordinary push hook with `SUITES PASS=26 FAIL=0` and was read back from the remote branch.
+- Hosted run `31642058664`, job `94266732765`, passed at that exact head. CodeRabbit approved it, GitGuardian passed it, and PR #16 was mergeable and clean.
+- PR #16 merged as `ddc8700cccab5586663703faab3ac782104085b5` at 2026-08-12T21:28:14Z. `origin/main`, the primary checkout, and the merge readback agree on that commit. The receipt head is its ancestor.
+- The repository installer published all nine runtimes and four assets from exact merged source `ddc8700`. The install stamp reports `provenance=head`, and dashboard status reports `install ddc8700cccab ok verified (head)`.
+- The existing `com.gillettes.mission-control` LaunchAgent retained its 300-second interval. Natural firings advanced its run count from 244 to 246 with last exit zero. Outcome Extractor, Morning Brief, and Morning Brief deadman remained activation-gated and skipped.
+- Six remote archive tags were read back at their exact SHAs: attention source `60577b78`, Opus 5 source `79cff0d`, Phase 0 PR head `9296e2c`, convergence receipt `e0b60f7`, Rollup Answer PR head `5153e2d`, and no-write source repair `fdb838d`.
+- PRs #10 and #11 were closed without merge after recovery-tag readback. Their remote branches remain retained because the repository has no separately audited compare-and-swap deletion route.
+- The approved owner broker preserved both released source worktrees. Rollup Answer is still protected by an active writer lock held by the Codex app. Opus 5 is protected because its patch-contained source head is not a mainline ancestor. No raw removal, branch deletion, or policy bypass followed.
+- OpenSpec change `rollup-answer` has no unchecked task. Strict validation passed, its eight requirements were synced to `openspec/specs/rollup-answer/spec.md`, and the completed change moved to `openspec/changes/archive/2026-08-12-rollup-answer/`.
+
 ## No-delete gates
 
 No worktree, local branch, remote branch, PR, rescue ref, or backup is removed until all applicable checks pass:
@@ -109,7 +121,8 @@ No worktree, local branch, remote branch, PR, rescue ref, or backup is removed u
 ## Current unverified boundaries
 
 - Historical Decisions timeouts cannot be attributed more narrowly than the observed host-wide storage/timeout episode; current behavior is green and no source defect was reproduced.
-- Published head `be1c342817236c347820c37b4d9f3ffad66b826b` is push-hook, GitGuardian, and CodeRabbit green. Hosted run `31639362011` failed the two reproduced cross-platform cases repaired at `c988153`. Exact records head `7a2ae1a` is authoritative-gate green; the receipt head still needs the push hook, hosted readback, PR merge, and installed-source readback.
-- Existing secondary worktrees predate owner leases and require owner-bound recovery before cleanup.
-- The Rollup Answer and Opus 5 owner worktrees remain registered until their exact owners release their leases. Their source commits are contained, but physical cleanup must use the broker after each owner turn ends.
-- Natural scheduled-run proof must come from an observed scheduler firing; quiet time is not proof.
+- A post-merge same-model/max audit was not repeated. The merge commit contains the exact hosted-green and reviewed PR tree.
+- Existing secondary worktrees predate owner leases and require owner-bound recovery before cleanup. Their dirty states remain protected by exact snapshot commits and both verified bundles.
+- Remote source branches remain until a separately audited expected-OID deletion route exists. The cleanup policy forbids substituting an ordinary remote delete.
+- The Rollup Answer and Opus 5 worktrees are owner-released but broker-protected for the exact reasons above. Physical cleanup remains deferred rather than forced.
+- Provider delivery and live decision-store answer behavior were not used as release proof. This convergence verified hermetic no-send behavior, installed-source identity, and natural collector execution.

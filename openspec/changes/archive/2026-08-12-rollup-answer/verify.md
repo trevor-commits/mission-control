@@ -14,7 +14,7 @@
 - Current-main integration base: `43bca917871a33f3b4176117df86e15eb80a3472`.
 - Current-main source repair: `60577b78fa32b48f10580796f94aacdb16a1fb19`.
 - Source no-write repair: `fdb838dd6d7520646541c9bf95e2a7901c8c2d58`.
-- Repository convergence integration: source repairs are contained as `bd83a30` and `4453b8e`; rewritten PR review/CI repair is `db40774bbb477326989553cba703c716d857bb80` on PR #16. Published head `be1c342817236c347820c37b4d9f3ffad66b826b` passed the ordinary push hook, GitGuardian, and CodeRabbit. Hosted run `31639362011` exposed two cross-platform gaps repaired at `c988153baedfceeae68773072fb3fde032f2a8f9`; exact records-head and hosted gates remain pending.
+- Repository convergence integration: source repairs are contained as `bd83a30` and `4453b8e`; rewritten PR review/CI repair is `db40774bbb477326989553cba703c716d857bb80`. Repair `c988153baedfceeae68773072fb3fde032f2a8f9` closes the two cross-platform failures from hosted run `31639362011`. Receipt head `e0b60f7c545c5ec2612e3aa6aa124c59b53c4f7c` passed the ordinary push hook, hosted run `31642058664`, GitGuardian, and CodeRabbit. PR #16 merged as `ddc8700cccab5586663703faab3ac782104085b5`.
 - Environment: hermetic temporary Mission Control homes/stores, synthetic feeds, fake senders, and loopback-only fixtures.
 
 ## Evidence
@@ -44,7 +44,10 @@
 | Post-rewrite authoritative verifier | `SUITES PASS=26 FAIL=0` at exact `e34c2ed23028b31707ef581ba0bc6b1cc9e4a92e`; dashboard 91/0; rollup 32/32; ER-134 63/0; browser 315; panel 13/0; native suites 16/0 each; OpenSpec 2/0; syntax and artifacts pass | current convergence task transcript |
 | Second hosted macOS repair | RED read-only invalid-member validation created WAL/shared-memory sidecars; hosted search observed an earlier debounced render. GREEN at `c988153`: rollup 32/32, Decision Alert all pass, browser 315 twice, syntax and diff checks pass | hosted run `31639362011`; convergence record |
 | Second-hosted exact verifier | `SUITES PASS=26 FAIL=0` at exact records head `7a2ae1af7264df830b48cfb622c1f71a1b85029a`; dashboard 91/0; rollup 32/32; browser 315; panel 13/0; native suites 16/0 each; OpenSpec 2/0; syntax and artifacts pass | current convergence task transcript |
-| Final same-model/max audit | pending immutable merge commit | `records/rollup-answer-independent-codex-audit.md` |
+| Receipt publication and hosted readback | ordinary push hook `SUITES PASS=26 FAIL=0`; hosted run `31642058664` success; CodeRabbit approved; GitGuardian passed at `e0b60f7` | PR #16 provider readback |
+| Merge, install, and natural runtime | PR #16 merged as `ddc8700`; install stamp binds 9 runtimes and 4 assets to that exact head; natural launchd runs advanced from 244 to 246 with last exit zero | install stamp, dashboard status, and launchd readback |
+| Archive and stale-PR closeout | six remote archive tags read back at exact SHAs; PRs #10 and #11 closed without merge; approved cleanup broker preserved both released source worktrees | convergence record and provider readback |
+| Final same-model/max audit | not repeated after the merge; the merge tree is identical to the exact reviewed and hosted-green PR head | `records/rollup-answer-independent-codex-audit.md` |
 
 ## Claims and limits
 
@@ -55,4 +58,6 @@
 - Confirmed: the valid 300-second attention envelope participates in guard validation and combined Home state; exact `attention` and `attention — ...` panel states remain actionable.
 - Confirmed: exact sixth-repair head `78672c4` passes the authoritative `SUITES PASS=23 FAIL=0` gate live on macOS 26.5.
 - Confirmed: no dependency or schema migration was introduced.
-- Did not verify: the second-hosted verifier receipt through the ordinary push hook or repaired hosted CI; PR merge; install, provider delivery, live-store behavior, plist, or launchd.
+- Confirmed: receipt head `e0b60f7` passed the ordinary push hook and repaired hosted CI. PR #16 merged as `ddc8700`, and that exact source is installed with natural scheduled exit-zero proof.
+- Confirmed: no provider delivery or live decision-store mutation was used as verification. The existing collector LaunchAgent retained its label and cadence; activation-gated jobs remained skipped.
+- Did not verify: a new post-merge same-model/max audit, provider delivery, or live-store answer behavior. The merge commit contains the exact hosted-green PR tree, so these are recorded limits rather than hidden acceptance claims.

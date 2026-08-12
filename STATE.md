@@ -1,6 +1,6 @@
 # Lane D state — rollup-answer CLI wiring
 
-- Status: SECOND HOSTED REPAIR EXACT-LOCAL GREEN; PUBLICATION AND LANDING PENDING. PR #16 is published at `be1c342817236c347820c37b4d9f3ffad66b826b`; GitGuardian is green and CodeRabbit approved it. Hosted run `31639362011` exposed two cross-platform gaps repaired at `c988153baedfceeae68773072fb3fde032f2a8f9`. Exact records head `7a2ae1af7264df830b48cfb622c1f71a1b85029a` passes `SUITES PASS=26 FAIL=0`; its receipt commit, push hook, hosted readback, merge, install, archive, and cleanup remain.
+- Status: LANDED, INSTALLED, AND OPENSPEC-ARCHIVED. Receipt head `e0b60f7c545c5ec2612e3aa6aa124c59b53c4f7c` passed the ordinary `26/0` push hook, hosted run `31642058664`, GitGuardian, and CodeRabbit. PR #16 merged as `ddc8700cccab5586663703faab3ac782104085b5`; that exact source is installed with natural scheduled exit-zero proof. Six exact archive tags are published, and stale PRs #10 and #11 are closed. Remote source branches and two released worktrees remain safety-retained because approved deletion gates rejected them.
 - Branch: `codex/repo-convergence-019ff2ae`
 - Review base: `43bca917871a33f3b4176117df86e15eb80a3472`
 - Convergence PR: #16, `https://github.com/trevor-commits/mission-control/pull/16`
@@ -19,11 +19,11 @@
 - Worktree: owner-leased repository convergence worktree.
 - Source chat: Codex `019ff2ae-33b3-7e50-af39-3a08efef29a8`; Lane D source owner `019f762c-c815-77b3-97c0-021c66fd3b7e`.
 - Trust Gate: on — durable operator direction and completion semantics
-- Canonical change: `openspec/changes/rollup-answer/`
+- Canonical change: `openspec/changes/archive/2026-08-12-rollup-answer/`; synced specification: `openspec/specs/rollup-answer/spec.md`
 - Executable binding: `hotl-workflow-rollup-answer.md`
 - Linear disposition: self-contained / repo-only; no Mission Control Linear team is configured
 - Project-memory convention: this repo has no separate `PROJECT_MEMORY.md`; `todo.md` is the declared operational-memory surface
-- Live/deploy actions: none; PR publication only
+- Live/deploy actions: installed merged source `ddc8700`; existing `com.gillettes.mission-control` retained its five-minute cadence; activation-gated jobs remained skipped
 
 ## Approved contract and citation
 
@@ -191,17 +191,19 @@ Receipts:
 
 - Confirmed: both first-audit P1 findings, all three second-audit findings, the third-audit occupied-parent P1, the fourth-audit persisted-view P1, both fifth-audit P1s, and all four sixth-audit findings were independently reproduced and have behavior-level regressions.
 - Confirmed: repair `bfaf10b` passed the targeted occupied-parent contract and 18/18 rollup contracts; exact records-complete `bc9014d` passed the historical authoritative `23/0` verifier; fourth repair `0ce6d3d` passed its replacement authoritative `23/0` verifier. Fifth repair `c0d0a53` passes the current authoritative `23/0` verifier, including rollup 25/25, dashboard 67/0, ER-134 59/0, usage 24/0, browser 253, OpenSpec 2/0, and final source-artifact predicate.
-- Confirmed: no schema migration, dependency, live-store write, provider send, main touch, install, deploy, release, plist, or launchd action occurred during Lane D implementation.
+- Confirmed: no schema migration, dependency, live-store write, or provider send occurred during Lane D implementation or convergence verification. Final closeout installed the merged runtime through the existing installer and retained the existing collector label/cadence.
 - Confirmed: the sixth repair's focused matrix is targeted 4/4, rollup 29/29, browser 254, with syntax/diff/source-artifact checks green.
 - Confirmed: exact sixth-repair head `78672c46d94041f974ca97b0d2cfe5596c6b020a` passes the authoritative `SUITES PASS=23 FAIL=0` gate live on macOS 26.5 (evidence `records/evidence/rollup-answer-final-boundaries-full-green.txt`); the macOS `O_SYMLINK` gap was RED before this head and GREEN after.
 - Confirmed: the seventh frozen-head audit is historically `REVIEW-CLEAN / MERGE-READY` for source code head `78672c4` only (Cursor `9db69b00`; Codex Sol usage-limited). Parent re-ran rollup 29/29 before that audit.
 - Confirmed: source PR #11 is superseded for landing by convergence PR #16. Source repairs `60577b78` and `fdb838d` are contained as `bd83a30` and `4453b8e`; rewritten review repair `db40774` passes the full affected matrix.
-- Did not verify: final records-head authoritative and hosted gates, merged-main install, provider delivery, or live-store behavior.
+- Confirmed: exact records head `7a2ae1a` and receipt head `e0b60f7` each pass the authoritative `26/0` verifier. Hosted run `31642058664` is green, PR #16 is merged, and the installed stamp binds all nine runtimes and four assets to merge `ddc8700`.
+- Confirmed: natural collector executions advanced from 244 to 246 runs with last exit zero. No kickstart or provider send was used as proof.
+- Did not verify: a new post-merge same-model/max audit, provider delivery, or live decision-store answer behavior. The merge tree matches the exact reviewed and hosted-green PR tree.
 - Do not do from the retained source branch: merge PR #11, install, deploy, send, write a live store, change plist/launchd, or resolve live decision `decision:a6f185b53cbc1278499b062d`.
-- Merge-sitting note: PR #16 owns landing. The integrator must read back the live card before changing it and must preserve provider/no-egress boundaries during verification.
+- Cleanup note: source PRs are closed and exact remote archive tags are verified. Remote branches remain retained under the repository's CAS-deletion policy. Broker removal preserved the Rollup Answer worktree because the Codex app still holds its writer lock and preserved the Opus 5 worktree because its patch-contained source head is not a mainline ancestor.
 
 ## Exact resume
 
-1. Lane D source implementation, historical frozen-head audit, current-main integration, and convergence review repair are complete.
-2. Run the exact final records-head verifier, push PR #16, and require hosted CI/review readback before merge.
-3. After `origin/main` contains the merged commit, install that exact source, verify the install stamp/runtime, then archive PR #11 and clean released refs/worktrees through the owner broker.
+1. Lane D implementation, convergence repair, exact-head review, hosted verification, merge, installation, and OpenSpec archival are complete.
+2. Recovery remains available through exact rescue refs, six published archive tags, and two verified Git bundles with SHA-256 `5f62b9b219524e2eb1dea6acf1a37d258b116285478c1614684955cb0270072a`.
+3. Do not raw-delete retained source branches or worktrees. Revisit them only after a separately audited remote CAS route exists and the owner broker's exact ancestry/writer-lock gates pass.

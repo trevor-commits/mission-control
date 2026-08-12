@@ -9,8 +9,6 @@ Capture the current goal plus the concrete dependency-ordered steps that are sti
 - Put audit-created actionable execution items at the top of this section so audit follow-through is the next queue to execute.
 - If the current chat creates or discovers more urgent execution-ready work than the existing queue reflects, persist and move that fresher work to the top of this section before handoff so the chat is not the only durable record.
 - When a step is verified complete, move or summarize it in `## Completed` instead of deleting the history.
-- 2026-08-11 repository convergence: preservation, selective integration, review repair, rejected-push containment, and publication through `be1c342` are complete. GitGuardian and CodeRabbit are green. Hosted run `31639362011` exposed two reproduced macOS gaps repaired at `c988153`; exact records head `7a2ae1a` passes `26/0`. Remaining: receipt push/hosted gates, merge, install/live proof, archive tags, stale PR closure, and safe branch/worktree cleanup. | owner: Codex `019ff2ae-33b3-7e50-af39-3a08efef29a8` | plan: `records/2026-08-11-repository-convergence.md` | linear: self-contained; repo-only.
-- Phase 0 rollup-answer CLI: source head `fdb838d` adds write-before-validation safety after `60577b78`; convergence commits `bd83a30` and `4453b8e` contain both repairs. Hosted macOS sidecar creation is repaired at `c988153`, with rollup `32/32` and Decision Alert green. Remaining: exact-head publication, hosted readback, and PR #16 landing before install, source-PR closure, or cleanup. | source owner: Codex thread `019f762c-c815-77b3-97c0-021c66fd3b7e` | convergence owner: Codex `019ff2ae-33b3-7e50-af39-3a08efef29a8` | linear: repo-only.
 - ER-156 Telegram producer routing: source, tests, and docs now route decisions to Control,
   normal Morning Brief chunks to Briefs, and the independent deadman to Incidents without
   treating the authorization identity as a destination. The first exact-byte review findings
@@ -39,7 +37,7 @@ Mirror every configured Linear issue here with the repo-side home that explains 
 ## Completed
 If it's not here, it isn't remembered.
 Preserve a durable completion trail for verified work instead of deleting it from active planning.
-- 2026-08-12 | Lane D source implementation and review repair — source `fdb838dd6d7520646541c9bf95e2a7901c8c2d58` is clean, exact-source `26/0`, and contained by convergence `4453b8e`; rewritten PR review repair `db40774` passes rollup `32/32`, dashboard `91/0`, browser 315, panel `13/0`, native `16/0`, and every affected owner suite. Landing, install, archive, and cleanup remain in Active Next Steps. The residual `_quarantine_visible_rollup_conflict` P3 is closed by the replacement-parent regression and exact-source/convergence verifiers; owner: convergence task; reopen only if canonical-conflict cleanup or exact replay regresses. | linear: repo-only.
+- 2026-08-12 | Repository convergence and Lane D rollup-answer — receipt `e0b60f7` passed the ordinary `26/0` hook, hosted run `31642058664`, CodeRabbit, and GitGuardian. PR #16 merged as `ddc8700`; that exact source is installed and naturally scheduled at exit zero. Six exact remote archive tags are verified, PRs #10/#11 are closed, and OpenSpec is archived with eight requirements synced. Recovery bundles and rescue refs remain. Remote source branches and two released worktrees are safety-retained after CAS/broker rejection; never raw-delete them. | owner: Codex `019ff2ae-33b3-7e50-af39-3a08efef29a8` | record: `records/2026-08-11-repository-convergence.md` | linear: self-contained; repo-only.
 - 2026-08-07 | Usage surfaces round 2: ONE card per provider, live GLM, X reads headline, compact + attention dedupe — panel `hrProviderCard` renders each provider as a single white card with per-window compact lines (burn animation kept); usage tab folds held credits into the live card, `value_label` headline support, heading 'Providers'; the collector's z.ai quota provider observed the weekly Coding Plan window at 100% used at that time. Historical `claude-glm` 429s were correlated, but this audit found no request-level evidence proving that weekly saturation caused them. NEEDS-YOU dedupes identical cross-chat asks with an 'asked in N chats' badge on both the attention top5 path and the decisions fallback. Adversarial 3-lens review caught the Keychain exit-44 misclassification pre-landing (fixed collector-side). Suites: dashboard.test.sh 85/85, browser 253, render-smoke 8/8 (new contract: GLM live card present, old glm health row banned, credit folded, X reads). Live drives over real data: usage tab 10/10, panel 8 single cards, triple Safe-Mode card collapsed to one with badge. Companion: global-implementations branch glm-x-usage (collector 24/24, pinned runtime installed). by: claude-fable-5 session 71f37b5b. | causal-claim correction: `records/2026-08-07-claude-usage-surfaces-adversarial-audit.md` | linear: repo-only.
 - 2026-08-06 | Mission Control refresher sticky exit-1 from chat-source degradation — root cause was not PATH/TTY: live `chat-source metadata --jsonl` pays ~70s CCI startup while `_metadata_timeout_s` defaulted to 20s, so every unbounded enrich timed out (`requested>0 found=0`), stamped `metadata_enrichment_status=degraded`, and the five-minute catch-up lane re-exported `stale_providers:[chat-source]` forever because catch-up skips enrichment. Fix: default metadata timeout 180s + regression 19g; `collect --due` no longer exits 1 for chat-source-only cosmetic stale (status still surfaces it); healed live meta to ok 49/49; suites `dashboard.test.sh` 84/0, `chat-graph.test.sh` ALL PASS, render-smoke + browser 253 green. | linear: self-contained; repo-only.
 - 2026-08-06 | Usage surfaces live-first + provider-grouped, GLM display-banned — `dashboard/index.html` usage tab now renders the 60-second ai-headroom feed first: ONE card per provider with every window as a labeled line inside (Codex Weekly + Spark, Cursor plan + API); the 30-minute snapshot only contributes providers the collector lacks (Copilot, Hermes) plus held credits; hidden rows never render; provider `glm` is filtered on every usage surface (it stays in the snapshot JSON purely as a usage-router input). `dashboard/panel.html` groups multi-window providers under one uppercase header with indented window rows. `dashboard install` materializes an honest `data/headroom.*` placeholder before the external collector's first pass; a staleness banner names the kickstart command when the collector stops writing. `dashboard.test.sh` live-data guard now attributes mid-suite writes: allowed refresher-owned feed artifacts + loaded `com.gillettes.mission-control` pass with a note, anything else still fails (the old equality check false-failed whenever a 5-minute collect tick landed mid-run). Evidence: `dashboard.test.sh` 83/83, `dashboard-browser.test.js` 253, render-smoke 8/8 with new no-GLM/no-hidden/grouping/X-API assertions; merged `8d39075`, pushed (remote sha verified), installed (stamp head `8d39075`), and a live Chrome drive over real `~/.mission-control` data passed 9/9 checks. Companion collector change: global-implementations PR #96 (x_api adapter, visible unconnected Claude/X rows, feed envelope `schema/feed/generated_at/error`). by: claude-fable-5 session 71f37b5b. | linear: repo-only.
@@ -84,6 +82,22 @@ Preserve a durable completion trail for verified work instead of deleting it fro
 - 2026-07-04 | ER-087 follow-up audit gaps — governance scaffold, product intent, tab wording, stale-ingest honesty, and Map smoke coverage landed in this change; full record below.
 
 ## Work Record Log
+
+### 2026-08-12 — Repository convergence landing and archival closeout
+- Problem: the implementation was green and preserved, but final publication, hosted proof, merge, install, stale-PR closure, OpenSpec archival, and governed cleanup still needed exact readback.
+- Reasoning: perform irreversible steps only after exact-head containment and remote recovery tags. Use the owner broker for worktrees and retain anything whose safety gate rejects removal.
+- Diagnosis inputs: PR #16 checks and merge state, remote refs/tags, install stamp, launchd run counts, OpenSpec task/spec state, owner lease states, and live writer-lock ownership.
+- Implementation inputs: receipt `e0b60f7`, merge `ddc8700`, hosted run `31642058664`, six archive tags, verified recovery bundle SHA-256 `5f62b9b219524e2eb1dea6acf1a37d258b116285478c1614684955cb0270072a`, and approved broker tooling.
+- Fix: merged and installed the exact reviewed source, observed natural collector success, closed stale PRs after archive-tag readback, archived OpenSpec, and preserved all rejected cleanup targets.
+- Self-audit:
+  - method: read back provider checks, merge ancestry, install hashes, launchd state, remote tag SHAs, PR closure, OpenSpec strict validation, and broker results.
+  - outcome: shipped code and records are exact and recoverable. No source work was lost, no provider send occurred, and every attempted deletion gate failed safely or was deferred.
+  - did not verify: post-merge same-model/max audit, provider delivery, live-store answer behavior, remote branch deletion, or cleanup of legacy unleased worktrees.
+- Ripple Check: updated `STATE.md`, this ledger, the convergence record, archived OpenSpec artifacts, synced specification, and the separate system-change ledger lane.
+- by: Codex `019ff2ae-33b3-7e50-af39-3a08efef29a8`.
+- triggered by: Trevor's repository status and lossless convergence request.
+- led to: completed product convergence with explicitly retained recovery surfaces. Later cleanup must satisfy the existing CAS, ancestry, writer-lock, and owner-lease gates.
+- linear: self-contained; Mission Control remains repo-only.
 
 ### 2026-08-11 — Repository preservation and convergence intake
 - Problem: eleven secondary worktrees, ten unmerged local branches, two conflicting approved PRs, four dirty worktrees, detached heads, stale branch records, and 22 unreachable commits made direct merge or cleanup unsafe.
@@ -949,29 +963,29 @@ Keep materially new suggestions here so they survive beyond the current chat.
 
 ## Active Branch Ledger
 ### `codex/repo-convergence-019ff2ae`
-- status: active — PR #16 is published at `be1c342`; GitGuardian and CodeRabbit are green; hosted run `31639362011` exposed two reproduced macOS gaps; repair `c988153` and exact records head `7a2ae1a` are local-gate green; receipt push/hosted gates and landing remain
+- status: merged and installed; OpenSpec/archive closeout is being committed. PR #16 merged as `ddc8700` after receipt `e0b60f7` passed local/hosted/review gates.
 - created: 2026-08-11
 - base: `origin/main@43bca917871a33f3b4176117df86e15eb80a3472`
 - worktree: `/Users/gillettes/Coding Projects/mission-control-worktrees/codex/repo-convergence-019ff2ae`
 - source chat: 2026-08-11 Codex `019ff2ae-33b3-7e50-af39-3a08efef29a8`, repository recovery and convergence
-- last refreshed by chat: 2026-08-12 second hosted macOS repair
+- last refreshed by chat: 2026-08-12 landing, install, archival, and cleanup-gate closeout
 - purpose: preserve all work, stabilize current main, integrate current-value work, and safely clean obsolete Git state.
 - linked issue: `self-contained:` repository convergence; Linear repo-only mode
 - plugin mirror: none
-- merge expectation: merge verified implementation and records to `main`
+- merge expectation: implementation merged; fast-forward this final records/archive commit to `main`
 - merge target: `main`
 - review surface: focused regressions, full verifier, exact-head review, GitHub PR checks, install readback, and scheduled-run evidence
-- exit checklist: preservation, restore test, integrations, publication, both hosted-failure diagnoses, review repair, credential-gate containment, and exact second-hosted verifier complete; receipt push/hosted gates, merge/install proof, archive tags, remaining owner releases, and branch cleanup remain
-- delete when: after `origin/main` containment, final install proof, owner release, and later cleanup-broker removal
-- retain reason: active convergence owner
+- exit checklist: preservation, restore test, integration, repair, publication, hosted checks, merge, install, natural run, remote tags, stale PR closure, and OpenSpec archival complete. Final records commit, owner release, and later broker cleanup remain.
+- delete when: after this closeout is on `origin/main`, owner release, and a later cleanup-broker pass
+- retain reason: active only for the final records/archive commit; same-turn physical cleanup is forbidden after owner release
 - cleanup command: owner release followed in a later turn by `worktree-owner-lease.py cleanup-released` using the recorded state file and lease ID
 - linked PR/audit/completion record: `records/2026-08-11-repository-convergence.md`; PR #16 read back at `https://github.com/trevor-commits/mission-control/pull/16`
 - pre-existing dirt at task start: isolated worktree clean; all legacy dirty worktrees have separate rescue snapshots and remain untouched
-- usable invocation path: n/a until implementation lands
+- usable invocation path: installed `/Users/gillettes/.mission-control/bin/dashboard`; source `origin/main@ddc8700` before this records-only closeout
 - owner lease: Codex `019ff2ae-33b3-7e50-af39-3a08efef29a8`; lease `c3d027bb-4fad-46d0-bc46-9ad206bb1b57`; state `/Users/gillettes/Coding Projects/mission-control/.git/codex-worktree-owners/61afdbaf8b34f98e8ddf07f6108026a5d146b484996a7f82641b65802d174221.json`
 
 ### `codex/rollup-answer-wiring`
-- status: retained source; exact head `fdb838dd6d7520646541c9bf95e2a7901c8c2d58` contains attention repair `60577b78` and is integrated through convergence commits `bd83a30` plus `4453b8e`; source PR #11 remains stale until PR #16 lands
+- status: archived retained source. PR #11 is closed; exact source repair `fdb838d` and PR head `5153e2d` have verified remote archive tags. The released worktree remains broker-protected.
 - created: 2026-07-17
 - base: original `origin/main@8582e182d5db3b8964ec21738a82806d94c78a55`; current integration base `origin/main@43bca917871a33f3b4176117df86e15eb80a3472`
 - worktree: `/Users/gillettes/Coding Projects/mission-control-worktrees/rollup-answer-wiring`
@@ -980,8 +994,8 @@ Keep materially new suggestions here so they survive beyond the current chat.
 - linked issue: self-contained; Linear repo-only mode in `LINEAR.md`
 - merge expectation: land only through the exact-head convergence PR after focused/full verification and fresh review; no install or live-store exercise before main containment
 - merge target: `main`
-- review surface: `openspec/changes/rollup-answer/`, `hotl-workflow-rollup-answer.md`, implementation diff, hermetic evidence, and `STATE.md`
-- independent audits: ambiguity audit `019f7411-b995-76e2-8481-1266b1eebfa8` resolved by approval; repair audits are recorded in `records/rollup-answer-independent-codex-audit.md`; the seventh frozen-head audit was review-clean at `78672c4`; source repairs `60577b78` and `fdb838d` passed separate specification/code-quality review; PR #16 findings are repaired at rewritten `db40774`; final hosted readback remains
+- review surface: `openspec/changes/archive/2026-08-12-rollup-answer/`, synced `openspec/specs/rollup-answer/spec.md`, `hotl-workflow-rollup-answer.md`, implementation diff, hermetic evidence, and `STATE.md`
+- independent audits: ambiguity audit `019f7411-b995-76e2-8481-1266b1eebfa8` resolved by approval; repair audits are recorded in `records/rollup-answer-independent-codex-audit.md`; the seventh frozen-head audit was review-clean at `78672c4`; source repairs `60577b78` and `fdb838d` passed separate specification/code-quality review; PR #16 repair `db40774` and hosted head `e0b60f7` passed final provider review/readback
 - exit checklist:
   - [x] Existing grouping/equivalence/read paths inspected
   - [x] Existing answer, resolve, schema, and transaction paths inspected
@@ -1000,12 +1014,15 @@ Keep materially new suggestions here so they survive beyond the current chat.
   - [x] Sixth-audit repair passes the authoritative full verifier at exact commit `78672c46d94041f974ca97b0d2cfe5596c6b020a` (`SUITES PASS=23 FAIL=0` on macOS 26.5)
   - [x] Current main `43bca917` conflicts resolved with focused integration regressions green
   - [x] Fresh convergence-head automated review completed and every validated finding repaired
-  - [ ] Final convergence records, push, and hosted PR readback complete
+  - [x] Final convergence records, push, and hosted PR readback complete
   - [x] Product contract confirmed by Trevor on 2026-07-18
   - [x] Untouched authoritative baseline green (`21/21` suites)
   - [x] Production implementation and hermetic tests completed
   - [x] Fresh convergence-head implementation review completed; repair requires final readback
-  - [ ] Source head is contained by merged `origin/main`, then PR #11 and the source branch may be archived
+  - [x] Source repairs are contained by merged `origin/main`; PR #11 is closed and exact source/PR heads have verified remote archive tags
+- delete when: only after the Codex writer lock clears and the broker accepts exact patch-containment/ancestry; never raw-remove
+- retain reason: owner-released worktree is still locked by the Codex app, and its exact PR head is patch-contained rather than a mainline ancestor
+- cleanup command: later owner-bound broker cleanup after both exact gates pass
 ### `codex/er277-collector-019fb8ef`
 - status: four accepted `042b659` review blockers repaired and owning suites green at `ee54328`; fresh exact-SHA re-review pending
 - created: 2026-07-31
@@ -1097,7 +1114,8 @@ Each active branch entry should include:
 
 ## Branch History
 
-- 2026-08-11 | `codex/er930-opus5-only` | status: source complete, pushed, contained, and owner lease released; exact source `79cff0d98ef97e6c7eeabcf9cd43be19c877cd67` is contained as convergence `55544cbc0ddea856e09092588a636e28c438d125`; focused/full tests and selector audit complete | owner/source: Codex `019ff1e7-a4f1-7841-a6b7-99c783643ff5` | cleanup: physical removal waits for the source task's active writer lock to end and must use the cleanup broker; global record: ER-930.
+- 2026-08-12 | stale PR closeout | PR #10 (`codex/phase0-work-record@9296e2c`) and PR #11 (`codex/rollup-answer-wiring@5153e2d`) were closed without merge after exact containment and remote archive-tag readback. Their remote branches remain retained under the repository's expected-OID/CAS deletion policy. Recovery tags and both verified bundles remain. | owner: Codex `019ff2ae-33b3-7e50-af39-3a08efef29a8` | linear: repo-only.
+- 2026-08-11 | `codex/er930-opus5-only` | status: source complete, pushed, contained, owner-released, and remotely archive-tagged at exact `79cff0d98ef97e6c7eeabcf9cd43be19c877cd67`; convergence commit `55544cbc0ddea856e09092588a636e28c438d125` is on main | owner/source: Codex `019ff1e7-a4f1-7841-a6b7-99c783643ff5` | cleanup: broker preserved the worktree because its patch-contained source head is not a mainline ancestor; raw removal is forbidden | global record: ER-930.
 
 - 2026-08-08 | `codex/operator-ux-audit-019fdf95` / `codex/operator-ux-closeout-019fdf95` / `codex/live-headroom-strip-summary-019fdf95` | implementation head `da11b8a780359077db5d49e35c2db08cda1c0e34` merged through PR #13 at `3d8b897c227d2ae624781df33299f3b80ab70538`; exact remote ancestry and live install-stamp provenance pass with nine runtimes/four assets; task-owned usage data is fresh and the merged Global headroom feed is exact; the final installed render exposed and the follow-up branch closes a twelfth false-green strip-summary path | verification: dashboard 85/0, browser 306 before the follow-up plus its focused regression, panel 12/0, native 16/0 and 15/0, eight-tab hostile smoke, repository 24/0, GitGuardian, rendered wide/narrow/live-installed evidence, install/status readback | limits: no manual VoiceOver/future natural-refresh or final independent verdict claimed; separately owned chats degradation stays visible | cleanup: remove task worktree plus local/remote audit, closeout, and follow-up refs after the final row is on `origin/main`; preserve unrelated worktrees/runtime state | source: Codex `019fdf95-6246-7301-a2b8-3316ff00bcbd`, auditing Claude Code `71f37b5b-839f-4ac5-a933-cfa159ce18d4` | record: `records/2026-08-07-claude-usage-surfaces-adversarial-audit.md` | linear: self-contained.
 - 2026-07-31 | `codex/er277-mission-fixture-reaper` | test-harness lifecycle repair fast-forwarded from `b29726e` to `origin/main@57ff825`; expected RED and focused GREEN `PASS=7 FAIL=0`, exact process cleanup, and disabled/unloaded live-service readback recorded above | linked issue: self-contained ER-277 follow-up; plugin mirror: none (repo-only) | cleanup disposition: local/remote task branch and owned worktree removed after final closeout record landed; rollback: `git revert 57ff825bc9ea026f420bb30a3d837fc403253969` | source: Codex child `/root/repair_mission_fixture_reaper` (`binding_verified=yes`).
@@ -1183,6 +1201,7 @@ If it's not here, it isn't remembered.
 - When a verification run closes or updates an audit finding, cross-reference the matching audit record entry and the chat or commit that performed the work.
 
 ## Test Evidence Log
+- 2026-08-12 | commands: ordinary archive-tag push and complete hook; remote tag readback; PR #10/#11 close/readback; PR #16 checks/merge readback; install stamp/status; launchctl natural-run readback; owner-broker cleanup; OpenSpec archive and strict validation; required closeout technical-prose check | result: tag push `SUITES PASS=26 FAIL=0`; six exact tags published; PRs #10/#11 closed; PR #16 merge `ddc8700` installed with 9 runtime/4 asset attestation; natural runs 244→246, last exit zero; OpenSpec synced 8 requirements and archived. Broker safely preserved Rollup Answer (`active-writer-lock`) and Opus 5 (`released-head-not-merged`); no raw deletion followed. The prose checker separately reported 1,956 errors and 241 warnings across seven full historical files; no prose-clean claim. | log/PR reference: convergence record; PR #16; archived OpenSpec change | by: Codex `019ff2ae-33b3-7e50-af39-3a08efef29a8` | linear: repo-only.
 - 2026-08-12 | commands: exact `PYTHONDONTWRITEBYTECODE=1 /bin/bash scripts/verify.sh` at records head `7a2ae1a`; immediate HEAD/status/diff/source-artifact readback | result: `SUITES PASS=26 FAIL=0`, dashboard `91/0`, rollup `32/32`, browser 315, panel `13/0`, native suites `16/0` each, strict OpenSpec `2/0`, syntax and source artifacts pass; worktree remains exact and clean | log/PR reference: PR #16; convergence record | by: Codex `019ff2ae-33b3-7e50-af39-3a08efef29a8` | linear: repo-only.
 - 2026-08-12 | commands: hosted run `31639362011` summary and failed-log readback; sidecar-free invalid-member RED; focused Rollup Answer, Decision Alert, and two Dashboard Browser runs; Python/JavaScript syntax and diff checks | result: RED created `decisions.db-wal` and `decisions.db-shm` and returned a generic store error; GREEN repair `c988153baedfceeae68773072fb3fde032f2a8f9` preserves exact state, returns the intended member error, passes rollup `32/32`, Decision Alert all pass, and browser 315 assertions twice | log/PR reference: PR #16; hosted run `https://github.com/trevor-commits/mission-control/actions/runs/31639362011`; convergence record | by: Codex `019ff2ae-33b3-7e50-af39-3a08efef29a8` | linear: repo-only.
 - 2026-08-12 | commands: first ordinary push; credential-gate readback; focused `scripts/loose-end-runner.test.sh`; rescue-ref readback; autosquash; exact `PYTHONDONTWRITEBYTECODE=1 /bin/bash scripts/verify.sh` at rewritten head `e34c2ed`; immediate HEAD/status/diff/source-artifact readback | result: push safely rejected before publication; exact synthetic value is reconstructed without a credential-shaped addition; runner `32/0`; rewritten repair `db40774`; exact head `e34c2ed23028b31707ef581ba0bc6b1cc9e4a92e` passes `SUITES PASS=26 FAIL=0`, dashboard `91/0`, rollup `32/32`, ER-134 `63/0`, Usage `24/0`, browser 315, panel `13/0`, native suites `16/0` each, and OpenSpec `2/0` | log/PR reference: PR #16; convergence record; local rescue ref `refs/rescue/2026-08-12/pre-credential-rewrite-94f8977` | by: Codex `019ff2ae-33b3-7e50-af39-3a08efef29a8` | linear: repo-only.
