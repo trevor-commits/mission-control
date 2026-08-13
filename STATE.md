@@ -200,7 +200,7 @@ Receipts:
 - Confirmed: natural collector executions advanced from 244 to 246 runs with last exit zero. No kickstart or provider send was used as proof.
 - Did not verify: a new post-merge same-model/max audit, provider delivery, or live decision-store answer behavior. The merge tree matches the exact reviewed and hosted-green PR tree.
 - Do not do from the retained source branch: merge PR #11, install, deploy, send, write a live store, change plist/launchd, or resolve live decision `decision:a6f185b53cbc1278499b062d`.
-- Cleanup note: source PRs are closed and exact remote archive tags are verified. Remote branches remain retained under the repository's CAS-deletion policy. A 2026-08-12 broker retry still preserves Rollup Answer and the convergence worktree (`active-writer-lock`, Codex PID 53839) and Opus 5 (`released-head-not-merged`). Terminal audit: `records/2026-08-12-019ff2ae-terminal-audit.md`.
+- Cleanup note: source PRs are closed and exact remote archive tags are verified. Remote branches remain retained under the repository's CAS-deletion policy. A 2026-08-12 broker retry still preserves Rollup Answer (`active-writer-lock`, `worktree-content-present`, non-ancestor `5153e2d`) and the convergence worktree (`active-writer-lock`, Codex PID 53839) and Opus 5 (`released-head-not-merged`). Terminal audit: `records/2026-08-12-019ff2ae-terminal-audit.md`.
 
 ## Exact resume
 

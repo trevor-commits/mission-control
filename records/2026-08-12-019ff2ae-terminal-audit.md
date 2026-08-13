@@ -15,6 +15,10 @@
 - implementation/disposition chat: same Cursor chat
 - separate follow-up audit: no. This pass re-read live Git, provider, install, launchd, bundle, tag, and broker state instead of inheriting the closeout narrative
 - linear: self-contained. Mission Control remains repo-only
+- Work Record: `todo.md` `### 2026-08-12 — Terminal audit of Codex 019ff2ae and cleanup follow-through`
+- Completed: `todo.md` `2026-08-12 | Terminal audit of Codex 019ff2ae`
+- Ripple Check: `STATE.md`, convergence record, Active Next Steps, Completed, Active Branch Ledger, Audit Record Log, and Test Evidence
+- Self-audit: Work Record Self-audit plus this findings table
 
 ## Method
 
@@ -54,6 +58,7 @@ Resolved the supplied ID with `chat-source describe` first. Classified the targe
 | MC-019FF2AE-04 | External | Dashboard automation is red because Nightly Review last exited 1. Last receipt `~/.claude/nightly-review/last-run.json` is `failed` with `claude_result_missing_or_invalid` at 2026-08-12T06:35:37Z. The 23:30 run used `claude-sonnet-5` and Claude returned `is_error:true` with zero tokens. Chat-graph export now succeeds. `governor-fleet-preflight` prints an unbound `forwarded[@]` warning on empty args but exits 0. | Not a Mission Control install defect. Recorded for a Global Implementations / Nightly Review owner lane. No kickstart (would send Telegram). |
 | MC-019FF2AE-05 | Residual | Historical technical-prose debt on old records remains. | Deferred. No wholesale rewrite. |
 | MC-019FF2AE-06 | Residual | OpenSpec change `morning-brief` still has unchecked elapsed-proof tasks 7.4 and 12.1–12.3. | Pre-existing ER-107 gate. Not this convergence. Do not archive. |
+| MC-019FF2AE-07 | Info | GR-142 had no checkpoint. `record-final-audit` is the wrong route. | `no-action:` `reconcile --apply-disposition terminal-before-bind`. Receipt `b2f7561f`. `final_verdict_open=true`. No watcher to remove. |
 
 ## Better-path challenge
 
@@ -61,4 +66,4 @@ Keep recovery refs, tags, bundles, and rejected worktrees. Finish only what the 
 
 ## Did not verify
 
-Provider delivery, live decision-store answers, a new same-model/max source audit of the merge tree, and the next natural Nightly Review firing.
+Provider delivery, live decision-store answers, a new same-model/max source audit of the merge tree, and the next natural Nightly Review firing. This docs PR's Hosted Verify run `31657838306` passed after the first push. That run covers the audit records, not a re-audit of the already-merged product tree.
