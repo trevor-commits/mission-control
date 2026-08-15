@@ -9,9 +9,7 @@ Capture the current goal plus the concrete dependency-ordered steps that are sti
 - Put audit-created actionable execution items at the top of this section so audit follow-through is the next queue to execute.
 - If the current chat creates or discovers more urgent execution-ready work than the existing queue reflects, persist and move that fresher work to the top of this section before handoff so the chat is not the only durable record.
 - When a step is verified complete, move or summarize it in `## Completed` instead of deleting the history.
-- MC-20260815-01 main-only consolidation: preservation and exact-tree history join are complete at `e5cff776`; explicit tag publication, owner-aware checkout cleanup, expected-OID branch deletion, and final verification remain. No new branch or worktree is authorized. | owner: Codex `01a00647-2c65-7592-8c65-c76087de3bcf` | record: `records/2026-08-15-main-only-repository-consolidation.md` | linear: self-contained; repo-only.
-- MC-019FF2AE-02 broker cleanup: rerun `worktree-owner-lease.py cleanup-released` only after Codex PID 53839 drops writer locks on `019ff2ae` and `019f762c`. Rollup Answer also still has `worktree-content-present` and PR head `5153e2d` is not a Git ancestor of `main`. Keep Opus 5 until `79cff0d` is a mainline ancestor or an explicit closed-without-merge disposition exists. | owner: later broker pass | record: `records/2026-08-12-019ff2ae-terminal-audit.md` | linear: self-contained; repo-only.
-- MC-019FF2AE-03 remote source branches: retain until a separately audited expected-OID CAS deletion route exists. Do not ordinary-delete. | owner: later CAS lane | record: `records/2026-08-12-019ff2ae-terminal-audit.md` | linear: self-contained; repo-only.
+- MC-019FF2AE-03 remote source branches: all topic heads are mainline ancestors and recovery-tagged. Retain until a separately audited provider/CAS deletion route exists. Do not ordinary-delete. | owner: later provider-cleanup lane | record: `records/2026-08-15-main-only-repository-consolidation.md` | linear: self-contained; repo-only.
 - MC-019FF2AE-04 Nightly Review red: external Claude empty-result at 2026-08-11 23:30 (`claude-sonnet-5`). Not Mission Control install drift. Do not kickstart. Repair in Global Implementations. | owner: Global Implementations Nightly Review lane | record: `records/2026-08-12-019ff2ae-terminal-audit.md` | linear: self-contained.
 - MC-019FF2AE-05/06 deferred: historical technical-prose debt stays. OpenSpec `morning-brief` elapsed-proof tasks 7.4 and 12.1–12.3 stay unarchived. | owner: not this convergence | record: `records/2026-08-12-019ff2ae-terminal-audit.md` | linear: self-contained; repo-only.
 - GR-142 for Codex `019ff2ae`: `no-action:` already reconciled as `terminal-before-bind` with open verdict. Receipt `b2f7561f`. No watcher to remove. Do not `record-final-audit` without a checkpoint. | owner: none | record: `records/2026-08-12-019ff2ae-terminal-audit.md` | linear: self-contained; repo-only.
@@ -43,6 +41,7 @@ Mirror every configured Linear issue here with the repo-side home that explains 
 ## Completed
 If it's not here, it isn't remembered.
 Preserve a durable completion trail for verified work instead of deleting it from active planning.
+- 2026-08-15 | Main-only repository consolidation — joined every safe retained history without changing the baseline product tree, published 36 archive tags, preserved dual bundles and 14 checkout archives, removed 12 live side worktrees, finalized one absent stale registration, and reduced local branches to `main`. One app-managed detached checkout and 17 remote recovery aliases remain under explicit lifecycle gates. Both ordinary pushes passed `SUITES PASS=26 FAIL=0`. | owner: Codex `01a00647-2c65-7592-8c65-c76087de3bcf` | record: `records/2026-08-15-main-only-repository-consolidation.md` | linear: self-contained; repo-only.
 - 2026-08-12 | Terminal audit of Codex `019ff2ae` — live product closeout re-verified. Local push hook `SUITES PASS=26 FAIL=0`. Hosted Verify run `31657838306` passed. GR-142 reconciled `terminal-before-bind` receipt `b2f7561f`. Cleanup residuals remain in Active Next Steps. | owner: Cursor `2bc6c15d-4488-411f-92a9-4b167e034a06` | record: `records/2026-08-12-019ff2ae-terminal-audit.md` | Work Record: `2026-08-12 — Terminal audit of Codex 019ff2ae and cleanup follow-through` | linear: self-contained; repo-only.
 - 2026-08-12 | Repository convergence and Lane D rollup-answer — receipt `e0b60f7` passed the ordinary `26/0` hook, hosted run `31642058664`, CodeRabbit, and GitGuardian. PR #16 merged as `ddc8700`; that exact source is installed and naturally scheduled at exit zero. Six exact remote archive tags are verified, PRs #10/#11 are closed, and OpenSpec is archived with eight requirements synced. Recovery bundles and rescue refs remain. Remote source branches and two released worktrees are safety-retained after CAS/broker rejection; never raw-delete them. | owner: Codex `019ff2ae-33b3-7e50-af39-3a08efef29a8` | record: `records/2026-08-11-repository-convergence.md` | linear: self-contained; repo-only.
 - 2026-08-07 | Usage surfaces round 2: ONE card per provider, live GLM, X reads headline, compact + attention dedupe — panel `hrProviderCard` renders each provider as a single white card with per-window compact lines (burn animation kept); usage tab folds held credits into the live card, `value_label` headline support, heading 'Providers'; the collector's z.ai quota provider observed the weekly Coding Plan window at 100% used at that time. Historical `claude-glm` 429s were correlated, but this audit found no request-level evidence proving that weekly saturation caused them. NEEDS-YOU dedupes identical cross-chat asks with an 'asked in N chats' badge on both the attention top5 path and the decisions fallback. Adversarial 3-lens review caught the Keychain exit-44 misclassification pre-landing (fixed collector-side). Suites: dashboard.test.sh 85/85, browser 253, render-smoke 8/8 (new contract: GLM live card present, old glm health row banned, credit folded, X reads). Live drives over real data: usage tab 10/10, panel 8 single cards, triple Safe-Mode card collapsed to one with badge. Companion: global-implementations branch glm-x-usage (collector 24/24, pinned runtime installed). by: claude-fable-5 session 71f37b5b. | causal-claim correction: `records/2026-08-07-claude-usage-surfaces-adversarial-audit.md` | linear: repo-only.
@@ -89,6 +88,22 @@ Preserve a durable completion trail for verified work instead of deleting it fro
 - 2026-07-04 | ER-087 follow-up audit gaps — governance scaffold, product intent, tab wording, stale-ingest honesty, and Map smoke coverage landed in this change; full record below.
 
 ## Work Record Log
+
+### 2026-08-15 — Main-only lossless repository consolidation
+- Problem: many local and remote branches, fourteen side worktrees, dirty checkout state, detached heads, and loose commits made ordinary merging or deletion unsafe.
+- Reasoning: preserve every source twice, exclude the credential-bearing chain, join safe histories without activating deferred behavior, then let only owner-aware brokers remove physical state.
+- Diagnosis inputs: local and provider refs, worktree porcelain, ignored and tracked dirt, process and writer locks, Git object reachability, credential scans, tags, bundles, and repo lifecycle policy.
+- Implementation inputs: 36 public archive tags, private rescue refs, two complete bundles, fourteen checkout archives, dirty snapshot commits, owner leases, and the landed recovery inventory.
+- Fix: joined 33 safe tips to main with an exact-tree `ours` merge, published recovery tags, quarantined checkout-only content, removed twelve live side worktrees, finalized one absent registration, and atomically pruned every obsolete local branch.
+- Self-audit:
+  - method: compared tree IDs, ancestry, tag objects and peels, bundle hashes and extraction, raw worktree content, broker receipts, local and provider refs, Git status, and both push-hook results.
+  - outcome: local branch inventory is only `main`; every safe source is mainline-contained and independently recoverable; the private credential chain remains excluded.
+  - did not verify: physical removal of the app-managed bd05 checkout or remote topic deletion because their product and provider cleanup contracts remain unavailable.
+  - Ripple Check: updated Active Next Steps, Completed, Work Record, Active Branch Ledger, Branch History, and the consolidation record. Product source and runtime behavior were unchanged.
+- by: Codex `01a00647-2c65-7592-8c65-c76087de3bcf`.
+- triggered by: Trevor's request to combine every repository branch and worktree into main without creating another branch or worktree.
+- led to: one clean primary `main` checkout, one app-lifecycle exception, retained remote recovery aliases, and no unpreserved work.
+- linear: self-contained; repo-only.
 
 ### 2026-08-12 — Terminal audit of Codex 019ff2ae and cleanup follow-through
 - Problem: the convergence chat reported shipped-and-clean product state plus leftover cleanup. Those claims needed independent live proof, and the leftover steps needed another broker/ledger pass.
@@ -985,17 +1000,19 @@ Keep materially new suggestions here so they survive beyond the current chat.
 - 2026-07-05 | recommendation: do not adopt the GitHub Copilot enterprise-observability stack (OpenTelemetry Collector, Prometheus, Grafana, OpenObserve, Superset, Metabase, Airbyte, Meltano, dbt-core, Great Expectations, TensorZero, Helicone, OpenLIT, traceAI, TraceRoot, Pull Request Analytics Action); treat `records/2026-07-04-dashboard-coding-tracker-search-audit.md` as the real same-niche repo map; if a chart is ever justified, prefer vendorable zero-dependency `leeoniya/uPlot` over Chart.js/ECharts/CDN — but not for V1. | why: Copilot recommended from the repo description alone (it said so); every headline pick runs as a background service, framework, or separate warehouse and collides with the explicit non-goals of offline single-file, single-user, no-server. Full evaluation in Feedback Decision Log 2026-07-05. | by: Claude Code (Opus 4.8) session `a9724039-6595-4205-a25b-bf361020250a`. | linear: self-contained until Linear is configured.
 
 ## Active Branch Ledger
+Only `main` is locally active. The topic sections below are historical remote recovery aliases, retained because no audited provider/CAS cleanup broker exists.
+
 ### `main` — 2026-08-15 repository consolidation
-- status: active direct-main cleanup explicitly authorized by Trevor; preservation and exact-tree ancestry join complete.
+- status: clean and published; safe histories joined, owner-approved local cleanup complete, and remote recovery aliases explicitly retained.
 - base: `origin/main@fa8611bd0e2a3ea4f1c7476adc9807df471d5a56`.
 - source chat: Codex `01a00647-2c65-7592-8c65-c76087de3bcf`.
 - worktree: primary checkout `/Users/gillettes/Coding Projects/mission-control`; no new branch or worktree may be created.
 - merge target: `main`.
-- exit checklist: archive publication, native/broker cleanup, exact-OID local and remote branch deletion, complete verifier, remote readback, and durable closeout.
+- exit checklist: archive publication, broker cleanup, local branch pruning, complete verifier, remote readback, and durable closeout complete. App-managed and remote-provider cleanup remain gated.
 - recovery: `records/2026-08-15-main-only-repository-consolidation.md`; private dual-copy bundle SHA-256 `47be14743e935419cd8a570d0acf2c952c96e5162ea6cab5249118912fab0a17`.
 
 ### `codex/repo-convergence-019ff2ae`
-- status: merged, installed, archived, and owner-released. 2026-08-12 broker retry still `blocked` `active-writer-lock` because Codex PID 53839 holds the owner lock. PR #16 merged as `ddc8700` after receipt `e0b60f7` passed local/hosted/review gates.
+- status: history joined to main; stale registration finalized through the broker; local branch absent; remote recovery alias retained.
 - created: 2026-08-11
 - base: `origin/main@43bca917871a33f3b4176117df86e15eb80a3472`
 - worktree: `/Users/gillettes/Coding Projects/mission-control-worktrees/codex/repo-convergence-019ff2ae`
@@ -1017,7 +1034,7 @@ Keep materially new suggestions here so they survive beyond the current chat.
 - owner lease: Codex `019ff2ae-33b3-7e50-af39-3a08efef29a8`; lease `c3d027bb-4fad-46d0-bc46-9ad206bb1b57`; state `/Users/gillettes/Coding Projects/mission-control/.git/codex-worktree-owners/61afdbaf8b34f98e8ddf07f6108026a5d146b484996a7f82641b65802d174221.json`
 
 ### `cursor/019ff2ae-terminal-audit`
-- status: audit records on a docs branch from current `main`.
+- status: history joined to main; local branch absent; remote recovery alias retained.
 - created: 2026-08-12
 - base: `origin/main@fc52c57465a20eef048eaa73612771a07e6ba3e7`
 - worktree: primary checkout `/Users/gillettes/Coding Projects/mission-control`
@@ -1034,7 +1051,7 @@ Keep materially new suggestions here so they survive beyond the current chat.
 - pre-existing dirt at task start: primary checkout clean on `main`
 
 ### `codex/rollup-answer-wiring`
-- status: archived retained source. PR #11 is closed; exact source repair `fdb838d` and PR head `5153e2d` have verified remote archive tags. The released worktree remains broker-protected.
+- status: history joined to main; worktree and local branch removed through lease `c257044e-651d-4052-a698-f659fcb4926d`; remote recovery alias retained.
 - created: 2026-07-17
 - base: original `origin/main@8582e182d5db3b8964ec21738a82806d94c78a55`; current integration base `origin/main@43bca917871a33f3b4176117df86e15eb80a3472`
 - worktree: `/Users/gillettes/Coding Projects/mission-control-worktrees/rollup-answer-wiring`
@@ -1073,7 +1090,7 @@ Keep materially new suggestions here so they survive beyond the current chat.
 - retain reason: owner-released worktree is still locked by the Codex app, and its exact PR head is patch-contained rather than a mainline ancestor
 - cleanup command: later owner-bound broker cleanup after both exact gates pass
 ### `codex/er277-collector-019fb8ef`
-- status: four accepted `042b659` review blockers repaired and owning suites green at `ee54328`; fresh exact-SHA re-review pending
+- status: history joined to main; no local branch or worktree remains; remote recovery alias retained.
 - created: 2026-07-31
 - base: `origin/main`
 - worktree: `/Users/gillettes/Coding Projects/mission-control-worktrees/er277-collector-019fb8ef`
@@ -1093,7 +1110,7 @@ Keep materially new suggestions here so they survive beyond the current chat.
 - cleanup command: parent-owned after canonical landing; do not remove this externally supplied worktree in this packet
 
 ### `codex/er156-telegram-flow-routing`
-- status: source/tests/docs implemented; exact-byte review `REVIEW-CLEAN`; PR #12 open for landing
+- status: history joined to main; no local branch or worktree remains; remote recovery alias retained.
 - created: 2026-07-15
 - base: current branch head `37f81653032add17054a9688a295f669ffcb6061`;
   refreshed canonical comparison `origin/main@4d0d0c4a1ec72b795186bb17a44c066c9c6b3566`
@@ -1114,7 +1131,7 @@ Keep materially new suggestions here so they survive beyond the current chat.
 - linked PR/audit/completion record: https://github.com/trevor-commits/mission-control/pull/12 ; coordinator ER-156 verification record
 
 ### `codex/er103-git-state-and-morning-proof`
-- status: preserved-superseded dirty checkout
+- status: preserved source is joined to main; local branch removed by expected object ID; remote recovery alias retained.
 - created: 2026-07-11
 - base: `main`
 - worktree: `/Users/gillettes/Coding Projects/mission-control`
@@ -1163,6 +1180,7 @@ Each active branch entry should include:
 
 ## Branch History
 
+- 2026-08-15 | main-only consolidation | every safe local and provider tip is an ancestor of `main`; twelve live side worktrees were removed, one absent registration was finalized, and fourteen obsolete local branches were deleted after independent recovery proof | cleanup disposition: one app-managed detached checkout remains product-owned; seventeen remote topic refs remain recovery aliases under the provider/CAS gate | source: Codex `01a00647-2c65-7592-8c65-c76087de3bcf` | record: `records/2026-08-15-main-only-repository-consolidation.md`.
 - 2026-08-12 | stale PR closeout | PR #10 (`codex/phase0-work-record@9296e2c`) and PR #11 (`codex/rollup-answer-wiring@5153e2d`) were closed without merge after exact containment and remote archive-tag readback. Their remote branches remain retained under the repository's expected-OID/CAS deletion policy. Recovery tags and both verified bundles remain. | owner: Codex `019ff2ae-33b3-7e50-af39-3a08efef29a8` | linear: repo-only.
 - 2026-08-11 | `codex/er930-opus5-only` | status: source complete, pushed, contained, owner-released, and remotely archive-tagged at exact `79cff0d98ef97e6c7eeabcf9cd43be19c877cd67`; convergence commit `55544cbc0ddea856e09092588a636e28c438d125` is on main | owner/source: Codex `019ff1e7-a4f1-7841-a6b7-99c783643ff5` | cleanup: broker preserved the worktree because its patch-contained source head is not a mainline ancestor; raw removal is forbidden | global record: ER-930.
 

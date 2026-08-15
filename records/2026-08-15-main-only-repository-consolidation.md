@@ -31,11 +31,25 @@ Commit `e5cff7760b0791958cb1675472ad370f47243b2c` uses Git's `ours` merge strate
 
 The merge tree is exactly `6c232350159c1b63640352596709811fd0fd73e6`, identical to the pre-merge `main` tree. The excluded private commit is not an ancestor. Deferred answer-dispatch, visual-refresh, unified-health, and memory-health behavior therefore remains inactive.
 
-## Remaining execution gates
+## Completed execution
 
-1. Publish `main` and only the explicit archive tags, then read them back.
-2. Clean preserved checkout dirt only after archive and snapshot proof.
-3. Remove the app-managed checkout through native handoff and leased checkouts through the owner broker.
-4. Recover legacy no-lease checkouts through the hash-bound inventory and broker path.
-5. Delete residual local and remote topic branches only with expected-object checks.
-6. Reconcile this record, `todo.md`, continuity surfaces, branch hygiene, tests, and final remote state.
+- `main` and 36 explicit archive tags were published atomically. Remote readback matched every local tag object and peeled commit.
+- `origin/main` advanced through history join `e5cff7760b0791958cb1675472ad370f47243b2c`, preservation record `16c0449aafcaacc76f03745e73a888732b8443c7`, and recovery gate `563ef06b9a42cd0d2aff47f58569afa8b8571e86`.
+- Both ordinary pushes passed the full repository hook with `SUITES PASS=26 FAIL=0` and a clean credential gate.
+- Fifteen ignored or untracked paths moved to private quarantine under `.git/codex-quarantine/2026-08-15-main-consolidation-01a00647`. Four tracked dirty states were restored only after exact snapshot comparison.
+- Three existing released leases were cleaned through the owner broker: convergence `c3d027bb-4fad-46d0-bc46-9ad206bb1b57`, rollup wiring `c257044e-651d-4052-a698-f659fcb4926d`, and Opus 5 `43904228-a1e6-4739-873d-3e88cca6b8e3`.
+- The landed recovery inventory is `records/verification/2026-08-11-lossless-worktree-recovery-inventory.json`. It binds ten legacy checkouts to this transaction and four immutable recovery surfaces.
+- Recovery manifest `99752949e836d23c0131b1bf7fb96e8745bd6a0e36531a8c4d34319323c6e2b2` prepared all ten candidates with zero refusals.
+- Approval `9c407d5346d5fecf834f8c35df2c312104a763df3106e9b44983e5b8c939f678` authorized those exact candidate, path, and lease tuples.
+- Apply completed with zero blocked, drifted, malformed, or unauthorized entries. All ten legacy checkouts then reached broker state `removed`.
+- The broker deleted ten worktree-bound local branches. Four residual local branches were deleted atomically with their expected object IDs.
+- Local branch inventory now contains only `main`. Every deleted local head remains recoverable through main ancestry, public archive tags, private rescue refs, and both bundles.
+
+## Retained boundaries
+
+- The completed Codex task `019ff47d-1b90-7380-84f4-3117f1426070` was archived through the app lifecycle. Its detached bd05 checkout remains registered because the app did not remove it.
+- Native handoff unexpectedly created one transient local branch and switched the primary checkout. Main was immediately restored, and that exact unpushed ref was deleted by expected object ID.
+- Seventeen remote topic refs remain. The trusted hook rejected raw deletion, and `BRANCH_LIFECYCLE.md` requires retention until a separately audited provider/CAS cleanup route exists.
+- Every retained remote topic head is an ancestor of `main`. They are recovery aliases, not unmerged work.
+- The credential-bearing commit remains private-only and is not an ancestor of `main`.
+- No additional worktree was created. The handoff's transient branch was never pushed, and no work was lost.
