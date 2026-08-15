@@ -9,6 +9,7 @@ Capture the current goal plus the concrete dependency-ordered steps that are sti
 - Put audit-created actionable execution items at the top of this section so audit follow-through is the next queue to execute.
 - If the current chat creates or discovers more urgent execution-ready work than the existing queue reflects, persist and move that fresher work to the top of this section before handoff so the chat is not the only durable record.
 - When a step is verified complete, move or summarize it in `## Completed` instead of deleting the history.
+- MC-20260815-01 main-only consolidation: preservation and exact-tree history join are complete at `e5cff776`; explicit tag publication, owner-aware checkout cleanup, expected-OID branch deletion, and final verification remain. No new branch or worktree is authorized. | owner: Codex `01a00647-2c65-7592-8c65-c76087de3bcf` | record: `records/2026-08-15-main-only-repository-consolidation.md` | linear: self-contained; repo-only.
 - MC-019FF2AE-02 broker cleanup: rerun `worktree-owner-lease.py cleanup-released` only after Codex PID 53839 drops writer locks on `019ff2ae` and `019f762c`. Rollup Answer also still has `worktree-content-present` and PR head `5153e2d` is not a Git ancestor of `main`. Keep Opus 5 until `79cff0d` is a mainline ancestor or an explicit closed-without-merge disposition exists. | owner: later broker pass | record: `records/2026-08-12-019ff2ae-terminal-audit.md` | linear: self-contained; repo-only.
 - MC-019FF2AE-03 remote source branches: retain until a separately audited expected-OID CAS deletion route exists. Do not ordinary-delete. | owner: later CAS lane | record: `records/2026-08-12-019ff2ae-terminal-audit.md` | linear: self-contained; repo-only.
 - MC-019FF2AE-04 Nightly Review red: external Claude empty-result at 2026-08-11 23:30 (`claude-sonnet-5`). Not Mission Control install drift. Do not kickstart. Repair in Global Implementations. | owner: Global Implementations Nightly Review lane | record: `records/2026-08-12-019ff2ae-terminal-audit.md` | linear: self-contained.
@@ -984,6 +985,15 @@ Keep materially new suggestions here so they survive beyond the current chat.
 - 2026-07-05 | recommendation: do not adopt the GitHub Copilot enterprise-observability stack (OpenTelemetry Collector, Prometheus, Grafana, OpenObserve, Superset, Metabase, Airbyte, Meltano, dbt-core, Great Expectations, TensorZero, Helicone, OpenLIT, traceAI, TraceRoot, Pull Request Analytics Action); treat `records/2026-07-04-dashboard-coding-tracker-search-audit.md` as the real same-niche repo map; if a chart is ever justified, prefer vendorable zero-dependency `leeoniya/uPlot` over Chart.js/ECharts/CDN — but not for V1. | why: Copilot recommended from the repo description alone (it said so); every headline pick runs as a background service, framework, or separate warehouse and collides with the explicit non-goals of offline single-file, single-user, no-server. Full evaluation in Feedback Decision Log 2026-07-05. | by: Claude Code (Opus 4.8) session `a9724039-6595-4205-a25b-bf361020250a`. | linear: self-contained until Linear is configured.
 
 ## Active Branch Ledger
+### `main` — 2026-08-15 repository consolidation
+- status: active direct-main cleanup explicitly authorized by Trevor; preservation and exact-tree ancestry join complete.
+- base: `origin/main@fa8611bd0e2a3ea4f1c7476adc9807df471d5a56`.
+- source chat: Codex `01a00647-2c65-7592-8c65-c76087de3bcf`.
+- worktree: primary checkout `/Users/gillettes/Coding Projects/mission-control`; no new branch or worktree may be created.
+- merge target: `main`.
+- exit checklist: archive publication, native/broker cleanup, exact-OID local and remote branch deletion, complete verifier, remote readback, and durable closeout.
+- recovery: `records/2026-08-15-main-only-repository-consolidation.md`; private dual-copy bundle SHA-256 `47be14743e935419cd8a570d0acf2c952c96e5162ea6cab5249118912fab0a17`.
+
 ### `codex/repo-convergence-019ff2ae`
 - status: merged, installed, archived, and owner-released. 2026-08-12 broker retry still `blocked` `active-writer-lock` because Codex PID 53839 holds the owner lock. PR #16 merged as `ddc8700` after receipt `e0b60f7` passed local/hosted/review gates.
 - created: 2026-08-11
