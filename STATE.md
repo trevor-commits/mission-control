@@ -1,8 +1,11 @@
 # Lane D state — rollup-answer CLI wiring
 
-- Status: LANDED, INSTALLED, AND OPENSPEC-ARCHIVED. Receipt head `e0b60f7c545c5ec2612e3aa6aa124c59b53c4f7c` passed the ordinary `26/0` push hook, hosted run `31642058664`, GitGuardian, and CodeRabbit. PR #16 merged as `ddc8700cccab5586663703faab3ac782104085b5`; that exact source is installed with natural scheduled exit-zero proof. Six exact archive tags are published, and stale PRs #10 and #11 are closed. Remote source branches and two released worktrees remain safety-retained because approved deletion gates rejected them.
-- Branch: `codex/repo-convergence-019ff2ae`
-- Review base: `43bca917871a33f3b4176117df86e15eb80a3472`
+- Status: LANDED, INSTALLED, OPENSPEC-ARCHIVED, AND CONSOLIDATED.
+- Product evidence: receipt `e0b60f7c545c5ec2612e3aa6aa124c59b53c4f7c` passed the `26/0` push hook, hosted run `31642058664`, GitGuardian, and CodeRabbit.
+- Landing evidence: PR #16 merged as `ddc8700cccab5586663703faab3ac782104085b5`. That exact source is installed with natural scheduled exit-zero proof.
+- Cleanup status: stale PRs #10 and #11 are closed. Every non-main local and remote branch was removed through guarded cleanup. One Codex-managed detached checkout remains.
+- Branch: `main`.
+- Historical review base: `43bca917871a33f3b4176117df86e15eb80a3472`.
 - Convergence PR: #16, `https://github.com/trevor-commits/mission-control/pull/16`
 - Source branch: `codex/rollup-answer-wiring` at `fdb838dd6d7520646541c9bf95e2a7901c8c2d58`; contained by convergence commits `bd83a30` and `4453b8e`.
 - Second hosted repair: `c988153baedfceeae68773072fb3fde032f2a8f9` (`fix(ci): close macOS validation and search races`).
@@ -199,11 +202,14 @@ Receipts:
 - Confirmed: exact records head `7a2ae1a` and receipt head `e0b60f7` each pass the authoritative `26/0` verifier. Hosted run `31642058664` is green, PR #16 is merged, and the installed stamp binds all nine runtimes and four assets to merge `ddc8700`.
 - Confirmed: natural collector executions advanced from 244 to 246 runs with last exit zero. No kickstart or provider send was used as proof.
 - Did not verify: a new post-merge same-model/max audit, provider delivery, or live decision-store answer behavior. The merge tree matches the exact reviewed and hosted-green PR tree.
-- Do not do from the retained source branch: merge PR #11, install, deploy, send, write a live store, change plist/launchd, or resolve live decision `decision:a6f185b53cbc1278499b062d`.
-- Cleanup note: source PRs are closed and exact remote archive tags are verified. Remote branches remain retained under the repository's CAS-deletion policy. A 2026-08-12 broker retry still preserves Rollup Answer (`active-writer-lock`, `worktree-content-present`, non-ancestor `5153e2d`) and the convergence worktree (`active-writer-lock`, Codex PID 53839) and Opus 5 (`released-head-not-merged`). Terminal audit: `records/2026-08-12-019ff2ae-terminal-audit.md`.
+- Deferred behavior remains inactive. Do not install, deploy, send, write a live store, change plist/launchd, or resolve live decision `decision:a6f185b53cbc1278499b062d` from archived source history.
+- Cleanup note: source PRs are closed, and exact archive tags remain verified.
+- Remote cleanup: all 17 topic branches were deleted through exact-OID leases after main containment and recovery checks.
+- Historical evidence: earlier broker rejections remain in `records/2026-08-12-019ff2ae-terminal-audit.md`.
+- Remaining checkout: detached bd05 stays registered because only the Codex app lifecycle may remove it.
 
 ## Exact resume
 
 1. Lane D implementation, convergence repair, exact-head review, hosted verification, merge, installation, and OpenSpec archival are complete.
 2. Recovery remains available through exact rescue refs, six published archive tags, and two verified Git bundles with SHA-256 `5f62b9b219524e2eb1dea6acf1a37d258b116285478c1614684955cb0270072a`.
-3. Do not raw-delete retained source branches or worktrees. Revisit them only after a separately audited remote CAS route exists and the owner broker's exact ancestry/writer-lock gates pass.
+3. Do not manually remove the detached bd05 checkout. Its Codex app lifecycle owns that remaining cleanup.

@@ -49,7 +49,17 @@ The merge tree is exactly `6c232350159c1b63640352596709811fd0fd73e6`, identical 
 
 - The completed Codex task `019ff47d-1b90-7380-84f4-3117f1426070` was archived through the app lifecycle. Its detached bd05 checkout remains registered because the app did not remove it.
 - Native handoff unexpectedly created one transient local branch and switched the primary checkout. Main was immediately restored, and that exact unpushed ref was deleted by expected object ID.
-- Seventeen remote topic refs remain. The trusted hook rejected raw deletion, and `BRANCH_LIFECYCLE.md` requires retention until a separately audited provider/CAS cleanup route exists.
-- Every retained remote topic head is an ancestor of `main`. They are recovery aliases, not unmerged work.
+- The initial closeout retained seventeen remote topic refs because the trusted hook rejected raw deletion. Every retained tip was already an ancestor of `main` and recoverable through archive tags and both bundles.
+- A later 2026-08-15 cleanup used the approved branch-hygiene helper. Each remote deletion carried an exact expected-OID lease, and the helper refused moved refs. The final remote head inventory contains only `main`.
 - The credential-bearing commit remains private-only and is not an ancestor of `main`.
 - No additional worktree was created. The handoff's transient branch was never pushed, and no work was lost.
+
+## Remote cleanup addendum
+
+- Verification record: `records/verification/2026-08-15-remote-branch-cas-cleanup.md`.
+- All seventeen non-main remote heads were deleted from the primary `main` checkout. No branch or worktree was created.
+- The final helper preview reported `Nothing to delete`.
+- Local and remote branch inventories now contain only `main`.
+- The dual recovery bundles still verify, retain matching SHA-256 `47be14743e935419cd8a570d0acf2c952c96e5162ea6cab5249118912fab0a17`, and remain mode `0600`.
+- Twenty-one branch archive tags remain available under `archive/consolidation-20260815/branch/`.
+- The detached bd05 checkout remains registered because `BRANCH_LIFECYCLE.md` assigns its removal to the Codex app lifecycle.
