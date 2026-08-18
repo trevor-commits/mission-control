@@ -206,13 +206,15 @@ html[data-theme="dark"] {
 .hr-disclosure:focus-visible, .hr-tab:focus-visible, .hr-pin:focus-visible,
 .opt:focus-visible, .tbtn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .hr-row.stale { border-style: dashed; }
-.hr-wline { display: flex; align-items: center; gap: 7px; margin-top: 5px; }
-.hr-wline.stale { opacity: .75; }
+.hr-wblock { margin-top: 5px; }
+.hr-wblock.stale { opacity: .75; }
+.hr-wline { display: flex; align-items: center; gap: 7px; }
 .hr-wname { color: var(--muted); font-size: 12px; min-width: 74px; }
 .hr-wbarwrap { position: relative; flex: 1; height: 11px; }
 .hr-wbarwrap .hr-track { bottom: 2px; height: 5px; }
 .hr-wval { font-size: 12px; font-weight: 750; font-variant-numeric: tabular-nums; white-space: nowrap; }
-.hr-wcd { color: var(--faint); font-size: 12px; white-space: nowrap; }
+.hr-wcd { display: block; color: var(--faint); font-size: 12px; margin-top: 3px; font-variant-numeric: tabular-nums; font-family: ui-monospace, "SF Mono", Menlo, monospace; }
+.hr-wcd.wait { color: var(--red); font-weight: 650; }
 .hr-note-line { color: var(--muted); font-size: 12px; margin-top: 4px; }
 .hr-top { display: flex; align-items: baseline; gap: 6px; }
 .hr-name { font-size: 12.5px; font-weight: 700; letter-spacing: -.01em; }
@@ -790,7 +792,7 @@ body.pin .hr-head { padding-top: 10px; }
   var HR = {
     view: (function () { try { return localStorage.getItem("mc-hr-view") || "active"; } catch (e) { return "active"; } })(),
     motion: hrInitialMotion(),
-    anims: [], raf: null, lastT: 0
+    anims: [], raf: null, lastT: 0, countdowns: []
   };
   Object.defineProperty(HR, "reduced", { get: function () { return HR.motion !== "on"; } });
   var HR_VIEWS = [["active", "Active", "Active and critical providers"],
@@ -834,13 +836,32 @@ body.pin .hr-head { padding-top: 10px; }
       return a.remaining_pct <= b.remaining_pct ? a : b;
     });
   }
-  function hrCountdown(epoch, monthly) {
-    if (typeof epoch !== "number" || !isFinite(epoch) || epoch <= 0) return null;
+  function hrCountdown(epoch, opts) {
+    opts = opts || {};
+    var empty = !!opts.empty;
+    var monthly = !!opts.monthly;
+    var verb = monthly ? "renews" : "resets";
+    var prefix = empty ? "empty — " : "";
+    if (typeof epoch !== "number" || !isFinite(epoch) || epoch <= 0) {
+      return prefix + (opts.fallback || (empty ? "waiting for reset time" : "reset time unknown"));
+    }
     var s = Math.round(epoch - Date.now() / 1000);
-    if (s <= 0) return monthly ? "renewing…" : "resetting…";
-    var d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600), m = Math.floor((s % 3600) / 60);
-    var txt = d > 0 ? d + "d " + h + "h" : h > 0 ? h + "h " + m + "m" : m + "m";
-    return (monthly ? "renews in " : "resets in ") + txt;
+    if (s <= 0) return prefix + (monthly ? "renewing now" : "resetting now");
+    var d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600);
+    var m = Math.floor((s % 3600) / 60), sec = s % 60;
+    function pad(n) { return n < 10 ? "0" + n : String(n); }
+    var body = d > 0 ? verb + " in " + d + "d " + h + "h " + m + "m"
+      : h > 0 ? verb + " in " + h + "h " + pad(m) + "m " + pad(sec) + "s"
+      : verb + " in " + m + "m " + pad(sec) + "s";
+    return prefix + body;
+  }
+  function hrResetFallback(r) {
+    if (!r) return "reset time unknown";
+    if (r.kind === "balance" || r.window_class === "balance") return "prepaid — no scheduled reset";
+    if (r.window_class === "5h" && typeof r.remaining_pct === "number" && r.remaining_pct >= 100)
+      return "full — 5-hour clock starts on next use";
+    if (r.window_class === "5h" && r.health === "auth") return "5-hour clock unknown until Claude Code reports it";
+    return "reset time unknown";
   }
   function hrSorted(rows) {
     var vis = rows.filter(function (r) { return r.health !== "hidden"; });
@@ -875,6 +896,8 @@ body.pin .hr-head { padding-top: 10px; }
   function hrValText(r) {
     if (r.health === "auth") return "signed out";
     if (r.value_label) return r.value_label;
+    if (r.kind === "quota" && r.remaining_pct != null && r.remaining_pct <= 0) return "empty";
+    if (r.kind === "quota" && r.remaining_pct != null && r.remaining_pct >= 100) return "full";
     if (r.kind === "quota" && r.remaining_pct != null) return Math.round(r.remaining_pct) + "%";
     if (r.balance_usd != null) return "$" + Number(r.balance_usd).toFixed(2);
     return "\u2013";
@@ -919,7 +942,9 @@ body.pin .hr-head { padding-top: 10px; }
     return total.toLocaleString() + " reads total · latest " + latest + ": " + byDate[latest].toLocaleString();
   }
   function hrWindowLine(r, showName) {
-    var line = el("div", "hr-wline" + (r.confidence === "stale" ? " stale" : ""));
+    var stale = r.confidence === "stale";
+    var block = el("div", "hr-wblock" + (stale ? " stale" : ""));
+    var line = el("div", "hr-wline");
     if (showName) line.appendChild(el("span", "hr-wname",
       (r.window_label && r.window_label !== "-") ? r.window_label : "Status"));
     var wrap = el("div", "hr-wbarwrap");
@@ -945,9 +970,13 @@ body.pin .hr-head { padding-top: 10px; }
     var right = el("span", "hr-wval", hrValText(r));
     right.style.color = color;
     line.appendChild(right);
-    var cd = hrCountdown(r.resets_epoch, r.window_class === "month");
-    if (cd) line.appendChild(el("span", "hr-wcd", cd.replace("resets in ", "").replace("renews in ", "")));
-    return line;
+    block.appendChild(line);
+    var empty = r.kind === "quota" && r.health === "ok" && r.remaining_pct != null && r.remaining_pct <= 0;
+    var cdOpts = { empty: empty, monthly: r.window_class === "month", fallback: hrResetFallback(r) };
+    var cd = el("span", "hr-wcd" + (empty ? " wait" : ""), hrCountdown(r.resets_epoch, cdOpts));
+    HR.countdowns.push({ el: cd, row: r, opts: cdOpts });
+    block.appendChild(cd);
+    return block;
   }
   function hrProviderCard(grp, groupIndex) {
     var rows = grp.rows;
@@ -969,15 +998,14 @@ body.pin .hr-head { padding-top: 10px; }
     if (rows.some(function (r) { return r.health === "auth"; })) top.appendChild(el("span", "hr-flag auth", "Token wait"));
     var val = el("span", "hr-val", hrValText(head));
     val.style.color = hrRowColor(head);
-    if (head.kind === "quota" && head.remaining_pct != null && !head.value_label) {
+    if (head.kind === "quota" && head.remaining_pct != null && !head.value_label &&
+        head.remaining_pct > 0 && head.remaining_pct < 100) {
       val.appendChild(el("span", "unit", "left"));
     }
     top.appendChild(val);
     card.appendChild(top);
     rows.forEach(function (r) {
-      if (r.remaining_pct != null || r.balance_usd != null || r.value_label) {
-        card.appendChild(hrWindowLine(r, rows.length > 1));
-      }
+      card.appendChild(hrWindowLine(r, rows.length > 1));
     });
     rows.forEach(function (r) {
       var le = (r.detail || {}).local_estimate;
@@ -1138,6 +1166,7 @@ body.pin .hr-head { padding-top: 10px; }
 
     if (HR.raf) { cancelAnimationFrame(HR.raf); HR.raf = null; }
     HR.anims = [];
+    HR.countdowns = [];
     list.textContent = "";
     var feed = hrFeed();
     var statAi = document.getElementById("stat-ai");
@@ -1185,6 +1214,21 @@ body.pin .hr-head { padding-top: 10px; }
       list.appendChild(el("div", "hr-note", "Collector data is " + Math.round(age / 60) + " min old."));
     }
     hrKick();
+    hrTickCountdowns();
+  }
+
+  function hrTickCountdowns() {
+    (HR.countdowns || []).forEach(function (c) {
+      var row = c.row || {};
+      var opts = c.opts || {};
+      c.el.textContent = hrCountdown(row.resets_epoch, opts);
+      var empty = !!opts.empty;
+      var waiting = empty || (typeof row.resets_epoch === "number" && row.resets_epoch - Date.now() / 1000 <= 0);
+      c.el.className = "hr-wcd" + (waiting ? " wait" : "");
+    });
+  }
+  if (!window.MC_HR_COUNTDOWN_TIMER && typeof setInterval === "function") {
+    window.MC_HR_COUNTDOWN_TIMER = setInterval(hrTickCountdowns, 1000);
   }
 
   window.MC_updateHeadroom = function (feed) {

@@ -273,6 +273,42 @@ async function main() {
       await withPanel(state(feeds), {}, async page => {
         const names = await page.locator('.hr-name').allInnerTexts();
         assert.deepStrictEqual(names, ['Exhausted Provider', 'Active Provider']);
+        const exhaustedCd = await page.locator('.hr-card', { hasText: 'Exhausted Provider' }).locator('.hr-wcd').innerText();
+        assert.match(exhaustedCd, /empty — resets in/, 'exhausted quota hides the waiting countdown');
+        assert.ok(await page.locator('.hr-card', { hasText: 'Exhausted Provider' }).locator('.hr-wcd.wait').count() > 0,
+          'exhausted countdown is not marked as waiting');
+      });
+    });
+
+    await test('every usage window keeps a uniform reset line, including full, empty, and signed-out rows', async () => {
+      const empty = quotaRow({ id: 'empty:week', provider: 'empty', label: 'Empty', remaining_pct: 0,
+        band: 'red', active: false, burn_per_hour: 0, resets_epoch: NOW + 3663 });
+      const full = quotaRow({ id: 'full:week', provider: 'full', label: 'Full', remaining_pct: 100,
+        active: false, burn_per_hour: 0, resets_epoch: NOW + 7200 });
+      const unusedFive = quotaRow({ id: 'glm:5h', provider: 'glm', label: 'GLM', window_class: '5h',
+        window_label: '5-hour', remaining_pct: 100, active: false, burn_per_hour: 0, resets_epoch: null });
+      const signed = quotaRow({ id: 'claude:week', provider: 'claude', label: 'Claude', health: 'auth',
+        remaining_pct: null, used_pct: null, band: 'none', confidence: 'stale', active: false,
+        burn_per_hour: null, resets_epoch: NOW + 86400 });
+      const prepaid = quotaRow({ id: 'moonshot:balance', provider: 'moonshot', label: 'Moonshot',
+        kind: 'balance', window_class: 'balance', window_label: 'API balance', remaining_pct: null,
+        balance_usd: 12.42, band: 'cash', active: false, burn_per_hour: null, resets_epoch: null });
+      const feeds = Object.assign(healthyCore(), {
+        headroom: headroom([empty, full, unusedFive, signed, prepaid], {
+          id: empty.id, label: empty.label, window_label: empty.window_label,
+          remaining_pct: empty.remaining_pct, band: empty.band,
+        }),
+      });
+      await withPanel(state(feeds), { before: 'try{localStorage.setItem("mc-hr-view","all")}catch(e){}' }, async page => {
+        const cds = await page.locator('.hr-wcd').allInnerTexts();
+        assert.ok(cds.some(t => /empty — resets in/.test(t)), `missing empty countdown: ${JSON.stringify(cds)}`);
+        assert.ok(cds.some(t => /^resets in /.test(t) && !/empty —/.test(t)), `missing full countdown: ${JSON.stringify(cds)}`);
+        assert.ok(cds.some(t => /full — 5-hour clock starts on next use/.test(t)), `missing unused 5h copy: ${JSON.stringify(cds)}`);
+        assert.ok(cds.some(t => /prepaid — no scheduled reset/.test(t)), `missing prepaid copy: ${JSON.stringify(cds)}`);
+        const claude = await page.locator('.hr-card', { hasText: 'Claude' }).innerText();
+        assert.match(claude, /signed out/);
+        assert.match(claude, /resets in /);
+        assert.strictEqual(await page.locator('.hr-wcd').count(), 5, 'a window dropped its reset line');
       });
     });
 
