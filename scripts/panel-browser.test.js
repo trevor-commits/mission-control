@@ -285,7 +285,7 @@ async function main() {
       await withPanel(state(Object.assign(healthyCore(), {
         headroom: headroom([staleRow, liveRow], summary),
       })), {}, async page => {
-        assert.strictEqual(await page.locator('#stat-ai').innerText(), '–', 'non-live summary reached the stat');
+        assert.strictEqual(await page.locator('#stat-ai').innerText(), '60%', 'live sibling was blanked by a stale summary');
       });
       await withPanel(state(Object.assign(healthyCore(), {
         headroom: headroom([liveRow], { id: liveRow.id, label: liveRow.label,
@@ -299,7 +299,7 @@ async function main() {
         headroom: headroom([actualLow, liveRow], { id: liveRow.id, label: liveRow.label,
           window_label: liveRow.window_label, remaining_pct: liveRow.remaining_pct, band: liveRow.band }),
       })), {}, async page => {
-        assert.strictEqual(await page.locator('#stat-ai').innerText(), '–', 'non-lowest live summary reached the stat');
+        assert.strictEqual(await page.locator('#stat-ai').innerText(), '10%', 'actual lowest live row did not reach the stat');
       });
     });
 
@@ -326,7 +326,7 @@ async function main() {
           headroom: headroom(rows, low),
         })), {}, async page => { values.push(await page.locator('#stat-ai').innerText()); });
       }
-      assert.deepStrictEqual(values, ['40%', '–', '–', '–', '–']);
+      assert.deepStrictEqual(values, ['40%', '40%', '–', '–', '–']);
     });
 
     await test('malformed headroom update clears the prior stat without a runtime error', async () => {

@@ -20,7 +20,7 @@ Capture the current goal plus the concrete dependency-ordered steps that are sti
   gated on mobile-connect exact-SHA CI plus the three private Telegram bindings. | owner:
   Codex thread `019f674e-a794-71f0-a6dc-ca861fec4864` | linear: repo-only ER-156.
 - ER-107 Morning Brief operator/provider gates (delivery proof complete): fifteen natural delivered mornings 2026-07-10 through 2026-07-24 are harvested in `records/morning-brief-live-proof-log.md`. Remaining gates are Trevor comprehension check-ins on that log, a separately authorized privacy-screened Outcome Extractor provider calibration, and an explicit activate-or-defer decision. Pending extractor plist remains unloaded at `~/Library/LaunchAgents/com.gillettes.outcome-extractor.plist.pending-calibration-20260713`. | owner: Trevor (comprehension + calibration/activation decision) | linear: repo-only; no Mission Control Linear team is configured.
-- ER-089 usage-aware autonomous routing (high): design and implement provider-usage adapters only where safe credentials/sources exist, then expose the routing signal in Mission Control without inventing missing provider percentages. Blocker: Trevor-held provider auth for z.ai/OpenAI/GitHub if live usage is required. | owner: next Mission Control routing session | linear: self-contained until Linear is configured.
+- ER-089 usage-aware autonomous routing (high): live 60-second headroom overlay now feeds the router and the menu bar. Remaining work is Claude Keychain OAuth plus adapters only where a safe source still does not exist. | owner: next Mission Control routing session after Claude login | record: `records/2026-08-18-live-usage-sync.md` | linear: self-contained until Linear is configured.
 - ER-090 autonomous coding-hygiene loop (high): Trevor's 2026-07-11 autonomous-portfolio request approves the bounded executor direction: consume Mission Control truth, rank by leverage/harm, fix and verify in scoped owner repos, use independent challenge when warranted, and raise only genuine decisions/blockers. Persistent unattended scheduling remains dependency-gated—not approval-gated—until atomic lease/epoch/fencing and transactional receipt-outbox semantics prevent duplicate or stale chat execution. The first interactive governor cycle is tracked by global ER-118. | owner: Codex thread `019f51c1-5817-7872-a6ce-8b65428277ed` | linear: self-contained until Linear is configured.
 - P14 end-of-day loose-ends robot (after ER-090/P12 boundaries): consume the new Open work ledger in dry-run first, auto-fix only mechanically safe items, and escalate decision items loudly without merging, force-pushing, deleting, or editing human docs. | owner: future Mission Control autonomy session | linear: self-contained until Linear is configured.
 
@@ -40,6 +40,8 @@ Mirror every configured Linear issue here with the repo-side home that explains 
 ## Completed
 If it's not here, it isn't remembered.
 Preserve a durable completion trail for verified work instead of deleting it from active planning.
+- 2026-08-18 | Live usage sync: menu bar, Usage tab, and compact panel show the lowest live signed-in quota; signed-out Claude can no longer blank Codex/Cursor/GLM; ops monitoring registry lands with this change | owner: Cursor `b60f025b-cb97-4a82-8f55-866893c361c6` | record: `records/2026-08-18-live-usage-sync.md` | linear: self-contained; repo-only.
+- 2026-08-18 | Ops monitoring layer: registered Hermes `ops` profile jobs (ops tick chain + weekly backup verify) in the automation registry — full record in `records/2026-08-18-ops-monitoring-layer.md` | owner: Hermes subagent (kimi-k3); landed with usage-sync | linear: self-contained; repo-only.
 - 2026-08-15 | Remote branch exact-lease cleanup — deleted all 17 non-main remote heads through exact-OID leases after main-ancestry, archive-tag, and bundle checks. Local and remote branch inventories now contain only `main`. The detached bd05 checkout remains app-managed. | owner: Codex `01a00647-2c65-7592-8c65-c76087de3bcf` | record: `records/verification/2026-08-15-remote-branch-cas-cleanup.md` | Work Record: `2026-08-15 — Remote branch exact-lease cleanup` | linear: self-contained and repo-only.
 - 2026-08-15 | Main-only repository consolidation — joined every safe retained history without changing the baseline product tree. It published 36 archive tags and preserved dual bundles plus 14 checkout archives. It removed 12 live side worktrees, finalized one absent registration, and reduced local branches to `main`. The follow-up cleanup reduced remote branches to `main`. One app-managed detached checkout remains. Both ordinary consolidation pushes passed `SUITES PASS=26 FAIL=0`. | owner: Codex `01a00647-2c65-7592-8c65-c76087de3bcf` | record: `records/2026-08-15-main-only-repository-consolidation.md` | linear: self-contained and repo-only.
 - 2026-08-12 | Terminal audit of Codex `019ff2ae` — live product closeout re-verified. Local push hook `SUITES PASS=26 FAIL=0`. Hosted Verify run `31657838306` passed. GR-142 reconciled `terminal-before-bind` receipt `b2f7561f`. Cleanup residuals remain in Active Next Steps. | owner: Cursor `2bc6c15d-4488-411f-92a9-4b167e034a06` | record: `records/2026-08-12-019ff2ae-terminal-audit.md` | Work Record: `2026-08-12 — Terminal audit of Codex 019ff2ae and cleanup follow-through` | linear: self-contained; repo-only.
@@ -88,6 +90,37 @@ Preserve a durable completion trail for verified work instead of deleting it fro
 - 2026-07-04 | ER-087 follow-up audit gaps — governance scaffold, product intent, tab wording, stale-ingest honesty, and Map smoke coverage landed in this change; full record below.
 
 ## Work Record Log
+
+### 2026-08-18 — Live usage sync on glance surfaces
+- Problem: Trevor had to open Chrome for current usage. The 60-second collector had live Codex/Cursor/GLM numbers, but the menu bar and Usage tab treated a signed-out Claude row as the lowest remaining quota and then showed nothing.
+- Reasoning: Glance surfaces must compute lowest remaining from trusted live rows only. Signed-out Claude stays visible as signed out, never as 0% or 100%.
+- Diagnosis inputs: live `~/.mission-control/data/headroom.json` (Claude `health=auth`, Codex weekly 100% used, Cursor live); `headroomLowest()` and `hrLiveSummaryRow()` requiring summary identity match; Desktop shortcut to the 30-minute HTML ledger.
+- Implementation inputs: `scripts/mc-panel.swift`, `dashboard/panel.html`, `dashboard/index.html`, native and browser tests, ops `dashboard/jobs.json`.
+- Fix: pick the lowest ok+live+fresh quota independently of an untrusted summary; render auth rows as signed out; sort them after live low-headroom cards; point the 30-minute HTML ledger at `#usage`.
+- Self-audit:
+  - method: `python3 scripts/mc-panel-headroom.test.py`; `python3 scripts/mc-panel-summary.test.py`; `node scripts/panel-browser.test.js`; `node scripts/dashboard-browser.test.js`; `node scripts/dashboard-render-smoke.js .`; `PYTHONDONTWRITEBYTECODE=1 /bin/bash scripts/automation-status.test.sh`; `PYTHONDONTWRITEBYTECODE=1 python3 -B scripts/rollup-answer.test.py`; `PYTHONDONTWRITEBYTECODE=1 /bin/bash scripts/verify.sh`.
+  - outcome: native headroom 17/0; native summary 16/0; panel browser exit 0; dashboard browser 317 assertions; render-smoke 8 tabs; automation-status ALL PASS; isolated rollup 32/0; full verifier `SUITES PASS=26 FAIL=0` after widening test-only pause/continue bounds to 30s.
+  - did not verify: live Anthropic percent (Keychain OAuth empty); corner-card pin preference; Telegram Mobile Connect.
+- Ripple Check: runbook Desktop-first section, Active Next Steps ER-089 remainder, Completed, Work Record, branch ledger, Test Evidence, and this record updated together. Companion collector/router change lives in global-implementations.
+- by: Cursor `b60f025b-cb97-4a82-8f55-866893c361c6`
+- triggered by: Trevor asking to make token tracking synced and usable without Chrome.
+- led to: `records/2026-08-18-live-usage-sync.md`
+- linear: self-contained; repo-only.
+
+### 2026-08-18 — Ops profile monitoring layer registration
+- Problem: the new Hermes `ops` profile's tick chain and weekly backup verification ran outside the Automation registry, so the dashboard could not show their freshness or activation state.
+- Reasoning: match the existing registry schema exactly and copy classification semantics from the nearest existing entries instead of inventing new fields.
+- Diagnosis inputs: `dashboard/jobs.json` (14 existing entries), `scripts/automation-status` classify/pseudo/activation_required paths, the ops tick plist, `ops-backup-verify.sh`, live snapshot/canary state, and launchctl inventory.
+- Fix: added `com.gillettes.hermes-ops-tick` (`kind: interval`, freshness 1800s, canary-stamp evidence `role: run`/`run_key: true`, plist `err_log`, `activation_required: true` per the Morning Brief pending-plist pattern) and `com.gillettes.hermes-ops-backup-verify` (`kind: calendar`, freshness 691200s, `pseudo: true` per the cron-only `chat-graph-ingest` pattern, evidence as `<snapshot-root>/*/manifest.json` globs because the collector only stats regular files and the requested roots are directories).
+- Self-audit:
+  - method: JSON parse check; live `automation-status --json` against the real registry; focused `scripts/automation-status.test.sh`; full `scripts/verify.sh`.
+  - outcome: registry parses with 16 jobs; live classification is tick `awaiting-activation` (launchd bootstrap pending, honest) and backup-verify `green` (today's `-weekly-ops` snapshots); focused suite ALL PASS; full verifier result in Test Evidence Log.
+  - did not verify: launchd bootstrap of the tick agent (Trevor-owned activation), the next natural Sunday backup run, and commit/push (explicitly out of scope; change remains in the working tree).
+- Ripple Check: registry change plus this record, the Completed row, and Test Evidence Log landed together. No collector, renderer, schema, doc, or runtime surface changed; README's automation-status description stays accurate.
+- by: Hermes subagent (kimi-k3), delegated from Trevor's default-profile session.
+- triggered by: creation of the Hermes `ops` profile and its un-bootstrapped tick plist.
+- led to: `records/2026-08-18-ops-monitoring-layer.md`.
+- linear: self-contained; repo-only.
 
 ### 2026-08-15 — Remote branch exact-lease cleanup
 - Problem: seventeen non-main remote refs remained after every safe history was joined to `main` and every obsolete local branch was removed.
@@ -1016,7 +1049,19 @@ Keep materially new suggestions here so they survive beyond the current chat.
 - 2026-07-05 | recommendation: do not adopt the GitHub Copilot enterprise-observability stack (OpenTelemetry Collector, Prometheus, Grafana, OpenObserve, Superset, Metabase, Airbyte, Meltano, dbt-core, Great Expectations, TensorZero, Helicone, OpenLIT, traceAI, TraceRoot, Pull Request Analytics Action); treat `records/2026-07-04-dashboard-coding-tracker-search-audit.md` as the real same-niche repo map; if a chart is ever justified, prefer vendorable zero-dependency `leeoniya/uPlot` over Chart.js/ECharts/CDN — but not for V1. | why: Copilot recommended from the repo description alone (it said so); every headline pick runs as a background service, framework, or separate warehouse and collides with the explicit non-goals of offline single-file, single-user, no-server. Full evaluation in Feedback Decision Log 2026-07-05. | by: Claude Code (Opus 4.8) session `a9724039-6595-4205-a25b-bf361020250a`. | linear: self-contained until Linear is configured.
 
 ## Active Branch Ledger
-Only `main` exists locally or remotely. The topic sections below preserve historical ownership and cleanup evidence. They are not live branches.
+### `cursor/usage-sync-live-headroom`
+- status: active. Live usage glance-surface repair plus ops registry landing.
+- created: 2026-08-18
+- base: `origin/main@19901c8`
+- source chat: Cursor `b60f025b-cb97-4a82-8f55-866893c361c6`
+- worktree: primary checkout `/Users/gillettes/Coding Projects/mission-control`
+- purpose: show live remaining percent on the menu bar and Usage tab without a signed-out Claude row blanking the number
+- merge target: `main`
+- review surface: PR
+- delete when: merged to main
+- linear: self-contained; repo-only
+
+Only `main` existed locally or remotely before this branch. The topic sections below preserve historical ownership and cleanup evidence.
 
 ### `main` — 2026-08-15 repository consolidation
 - status: clean and published. Safe histories joined. Local and remote branch cleanup complete.
@@ -1300,6 +1345,8 @@ If it's not here, it isn't remembered.
 - When a verification run closes or updates an audit finding, cross-reference the matching audit record entry and the chat or commit that performed the work.
 
 ## Test Evidence Log
+- 2026-08-18 | commands: `python3 scripts/mc-panel-headroom.test.py`; `python3 scripts/mc-panel-summary.test.py`; `node scripts/panel-browser.test.js`; `node scripts/dashboard-browser.test.js`; `node scripts/dashboard-render-smoke.js .`; `PYTHONDONTWRITEBYTECODE=1 /bin/bash scripts/automation-status.test.sh`; `PYTHONDONTWRITEBYTECODE=1 python3 -B scripts/rollup-answer.test.py`; `PYTHONDONTWRITEBYTECODE=1 /bin/bash scripts/verify.sh` | result: native headroom 17/0; native summary 16/0; panel browser exit 0; dashboard browser 317; render-smoke 8 tabs; automation-status ALL PASS; isolated rollup 32/0; `SUITES PASS=26 FAIL=0` | log/PR reference: `records/2026-08-18-live-usage-sync.md` | by: Cursor `b60f025b-cb97-4a82-8f55-866893c361c6` | linear: repo-only.
+- 2026-08-18 | commands: `python3 json.load` on `dashboard/jobs.json`; live `scripts/automation-status --json --registry dashboard/jobs.json`; `PYTHONDONTWRITEBYTECODE=1 /bin/bash scripts/automation-status.test.sh`; `PYTHONDONTWRITEBYTECODE=1 /bin/bash scripts/verify.sh` | result: registry parses (16 jobs); live classification tick `awaiting-activation` + backup-verify `green`; focused suite ALL PASS; first full verifier `25/1` failed only the final source-artifact gate on `scripts/__pycache__` bytecode written by the earlier unguarded live classification run — artifact removed, rerun `SUITES PASS=26 FAIL=0` (browser/panel suites included) | log/PR reference: `records/2026-08-18-ops-monitoring-layer.md`; landed with usage-sync | by: Hermes subagent (kimi-k3) | linear: repo-only.
 - 2026-08-15 | commands: helper self-test, exact OID checks, main ancestry, archive peels, guarded cleanup, prune fetch, final inventories, helper preview, archive count, and bundle checks.
   - result: helper self-test passed. All seventeen exact-OID remote deletions completed. Local and provider inventories contain only `main`. The helper reports `Nothing to delete`.
   - recovery: 21 branch archive tags remain. Both mode-0600 bundles verify at SHA-256 `47be14743e935419cd8a570d0acf2c952c96e5162ea6cab5249118912fab0a17`.

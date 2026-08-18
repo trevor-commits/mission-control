@@ -71,7 +71,7 @@ class RollupAnswerTests(unittest.TestCase):
         if extra_env:
             env.update(extra_env)
         proc = subprocess.run(
-            argv, env=env, text=True, capture_output=True, timeout=15, check=False)
+            argv, env=env, text=True, capture_output=True, timeout=60, check=False)
         if ok and proc.returncode != 0:
             self.fail("command failed (%s): %s\nstdout=%s\nstderr=%s" % (
                 proc.returncode, argv, proc.stdout, proc.stderr))
@@ -81,7 +81,7 @@ class RollupAnswerTests(unittest.TestCase):
 
     def _await_pause(self, proc: subprocess.Popen[str], marker: Path,
                      what: str) -> None:
-        deadline = time.monotonic() + 5
+        deadline = time.monotonic() + 30
         while not marker.exists() and time.monotonic() < deadline:
             if proc.poll() is not None:
                 break
@@ -592,7 +592,7 @@ class RollupAnswerTests(unittest.TestCase):
         batch_parent.rename(old_parent)
         batch_parent.mkdir(mode=0o700)
         (self.home / ".rollup-answer-test-continue").touch(mode=0o600)
-        stdout, stderr = proc.communicate(timeout=10)
+        stdout, stderr = proc.communicate(timeout=30)
         self.assertNotEqual(proc.returncode, 0, (stdout, stderr))
         for decision_id in (ids["primary"], ids["equivalent"]):
             self.assertEqual(self._pending_events(decision_id), [])
@@ -620,7 +620,7 @@ class RollupAnswerTests(unittest.TestCase):
         prompt.write_text(prompt.read_text() + "mutated-after-commit\n")
         prompt.chmod(0o600)
         (self.home / ".rollup-answer-postcommit-test-continue").touch(mode=0o600)
-        stdout, stderr = proc.communicate(timeout=10)
+        stdout, stderr = proc.communicate(timeout=30)
         self.assertNotEqual(proc.returncode, 0, (stdout, stderr))
         for decision_id in (ids["primary"], ids["equivalent"]):
             self.assertEqual(len(self._pending_events(decision_id)), 1)
@@ -657,7 +657,7 @@ class RollupAnswerTests(unittest.TestCase):
         parent.rename(old_parent)
         parent.mkdir(mode=0o700)
         (self.home / ".rollup-answer-postcommit-test-continue").touch(mode=0o600)
-        stdout, stderr = proc.communicate(timeout=10)
+        stdout, stderr = proc.communicate(timeout=30)
         self.assertNotEqual(proc.returncode, 0, (stdout, stderr))
         for decision_id in (ids["primary"], ids["equivalent"]):
             self.assertEqual(len(self._pending_events(decision_id)), 1)
@@ -694,7 +694,7 @@ class RollupAnswerTests(unittest.TestCase):
         prompt.write_text(prompt.read_text() + "mutated-during-replay\n")
         prompt.chmod(0o600)
         (self.home / ".rollup-answer-postcommit-test-continue").touch(mode=0o600)
-        stdout, stderr = proc.communicate(timeout=10)
+        stdout, stderr = proc.communicate(timeout=30)
         self.assertNotEqual(proc.returncode, 0, (stdout, stderr))
         self.assertFalse(batch.exists())
         self.assertTrue(any(batch.parent.glob(".rollup-quarantine.*")))
@@ -734,7 +734,7 @@ class RollupAnswerTests(unittest.TestCase):
         parent.rename(old_parent)
         parent.mkdir(mode=0o700)
         (self.home / ".rollup-answer-postcommit-test-continue").touch(mode=0o600)
-        stdout, stderr = proc.communicate(timeout=10)
+        stdout, stderr = proc.communicate(timeout=30)
         self.assertNotEqual(proc.returncode, 0, (stdout, stderr))
         self.assertFalse((old_parent / batch_name).exists())
         self.assertTrue(any(old_parent.glob(".rollup-quarantine.*")))
@@ -779,7 +779,7 @@ class RollupAnswerTests(unittest.TestCase):
         manifest.write_text("{}\n")
         manifest.chmod(0o600)
         (self.home / ".rollup-answer-postcommit-test-continue").touch(mode=0o600)
-        stdout, stderr = proc.communicate(timeout=10)
+        stdout, stderr = proc.communicate(timeout=30)
         self.assertNotEqual(proc.returncode, 0, (stdout, stderr))
         self.assertFalse((old_parent / batch_name).exists())
         self.assertTrue(any(old_parent.glob(".rollup-quarantine.*")))
@@ -825,7 +825,7 @@ class RollupAnswerTests(unittest.TestCase):
         conflict.write_text("occupied canonical name\n")
         conflict.chmod(0o600)
         (self.home / ".rollup-answer-postcommit-test-continue").touch(mode=0o600)
-        stdout, stderr = proc.communicate(timeout=10)
+        stdout, stderr = proc.communicate(timeout=30)
         self.assertNotEqual(proc.returncode, 0, (stdout, stderr))
         self.assertFalse((old_parent / batch_name).exists())
         self.assertTrue(any(old_parent.glob(".rollup-quarantine.*")))

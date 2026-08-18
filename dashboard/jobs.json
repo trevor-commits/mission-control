@@ -216,6 +216,58 @@
       "name": "chat-graph-ingest",
       "pseudo": true,
       "schedule": "every 86400s"
+    },
+    {
+      "evidence": [
+        {
+          "path": "/Users/gillettes/.hermes/profiles/ops/ops-data/canary/stamp",
+          "role": "run",
+          "run_key": true
+        }
+      ],
+      "err_log": "/Users/gillettes/.hermes/profiles/ops/ops-data/logs/tick.err.log",
+      "expected_freshness_s": 1800,
+      "kind": "interval",
+      "label": "Hermes Ops Tick",
+      "name": "com.gillettes.hermes-ops-tick",
+      "activation_required": true,
+      "schedule": "every 60s (launchd, bootstrap pending) + every minute via default-profile cron job ops-tick-runner"
+    },
+    {
+      "evidence": [
+        {
+          "path": "/Users/gillettes/.hermes/state-snapshots/*/manifest.json",
+          "role": "run",
+          "run_key": true
+        },
+        {
+          "path": "/Users/gillettes/.hermes/profiles/ops/state-snapshots/*/manifest.json",
+          "role": "run",
+          "run_key": true
+        }
+      ],
+      "expected_freshness_s": 691200,
+      "kind": "calendar",
+      "label": "Hermes Ops Backup Verify",
+      "name": "com.gillettes.hermes-ops-backup-verify",
+      "pseudo": true,
+      "schedule": "Sundays 7:00 AM"
+    },
+    {
+      "evidence": [
+        {
+          "path": "/Users/gillettes/.hermes/profiles/ops/ops-data/state/route-probe/last-run",
+          "role": "run",
+          "run_key": true
+        }
+      ],
+      "err_log": "/Users/gillettes/.hermes/profiles/ops/ops-data/logs/tick.err.log",
+      "expected_freshness_s": 3600,
+      "kind": "interval",
+      "label": "Hermes Ops Route Probe",
+      "name": "com.gillettes.hermes-ops-route-probe",
+      "pseudo": true,
+      "schedule": "every 1800s"
     }
   ]
 }

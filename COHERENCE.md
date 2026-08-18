@@ -22,6 +22,7 @@ This map is append-only. Add a row whenever a new durable cross-reference is int
 | `/Users/gillettes/Coding Projects/mission-control/todo.md` log shapes | `CONTINUITY.md`, `/Users/gillettes/Coding Projects/mission-control/LINEAR.md` | durable records and issue coverage must stay aligned with local principle docs |
 | `PROJECT_INTENT.md` and local source-of-truth docs | `/Users/gillettes/Coding Projects/mission-control/AGENTS.md`, `/Users/gillettes/Coding Projects/mission-control/CLAUDE.md` | task routing and authority statements depend on the docs map remaining accurate |
 | optional repo-local companions such as `README.md`, `GUIDE.md`, `PROMPTS.md`, `RULES.md`, `STRUCTURE.md` | local principle docs | companion docs should point to the same principle surfaces rather than drifting separately |
+| `scripts/mc-panel.swift` / `dashboard/panel.html` / `dashboard/index.html` lowest-quota glance | `~/.mission-control/data/headroom.json` `summary.lowest_quota` plus live signed-in quota rows | glance percent is the lowest ok+live+fresh remaining; signed-out Claude cannot blank Codex, Cursor, or GLM |
 
 ## Staleness And Orphans
 - Staleness is caught first at commit time through the Ripple Check, then during broader audits.

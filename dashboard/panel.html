@@ -818,11 +818,6 @@ body.pin .hr-head { padding-top: 10px; }
     var now = Date.now() / 1000;
     var age = now - feed.generated_epoch;
     if (age < 0 || age > 300) return null;
-    var low = feed.data.summary.lowest_quota;
-    if (!plainObject(low) || !low.id || typeof low.remaining_pct !== "number" ||
-        !isFinite(low.remaining_pct) || low.remaining_pct < 0 || low.remaining_pct > 100) return null;
-    var matches = feed.data.rows.filter(function (candidate) { return candidate && candidate.id === low.id; });
-    if (matches.length !== 1) return null;
     function trustedQuota(candidate) {
       if (!candidate || candidate.kind !== "quota" || candidate.confidence !== "live" || candidate.health !== "ok" ||
           typeof candidate.remaining_pct !== "number" || !isFinite(candidate.remaining_pct) ||
@@ -833,12 +828,11 @@ body.pin .hr-head { padding-top: 10px; }
       return candidate.age_s == null || (typeof candidate.age_s === "number" && isFinite(candidate.age_s) &&
         candidate.age_s >= 0 && candidate.age_s <= 300);
     }
-    var row = matches[0];
-    if (!trustedQuota(row) || Math.abs(row.remaining_pct - low.remaining_pct) > 0.01) return null;
-    if (feed.data.rows.some(function (candidate) {
-      return trustedQuota(candidate) && candidate.remaining_pct < row.remaining_pct - 0.01;
-    })) return null;
-    return row;
+    var trusted = feed.data.rows.filter(trustedQuota);
+    if (!trusted.length) return null;
+    return trusted.reduce(function (a, b) {
+      return a.remaining_pct <= b.remaining_pct ? a : b;
+    });
   }
   function hrCountdown(epoch, monthly) {
     if (typeof epoch !== "number" || !isFinite(epoch) || epoch <= 0) return null;
@@ -850,14 +844,16 @@ body.pin .hr-head { padding-top: 10px; }
   }
   function hrSorted(rows) {
     var vis = rows.filter(function (r) { return r.health !== "hidden"; });
-    var quota = vis.filter(function (r) { return r.kind === "quota" && r.remaining_pct != null; });
-    var rest = vis.filter(function (r) { return !(r.kind === "quota" && r.remaining_pct != null); });
+    var quota = vis.filter(function (r) {
+      return r.kind === "quota" && r.remaining_pct != null && r.health === "ok" && r.confidence === "live";
+    });
+    var rest = vis.filter(function (r) { return quota.indexOf(r) < 0; });
     quota.sort(function (a, b) { return a.remaining_pct - b.remaining_pct; });
     rest.sort(function (a, b) { return (a.runway_hours || 1e9) - (b.runway_hours || 1e9); });
     return quota.concat(rest);
   }
   function hrCritical(r) {
-    if (!r || r.health === "hidden") return false;
+    if (!r || r.health === "hidden" || r.health === "auth") return false;
     var text = String(r.value_label || "") + " " + String(r.note || "");
     return r.band === "red" ||
       (r.kind === "quota" && typeof r.remaining_pct === "number" && isFinite(r.remaining_pct) && r.remaining_pct <= 0) ||
@@ -877,6 +873,7 @@ body.pin .hr-head { padding-top: 10px; }
   }
 
   function hrValText(r) {
+    if (r.health === "auth") return "signed out";
     if (r.value_label) return r.value_label;
     if (r.kind === "quota" && r.remaining_pct != null) return Math.round(r.remaining_pct) + "%";
     if (r.balance_usd != null) return "$" + Number(r.balance_usd).toFixed(2);
@@ -886,8 +883,12 @@ body.pin .hr-head { padding-top: 10px; }
     return hrColor(r.kind === "balance" ? (r.band === "cash" ? "cash" : r.band) : r.band);
   }
   function hrHeadlineRow(rows) {
-    var quota = rows.filter(function (r) { return r.kind === "quota" && r.remaining_pct != null; });
+    var quota = rows.filter(function (r) {
+      return r.kind === "quota" && r.remaining_pct != null && r.health === "ok" && r.confidence === "live";
+    });
     if (quota.length) return quota.reduce(function (a, b) { return a.remaining_pct <= b.remaining_pct ? a : b; });
+    var signedOut = rows.filter(function (r) { return r.health === "auth"; });
+    if (signedOut.length) return signedOut[0];
     return rows[0];
   }
   function hrDailyReadsSummary(value) {

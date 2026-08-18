@@ -157,12 +157,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
           let feedData = obj["data"] as? [String: Any],
           !hasIncompleteMarker(feedData),
           let summary = feedData["summary"] as? [String: Any],
-          let low = summary["lowest_quota"] as? [String: Any],
-          let lowID = low["id"] as? String, !lowID.isEmpty,
+          summary["lowest_quota"] != nil,
           let rows = feedData["rows"] as? [[String: Any]]
     else { return nil }
 
-    let matchingRows = rows.filter { ($0["id"] as? String) == lowID }
     let now = Date().timeIntervalSince1970
     let maxAge: TimeInterval = 300
     func isFresh(_ value: Any?) -> Bool {
@@ -185,24 +183,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
       return pct
     }
 
-    guard matchingRows.count == 1,
-          let row = matchingRows.first,
-          isFresh(generatedEpoch),
-          let summaryPct = finiteJSONNumber(low["remaining_pct"]),
-          let rowPct = trustedQuota(row),
-          (0...100).contains(summaryPct),
-          abs(summaryPct - rowPct) <= 0.01,
-          let summaryBand = low["band"] as? String,
-          let rowBand = row["band"] as? String,
-          summaryBand == rowBand
-    else { return nil }
-
-    if rows.contains(where: { candidate in
-      guard let candidatePct = trustedQuota(candidate) else { return false }
-      return candidatePct < rowPct - 0.01
-    }) { return nil }
-
-    return (Int(rowPct.rounded()), rowBand)
+    guard isFresh(generatedEpoch) else { return nil }
+    var best: (pct: Double, band: String)?
+    for candidate in rows {
+      guard let pct = trustedQuota(candidate),
+            let band = candidate["band"] as? String, !band.isEmpty
+      else { continue }
+      if let current = best, pct >= current.pct - 0.01 { continue }
+      best = (pct, band)
+    }
+    guard let shown = best else { return nil }
+    return (Int(shown.pct.rounded()), shown.band)
   }
 
   func pushHeadroom() {
