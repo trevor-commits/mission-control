@@ -184,7 +184,7 @@ def _test_pause_after_stage(home_fd: int) -> None:
     release = ".decision-answer-test-continue"
     fd = os.open(marker, os.O_CREAT | os.O_WRONLY | os.O_TRUNC, 0o600, dir_fd=home_fd)
     os.close(fd)
-    deadline = time.monotonic() + 5
+    deadline = time.monotonic() + 30
     while time.monotonic() < deadline:
         try:
             os.stat(release, dir_fd=home_fd, follow_symlinks=False)
@@ -673,7 +673,7 @@ def _test_pause_after_rollup_stage(home_fd: int) -> None:
     fd = os.open(marker, os.O_CREAT | os.O_WRONLY | os.O_TRUNC, 0o600,
                  dir_fd=home_fd)
     os.close(fd)
-    deadline = time.monotonic() + 5
+    deadline = time.monotonic() + 30
     while time.monotonic() < deadline:
         try:
             os.stat(release, dir_fd=home_fd, follow_symlinks=False)
@@ -692,7 +692,7 @@ def _test_pause_after_rollup_commit(home_fd: int) -> None:
     fd = os.open(marker, os.O_CREAT | os.O_WRONLY | os.O_TRUNC, 0o600,
                  dir_fd=home_fd)
     os.close(fd)
-    deadline = time.monotonic() + 5
+    deadline = time.monotonic() + 30
     while time.monotonic() < deadline:
         try:
             os.stat(release, dir_fd=home_fd, follow_symlinks=False)

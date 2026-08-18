@@ -168,18 +168,18 @@ def main() -> int:
         ))
         mismatched = feed(now, row(now))
         mismatched["data"]["summary"]["lowest_quota"]["remaining_pct"] = 1.0  # type: ignore[index]
-        cases.append(("summary must match its live row", mismatched, "nil"))
+        cases.append(("lying summary does not hide the live row", mismatched, "19|orange"))
         duplicate = feed(now, row(now))
         duplicate["data"]["rows"].append(row(now))  # type: ignore[index, union-attr]
-        cases.append(("summary id must match exactly one row", duplicate, "nil"))
+        cases.append(("duplicate live ids still show the trusted percent", duplicate, "19|orange"))
         lower_sibling = feed(now, row(now))
         lower_sibling["data"]["rows"].append(  # type: ignore[index, union-attr]
             row(now, id="x:month", remaining_pct=4.0, band="red")
         )
         cases.append((
-            "summary must reject a lower trusted live quota sibling",
+            "lowest trusted live sibling is shown even if summary names another row",
             lower_sibling,
-            "nil",
+            "4|red",
         ))
         stale_lower_sibling = feed(now, row(now))
         stale_lower_sibling["data"]["rows"].append(  # type: ignore[index, union-attr]
@@ -188,6 +188,25 @@ def main() -> int:
         cases.append((
             "untrusted stale sibling does not replace the live summary",
             stale_lower_sibling,
+            "19|orange",
+        ))
+        signed_out = feed(
+            now,
+            row(now, id="claude:week", remaining_pct=0.0, band="red", health="auth", confidence="stale"),
+        )
+        signed_out["data"]["rows"].append(  # type: ignore[index, union-attr]
+            row(now, id="codex:week", remaining_pct=19.0, band="orange")
+        )
+        signed_out["data"]["summary"]["lowest_quota"] = {  # type: ignore[index]
+            "id": "claude:week",
+            "remaining_pct": 0.0,
+            "band": "red",
+            "health": "auth",
+            "confidence": "stale",
+        }
+        cases.append((
+            "signed-out Claude lowest does not blank a live Codex percent",
+            signed_out,
             "19|orange",
         ))
 

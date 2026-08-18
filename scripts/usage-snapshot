@@ -561,7 +561,8 @@ if [ "$DO_HTML" = "1" ]; then
   elif {
     printf '<!doctype html><meta charset="utf-8"><title>AI usage</title>\n'
     printf '<style>body{font:14px -apple-system,sans-serif;margin:2em;max-width:820px}h1{font-size:20px}.bar{background:#eee;border-radius:4px;height:18px;width:320px;display:inline-block;vertical-align:middle}.fill{background:#e8a33d;height:18px;border-radius:4px}.ok{color:#2a7}.bad{color:#c33}.dim{color:#888}td,th{padding:4px 10px;text-align:left;border-bottom:1px solid #eee}</style>\n'
-    printf '<h1>AI usage — %s</h1><table><tr><th>provider</th><th>window</th><th>used</th><th>resets in</th><th>health</th><th>confidence</th><th>notes</th></tr>\n' "$NOW_ISO"
+    printf '<h1>AI usage — %s</h1>\n' "$NOW_ISO"
+    printf '<p class="dim">Live remaining percent updates every minute in <a href="file://%s/.mission-control/index.html#usage">Mission Control → Usage</a> (menu bar <b>MC</b>). This page is the 30-minute ledger, not the live scoreboard.</p><table><tr><th>provider</th><th>window</th><th>used</th><th>resets in</th><th>health</th><th>confidence</th><th>notes</th></tr>\n' "$HOME"
     # @html only on .notes (free text) — @html on the whole row escaped the bar <span>s into literal text
     printf '%s' "$SNAPSHOT" | jq -r '.providers[] | "<tr><td><b>\(.provider)</b></td><td>\(.window)</td><td>\(if .used_pct!=null then "<span class=bar><span class=fill style=width:\(.used_pct*3.2|floor)px></span></span> \(.used_pct)%" elif .tokens_used?!=null then "\(.tokens_used) tok" else "—" end)</td><td>\(if .resets_in_min!=null then "\(.resets_in_min) min" else "—" end)</td><td class=\(if .health=="ok" or .health=="present" then "ok" else "bad" end)>\(.health)</td><td class=dim>\(.confidence)</td><td class=dim>\(.notes|@html)</td></tr>"'
     printf '</table><h1>Wasted at reset (goal: near 0)</h1><table><tr><th>closed</th><th>provider</th><th>window</th><th>final used %%</th><th>wasted %%</th></tr>\n'

@@ -2927,8 +2927,16 @@ html[data-theme="dark"] .mc-heat-l4 { background: #35b98a; }
     return grp.rows.map(function (r) { return bandToState(r, feedEpoch); })
       .sort(function (a, b) { return order[a] - order[b]; })[0] || "amber";
   }
-  function headroomGroupRemaining(grp) {
-    var values = grp.rows.map(function (r) { return numericPct(r.remaining_pct); }).filter(isFinite);
+  function trustedLiveQuota(r, feedEpoch) {
+    if (!r || r.kind !== "quota" || r.health !== "ok" || r.confidence !== "live") return false;
+    var pct = numericPct(r.remaining_pct);
+    if (!isFinite(pct)) return false;
+    var age = readingAgeSeconds(r, feedEpoch);
+    return age != null && age >= 0 && age <= 300;
+  }
+  function headroomGroupRemaining(grp, feedEpoch) {
+    var values = grp.rows.filter(function (r) { return trustedLiveQuota(r, feedEpoch); })
+      .map(function (r) { return numericPct(r.remaining_pct); }).filter(isFinite);
     return values.length ? Math.min.apply(Math, values) : null;
   }
   function renderHeadroomGroupCard(grp, credits, snapshotEpoch, liveEpoch) {
@@ -2941,13 +2949,14 @@ html[data-theme="dark"] .mc-heat-l4 { background: #35b98a; }
     grp.rows.forEach(function (r) {
       var st = bandToState(r, liveEpoch);
       var sub = h("div", { class: "mc-hr-window" });
-      var valTxt = r.value_label ? r.value_label
+      var valTxt = r.health === "auth" ? "signed out"
+                 : r.value_label ? r.value_label
                  : r.remaining_pct != null ? Math.round(r.remaining_pct) + "% left"
                  : r.balance_usd != null ? "$" + Number(r.balance_usd).toFixed(2) + " left" : "no reading yet";
       sub.appendChild(h("div", { class: "mc-decision-top" },
         h("span", { class: "mc-hr-window-name" }, (r.window_label && r.window_label !== "-") ? r.window_label : "Status"),
         h("span", { class: "mc-num " + (STATE_CLASS[st] || "") }, valTxt)));
-      if (r.remaining_pct != null && !r.value_label) {
+      if (r.health !== "auth" && r.remaining_pct != null && !r.value_label) {
         sub.appendChild(h("div", { class: "mc-bar-track" },
           h("div", { class: "mc-bar-fill " + (STATE_CLASS[st] || ""), style: "--mc-w:" + Math.max(0, Math.min(100, r.remaining_pct)) + "%" })));
       }
@@ -3044,7 +3053,7 @@ html[data-theme="dark"] .mc-heat-l4 { background: #35b98a; }
       });
       hrGroups.forEach(function (grp) {
         cards.push({ kind: "live", group: grp, state: headroomGroupState(grp, hg.epoch),
-          remaining: headroomGroupRemaining(grp), label: grp.label || grp.key });
+          remaining: headroomGroupRemaining(grp, hg.epoch), label: grp.label || grp.key });
       });
     }
     snapshotItems.forEach(function (item) {
@@ -3059,8 +3068,13 @@ html[data-theme="dark"] .mc-heat-l4 { background: #35b98a; }
     cards.sort(function (a, b) {
       var stateDiff = actionStateRank(a.state) - actionStateRank(b.state);
       if (stateDiff) return stateDiff;
-      var ar = a.remaining == null ? ((a.state === "red" || a.state === "amber") ? -1 : 101) : a.remaining;
-      var br = b.remaining == null ? ((b.state === "red" || b.state === "amber") ? -1 : 101) : b.remaining;
+      function sortRemaining(card) {
+        if (card.remaining != null) return card.remaining;
+        if (card.kind === "live" && card.group && card.group.rows.length &&
+            card.group.rows.every(function (r) { return r.health === "auth"; })) return 101;
+        return (card.state === "red" || card.state === "amber") ? -1 : 101;
+      }
+      var ar = sortRemaining(a), br = sortRemaining(b);
       if (ar !== br) return ar - br;
       return String(a.label).localeCompare(String(b.label));
     });

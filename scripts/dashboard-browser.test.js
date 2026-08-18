@@ -184,6 +184,7 @@ async function operatorUxAudit(browser, root) {
             ] } },
           { id:'critical:week', provider:'critical', label:'Critical', kind:'quota', window_label:'Weekly', health:'ok', band:'red', confidence:'live', remaining_pct:2, used_pct:98, age_s:65, fetched_epoch:nowEpoch-465, source:'critical-live' },
           { id:'low:week', provider:'low', label:'Low', kind:'quota', window_label:'Weekly', health:'ok', band:'orange', confidence:'live', remaining_pct:15, used_pct:85, age_s:305, fetched_epoch:nowEpoch-305, source:'low-live' },
+          { id:'claude:week', provider:'claude', label:'Claude', kind:'quota', window_label:'Weekly', health:'auth', band:'red', confidence:'stale', remaining_pct:0, used_pct:100, age_s:86400, fetched_epoch:nowEpoch-86400, source:'oauth', note:'no Claude Code OAuth token in Keychain' },
         ];
         const snapshot = window.MC.feeds.usage;
         snapshot.generated_epoch = nowEpoch - 600;
@@ -199,9 +200,13 @@ async function operatorUxAudit(browser, root) {
       const cards = await page.locator('.mc-decision-grid > .mc-card').evaluateAll(els => els.map(el => ({
         title: (el.querySelector('.mc-decision-title') || {}).textContent || '', text: el.innerText,
       })));
-      check(cards.length === 5, `usage test expected five provider cards, got ${cards.length}`);
+      check(cards.length === 6, `usage test expected six provider cards, got ${cards.length}`);
       check(cards[0] && cards[0].title === 'Critical', `critical provider is not first (${cards.map(x => x.title).join(', ')})`);
       check(cards[1] && cards[1].title === 'Low', `low-headroom provider is not second (${cards.map(x => x.title).join(', ')})`);
+      const claudeIndex = cards.findIndex(x => x.title === 'Claude');
+      check(claudeIndex > 1, `signed-out Claude sorted ahead of live low-headroom providers (${cards.map(x => x.title).join(', ')})`);
+      check(cards.some(x => x.title === 'Claude' && /signed out/.test(x.text) && /token wait/i.test(x.text)),
+        'signed-out Claude still shows a last-known percent instead of signed out');
       const unconnectedIndex = cards.findIndex(x => /Not captured/.test(x.text));
       const healthySnapshotIndex = cards.findIndex(x => /Copilot/.test(x.title));
       check(unconnectedIndex >= 0 && healthySnapshotIndex >= 0 && unconnectedIndex < healthySnapshotIndex,
@@ -221,7 +226,7 @@ async function operatorUxAudit(browser, root) {
         state: (el.querySelector('.mc-glyph') || {}).title || '',
         count: (el.querySelector('.mc-num') || {}).textContent || '',
       }));
-      check(usageStrip.state === 'red' && usageStrip.count === '2',
+      check(usageStrip.state === 'red' && usageStrip.count === '3',
         `top Usage indicator ignores live red/amber headroom (${JSON.stringify(usageStrip)})`);
       await page.evaluate(nowEpoch => {
         window.MC.feedErrors.headroom = { ok: false, error: 'new collector failure', generated_epoch: nowEpoch + 1 };

@@ -57,6 +57,8 @@ It combines usage, git, chats, and automation feeds from the ER-087 scripts into
 
 - **Home** opens light by default with at most three **Needs you** decisions; use **Show more details** for the full depth view. Toggle **Dark mode** in the top strip.
 - **Corner panel:** `dashboard panel` installs `~/.mission-control/panel.html`, stages `~/.mission-control/Mission Control Panel.app` (LSUIElement), launches the menu-bar app (`MC`), and idempotently installs `com.gillettes.mc-panel` KeepAlive+RunAtLoad so MC returns after login/reboot. First launch may compile `scripts/mc-panel.swift` with `swiftc`.
+- **Menu-bar percent:** the lowest live signed-in quota. A signed-out Claude row cannot blank Codex, Cursor, or GLM.
+- **Live usage:** the 60-second `ai-headroom` feed is the scoreboard. The 30-minute HTML ledger points here. Open `#usage` or the menu-bar `MC` item instead of a Chrome tab.
 - **Answer a choice:** `dashboard decide answer <decision-id> <n>` writes a Goal prompt under `~/.mission-control/prompts/` and resolves the decision. Menu-bar option clicks run `dashboard decide answer` directly via the `mcDecide` bridge; Home browser option buttons still copy that command.
 
 ## Decision-queue admission, rollup, and severity bypass (Phase 0 item 0.3)
