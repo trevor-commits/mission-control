@@ -40,6 +40,7 @@ Mirror every configured Linear issue here with the repo-side home that explains 
 ## Completed
 If it's not here, it isn't remembered.
 Preserve a durable completion trail for verified work instead of deleting it from active planning.
+- 2026-08-18 | Usage reset countdowns: every Usage tab and compact-panel window keeps a 12px countdown, including full windows and empty waiting windows; signed-out Claude weekly still shows Wednesday 5pm PT | owner: Cursor `46ba944f-41f8-41c8-8d6b-c0b76bce90bb` | record: `records/2026-08-18-usage-reset-countdowns.md` | linear: self-contained; repo-only.
 - 2026-08-18 | Live usage sync: menu bar, Usage tab, and compact panel show the lowest live signed-in quota; signed-out Claude can no longer blank Codex/Cursor/GLM; ops monitoring registry lands with this change | owner: Cursor `b60f025b-cb97-4a82-8f55-866893c361c6` | record: `records/2026-08-18-live-usage-sync.md` | linear: self-contained; repo-only.
 - 2026-08-18 | Ops monitoring layer: registered Hermes `ops` profile jobs (ops tick chain + weekly backup verify) in the automation registry — full record in `records/2026-08-18-ops-monitoring-layer.md` | owner: Hermes subagent (kimi-k3); landed with usage-sync | linear: self-contained; repo-only.
 - 2026-08-15 | Remote branch exact-lease cleanup — deleted all 17 non-main remote heads through exact-OID leases after main-ancestry, archive-tag, and bundle checks. Local and remote branch inventories now contain only `main`. The detached bd05 checkout remains app-managed. | owner: Codex `01a00647-2c65-7592-8c65-c76087de3bcf` | record: `records/verification/2026-08-15-remote-branch-cas-cleanup.md` | Work Record: `2026-08-15 — Remote branch exact-lease cleanup` | linear: self-contained and repo-only.
@@ -90,6 +91,22 @@ Preserve a durable completion trail for verified work instead of deleting it fro
 - 2026-07-04 | ER-087 follow-up audit gaps — governance scaffold, product intent, tab wording, stale-ingest honesty, and Map smoke coverage landed in this change; full record below.
 
 ## Work Record Log
+
+### 2026-08-18 — Uniform usage reset countdowns
+- Problem: Usage cards hid the reset clock unless `resets_epoch` was present. Empty GLM weekly (0% left) and unused 5-hour (100% left, clock not started) showed no wait time. Signed-out Claude weekly hid a known Wednesday 5pm PT reset because remaining percent was null. Panel clocks were static and used different copy from the Usage tab.
+- Reasoning: every window gets the same 12px countdown line. Known epoch counts down even when full. Empty windows prefix `empty —` and turn red. Missing clocks get an honest fallback instead of a blank.
+- Diagnosis inputs: live `~/.mission-control/data/headroom.json` (`glm:week` remaining 0 with null epoch; `glm:5h` remaining 100 with null epoch; Claude weekly signed out); z.ai `nextResetTime` in milliseconds; CodexBar reset-countdown pattern and Tabler card scanability.
+- Implementation inputs: `dashboard/index.html`, `dashboard/panel.html`, fixtures, dashboard/panel browser tests, render-smoke, companion collector in global-implementations.
+- Fix: always attach a countdown; tick every second; unify copy (`resets in` / `renews in` / `empty —` / unused 5-hour / prepaid). Guard `setInterval` so ER-134's interval-free panel sandbox still renders.
+- Self-audit:
+  - method: `node scripts/dashboard-render-smoke.js .`; `node scripts/dashboard-browser.test.js`; `node scripts/panel-browser.test.js`; `PYTHONDONTWRITEBYTECODE=1 /bin/bash scripts/er134-usability.test.sh`; `PYTHONDONTWRITEBYTECODE=1 /bin/bash scripts/verify.sh`.
+  - outcome: render-smoke 8 tabs; dashboard browser 323; panel browser 14/0; ER-134 63/0; full verifier `SUITES PASS=26 FAIL=0`.
+  - did not verify: live Anthropic 5-hour clock (Keychain empty); inventing a GLM 5-hour reset while unused; menu-bar title countdown.
+- Ripple Check: COHERENCE dependency row, Work Record, Completed, Active Branch Ledger, Test Evidence, and `records/2026-08-18-usage-reset-countdowns.md` updated together. Companion collector change lives in global-implementations.
+- by: Cursor `46ba944f-41f8-41c8-8d6b-c0b76bce90bb`
+- triggered by: Trevor asking every usage surface to say when it resets and count down, especially when empty and waiting.
+- led to: `records/2026-08-18-usage-reset-countdowns.md`
+- linear: self-contained; repo-only.
 
 ### 2026-08-18 — Live usage sync on glance surfaces
 - Problem: Trevor had to open Chrome for current usage. The 60-second collector had live Codex/Cursor/GLM numbers, but the menu bar and Usage tab treated a signed-out Claude row as the lowest remaining quota and then showed nothing.
@@ -1049,12 +1066,24 @@ Keep materially new suggestions here so they survive beyond the current chat.
 - 2026-07-05 | recommendation: do not adopt the GitHub Copilot enterprise-observability stack (OpenTelemetry Collector, Prometheus, Grafana, OpenObserve, Superset, Metabase, Airbyte, Meltano, dbt-core, Great Expectations, TensorZero, Helicone, OpenLIT, traceAI, TraceRoot, Pull Request Analytics Action); treat `records/2026-07-04-dashboard-coding-tracker-search-audit.md` as the real same-niche repo map; if a chart is ever justified, prefer vendorable zero-dependency `leeoniya/uPlot` over Chart.js/ECharts/CDN — but not for V1. | why: Copilot recommended from the repo description alone (it said so); every headline pick runs as a background service, framework, or separate warehouse and collides with the explicit non-goals of offline single-file, single-user, no-server. Full evaluation in Feedback Decision Log 2026-07-05. | by: Claude Code (Opus 4.8) session `a9724039-6595-4205-a25b-bf361020250a`. | linear: self-contained until Linear is configured.
 
 ## Active Branch Ledger
+### `cursor/usage-reset-countdowns`
+- status: active. Uniform reset countdown on every Usage tab and compact-panel window.
+- created: 2026-08-18
+- base: `origin/main`
+- source chat: Cursor `46ba944f-41f8-41c8-8d6b-c0b76bce90bb`
+- worktree: primary checkout `/Users/gillettes/Coding Projects/mission-control`
+- purpose: show when each usage window resets and count down to it, including full and empty waiting rows
+- merge target: `main`
+- review surface: PR
+- delete when: merged to main
+- linear: self-contained; repo-only
+
 ### `cursor/usage-sync-live-headroom`
 - status: active. Live usage glance-surface repair plus ops registry landing.
 - created: 2026-08-18
 - base: `origin/main@19901c8`
 - source chat: Cursor `b60f025b-cb97-4a82-8f55-866893c361c6`
-- worktree: primary checkout `/Users/gillettes/Coding Projects/mission-control`
+- worktree: previous topic; this checkout is now `cursor/usage-reset-countdowns`
 - purpose: show live remaining percent on the menu bar and Usage tab without a signed-out Claude row blanking the number
 - merge target: `main`
 - review surface: PR
@@ -1345,6 +1374,7 @@ If it's not here, it isn't remembered.
 - When a verification run closes or updates an audit finding, cross-reference the matching audit record entry and the chat or commit that performed the work.
 
 ## Test Evidence Log
+- 2026-08-18 | commands: `node scripts/dashboard-render-smoke.js .`; `node scripts/dashboard-browser.test.js`; `node scripts/panel-browser.test.js`; `PYTHONDONTWRITEBYTECODE=1 /bin/bash scripts/er134-usability.test.sh`; `PYTHONDONTWRITEBYTECODE=1 /bin/bash scripts/verify.sh` | result: render-smoke 8 tabs; dashboard browser 323; panel browser 14/0; ER-134 63/0; `SUITES PASS=26 FAIL=0` | log/PR reference: `records/2026-08-18-usage-reset-countdowns.md` | by: Cursor `46ba944f-41f8-41c8-8d6b-c0b76bce90bb` | linear: repo-only.
 - 2026-08-18 | commands: `python3 scripts/mc-panel-headroom.test.py`; `python3 scripts/mc-panel-summary.test.py`; `node scripts/panel-browser.test.js`; `node scripts/dashboard-browser.test.js`; `node scripts/dashboard-render-smoke.js .`; `PYTHONDONTWRITEBYTECODE=1 /bin/bash scripts/automation-status.test.sh`; `PYTHONDONTWRITEBYTECODE=1 python3 -B scripts/rollup-answer.test.py`; `PYTHONDONTWRITEBYTECODE=1 /bin/bash scripts/verify.sh` | result: native headroom 17/0; native summary 16/0; panel browser exit 0; dashboard browser 317; render-smoke 8 tabs; automation-status ALL PASS; isolated rollup 32/0; `SUITES PASS=26 FAIL=0` | log/PR reference: `records/2026-08-18-live-usage-sync.md` | by: Cursor `b60f025b-cb97-4a82-8f55-866893c361c6` | linear: repo-only.
 - 2026-08-18 | commands: `python3 json.load` on `dashboard/jobs.json`; live `scripts/automation-status --json --registry dashboard/jobs.json`; `PYTHONDONTWRITEBYTECODE=1 /bin/bash scripts/automation-status.test.sh`; `PYTHONDONTWRITEBYTECODE=1 /bin/bash scripts/verify.sh` | result: registry parses (16 jobs); live classification tick `awaiting-activation` + backup-verify `green`; focused suite ALL PASS; first full verifier `25/1` failed only the final source-artifact gate on `scripts/__pycache__` bytecode written by the earlier unguarded live classification run — artifact removed, rerun `SUITES PASS=26 FAIL=0` (browser/panel suites included) | log/PR reference: `records/2026-08-18-ops-monitoring-layer.md`; landed with usage-sync | by: Hermes subagent (kimi-k3) | linear: repo-only.
 - 2026-08-15 | commands: helper self-test, exact OID checks, main ancestry, archive peels, guarded cleanup, prune fetch, final inventories, helper preview, archive count, and bundle checks.

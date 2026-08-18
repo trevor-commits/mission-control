@@ -18,7 +18,7 @@
     },
     "fetched_epoch": null,
     "health": "auth",
-    "id": "claude:none",
+    "id": "claude:5h",
     "kind": "quota",
     "label": "Claude",
     "note": "no Claude Code OAuth token in Keychain",
@@ -29,8 +29,32 @@
     "runway_hours": null,
     "source": "",
     "used_pct": null,
-    "window_class": "other",
-    "window_label": "-"
+    "window_class": "5h",
+    "window_label": "5-hour"
+   },
+   {
+    "active": false,
+    "age_s": null,
+    "balance_usd": null,
+    "band": "none",
+    "burn_per_hour": null,
+    "confidence": "unknown",
+    "detail": {},
+    "fetched_epoch": null,
+    "health": "auth",
+    "id": "claude:week",
+    "kind": "quota",
+    "label": "Claude",
+    "note": "no Claude Code OAuth token in Keychain",
+    "pace": null,
+    "provider": "claude",
+    "remaining_pct": null,
+    "resets_epoch": 1788399586,
+    "runway_hours": null,
+    "source": "",
+    "used_pct": null,
+    "window_class": "week",
+    "window_label": "Weekly"
    },
    {
     "active": false,
@@ -281,13 +305,39 @@
     "note": "",
     "pace": "learning",
     "provider": "glm",
-    "remaining_pct": 88.0,
+    "remaining_pct": 100.0,
     "resets_epoch": null,
     "runway_hours": null,
     "source": "zai-quota-limit",
-    "used_pct": 12.0,
+    "used_pct": 0.0,
     "window_class": "5h",
     "window_label": "5-hour"
+   },
+   {
+    "active": false,
+    "age_s": 30,
+    "balance_usd": null,
+    "band": "red",
+    "burn_per_hour": 0.0,
+    "confidence": "live",
+    "detail": {
+     "plan": "pro"
+    },
+    "fetched_epoch": 1786059970,
+    "health": "ok",
+    "id": "glm:week",
+    "kind": "quota",
+    "label": "GLM",
+    "note": "",
+    "pace": "learning",
+    "provider": "glm",
+    "remaining_pct": 0.0,
+    "resets_epoch": 1788399586,
+    "runway_hours": null,
+    "source": "zai-quota-limit",
+    "used_pct": 100.0,
+    "window_class": "week",
+    "window_label": "Weekly"
    }
   ],
   "summary": {
@@ -298,10 +348,10 @@
    "alerts_this_run": [],
    "errors": [],
    "lowest_quota": {
-    "band": "orange",
-    "id": "codex:main-primary",
-    "label": "Codex",
-    "remaining_pct": 19.0,
+    "band": "red",
+    "id": "glm:week",
+    "label": "GLM",
+    "remaining_pct": 0.0,
     "window_label": "Weekly"
    }
   }

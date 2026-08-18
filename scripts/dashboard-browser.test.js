@@ -240,6 +240,59 @@ async function operatorUxAudit(browser, root) {
         'feed-level headroom failure lacks an operator-visible warning');
     });
 
+    await block('usage reset countdowns stay visible when full, empty, or signed out', async () => {
+      await page.goto(url('usage'), { waitUntil: 'load' });
+      const now = Math.floor(Date.now() / 1000);
+      await page.evaluate(nowEpoch => {
+        window.MC.feedErrors = window.MC.feedErrors || {};
+        window.MC.feedErrors.headroom = null;
+        const live = window.MC.feeds.headroom;
+        live.generated_epoch = nowEpoch;
+        live.generated_at = new Date(nowEpoch * 1000).toISOString();
+        live.ok = true;
+        live.error = null;
+        live.cadence_s = 60;
+        live.data.rows = [
+          { id:'empty:week', provider:'empty', label:'Empty', kind:'quota', window_label:'Weekly', window_class:'week',
+            health:'ok', band:'red', confidence:'live', remaining_pct:0, used_pct:100, age_s:8,
+            fetched_epoch:nowEpoch-8, source:'empty-live', resets_epoch:nowEpoch+3663 },
+          { id:'full:week', provider:'full', label:'Full', kind:'quota', window_label:'Weekly', window_class:'week',
+            health:'ok', band:'green', confidence:'live', remaining_pct:100, used_pct:0, age_s:8,
+            fetched_epoch:nowEpoch-8, source:'full-live', resets_epoch:nowEpoch+7200 },
+          { id:'glm:5h', provider:'glm', label:'GLM', kind:'quota', window_label:'5-hour', window_class:'5h',
+            health:'ok', band:'green', confidence:'live', remaining_pct:100, used_pct:0, age_s:8,
+            fetched_epoch:nowEpoch-8, source:'zai-quota-limit', resets_epoch:null },
+          { id:'claude:week', provider:'claude', label:'Claude', kind:'quota', window_label:'Weekly', window_class:'week',
+            health:'auth', band:'none', confidence:'stale', remaining_pct:null, used_pct:null, age_s:86400,
+            fetched_epoch:nowEpoch-86400, source:'oauth', note:'no Claude Code OAuth token in Keychain',
+            resets_epoch:nowEpoch+86400 },
+          { id:'moonshot:balance', provider:'moonshot', label:'Moonshot', kind:'balance', window_label:'API balance',
+            window_class:'balance', health:'ok', band:'cash', confidence:'live', remaining_pct:null,
+            balance_usd:12.42, age_s:8, fetched_epoch:nowEpoch-8, source:'moonshot-balance', resets_epoch:null },
+        ];
+        window.MC.feeds.usage.data.providers = [];
+        window.MC.feeds.usage.data.waste = [];
+        window.dispatchEvent(new Event('hashchange'));
+      }, now);
+      await page.waitForTimeout(50);
+      const cards = await page.locator('.mc-decision-grid > .mc-card').evaluateAll(els => els.map(el => ({
+        title: (el.querySelector('.mc-decision-title') || {}).textContent || '', text: el.innerText,
+      })));
+      const countdowns = await page.locator('.mc-countdown').evaluateAll(els => els.map(el => el.textContent || ''));
+      check(cards.some(x => x.title === 'Empty' && /\bempty\b/.test(x.text) && /empty — resets in/.test(x.text)),
+        'exhausted quota card hides the reset countdown');
+      check(cards.some(x => x.title === 'Full' && /\bfull\b/.test(x.text) && /resets in /.test(x.text) && !/empty —/.test(x.text)),
+        'full quota card hides the reset countdown');
+      check(countdowns.some(t => /full — 5-hour clock starts on next use/.test(t)),
+        'unused 5-hour window with no clock does not explain when the countdown starts');
+      check(cards.some(x => x.title === 'Claude' && /signed out/.test(x.text) && /resets in /.test(x.text)),
+        'signed-out weekly Claude hides a known reset countdown');
+      check(countdowns.some(t => /prepaid — no scheduled reset/.test(t)),
+        'prepaid balance omits a uniform reset line');
+      check(countdowns.every(t => t.trim().length > 0),
+        'a usage window rendered a blank reset line');
+    });
+
     await block('large Chats search and persisted filters', async () => {
       await page.goto(url('chats'), { waitUntil: 'load' });
       const search = page.getByLabel('Search chats and open work');

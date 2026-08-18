@@ -463,7 +463,8 @@ body {
 .mc-run-strip { display: inline-flex; align-items: center; gap: 5px; margin: var(--mc-sp-1) 0; }
 .mc-usage-name { width: 140px; flex: none; font-size: var(--mc-fs-2); }
 .mc-pace { color: var(--mc-amber); font-size: var(--mc-fs-2); }
-.mc-countdown { font-family: var(--mc-mono); font-size: var(--mc-fs-1); color: var(--mc-fg-muted); }
+.mc-countdown { font-family: var(--mc-mono); font-size: 12px; color: var(--mc-fg-muted); font-variant-numeric: tabular-nums; display: block; margin-top: 4px; }
+.mc-countdown.mc-state-red { color: var(--mc-red); font-weight: 650; }
 .mc-decision-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(255px, 1fr)); gap: var(--mc-sp-3); }
 .mc-hr-window { border-top: 1px solid var(--mc-border); margin-top: 6px; padding-top: 6px; }
 .mc-hr-window-name { font-weight: 650; }
@@ -619,6 +620,50 @@ html[data-theme="dark"] .mc-heat-l4 { background: #35b98a; }
 
   var LOAD_EPOCH = Math.floor(Date.now() / 1000);
   function nowS() { return Math.floor(Date.now() / 1000); }
+  function pad(n) { return n < 10 ? "0" + n : String(n); }
+  function isQuotaEmpty(r) {
+    return !!(r && r.kind === "quota" && r.health === "ok" &&
+      typeof r.remaining_pct === "number" && isFinite(r.remaining_pct) && r.remaining_pct <= 0);
+  }
+  function resetFallback(r) {
+    if (!r) return "reset time unknown";
+    if (r.kind === "balance" || r.window_class === "balance") return "prepaid — no scheduled reset";
+    if (r.window_class === "5h" && typeof r.remaining_pct === "number" && r.remaining_pct >= 100)
+      return "full — 5-hour clock starts on next use";
+    if (r.window_class === "5h" && r.health === "auth") return "5-hour clock unknown until Claude Code reports it";
+    return "reset time unknown";
+  }
+  function resetCountdownText(epoch, opts) {
+    opts = opts || {};
+    var empty = !!opts.empty;
+    var monthly = !!opts.monthly;
+    var verb = monthly ? "renews" : "resets";
+    var prefix = empty ? "empty — " : "";
+    if (typeof epoch !== "number" || !isFinite(epoch) || epoch <= 0) {
+      return prefix + (opts.fallback || (empty ? "waiting for reset time" : "reset time unknown"));
+    }
+    var s = Math.round(epoch - Date.now() / 1000);
+    if (s <= 0) return prefix + (monthly ? "renewing now" : "resetting now");
+    var d = Math.floor(s / 86400);
+    var h = Math.floor((s % 86400) / 3600);
+    var m = Math.floor((s % 3600) / 60);
+    var sec = s % 60;
+    var body = d > 0 ? verb + " in " + d + "d " + h + "h " + m + "m"
+      : h > 0 ? verb + " in " + h + "h " + pad(m) + "m " + pad(sec) + "s"
+      : verb + " in " + m + "m " + pad(sec) + "s";
+    return prefix + body;
+  }
+  function attachCountdown(el, epoch, opts) {
+    opts = opts || {};
+    countdowns.push({
+      el: el,
+      target: (typeof epoch === "number" && isFinite(epoch) && epoch > 0) ? +epoch : null,
+      empty: !!opts.empty,
+      monthly: !!opts.monthly,
+      fallback: opts.fallback || ""
+    });
+  }
+  var countdowns = [];
   var OPERATOR_STATE_KEY = "mc-operator-state-v1";
   function loadOperatorState() {
     try {
@@ -1312,6 +1357,8 @@ html[data-theme="dark"] .mc-heat-l4 { background: #35b98a; }
   function usagePctText(p) {
     if (isCreditWindow(p) && p.notes) return p.notes;
     var pct = numericPct(p.pct);
+    if (isFinite(pct) && pct >= 100) return "empty";
+    if (isFinite(pct) && pct <= 0) return "full";
     if (isFinite(pct)) return pct + "% used";
     if (p.used != null) return p.used + (p.unit ? " " + p.unit : "");
     return "no numeric read";
@@ -1390,11 +1437,13 @@ html[data-theme="dark"] .mc-heat-l4 { background: #35b98a; }
       { label: "Reading", value: readingAgeText(item, epoch) },
       { label: "Cadence", value: "snapshot · every 30 min" }
     ]));
-    if (item.resets_in_min != null) {
-      var cd = h("span", { class: "mc-countdown" });
-      countdowns.push({ el: cd, target: epoch + (+item.resets_in_min) * 60 });
-      meta.appendChild(cd);
-    }
+    var cd = h("span", { class: "mc-countdown" });
+    attachCountdown(cd, item.resets_in_min != null ? epoch + (+item.resets_in_min) * 60 : null, {
+      empty: isFinite(pct) && pct >= 100,
+      monthly: /month/i.test(String(item.window || "")),
+      fallback: isFinite(pct) && pct >= 100 ? "waiting for reset time" : "reset time unknown"
+    });
+    meta.appendChild(cd);
     if (item.notes && !isCreditWindow(item)) meta.appendChild(h("div", { class: "mc-card-secondary mc-ellipsis", title: item.notes }, item.notes));
     meta.appendChild(h("div", { class: "mc-next-action" }, "Next: " + decision.next));
     card.appendChild(meta);
@@ -2909,7 +2958,6 @@ html[data-theme="dark"] .mc-heat-l4 { background: #35b98a; }
   // ===========================================================================
   //  USAGE TAB
   // ===========================================================================
-  var countdowns = []; // {el, targetEpoch}
 
   // --- live headroom groups: one card per provider, labeled windows inside ---
   function bandToState(r, feedEpoch) {
@@ -2951,6 +2999,8 @@ html[data-theme="dark"] .mc-heat-l4 { background: #35b98a; }
       var sub = h("div", { class: "mc-hr-window" });
       var valTxt = r.health === "auth" ? "signed out"
                  : r.value_label ? r.value_label
+                 : isQuotaEmpty(r) ? "empty"
+                 : r.remaining_pct != null && r.remaining_pct >= 100 ? "full"
                  : r.remaining_pct != null ? Math.round(r.remaining_pct) + "% left"
                  : r.balance_usd != null ? "$" + Number(r.balance_usd).toFixed(2) + " left" : "no reading yet";
       sub.appendChild(h("div", { class: "mc-decision-top" },
@@ -2973,11 +3023,13 @@ html[data-theme="dark"] .mc-heat-l4 { background: #35b98a; }
         chips.push({ label: "Burn", value: (r.kind === "balance" ? "$" + r.burn_per_hour.toFixed(2) : r.burn_per_hour.toFixed(1) + "%") + "/h" });
       }
       sub.appendChild(chipsLine(chips));
-      if (r.resets_epoch) {
-        var cd = h("span", { class: "mc-countdown" });
-        countdowns.push({ el: cd, target: +r.resets_epoch });
-        sub.appendChild(cd);
-      }
+      var cd = h("span", { class: "mc-countdown" });
+      attachCountdown(cd, r.resets_epoch, {
+        empty: isQuotaEmpty(r),
+        monthly: r.window_class === "month",
+        fallback: resetFallback(r)
+      });
+      sub.appendChild(cd);
       var d = r.detail || {};
       if (d.local_estimate && d.local_estimate.tokens_used != null) {
         sub.appendChild(h("div", { class: "mc-card-secondary" },
@@ -3004,6 +3056,13 @@ html[data-theme="dark"] .mc-heat-l4 { background: #35b98a; }
         { label: "Reading", value: readingAgeText(item, snapshotEpoch) },
         { label: "Cadence", value: "snapshot · every 30 min" }
       ]));
+      var creditCd = h("span", { class: "mc-countdown" });
+      attachCountdown(creditCd, item.resets_in_min != null ? snapshotEpoch + (+item.resets_in_min) * 60 : null, {
+        empty: false,
+        monthly: false,
+        fallback: "credit expiry unknown"
+      });
+      sub.appendChild(creditCd);
       if (item.notes) sub.appendChild(h("div", { class: "mc-card-secondary mc-ellipsis", title: item.notes }, item.notes));
       card.appendChild(sub);
     });
@@ -3111,16 +3170,15 @@ html[data-theme="dark"] .mc-heat-l4 { background: #35b98a; }
 
   function tickCountdowns() {
     countdowns.forEach(function (c) {
-      var rem = c.target - nowS();
-      if (rem < 0) { c.el.textContent = "reset time passed; waiting for next refresh"; c.el.className = "mc-countdown mc-state-amber"; }
-      else {
-        var hh = Math.floor(rem / 3600), mm = Math.floor((rem % 3600) / 60), ss = rem % 60;
-        c.el.textContent = "resets in " + hh + "h" + pad(mm) + "m" + pad(ss) + "s";
-        c.el.className = "mc-countdown";
-      }
+      c.el.textContent = resetCountdownText(c.target, {
+        empty: c.empty,
+        monthly: c.monthly,
+        fallback: c.fallback
+      });
+      var waiting = !!c.empty || (c.target != null && c.target - nowS() <= 0);
+      c.el.className = "mc-countdown" + (waiting ? " mc-state-red" : "");
     });
   }
-  function pad(n) { return n < 10 ? "0" + n : String(n); }
 
   // ===========================================================================
   //  MORNING BRIEF TAB
@@ -3369,7 +3427,7 @@ html[data-theme="dark"] .mc-heat-l4 { background: #35b98a; }
   window.addEventListener("focus", function () { if (nowS() - LOAD_EPOCH > 60) requestPageRefresh(); });
   document.addEventListener("visibilitychange", function () { if (!document.hidden && nowS() - LOAD_EPOCH > 60) requestPageRefresh(); });
   // countdowns tick every second
-  setInterval(tickCountdowns, 1000);
+  if (typeof setInterval === "function") setInterval(tickCountdowns, 1000);
 
   rerender();
 })();

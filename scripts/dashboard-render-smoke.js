@@ -259,7 +259,7 @@ for (const tab of TABS) {
   const txt = (main && main.textContent) || '';
   if (!txt.trim()) { console.error('FAIL: #' + tab + ' rendered EMPTY mc-main'); fails++; continue; }
   const stripTxt = (byId['mc-strip'] && byId['mc-strip'].textContent) || '';
-  if (tab === 'home' && !/Usage\s*6/.test(stripTxt)) {
+  if (tab === 'home' && !/Usage\s*7/.test(stripTxt)) {
     console.error('FAIL: strip does not count the deduplicated live-first usage states (strip="' + stripTxt + '")');
     fails++; continue;
   }
@@ -377,6 +377,18 @@ for (const tab of TABS) {
     if (codexMentions > 2) { // 1 grouped live card (credit folded in) + the Spark window label
       console.error('FAIL: #usage declares Codex ' + codexMentions + ' times — provider grouping regressed');
       fails++; continue;
+    }
+    if (!/empty — resets in|empty — resetting now/.test(txt)) {
+      console.error('FAIL: #usage empty GLM weekly window has no waiting countdown'); fails++; continue;
+    }
+    if (txt.indexOf('full — 5-hour clock starts on next use') === -1) {
+      console.error('FAIL: #usage unused 5-hour window has no clock-start copy'); fails++; continue;
+    }
+    if (txt.indexOf('prepaid — no scheduled reset') === -1) {
+      console.error('FAIL: #usage prepaid balance has no uniform reset line'); fails++; continue;
+    }
+    if (!/resets in |renews in /.test(txt)) {
+      console.error('FAIL: #usage is missing a live reset/renew countdown'); fails++; continue;
     }
   }
   if (tab === 'usage' && txt.indexOf('Providers') === -1) {
