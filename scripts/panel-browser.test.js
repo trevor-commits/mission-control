@@ -454,6 +454,11 @@ async function main() {
         assert.ok(await page.locator('#hr-detail').isHidden(), 'detail should start collapsed');
         await openDetail(page);
         assert.ok(await page.locator('#hr-detail').isVisible(), 'caret did not reveal the detail');
+        // The detail must open directly under the caret, not below a Needs-you
+        // list that can run to seven cards and push it off a 560px popover.
+        const order = await page.evaluate(() => Array.from(
+          document.querySelectorAll('#hr-brief,#hr-toggle,#hr-detail,#list')).map(n => n.id));
+        assert.deepStrictEqual(order, ['hr-brief', 'hr-toggle', 'hr-detail', 'list']);
         assert.ok(await page.locator('#hr-list .hr-card').count() >= 1, 'detail list is empty');
       });
     });
