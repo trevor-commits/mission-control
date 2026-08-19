@@ -177,16 +177,8 @@ html[data-theme="dark"] {
 .hr-bnone { font-size: 12px; color: var(--muted); }
 .hr-bage { font-size: 12px; color: var(--muted); }
 .hr-bage.warn { color: var(--amber); }
-.hr-toggle { appearance: none; width: calc(100% - 28px); margin: 4px 14px 10px;
-  padding: 7px 10px; background: var(--card-2); color: var(--muted);
-  border: 1px solid var(--line); border-radius: 8px; font: inherit; font-size: 12px;
-  text-align: left; cursor: pointer; display: flex; align-items: center; gap: 7px; }
-.hr-toggle:hover { color: var(--text); }
 .hr-selfcheck { padding: 0 14px 10px; font-size: 12px; color: var(--muted); }
 .hr-selfcheck.warn { color: var(--amber); }
-.hr-caret { display: inline-block; transition: transform .12s ease; }
-.hr-toggle[aria-expanded="true"] .hr-caret { transform: rotate(90deg); }
-@media (prefers-reduced-motion: reduce) { .hr-caret { transition: none; } }
 .hr-head { display: flex; align-items: center; gap: 6px; padding: 14px 18px 6px; }
 .hr-head .t {
   color: var(--faint); font-size: 12px; font-weight: 700;
@@ -273,7 +265,7 @@ html[data-theme="dark"] {
 body.pin .topbar, body.pin .stats, body.pin .section-head,
 body.pin #list, body.pin .toolbar { display: none; }
 /* The pinned corner card is the headroom detail itself, not the landing summary. */
-body.pin .hr-brief, body.pin .hr-toggle { display: none; }
+body.pin .hr-brief { display: none; }
 body.pin .hr-head { padding-top: 10px; }
 @media (prefers-reduced-motion: reduce) {
   .hr-fill { transition: none; }
@@ -316,13 +308,8 @@ body.pin .hr-head { padding-top: 10px; }
      bar and a live countdown. Everything else moved behind the caret below. -->
 <section class="hr-brief" id="hr-brief" aria-label="AI headroom at a glance"></section>
 
-<button class="hr-toggle" type="button" id="hr-toggle" aria-expanded="false" aria-controls="hr-detail">
-  <span class="hr-caret" id="hr-caret" aria-hidden="true">&#9656;</span><span id="hr-toggle-label">All providers and jobs</span>
-</button>
-
 <div class="hr-selfcheck" id="hr-selfcheck"></div>
 
-<div id="hr-detail" hidden>
   <section class="stats" id="stats" style="grid-template-columns: repeat(4, 1fr);">
     <div class="stat"><div class="num" id="stat-needs">–</div><div class="lbl">Needs you</div></div>
     <div class="stat"><div class="num" id="stat-jobs">–</div><div class="lbl" id="stat-jobs-lbl">Jobs healthy</div></div>
@@ -336,8 +323,7 @@ body.pin .hr-head { padding-top: 10px; }
     <button class="hr-pin" type="button" id="hr-motion" title="Toggle burn animation" aria-label="Toggle burn animation" aria-pressed="false">≋</button>
     <button class="hr-pin" type="button" id="hr-pin" title="Pin as always-on-top corner card" aria-label="Pin panel as an always-on-top corner card">⇱</button>
   </div>
-  <div id="hr-list" role="tabpanel" aria-label="AI headroom results"></div>
-</div>
+<div id="hr-list" role="tabpanel" aria-label="AI headroom results"></div>
 
 <div class="section-head"><span id="title">Needs you</span><span class="count" id="needs-count"></span></div>
 <div id="list"></div>
@@ -879,35 +865,20 @@ body.pin .hr-head { padding-top: 10px; }
   var HR_BAND = { green: "--hr-green", yellow: "--hr-yellow", orange: "--hr-orange",
                   red: "--hr-red", cash: "--hr-cash", none: "--hr-cash" };
 
+  // Which provider details the operator left open. Survives the 3s re-render and
+  // the 120s popover reload; without it the collapse is unusable.
+  HR.open = {};
+  try {
+    var storedOpen = JSON.parse(localStorage.getItem("mc-hr-open") || "{}");
+    if (storedOpen && typeof storedOpen === "object" && !Array.isArray(storedOpen)) {
+      Object.keys(storedOpen).forEach(function (k) {
+        if (storedOpen[k] === true) HR.open[k] = true;
+      });
+    }
+  } catch (e) {}
+
   if (/[?&]mode=pin/.test(location.search)) document.body.classList.add("pin");
 
-  // Caret state persists: the popover reloads every 120 s and would otherwise
-  // snap shut while the detail was being read.
-  function wireDetailToggle() {
-    var btn = document.getElementById("hr-toggle");
-    var detail = document.getElementById("hr-detail");
-    if (!btn || !detail) return;
-    var pinned = document.body.classList.contains("pin");
-    var open = pinned;
-    if (!pinned) {
-      try { open = localStorage.getItem("mc-panel-detail") === "open"; } catch (e) {}
-    }
-    function apply() {
-      detail.hidden = !open;
-      btn.setAttribute("aria-expanded", open ? "true" : "false");
-      var label = document.getElementById("hr-toggle-label");
-      if (label) {
-        label.textContent = open ? "Hide providers and jobs" : "All providers and jobs";
-      }
-    }
-    btn.onclick = function () {
-      open = !open;
-      try { localStorage.setItem("mc-panel-detail", open ? "open" : "closed"); } catch (e) {}
-      apply();
-    };
-    apply();
-  }
-  wireDetailToggle();
 
   function hrColor(band) {
     return getComputedStyle(document.documentElement)
@@ -1212,11 +1183,20 @@ body.pin .hr-head { padding-top: 10px; }
       if (d.granted != null && d.granted > 0) drow(prefix + "Granted", "$" + d.granted);
     });
     card.appendChild(det);
-    top.onclick = function () {
-      var open = card.classList.toggle("open");
+    var openKey = "prov:" + (grp.key || grp.label || groupIndex);
+    function applyOpen(open) {
+      card.classList.toggle("open", open);
       top.setAttribute("aria-expanded", open ? "true" : "false");
       det.setAttribute("aria-hidden", open ? "false" : "true");
+    }
+    top.onclick = function () {
+      var open = !card.classList.contains("open");
+      HR.open[openKey] = open;
+      if (!open) delete HR.open[openKey];
+      try { localStorage.setItem("mc-hr-open", JSON.stringify(HR.open)); } catch (e) {}
+      applyOpen(open);
     };
+    applyOpen(HR.open[openKey] === true);
     return card;
   }
 
@@ -1343,7 +1323,7 @@ body.pin .hr-head { padding-top: 10px; }
       res.rows.forEach(function (r) {
         var key = r.provider || r.label || "?";
         var grp = byProv[key];
-        if (!grp) { grp = { label: r.label || key, rows: [] }; byProv[key] = grp; groups.push(grp); }
+        if (!grp) { grp = { key: key, label: r.label || key, rows: [] }; byProv[key] = grp; groups.push(grp); }
         grp.rows.push(r);
       });
       groups.forEach(function (grp, index) { list.appendChild(hrProviderCard(grp, index)); });
