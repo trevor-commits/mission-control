@@ -175,6 +175,8 @@ html[data-theme="dark"] {
 .hr-brow { display: grid; gap: 2px; }
 .hr-bname { font-size: 12px; font-weight: 600; color: var(--muted); letter-spacing: .01em; }
 .hr-bnone { font-size: 12px; color: var(--muted); }
+.hr-bage { font-size: 12px; color: var(--muted); }
+.hr-bage.warn { color: var(--amber); }
 .hr-toggle { appearance: none; width: calc(100% - 28px); margin: 4px 14px 10px;
   padding: 7px 10px; background: var(--card-2); color: var(--muted);
   border: 1px solid var(--line); border-radius: 8px; font: inherit; font-size: 12px;
@@ -1077,6 +1079,21 @@ body.pin .hr-head { padding-top: 10px; }
       box.appendChild(el("div", "hr-bnone", rows
         ? "No live 5-hour or weekly window right now — open the detail below."
         : "Headroom collector not running."));
+    }
+    // Always say how old the number is. A percentage with no age implies it is
+    // current, and it silently may not be -- the collector polls on its own
+    // schedule. Opening this panel forces a fresh poll, so this normally reads
+    // in seconds.
+    var feed = hrFeed();
+    var epoch = plainObject(feed) && typeof feed.generated_epoch === "number" &&
+      isFinite(feed.generated_epoch) ? feed.generated_epoch : null;
+    if (epoch) {
+      var age = Math.max(0, Math.round(Date.now() / 1000 - epoch));
+      var text = age < 60 ? age + "s ago"
+        : age < 3600 ? Math.round(age / 60) + "m ago"
+        : Math.round(age / 3600) + "h ago";
+      var line = el("div", "hr-bage" + (age > 300 ? " warn" : ""), "Measured " + text + ".");
+      box.appendChild(line);
     }
   }
   function hrWindowLine(r, showName) {

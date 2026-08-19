@@ -69,7 +69,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
       self?.updateStatusTitle()
     }
     // Live headroom: inject fresh collector data every 15 s (no page reloads).
-    headroomTimer = Timer.scheduledTimer(withTimeInterval: 15, repeats: true) { [weak self] _ in
+    headroomTimer = Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { [weak self] _ in
       self?.pushHeadroom()
       self?.updateStatusTitle()
     }
@@ -503,7 +503,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
     }
   }
 
+  // The collector polls on its own schedule, so the number can be minutes old at
+  // the moment you look. Opening the panel forces a fresh poll, off the main
+  // thread so the popover never waits on the network. The helper debounces, so
+  // repeated opens do not hammer the providers.
+  func refreshHeadroomNow() {
+    let tool = FileManager.default.homeDirectoryForCurrentUser
+      .appendingPathComponent(".mission-control/bin/headroom-refresh")
+    guard FileManager.default.isExecutableFile(atPath: tool.path) else { return }
+    DispatchQueue.global(qos: .utility).async { [weak self] in
+      let task = Process()
+      task.executableURL = tool
+      task.standardOutput = FileHandle.nullDevice
+      task.standardError = FileHandle.nullDevice
+      do { try task.run() } catch { return }
+      task.waitUntilExit()
+      DispatchQueue.main.async {
+        self?.pushHeadroom()
+        self?.updateStatusTitle()
+      }
+    }
+  }
+
   func showPopover(over button: NSStatusBarButton, activating: Bool) {
+    refreshHeadroomNow()
     guard !popover.isShown else { return }
     reload()
     // Run after the status-item event completes. Showing synchronously lets the

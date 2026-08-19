@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "spike-preview",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": ["-m","http.server","8731","--directory","/private/tmp/claude-501/-Users-gillettes-Coding-Projects-mission-control/14f739da-084c-4e39-88ea-db796af7ff0b/scratchpad/serve"],
+      "port": 8731
+    }
+  ]
+}
