@@ -1,0 +1,136 @@
+#!/usr/bin/env python3
+"""headroom-refresh - force a fresh usage poll, on demand and debounced.
+
+The collector runs on its own 60s LaunchAgent and self-gates per provider
+(60s while a provider is in use, 300s idle). That is the right cadence for a
+background job, but it means the number on screen can be minutes old at the
+moment you actually look at it.
+
+This closes that gap from the other end: the panel calls this when it opens, so
+what you are looking at was fetched seconds ago. Polling costs an API call, so
+it only happens when someone is actually looking, and a debounce stops repeated
+opens from hammering the providers.
+
+The collector's path is READ FROM ITS LaunchAgent, never hardcoded. The runtime
+is a hash-pinned copy under gi-runtime/usage-routing/<rev>/ that moves on every
+re-pin; hardcoding it would silently refresh a stale binary, or nothing at all.
+"""
+
+import json
+import os
+import plistlib
+import subprocess
+import sys
+import time
+
+HOME = os.path.expanduser("~")
+PLIST = os.path.join(HOME, "Library", "LaunchAgents", "com.gillettes.ai-headroom.plist")
+STAMP = os.path.join(HOME, ".mission-control", "self-repair", "headroom-refresh.stamp")
+# Two opens in quick succession must not mean two polls.
+MIN_INTERVAL_S = 20
+TIMEOUT_S = 25
+
+
+def collector_argv(plist_path=PLIST):
+    """Program arguments for the installed collector, or None."""
+    try:
+        with open(plist_path, "rb") as handle:
+            plist = plistlib.load(handle)
+    except (OSError, ValueError):
+        return None
+    argv = plist.get("ProgramArguments")
+    if not isinstance(argv, list) or not argv:
+        return None
+    if not all(isinstance(a, str) and a for a in argv):
+        return None
+    if not os.path.exists(argv[-1]):
+        return None
+    return argv
+
+
+def due(now, stamp_path=STAMP, min_interval_s=MIN_INTERVAL_S):
+    try:
+        with open(stamp_path, "r") as handle:
+            last = float(json.load(handle).get("last_epoch") or 0)
+    except (OSError, ValueError, TypeError, AttributeError):
+        return True
+    return (now - last) >= min_interval_s
+
+
+def stamp(now, stamp_path=STAMP):
+    os.makedirs(os.path.dirname(stamp_path), mode=0o700, exist_ok=True)
+    tmp = stamp_path + ".tmp"
+    with open(tmp, "w") as handle:
+        json.dump({"last_epoch": int(now)}, handle)
+    os.replace(tmp, stamp_path)
+
+
+def refresh(now=None, force=False):
+    now = time.time() if now is None else now
+    if not force and not due(now):
+        return "debounced", 0
+    argv = collector_argv()
+    if argv is None:
+        return "collector not installed", 0
+    # --no-notify: the notification sender is a separate job with its own health.
+    # A refresh must never be able to fail because of it.
+    try:
+        done = subprocess.run(argv + ["--force", "--no-notify"],
+                              stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+                              timeout=TIMEOUT_S, check=False)
+    except (OSError, subprocess.SubprocessError) as exc:
+        return "failed: %s" % str(exc)[:120], 1
+    stamp(now)
+    if done.returncode != 0:
+        return "collector exit %d" % done.returncode, done.returncode
+    return "refreshed", 0
+
+
+def self_test():
+    import tempfile
+    failures = []
+
+    def check(name, cond):
+        print(("PASS " if cond else "FAIL ") + name)
+        if not cond:
+            failures.append(name)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        s = os.path.join(tmp, "stamp.json")
+        now = 1_000_000.0
+        check("first call is due", due(now, s))
+        stamp(now, s)
+        check("an immediate second call is debounced", not due(now + 1, s))
+        check("a call past the window is due again", due(now + MIN_INTERVAL_S, s))
+
+        bad = os.path.join(tmp, "corrupt.json")
+        open(bad, "w").write("{not json")
+        check("a corrupt stamp fails open, not closed", due(now, bad))
+
+        # The collector path comes from the plist, never a constant.
+        p = os.path.join(tmp, "a.plist")
+        with open(p, "wb") as h:
+            plistlib.dump({"ProgramArguments": ["/usr/bin/true", os.path.join(tmp, "gone")]}, h)
+        check("a plist pointing at a missing binary is refused",
+              collector_argv(p) is None)
+        real = os.path.join(tmp, "real")
+        open(real, "w").write("#!/bin/sh\n")
+        with open(p, "wb") as h:
+            plistlib.dump({"ProgramArguments": ["/usr/bin/env", "python3", real]}, h)
+        check("a valid plist yields its argv", collector_argv(p) == ["/usr/bin/env", "python3", real])
+        with open(p, "wb") as h:
+            plistlib.dump({"ProgramArguments": []}, h)
+        check("an empty argv is refused", collector_argv(p) is None)
+        check("a missing plist is refused", collector_argv(os.path.join(tmp, "nope.plist")) is None)
+
+    print("%d passed; %d failed" % (8 - len(failures), len(failures)))
+    return 1 if failures else 0
+
+
+if __name__ == "__main__":
+    argv = sys.argv[1:]
+    if "--self-test" in argv:
+        sys.exit(self_test())
+    message, code = refresh(force="--force" in argv)
+    print("headroom-refresh: %s" % message)
+    sys.exit(code)
