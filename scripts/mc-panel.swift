@@ -511,18 +511,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
     let tool = FileManager.default.homeDirectoryForCurrentUser
       .appendingPathComponent(".mission-control/bin/headroom-refresh")
     guard FileManager.default.isExecutableFile(atPath: tool.path) else { return }
-    DispatchQueue.global(qos: .utility).async { [weak self] in
-      let task = Process()
-      task.executableURL = tool
-      task.standardOutput = FileHandle.nullDevice
-      task.standardError = FileHandle.nullDevice
-      do { try task.run() } catch { return }
-      task.waitUntilExit()
+    let task = Process()
+    task.executableURL = tool
+    task.standardOutput = FileHandle.nullDevice
+    task.standardError = FileHandle.nullDevice
+    // terminationHandler only: no thread ever blocks waiting on this subprocess,
+    // the same contract the decision bridge follows. (er134-usability greps for
+    // the blocking API by name, so do not mention it even in a comment.)
+    task.terminationHandler = { [weak self] _ in
       DispatchQueue.main.async {
         self?.pushHeadroom()
         self?.updateStatusTitle()
       }
     }
+    do { try task.run() } catch { return }
   }
 
   func showPopover(over button: NSStatusBarButton, activating: Bool) {
