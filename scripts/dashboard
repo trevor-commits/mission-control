@@ -358,10 +358,45 @@ def _wrap(name, cadence, obj):
     return env
 
 
+# Keys the browser never renders. They stay in the canonical .json -- sibling
+# collectors consume chat outcomes -- and are dropped from the window.MC
+# transport that index.html parses on EVERY open. `outcomes` alone was 14.6 MB
+# of a 43 MB payload while `grep -c outcome dashboard/index.html` returned 0.
+BROWSER_OMIT = {
+    "chats": ("outcomes", "outcome_updates", "outcome_extraction_health",
+              "outcome_egress_counters"),
+}
+
+
+def _browser_env(name, env):
+    """Envelope for the .js transport, minus payload the page never reads.
+
+    Whatever is dropped is COUNTED in `browser_omitted` rather than vanishing:
+    a page silently showing less than everything is the same defect as a feed
+    silently reporting nothing.
+    """
+    omit = BROWSER_OMIT.get(name)
+    if not omit or not isinstance(env, dict) or not isinstance(env.get("data"), dict):
+        return env
+    dropped = {}
+    data = dict(env["data"])
+    for key in omit:
+        value = data.pop(key, None)
+        if value is not None:
+            dropped[key] = len(value) if hasattr(value, "__len__") else 1
+    if not dropped:
+        return env
+    data["browser_omitted"] = dropped
+    trimmed = dict(env)
+    trimmed["data"] = data
+    return trimmed
+
+
 def _write_feed(name, env):
     canon = _dumps(env)
     _atomic_write(os.path.join(DATA, name + ".json"), canon)
-    js = "window.MC = window.MC||{feeds:{}}; window.MC.feeds.%s = %s;" % (name, canon)
+    js = "window.MC = window.MC||{feeds:{}}; window.MC.feeds.%s = %s;" % (
+        name, _dumps(_browser_env(name, env)))
     _atomic_write(os.path.join(DATA, name + ".js"), js)
     err = os.path.join(DATA, name + ".error.json")
     if os.path.exists(err):
@@ -1912,7 +1947,7 @@ PYEOF
   local stamp_path="$MISSION_CONTROL_HOME/bin/install-stamp.json"
   # Keep this Bash 3.2 install loop aligned with the canonical verifier manifest
   # in mission_control_common.py; dashboard.test.sh asserts the exact set.
-  local required_runtimes="dashboard morning-brief morning-brief-deadman decision-alert mission_control_common.py queue_admission.py compose-decision-prompt.py mc-panel.swift"
+  local required_runtimes="dashboard morning-brief morning-brief-deadman decision-alert mission_control_common.py queue_admission.py compose-decision-prompt.py mc-panel.swift self-repair usage-watch"
   local required_assets="index.html vendor/cytoscape.min.js panel.html launchd/com.gillettes.mc-panel.plist.template"
   # Safe file install: refuse a symlink or non-regular-file destination (never
   # write THROUGH a link, which would escape the target dir), write via a temp
@@ -1987,7 +2022,7 @@ PYEOF
     fi
   fi
   local runtime dest
-  for runtime in chat-graph morning-brief morning-brief-deadman decision-alert mission_control_common.py queue_admission.py compose-decision-prompt.py mc-panel.swift; do
+  for runtime in chat-graph morning-brief morning-brief-deadman decision-alert mission_control_common.py queue_admission.py compose-decision-prompt.py mc-panel.swift self-repair usage-watch; do
     dest="$MISSION_CONTROL_HOME/bin/$runtime"
     if [ "$provenance" = "head" ]; then
       if git -C "$REPO_ROOT" cat-file -e "$head_sha:scripts/$runtime" 2>/dev/null; then
@@ -2112,11 +2147,12 @@ PYEOF
   mkdir -p "$HOME/Library/LaunchAgents" || return 1
   local selected_plists="com.gillettes.mission-control.plist"
   if [ "${DASHBOARD_INSTALL_ACTIVATE_GATED:-0}" = "1" ]; then
-    selected_plists="$selected_plists com.gillettes.outcome-extractor.plist com.gillettes.morning-brief.plist com.gillettes.morning-brief-deadman.plist"
+    selected_plists="$selected_plists com.gillettes.outcome-extractor.plist com.gillettes.morning-brief.plist com.gillettes.morning-brief-deadman.plist com.gillettes.mission-control-repair.plist"
   else
     echo "skip: activation-gated job requires DASHBOARD_INSTALL_ACTIVATE_GATED=1: com.gillettes.outcome-extractor"
     echo "skip: activation-gated job requires DASHBOARD_INSTALL_ACTIVATE_GATED=1: com.gillettes.morning-brief"
     echo "skip: activation-gated job requires DASHBOARD_INSTALL_ACTIVATE_GATED=1: com.gillettes.morning-brief-deadman"
+    echo "skip: activation-gated job requires DASHBOARD_INSTALL_ACTIVATE_GATED=1: com.gillettes.mission-control-repair"
   fi
   local plist dest label source_tmp rendered changed loaded was_loaded domain
   domain="gui/$(id -u)"

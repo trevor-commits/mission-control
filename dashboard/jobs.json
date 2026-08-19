@@ -1,24 +1,25 @@
 {
   "jobs": [
     {
+      "activation_required": true,
+      "err_log": "/Users/gillettes/.mission-control/logs/outcome-extractor.err.log",
       "evidence": [
         {
           "path": "/Users/gillettes/.mission-control/outcome-extractor/last-run.json",
           "role": "run",
-          "semantic_status": true,
-          "run_key": true
+          "run_key": true,
+          "semantic_status": true
         }
       ],
-      "err_log": "/Users/gillettes/.mission-control/logs/outcome-extractor.err.log",
       "expected_freshness_s": 93600,
       "kind": "calendar",
       "label": "Outcome Extractor",
       "name": "com.gillettes.outcome-extractor",
-      "activation_required": true,
       "retry_schedule": "04:47 and 04:54",
       "schedule": "04:40 daily"
     },
     {
+      "err_log": "/Users/gillettes/.claude/nightly-review/launchd.err.log",
       "evidence": [
         {
           "path": "/Users/gillettes/.claude/nightly-review/reports/*.md",
@@ -26,7 +27,6 @@
           "run_key": true
         }
       ],
-      "err_log": "/Users/gillettes/.claude/nightly-review/launchd.err.log",
       "expected_freshness_s": 93600,
       "kind": "calendar",
       "label": "Nightly Review",
@@ -34,6 +34,7 @@
       "schedule": "23:30 daily"
     },
     {
+      "err_log": "/Users/gillettes/.local/state/repo-nightly-bundle/launchd.err.log",
       "evidence": [
         {
           "path": "/Users/gillettes/.local/state/repo-nightly-bundle/last-status.json",
@@ -42,7 +43,6 @@
           "semantic_status": true
         }
       ],
-      "err_log": "/Users/gillettes/.local/state/repo-nightly-bundle/launchd.err.log",
       "expected_freshness_s": 93600,
       "kind": "calendar",
       "label": "Nightly Repository Bundles",
@@ -50,6 +50,7 @@
       "schedule": "02:30 daily"
     },
     {
+      "err_log": "/Users/gillettes/.codex/automation-state/morning-health-brief/launchd.err.log",
       "evidence": [
         {
           "path": "/Users/gillettes/.codex/automation-state/morning-health-brief/last-run",
@@ -57,16 +58,16 @@
           "run_key": true
         }
       ],
-      "err_log": "/Users/gillettes/.codex/automation-state/morning-health-brief/launchd.err.log",
       "expected_freshness_s": 93600,
       "kind": "calendar",
       "label": "Morning Health Brief",
       "name": "com.gillettes.morning-health-brief",
+      "retired": true,
       "schedule": "07:00 daily",
-      "status_note": "Folded into Mission Control 2026-07-11; LaunchAgent unloaded",
-      "retired": true
+      "status_note": "Folded into Mission Control 2026-07-11; LaunchAgent unloaded"
     },
     {
+      "err_log": "/Users/gillettes/.usage-snapshot/launchd.err",
       "evidence": [
         {
           "path": "/Users/gillettes/.usage-snapshot/history.jsonl",
@@ -74,7 +75,6 @@
           "run_key": true
         }
       ],
-      "err_log": "/Users/gillettes/.usage-snapshot/launchd.err",
       "expected_freshness_s": 3600,
       "kind": "interval",
       "label": "Usage Snapshot",
@@ -82,6 +82,7 @@
       "schedule": "every 1800s"
     },
     {
+      "err_log": "/Users/gillettes/.delegation-audit/launchd.err",
       "evidence": [
         {
           "path": "/Users/gillettes/.delegation-audit/last-scan.json",
@@ -89,7 +90,6 @@
           "run_key": true
         }
       ],
-      "err_log": "/Users/gillettes/.delegation-audit/launchd.err",
       "expected_freshness_s": 93600,
       "kind": "calendar",
       "label": "Delegation Audit",
@@ -97,6 +97,7 @@
       "schedule": "08:45 daily; Wed 13:15"
     },
     {
+      "err_log": "/Users/gillettes/.local/state/repo-state-watcher/logs/scan.err.log",
       "evidence": [
         {
           "path": "/Users/gillettes/.local/state/repo-state-watcher/last-scan.tsv",
@@ -104,7 +105,6 @@
           "run_key": true
         }
       ],
-      "err_log": "/Users/gillettes/.local/state/repo-state-watcher/logs/scan.err.log",
       "expected_freshness_s": 3000,
       "kind": "interval",
       "label": "Repo State Watch Scan",
@@ -112,6 +112,7 @@
       "schedule": "every 1500s"
     },
     {
+      "err_log": "/Users/gillettes/.local/state/repo-state-watcher/logs/digest.err.log",
       "evidence": [
         {
           "path": "/Users/gillettes/.local/state/repo-state-watcher/logs/digest.out.log",
@@ -119,7 +120,6 @@
           "run_key": true
         }
       ],
-      "err_log": "/Users/gillettes/.local/state/repo-state-watcher/logs/digest.err.log",
       "expected_freshness_s": 93600,
       "kind": "calendar",
       "label": "Repo State Watch Digest",
@@ -127,6 +127,7 @@
       "schedule": "09:00 daily"
     },
     {
+      "err_log": "/Users/gillettes/.local/state/repo-state-watcher/groom.launchd.err",
       "evidence": [
         {
           "path": "/Users/gillettes/.local/state/repo-state-watcher/groom-last.txt",
@@ -134,7 +135,6 @@
           "run_key": true
         }
       ],
-      "err_log": "/Users/gillettes/.local/state/repo-state-watcher/groom.launchd.err",
       "expected_freshness_s": 21600,
       "kind": "interval",
       "label": "Repo Groom",
@@ -142,13 +142,13 @@
       "schedule": "every 10800s"
     },
     {
+      "err_log": "/Users/gillettes/.mobile-connect/log/launchd.err",
       "evidence": [
         {
           "path": "/Users/gillettes/.mobile-connect/log/launchd.out",
           "role": "progress"
         }
       ],
-      "err_log": "/Users/gillettes/.mobile-connect/log/launchd.err",
       "expected_freshness_s": 20,
       "kind": "keepalive",
       "label": "Mobile Connect",
@@ -156,6 +156,8 @@
       "schedule": "keepalive (throttle 10s)"
     },
     {
+      "activation_required": true,
+      "err_log": "/Users/gillettes/.mission-control/logs/morning-brief.err.log",
       "evidence": [
         {
           "path": "/Users/gillettes/.mission-control/morning-brief/last-compose.json",
@@ -163,15 +165,15 @@
           "run_key": true
         }
       ],
-      "err_log": "/Users/gillettes/.mission-control/logs/morning-brief.err.log",
       "expected_freshness_s": 93600,
       "kind": "calendar",
       "label": "Morning Brief",
       "name": "com.gillettes.morning-brief",
-      "activation_required": true,
       "schedule": "05:00 daily"
     },
     {
+      "activation_required": true,
+      "err_log": "/Users/gillettes/.mission-control/logs/morning-brief-deadman.err.log",
       "evidence": [
         {
           "path": "/Users/gillettes/.mission-control/morning-brief/deadman-last-check.json",
@@ -179,12 +181,10 @@
           "run_key": true
         }
       ],
-      "err_log": "/Users/gillettes/.mission-control/logs/morning-brief-deadman.err.log",
       "expected_freshness_s": 93600,
       "kind": "calendar",
       "label": "Morning Brief Deadman",
       "name": "com.gillettes.morning-brief-deadman",
-      "activation_required": true,
       "schedule": "05:20 daily"
     },
     {
@@ -218,6 +218,8 @@
       "schedule": "every 86400s"
     },
     {
+      "activation_required": true,
+      "err_log": "/Users/gillettes/.hermes/profiles/ops/ops-data/logs/tick.err.log",
       "evidence": [
         {
           "path": "/Users/gillettes/.hermes/profiles/ops/ops-data/canary/stamp",
@@ -225,12 +227,10 @@
           "run_key": true
         }
       ],
-      "err_log": "/Users/gillettes/.hermes/profiles/ops/ops-data/logs/tick.err.log",
       "expected_freshness_s": 1800,
       "kind": "interval",
       "label": "Hermes Ops Tick",
       "name": "com.gillettes.hermes-ops-tick",
-      "activation_required": true,
       "schedule": "every 60s (launchd, bootstrap pending) + every minute via default-profile cron job ops-tick-runner"
     },
     {
@@ -254,6 +254,7 @@
       "schedule": "Sundays 7:00 AM"
     },
     {
+      "err_log": "/Users/gillettes/.hermes/profiles/ops/ops-data/logs/tick.err.log",
       "evidence": [
         {
           "path": "/Users/gillettes/.hermes/profiles/ops/ops-data/state/route-probe/last-run",
@@ -261,13 +262,55 @@
           "run_key": true
         }
       ],
-      "err_log": "/Users/gillettes/.hermes/profiles/ops/ops-data/logs/tick.err.log",
       "expected_freshness_s": 3600,
       "kind": "interval",
       "label": "Hermes Ops Route Probe",
       "name": "com.gillettes.hermes-ops-route-probe",
       "pseudo": true,
       "schedule": "every 1800s"
+    },
+    {
+      "err_log": "/Users/gillettes/.usage-snapshot/headroom-launchd.err",
+      "evidence": [
+        {
+          "path": "/Users/gillettes/.usage-snapshot/headroom.json",
+          "role": "run"
+        }
+      ],
+      "expected_freshness_s": 360,
+      "kind": "interval",
+      "label": "AI Headroom Collector",
+      "name": "com.gillettes.ai-headroom",
+      "schedule": "every 60s"
+    },
+    {
+      "err_log": "/Users/gillettes/.mission-control/logs/mc-panel.err.log",
+      "evidence": [
+        {
+          "path": "/Users/gillettes/.mission-control/logs/mc-panel-debug.log",
+          "role": "run"
+        }
+      ],
+      "expected_freshness_s": 604800,
+      "kind": "keepalive",
+      "label": "Menu Bar Panel",
+      "name": "com.gillettes.mc-panel",
+      "schedule": "keepalive, throttle 5s"
+    },
+    {
+      "activation_required": true,
+      "err_log": "/Users/gillettes/.mission-control/logs/mission-control-repair.err.log",
+      "evidence": [
+        {
+          "path": "/Users/gillettes/.mission-control/self-repair/heartbeat.json",
+          "role": "run"
+        }
+      ],
+      "expected_freshness_s": 93600,
+      "kind": "calendar",
+      "label": "Self-Repair Pass",
+      "name": "com.gillettes.mission-control-repair",
+      "schedule": "04:10 daily"
     }
   ]
 }

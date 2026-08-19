@@ -171,6 +171,20 @@ html[data-theme="dark"] {
   --hr-green: #3fc794; --hr-yellow: #e3c04b; --hr-orange: #f0a35e; --hr-red: #f0767c;
   --hr-cash: #8b9dff;
 }
+.hr-brief { padding: 12px 14px 2px; display: grid; gap: 9px; }
+.hr-brow { display: grid; gap: 2px; }
+.hr-bname { font-size: 12px; font-weight: 600; color: var(--muted); letter-spacing: .01em; }
+.hr-bnone { font-size: 12px; color: var(--muted); }
+.hr-toggle { appearance: none; width: calc(100% - 28px); margin: 4px 14px 10px;
+  padding: 7px 10px; background: var(--card-2); color: var(--muted);
+  border: 1px solid var(--line); border-radius: 8px; font: inherit; font-size: 12px;
+  text-align: left; cursor: pointer; display: flex; align-items: center; gap: 7px; }
+.hr-toggle:hover { color: var(--text); }
+.hr-selfcheck { padding: 0 14px 10px; font-size: 12px; color: var(--muted); }
+.hr-selfcheck.warn { color: var(--amber); }
+.hr-caret { display: inline-block; transition: transform .12s ease; }
+.hr-toggle[aria-expanded="true"] .hr-caret { transform: rotate(90deg); }
+@media (prefers-reduced-motion: reduce) { .hr-caret { transition: none; } }
 .hr-head { display: flex; align-items: center; gap: 6px; padding: 14px 18px 6px; }
 .hr-head .t {
   color: var(--faint); font-size: 12px; font-weight: 700;
@@ -256,6 +270,8 @@ html[data-theme="dark"] {
 .hr-note { padding: 2px 16px 8px; color: var(--faint); font-size: 12px; text-align: center; }
 body.pin .topbar, body.pin .stats, body.pin .section-head,
 body.pin #list, body.pin .toolbar { display: none; }
+/* The pinned corner card is the headroom detail itself, not the landing summary. */
+body.pin .hr-brief, body.pin .hr-toggle { display: none; }
 body.pin .hr-head { padding-top: 10px; }
 @media (prefers-reduced-motion: reduce) {
   .hr-fill { transition: none; }
@@ -294,23 +310,35 @@ body.pin .hr-head { padding-top: 10px; }
   <span class="pill ok" id="status-pill" role="status" aria-live="polite"><span class="pdot"></span><span id="status-text">Checking</span></span>
 </header>
 
-<section class="stats" id="stats" style="grid-template-columns: repeat(4, 1fr);">
-  <div class="stat"><div class="num" id="stat-needs">–</div><div class="lbl">Needs you</div></div>
-  <div class="stat"><div class="num" id="stat-jobs">–</div><div class="lbl" id="stat-jobs-lbl">Jobs healthy</div></div>
-  <div class="stat"><div class="num" id="stat-feeds">–</div><div class="lbl">Feed age</div></div>
-  <div class="stat"><div class="num" id="stat-ai">–</div><div class="lbl">AI headroom</div></div>
-</section>
+<!-- Landing view is two lines: the tightest 5-hour and weekly window, each with a
+     bar and a live countdown. Everything else moved behind the caret below. -->
+<section class="hr-brief" id="hr-brief" aria-label="AI headroom at a glance"></section>
 
-<div class="hr-head">
-  <span class="t">AI Headroom</span>
-  <div class="hr-tabs" id="hr-tabs" role="tablist" aria-label="AI headroom views"></div>
-  <button class="hr-pin" type="button" id="hr-motion" title="Toggle burn animation" aria-label="Toggle burn animation" aria-pressed="false">≋</button>
-  <button class="hr-pin" type="button" id="hr-pin" title="Pin as always-on-top corner card" aria-label="Pin panel as an always-on-top corner card">⇱</button>
-</div>
-<div id="hr-list" role="tabpanel" aria-label="AI headroom results"></div>
+<button class="hr-toggle" type="button" id="hr-toggle" aria-expanded="false" aria-controls="hr-detail">
+  <span class="hr-caret" id="hr-caret" aria-hidden="true">&#9656;</span><span id="hr-toggle-label">All providers and jobs</span>
+</button>
 
 <div class="section-head"><span id="title">Needs you</span><span class="count" id="needs-count"></span></div>
 <div id="list"></div>
+
+<div class="hr-selfcheck" id="hr-selfcheck"></div>
+
+<div id="hr-detail" hidden>
+  <section class="stats" id="stats" style="grid-template-columns: repeat(4, 1fr);">
+    <div class="stat"><div class="num" id="stat-needs">–</div><div class="lbl">Needs you</div></div>
+    <div class="stat"><div class="num" id="stat-jobs">–</div><div class="lbl" id="stat-jobs-lbl">Jobs healthy</div></div>
+    <div class="stat"><div class="num" id="stat-feeds">–</div><div class="lbl">Feed age</div></div>
+    <div class="stat"><div class="num" id="stat-ai">–</div><div class="lbl">AI headroom</div></div>
+  </section>
+
+  <div class="hr-head">
+    <span class="t">AI Headroom</span>
+    <div class="hr-tabs" id="hr-tabs" role="tablist" aria-label="AI headroom views"></div>
+    <button class="hr-pin" type="button" id="hr-motion" title="Toggle burn animation" aria-label="Toggle burn animation" aria-pressed="false">≋</button>
+    <button class="hr-pin" type="button" id="hr-pin" title="Pin as always-on-top corner card" aria-label="Pin panel as an always-on-top corner card">⇱</button>
+  </div>
+  <div id="hr-list" role="tabpanel" aria-label="AI headroom results"></div>
+</div>
 
 <footer class="toolbar">
   <button class="tbtn" type="button" id="refresh">↻ Refresh</button>
@@ -497,8 +525,16 @@ body.pin .hr-head { padding-top: 10px; }
       if (!Number.isInteger(env.data.exceptions) || env.data.exceptions !== expectedExceptions) {
         return fail("automation exceptions disagree");
       }
-      if ((env.data.unregistered != null && (!Array.isArray(env.data.unregistered) || env.data.unregistered.length > 0)) ||
-          (env.data.launchctl_note != null && String(env.data.launchctl_note).trim() !== "")) {
+      // Registry drift (launchd jobs on this Mac that are not in jobs.json) is
+      // routine -- 57 untracked vs 17 tracked as of 2026-08-19 -- and must NOT
+      // blank job health. Requiring an empty list here hid a live red job behind
+      // "Status incomplete". Shape-check the list; surface the count as a note.
+      if (env.data.unregistered != null && !Array.isArray(env.data.unregistered)) {
+        return fail("automation partial");
+      }
+      // launchctl_note still fails: it means launchctl itself was unreadable, so
+      // every job state below it is unknown rather than merely untracked.
+      if (env.data.launchctl_note != null && String(env.data.launchctl_note).trim() !== "") {
         return fail("automation partial");
       }
     }
@@ -633,11 +669,22 @@ body.pin .hr-head { padding-top: 10px; }
     list.appendChild(box);
   }
 
-  function renderUnverified(list) {
+  // Naming the broken feed is the whole point: "Status incomplete" alone left the
+  // operator with no idea what was wrong or what to run.
+  function renderUnverified(list, reasons) {
     var box = el("div", "empty unknown");
     box.appendChild(el("div", "ring", "!"));
     box.appendChild(el("div", "t", "Status incomplete"));
-    box.appendChild(el("div", "s", "Decision or job status is missing, stale, or incomplete."));
+    var bad = (reasons || []).filter(Boolean);
+    if (bad.length) {
+      box.appendChild(el("div", "s", "Can't verify: " + bad.join(", ") + "."));
+      var feed = String(bad[0]).split(" ")[0];
+      if (/^[a-z]+$/.test(feed)) {
+        box.appendChild(el("div", "meta", "Fix: dashboard collect " + feed + " --force"));
+      }
+    } else {
+      box.appendChild(el("div", "s", "Decision or job status is missing, stale, or incomplete."));
+    }
     list.appendChild(box);
   }
 
@@ -723,7 +770,33 @@ body.pin .hr-head { padding-top: 10px; }
     }
     if (renderedTotal === 0) {
       if (allClearVerified) renderEmpty(list);
-      else renderUnverified(list);
+      else renderUnverified(list, [attentionState.reason, decisionsState.reason,
+                                   automationState.reason]);
+    }
+
+    // Self-repair receipt. A repair pass that silently died must not look the
+    // same as one that ran and found nothing -- that is the defect this whole
+    // change set exists to remove.
+    var selfBox = document.getElementById("hr-selfcheck");
+    if (selfBox) {
+      var autoData = (f.automation || {}).data;
+      var receipt = automationState.ok && plainObject(autoData) ? autoData.self_check : null;
+      selfBox.className = "hr-selfcheck";
+      if (!plainObject(receipt) || !Number.isInteger(receipt.last_run_epoch)) {
+        selfBox.textContent = automationState.ok ? "Self-check has never run." : "";
+        if (automationState.ok) selfBox.className = "hr-selfcheck warn";
+      } else {
+        var since = Math.max(0, Math.round(Date.now() / 1000 - receipt.last_run_epoch));
+        var ago = since < 3600 ? Math.round(since / 60) + "m"
+          : since < 86400 ? Math.round(since / 3600) + "h"
+          : Math.round(since / 86400) + "d";
+        var repaired = Number.isInteger(receipt.repaired) ? receipt.repaired : 0;
+        var tail = receipt.dry_run === true ? " (dry run)"
+          : repaired > 0 ? " · repaired " + repaired : "";
+        selfBox.textContent = "Self-check " + ago + " ago" + tail + ".";
+        // Past a day and a half the daily pass has missed a run of its own.
+        if (since > 129600) selfBox.className = "hr-selfcheck warn";
+      }
     }
 
     // Automation health + status pill.
@@ -805,6 +878,34 @@ body.pin .hr-head { padding-top: 10px; }
                   red: "--hr-red", cash: "--hr-cash", none: "--hr-cash" };
 
   if (/[?&]mode=pin/.test(location.search)) document.body.classList.add("pin");
+
+  // Caret state persists: the popover reloads every 120 s and would otherwise
+  // snap shut while the detail was being read.
+  function wireDetailToggle() {
+    var btn = document.getElementById("hr-toggle");
+    var detail = document.getElementById("hr-detail");
+    if (!btn || !detail) return;
+    var pinned = document.body.classList.contains("pin");
+    var open = pinned;
+    if (!pinned) {
+      try { open = localStorage.getItem("mc-panel-detail") === "open"; } catch (e) {}
+    }
+    function apply() {
+      detail.hidden = !open;
+      btn.setAttribute("aria-expanded", open ? "true" : "false");
+      var label = document.getElementById("hr-toggle-label");
+      if (label) {
+        label.textContent = open ? "Hide providers and jobs" : "All providers and jobs";
+      }
+    }
+    btn.onclick = function () {
+      open = !open;
+      try { localStorage.setItem("mc-panel-detail", open ? "open" : "closed"); } catch (e) {}
+      apply();
+    };
+    apply();
+  }
+  wireDetailToggle();
 
   function hrColor(band) {
     return getComputedStyle(document.documentElement)
@@ -940,6 +1041,43 @@ body.pin .hr-head { padding-top: 10px; }
     if (!Number.isSafeInteger(total)) return null;
     var latest = dates[dates.length - 1];
     return total.toLocaleString() + " reads total · latest " + latest + ": " + byDate[latest].toLocaleString();
+  }
+  // The two lines the panel opens on: the tightest 5-hour and weekly window.
+  // Deliberately reuses hrWindowLine so the summary bars and countdowns cannot
+  // drift away from the detailed list behind the caret.
+  function hrTightest(rows, cls) {
+    var pool = (rows || []).filter(function (r) {
+      return plainObject(r) && r.window_class === cls && r.kind === "quota" &&
+        typeof r.remaining_pct === "number" && isFinite(r.remaining_pct) &&
+        r.remaining_pct >= 0 && r.remaining_pct <= 100 &&
+        r.health === "ok" && r.confidence === "live";
+    });
+    if (!pool.length) return null;
+    pool.sort(function (a, b) { return a.remaining_pct - b.remaining_pct; });
+    return pool[0];
+  }
+  function renderBrief(rows) {
+    var box = document.getElementById("hr-brief");
+    if (!box) return;
+    box.textContent = "";
+    var shown = 0;
+    [["5h", "5-hour"], ["week", "Weekly"]].forEach(function (pair) {
+      var row = hrTightest(rows, pair[0]);
+      if (!row) return;
+      shown += 1;
+      var brow = el("div", "hr-brow");
+      var window_name = (row.window_label && row.window_label !== "-")
+        ? row.window_label : pair[1];
+      brow.appendChild(el("div", "hr-bname",
+        (row.label || row.provider || "AI") + " \u00b7 " + window_name));
+      brow.appendChild(hrWindowLine(row, false));
+      box.appendChild(brow);
+    });
+    if (!shown) {
+      box.appendChild(el("div", "hr-bnone", rows
+        ? "No live 5-hour or weekly window right now — open the detail below."
+        : "Headroom collector not running."));
+    }
   }
   function hrWindowLine(r, showName) {
     var stale = r.confidence === "stale";
@@ -1172,6 +1310,7 @@ body.pin .hr-head { padding-top: 10px; }
     var statAi = document.getElementById("stat-ai");
     var renderableRows = plainObject(feed) && plainObject(feed.data) &&
       Array.isArray(feed.data.rows) && feed.data.rows.every(plainObject) ? feed.data.rows : null;
+    renderBrief(renderableRows);
     if (!renderableRows) {
       list.appendChild(el("div", "hr-note",
         "Headroom collector not running — scripts/install-ai-headroom in global-implementations sets it up."));
