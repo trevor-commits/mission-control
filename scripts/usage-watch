@@ -1,0 +1,348 @@
+#!/usr/bin/env python3
+"""usage-watch — report AI quota resets and providers that stopped reporting.
+
+Why this exists: a Codex weekly window reset without anyone knowing. Alerting
+elsewhere only fires when a *value* crosses a threshold downward, so two whole
+classes of event were invisible:
+
+  * a reset (the value jumps back UP), and
+  * a provider going silent (there is no value at all to cross anything).
+
+Both were already observable and neither was read. The per-run history at
+~/.usage-snapshot/headroom-history.jsonl records every row every 60s, and
+ai-headroom:919 already detects the reset shape internally purely to clear its
+burn samples. This reads that same signal and says it out loud.
+
+Deliberately NOT a new store: no database, no second collector, no new feed.
+Findings are emitted through `dashboard attention add`, whose id is derived from
+the title and upserts, so repeat runs update one row instead of piling up.
+"""
+
+import json
+import os
+import subprocess
+import sys
+import time
+
+HOME = os.path.expanduser("~")
+HISTORY = os.path.join(HOME, ".usage-snapshot", "headroom-history.jsonl")
+HEADROOM = os.path.join(HOME, ".mission-control", "data", "headroom.json")
+STATE_DIR = os.path.join(HOME, ".mission-control", "usage-watch")
+STATE = os.path.join(STATE_DIR, "state.json")
+DASHBOARD_BIN = os.path.join(HOME, ".mission-control", "bin", "dashboard")
+
+# Same threshold ai-headroom:919 uses for the identical signal. One constant for
+# one concept: a second number here would drift away from it unnoticed.
+RESET_DROP_PCT = 20.0
+# How long a provider Mission Control considers active may report nothing before
+# that silence is itself the finding.
+SILENCE_S = 6 * 3600
+
+
+def _num(value):
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return float(value) if value == value and abs(value) != float("inf") else None
+
+
+def load_history(path, since_epoch=None):
+    """Stream the append-only history. Malformed lines are skipped, not fatal."""
+    out = []
+    try:
+        with open(path, "r", errors="replace") as handle:
+            for line in handle:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    entry = json.loads(line)
+                except ValueError:
+                    continue
+                t = _num(entry.get("t"))
+                rows = entry.get("rows")
+                if t is None or not isinstance(rows, list):
+                    continue
+                if since_epoch is not None and t < since_epoch:
+                    continue
+                out.append((int(t), rows))
+    except OSError:
+        return []
+    out.sort(key=lambda pair: pair[0])
+    return out
+
+
+def find_resets(history, drop_pct=RESET_DROP_PCT):
+    """A reset is a sharp DOWNWARD cliff in used_pct.
+
+    The history stores used_pct, not remaining_pct -- getting this direction
+    backwards yields a detector that can never fire.
+
+    Only `confidence == "live"` samples count. Cached rows are re-emitted
+    unchanged during a fetch backoff, so a poll resuming after a 30-minute gap
+    would otherwise look exactly like a reset.
+    """
+    previous = {}
+    events = []
+    for t, rows in history:
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            rid = row.get("id")
+            used = _num(row.get("used_pct"))
+            if not isinstance(rid, str) or used is None:
+                continue
+            if row.get("confidence") != "live":
+                continue
+            prior = previous.get(rid)
+            if prior is not None and used <= prior[1] - drop_pct:
+                events.append({
+                    "kind": "reset", "id": rid, "t": t,
+                    "used_from": round(prior[1], 1), "used_to": round(used, 1),
+                    "since_prev_s": t - prior[0],
+                })
+            previous[rid] = (t, used)
+    return events
+
+
+def find_silence(headroom_path, now, limit_s=SILENCE_S):
+    """A provider Mission Control calls active that has no trustworthy row.
+
+    This is the rule that would have caught an expired Claude token on day one
+    instead of day seven and a half.
+    """
+    try:
+        with open(headroom_path, "r", errors="replace") as handle:
+            feed = json.load(handle)
+    except (OSError, ValueError):
+        return []
+    data = feed.get("data") if isinstance(feed, dict) else None
+    if not isinstance(data, dict):
+        return []
+    summary = data.get("summary") if isinstance(data.get("summary"), dict) else {}
+    rows = data.get("rows") if isinstance(data.get("rows"), list) else []
+    active = summary.get("active_providers")
+    if not isinstance(active, list):
+        return []
+
+    out = []
+    for provider in active:
+        if not isinstance(provider, str):
+            continue
+        mine = [r for r in rows if isinstance(r, dict) and r.get("provider") == provider]
+        if not mine:
+            continue
+        trusted = [
+            r for r in mine
+            if r.get("health") == "ok" and r.get("confidence") == "live"
+            and _num(r.get("remaining_pct")) is not None
+        ]
+        if trusted:
+            continue
+        ages = [a for a in (_num(r.get("age_s")) for r in mine) if a is not None]
+        dark_s = int(max(ages)) if ages else None
+        if dark_s is not None and dark_s < limit_s:
+            continue
+        label = next((r.get("label") for r in mine
+                      if isinstance(r.get("label"), str) and r.get("label")), provider)
+        note = next((r.get("note") for r in mine
+                     if isinstance(r.get("note"), str) and r.get("note")), "")
+        health = next((r.get("health") for r in mine
+                       if isinstance(r.get("health"), str)), "unknown")
+        out.append({
+            "kind": "silence", "provider": provider, "label": label,
+            "dark_s": dark_s, "health": health, "note": note[:160], "t": now,
+        })
+    return out
+
+
+def read_state(path):
+    try:
+        with open(path, "r", errors="replace") as handle:
+            value = json.load(handle)
+        return value if isinstance(value, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def write_state(path, value):
+    """Atomic + 0700 dir, matching the repo's state-handling guardrail."""
+    os.makedirs(os.path.dirname(path), mode=0o700, exist_ok=True)
+    try:
+        os.chmod(os.path.dirname(path), 0o700)
+    except OSError:
+        pass
+    tmp = path + ".tmp"
+    with open(tmp, "w") as handle:
+        json.dump(value, handle, sort_keys=True)
+    os.replace(tmp, path)
+
+
+def human_age(seconds):
+    if seconds is None:
+        return "an unknown time"
+    if seconds < 3600:
+        return "%dm" % (seconds // 60)
+    if seconds < 86400:
+        return "%dh" % (seconds // 3600)
+    return "%dd" % (seconds // 86400)
+
+
+def describe(event):
+    if event["kind"] == "reset":
+        when = time.strftime("%-I:%M %p", time.localtime(event["t"]))
+        return (
+            "%s quota reset" % event["id"],
+            "Used went %.0f%% to %.0f%% at %s — the window rolled over."
+            % (event["used_from"], event["used_to"], when),
+            3,
+        )
+    return (
+        "%s usage is not reporting" % event["label"],
+        "No trustworthy reading for %s (health: %s). %s"
+        % (human_age(event["dark_s"]), event["health"], event["note"]),
+        1,
+    )
+
+
+def emit(events, dashboard_bin=DASHBOARD_BIN, runner=None):
+    """Push findings through the attention lane that already reaches the panel."""
+    runner = runner or (lambda argv: subprocess.run(
+        argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=20, check=False
+    ).returncode)
+    sent = 0
+    for event in events:
+        title, why, severity = describe(event)
+        code = runner([
+            dashboard_bin, "attention", "add",
+            "--title", title[:90], "--why", why[:200],
+            "--severity", str(severity), "--source", "usage-watch",
+        ])
+        if code == 0:
+            sent += 1
+    return sent
+
+
+def run(argv):
+    now = int(time.time())
+    as_json = "--json" in argv
+    do_emit = "--emit" in argv
+    since_epoch = None
+    if "--since" in argv:
+        raw = argv[argv.index("--since") + 1] if argv.index("--since") + 1 < len(argv) else ""
+        unit, number = raw[-1:], raw[:-1]
+        try:
+            scale = {"h": 3600, "d": 86400, "m": 60}[unit]
+            since_epoch = now - int(number) * scale
+        except (KeyError, ValueError):
+            sys.stderr.write("usage-watch: --since wants e.g. 48h, 7d, 90m\n")
+            return 2
+
+    history = load_history(HISTORY, since_epoch)
+    resets = find_resets(history)
+    silence = find_silence(HEADROOM, now)
+
+    # Idempotence: the history is append-only and this runs on a schedule. Without
+    # a high-water mark every run re-reports the same reset, and a watcher that
+    # cries wolf gets ignored -- which defeats the entire point of having one.
+    state = read_state(STATE)
+    last_seen = state.get("last_reset_t")
+    last_seen = int(last_seen) if isinstance(last_seen, (int, float)) else 0
+    fresh = [e for e in resets if e["t"] > last_seen]
+
+    events = fresh + silence
+    if as_json:
+        print(json.dumps({
+            "schema": 1, "generated_epoch": now,
+            "resets": resets, "new_resets": fresh, "silence": silence,
+            "history_entries": len(history),
+        }, sort_keys=True, indent=2))
+    else:
+        if not events:
+            print("usage-watch: nothing new (%d history entries scanned)" % len(history))
+        for event in events:
+            title, why, _ = describe(event)
+            print("%s — %s" % (title, why))
+
+    if do_emit and events:
+        print("usage-watch: emitted %d to the attention lane" % emit(events), file=sys.stderr)
+    if resets:
+        write_state(STATE, {"last_reset_t": max(e["t"] for e in resets)})
+    return 0
+
+
+def self_test():
+    failures = []
+
+    def check(name, condition):
+        print(("PASS " if condition else "FAIL ") + name)
+        if not condition:
+            failures.append(name)
+
+    live = lambda rid, used: {"id": rid, "used_pct": used, "confidence": "live"}
+
+    # A reset is a downward cliff in used_pct.
+    events = find_resets([(100, [live("a:week", 96.0)]), (160, [live("a:week", 0.0)])])
+    check("detects a reset as a downward used_pct cliff",
+          len(events) == 1 and events[0]["used_from"] == 96.0 and events[0]["used_to"] == 0.0)
+
+    # Ordinary consumption is not a reset.
+    check("normal burn is not a reset",
+          find_resets([(100, [live("a:week", 10.0)]), (160, [live("a:week", 14.0)])]) == [])
+
+    # A cached row replayed after a backoff must not look like a reset.
+    stale = {"id": "a:week", "used_pct": 0.0, "confidence": "stale"}
+    check("backoff replay of a cached row is ignored",
+          find_resets([(100, [live("a:week", 96.0)]), (160, [stale])]) == [])
+
+    # A drop smaller than the shared threshold is noise, not a rollover.
+    check("a small dip is below the reset threshold",
+          find_resets([(100, [live("a:week", 30.0)]), (160, [live("a:week", 20.0)])]) == [])
+
+    # Malformed lines must not crash the scan.
+    check("malformed rows are skipped, not fatal",
+          find_resets([(100, [None, {"id": 5}, live("a:week", 90.0)]),
+                       (160, [live("a:week", 1.0)])]) != [])
+
+    # Silence: an active provider with no trustworthy row is itself the finding.
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmp:
+        path = os.path.join(tmp, "headroom.json")
+        with open(path, "w") as handle:
+            json.dump({"data": {
+                "summary": {"active_providers": ["claude", "cursor"]},
+                "rows": [
+                    {"provider": "claude", "label": "Claude", "health": "auth",
+                     "confidence": "stale", "age_s": 650360, "note": "no OAuth token"},
+                    {"provider": "cursor", "label": "Cursor", "health": "ok",
+                     "confidence": "live", "remaining_pct": 41.0, "age_s": 30},
+                ]}}, handle)
+        found = find_silence(path, int(time.time()))
+        check("an active provider with no trusted row is reported",
+              len(found) == 1 and found[0]["provider"] == "claude")
+        check("a healthy active provider is not reported",
+              all(f["provider"] != "cursor" for f in found))
+
+        # A brief gap is not silence.
+        with open(path, "w") as handle:
+            json.dump({"data": {
+                "summary": {"active_providers": ["claude"]},
+                "rows": [{"provider": "claude", "label": "Claude", "health": "down",
+                          "confidence": "stale", "age_s": 120}]}}, handle)
+        check("a short outage is below the silence threshold",
+              find_silence(path, int(time.time())) == [])
+
+    # Emission is idempotent by construction: one stable title per finding.
+    sent = []
+    emit([{"kind": "silence", "label": "Claude", "dark_s": 650360,
+           "health": "auth", "note": "", "t": 0}],
+         dashboard_bin="/bin/true", runner=lambda argv: sent.append(argv) or 0)
+    check("silence emits one stable, upsertable title",
+          len(sent) == 1 and sent[0][sent[0].index("--title") + 1]
+          == "Claude usage is not reporting")
+
+    print("%d passed; %d failed" % (9 - len(failures), len(failures)))
+    return 1 if failures else 0
+
+
+if __name__ == "__main__":
+    sys.exit(self_test() if "--self-test" in sys.argv[1:] else run(sys.argv[1:]))

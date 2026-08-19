@@ -131,6 +131,14 @@ async function main() {
     }
   }
 
+  // The provider list, tabs and stat strip now sit behind the landing caret.
+  // Tests that inspect them open it exactly the way an operator does.
+  async function openDetail(page) {
+    const toggle = page.locator('#hr-toggle');
+    if (await toggle.getAttribute('aria-expanded') !== 'true') await toggle.click();
+    await page.locator('#hr-detail').waitFor({ state: 'visible' });
+  }
+
   async function test(name, body) {
     try {
       await body();
@@ -147,6 +155,38 @@ async function main() {
       await withPanel(state(healthyCore()), {}, async page => {
         assert.strictEqual(await page.locator('#status-text').innerText(), 'All clear');
         assert.match(await page.locator('#list').innerText(), /All clear/);
+      });
+    });
+
+    // Registry drift is routine on this Mac (57 untracked launchd jobs vs 17
+    // tracked, 2026-08-19). Failing closed on it blanked every job state and hid
+    // a live red job behind "Status incomplete".
+    await test('registry drift still reports job health, including a red job', async () => {
+      const good = healthyCore();
+      const drifted = Object.assign({}, good, { automation: envelope('automation', {
+        jobs: [{ label: 'Mobile Connect', state: 'red' }],
+        counts: { red: 1 }, exceptions: 1,
+        unregistered: ['untracked.one', 'untracked.two'],
+      }) });
+      await withPanel(state(drifted), {}, async page => {
+        const pill = await page.locator('#status-pill').getAttribute('class');
+        assert.ok(/warn|bad/.test(pill), `drift must not read clear, got ${pill}`);
+        assert.match(await page.locator('#status-text').innerText(), /red job/i);
+        assert.strictEqual(await page.locator('#stat-jobs').innerText(), '0/1');
+        const list = await page.locator('#list').innerText();
+        assert.ok(!/Status incomplete/.test(list), 'drift must not blank job health');
+      });
+    });
+
+    // When something genuinely cannot be verified, say which feed and what to run.
+    await test('unverifiable status names the failing feed and the repair command', async () => {
+      const good = healthyCore();
+      const errors = { decisions: { ok: false, error: 'decision queue timed out after 30s', generated_epoch: NOW } };
+      await withPanel(state(good, errors), {}, async page => {
+        const list = await page.locator('#list').innerText();
+        assert.match(list, /Status incomplete/);
+        assert.match(list, /decisions/);
+        assert.match(list, /dashboard collect decisions --force/);
       });
     });
 
@@ -201,9 +241,9 @@ async function main() {
         ['unknown automation state', Object.assign({}, good, { automation: envelope('automation', {
           jobs: [{ label: 'Unknown job', state: 'mystery' }], counts: {}, exceptions: 0,
         }) }), {}],
-        ['unregistered automation gap', Object.assign({}, good, { automation: envelope('automation', {
+        ['malformed unregistered value', Object.assign({}, good, { automation: envelope('automation', {
           jobs: [{ label: 'Collector', state: 'green' }], counts: { green: 1 }, exceptions: 0,
-          unregistered: ['untracked.job'],
+          unregistered: 'not-a-list',
         }) }), {}],
         ['automation launchctl parse gap', Object.assign({}, good, { automation: envelope('automation', {
           jobs: [{ label: 'Collector', state: 'green' }], counts: { green: 1 }, exceptions: 0,
@@ -308,7 +348,7 @@ async function main() {
         const claude = await page.locator('.hr-card', { hasText: 'Claude' }).innerText();
         assert.match(claude, /signed out/);
         assert.match(claude, /resets in /);
-        assert.strictEqual(await page.locator('.hr-wcd').count(), 5, 'a window dropped its reset line');
+        assert.strictEqual(await page.locator('#hr-list .hr-wcd').count(), 5, 'a window dropped its reset line');
       });
     });
 
@@ -381,12 +421,90 @@ async function main() {
       });
     });
 
+    // Trevor's landing view: two labelled bars with live countdowns, everything
+    // else behind the caret. Before this the panel opened on four stat tiles that
+    // read "-" whenever a feeder hiccuped.
+    await test('panel opens on the tightest 5-hour and weekly windows with countdowns', async () => {
+      const rows = [
+        quotaRow({ id: 'a:5h', provider: 'a', label: 'Alpha', window_class: '5h',
+          window_label: '5-hour', remaining_pct: 62, resets_epoch: NOW + 5400 }),
+        quotaRow({ id: 'a:week', provider: 'a', label: 'Alpha', window_class: 'week',
+          window_label: 'Weekly', remaining_pct: 71, resets_epoch: NOW + 90000 }),
+        // Tighter weekly on another provider: the brief must prefer this one.
+        quotaRow({ id: 'b:week', provider: 'b', label: 'Beta', window_class: 'week',
+          window_label: 'Weekly', remaining_pct: 4, band: 'red', resets_epoch: NOW + 7200 }),
+      ];
+      await withPanel(state(Object.assign(healthyCore(), {
+        headroom: headroom(rows, { id: 'b:week', label: 'Beta', window_label: 'Weekly',
+          remaining_pct: 4, band: 'red' }),
+      })), {}, async page => {
+        const brief = page.locator('#hr-brief');
+        assert.strictEqual(await brief.locator('.hr-brow').count(), 2, 'expected exactly two lines');
+        const text = await brief.innerText();
+        assert.match(text, /Alpha · 5-hour/, 'five-hour line missing');
+        assert.match(text, /Beta · Weekly/, 'weekly line must show the tightest provider');
+        assert.ok(!/Alpha · Weekly/.test(text), 'a looser weekly window must not win');
+        // Every brief line carries a live reset countdown, same as the detail list.
+        assert.strictEqual(await brief.locator('.hr-wcd').count(), 2);
+        for (const cd of await brief.locator('.hr-wcd').allInnerTexts()) {
+          assert.match(cd, /resets in /, `brief line lost its countdown: ${cd}`);
+        }
+        // The detail is collapsed until asked for.
+        assert.strictEqual(await page.locator('#hr-toggle').getAttribute('aria-expanded'), 'false');
+        assert.ok(await page.locator('#hr-detail').isHidden(), 'detail should start collapsed');
+        await openDetail(page);
+        assert.ok(await page.locator('#hr-detail').isVisible(), 'caret did not reveal the detail');
+        assert.ok(await page.locator('#hr-list .hr-card').count() >= 1, 'detail list is empty');
+      });
+    });
+
+    // A repair pass that silently died must not look like one that ran clean.
+    await test('self-check receipt is shown, and its absence is flagged', async () => {
+      const withJobs = extra => envelope('automation', Object.assign({
+        jobs: [{ label: 'Collector', state: 'green' }], counts: { green: 1 }, exceptions: 0,
+      }, extra));
+
+      await withPanel(state(Object.assign(healthyCore(), {
+        automation: withJobs({ self_check: { last_run_epoch: NOW - 7200, planned: 2, repaired: 2, dry_run: false } }),
+      })), {}, async page => {
+        const line = await page.locator('#hr-selfcheck').innerText();
+        assert.match(line, /Self-check 2h ago/);
+        assert.match(line, /repaired 2/);
+        assert.ok(!/warn/.test(await page.locator('#hr-selfcheck').getAttribute('class')));
+      });
+
+      // Never run at all.
+      await withPanel(state(Object.assign(healthyCore(), { automation: withJobs({}) })), {}, async page => {
+        assert.match(await page.locator('#hr-selfcheck').innerText(), /never run/i);
+        assert.match(await page.locator('#hr-selfcheck').getAttribute('class'), /warn/);
+      });
+
+      // Ran, then stopped running -- the failure mode that went unnoticed before.
+      await withPanel(state(Object.assign(healthyCore(), {
+        automation: withJobs({ self_check: { last_run_epoch: NOW - 4 * 86400, planned: 0, repaired: 0, dry_run: false } }),
+      })), {}, async page => {
+        assert.match(await page.locator('#hr-selfcheck').innerText(), /Self-check 4d ago/);
+        assert.match(await page.locator('#hr-selfcheck').getAttribute('class'), /warn/);
+      });
+    });
+
+    await test('brief states plainly when no live window exists', async () => {
+      const dark = quotaRow({ id: 'a:week', health: 'auth', confidence: 'stale',
+        remaining_pct: null, age_s: 650360 });
+      await withPanel(state(Object.assign(healthyCore(), {
+        headroom: headroom([dark], null),
+      })), {}, async page => {
+        assert.match(await page.locator('#hr-brief').innerText(), /No live 5-hour or weekly window/);
+      });
+    });
+
     await test('provider disclosure is a native button with wired expanded state', async () => {
       const row = quotaRow({ detail: { plan: 'Synthetic Pro' }, note: 'Synthetic details' });
       await withPanel(state(Object.assign(healthyCore(), {
         headroom: headroom([row], { id: row.id, label: row.label, window_label: row.window_label,
           remaining_pct: row.remaining_pct, band: row.band }),
       })), {}, async page => {
+        await openDetail(page);
         const disclosure = page.locator('.hr-disclosure').first();
         assert.strictEqual(await disclosure.evaluate(node => node.tagName), 'BUTTON');
         assert.strictEqual(await disclosure.getAttribute('aria-expanded'), 'false');
@@ -417,6 +535,7 @@ async function main() {
         headroom: headroom([row], { id: row.id, label: row.label, window_label: row.window_label,
           remaining_pct: row.remaining_pct, band: row.band }),
       })), {}, async page => {
+        await openDetail(page);
         const disclosure = page.locator('.hr-disclosure').first();
         await disclosure.press('Enter');
         const controls = await disclosure.getAttribute('aria-controls');
@@ -433,6 +552,7 @@ async function main() {
         headroom: headroom([row], { id: row.id, label: row.label, window_label: row.window_label,
           remaining_pct: row.remaining_pct, band: row.band }),
       })), {}, async page => {
+        await openDetail(page);
         const tablist = page.locator('#hr-tabs');
         assert.strictEqual(await tablist.getAttribute('role'), 'tablist');
         assert(await tablist.getAttribute('aria-label'), 'tablist has no accessible label');

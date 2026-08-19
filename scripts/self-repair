@@ -1,0 +1,302 @@
+#!/usr/bin/env python3
+"""self-repair - fix the safe class of Mission Control failures, report the rest.
+
+Why this exists: every self-check in this repo was human-triggered. `dashboard
+status` already returns exit 1 on a red job and was never scheduled, so a red
+job and a timed-out feeder could both sit for days with nobody told. Meanwhile the one mechanism meant to catch failures -- the morning-brief
+deadman -- was itself logging `install-unverified (missing)` unnoticed.
+
+Two tiers, using the vocabularies that already exist (automation-status job
+states, feed_health verdicts). No P0/P1/P2: a second severity vocabulary would
+drift away from the two already in use.
+
+  now    red job / feed error / provider dark  -> already loud in the menu bar
+                                                  and panel; this pass only logs
+  daily  stale feed / red job                  -> repaired here, if reversible
+
+Repaired (reversible, mechanically checkable, every action logged with its undo):
+  * kickstart a launchd job that is red
+  * re-run a feed whose collector went stale
+
+Reported, never touched: auth and credentials, registry drift (it edits a repo
+file), anything still failing after retry, anything touching code or git.
+
+Dry-run is the default. `--apply` acts. A DISABLE sentinel hard-stops the run.
+The heartbeat this writes is surfaced by the panel, so a dead repair pass is
+itself visible -- otherwise this becomes one more thing that fails in silence.
+"""
+
+import argparse
+import json
+import os
+import re
+import subprocess
+import sys
+import time
+
+HOME = os.path.expanduser("~")
+MC_HOME = os.environ.get("MISSION_CONTROL_HOME") or os.path.join(HOME, ".mission-control")
+DATA = os.path.join(MC_HOME, "data")
+STATE_DIR = os.path.join(MC_HOME, "self-repair")
+HEARTBEAT = os.path.join(STATE_DIR, "heartbeat.json")
+REPORT = os.path.join(STATE_DIR, "report.jsonl")
+DISABLE = os.path.join(STATE_DIR, "DISABLE")
+DASHBOARD_BIN = os.path.join(MC_HOME, "bin", "dashboard")
+
+LABEL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+# Feed cadences mirror scripts/dashboard FEEDS. A feed is repaired only well past
+# its cadence, so an in-flight collection is never fought with a second run.
+CADENCE = {"automation": 300, "usage": 1800, "git": 900, "chats": 1800,
+           "decisions": 300, "attention": 300, "brief": 300}
+STALE_MULTIPLE = 6
+# After this many consecutive failed repairs the job stops being "safe to retry"
+# and becomes a report. Retrying forever is how a fix turns into noise.
+MAX_ATTEMPTS = 3
+
+
+def load_json(path):
+    try:
+        with open(path, "r", errors="replace") as handle:
+            value = json.load(handle)
+        return value if isinstance(value, dict) else None
+    except (OSError, ValueError):
+        return None
+
+
+def write_json(path, value):
+    os.makedirs(os.path.dirname(path), mode=0o700, exist_ok=True)
+    try:
+        os.chmod(os.path.dirname(path), 0o700)
+    except OSError:
+        pass
+    tmp = path + ".tmp"
+    with open(tmp, "w") as handle:
+        json.dump(value, handle, sort_keys=True, indent=1)
+    os.replace(tmp, path)
+
+
+def append_report(path, record):
+    os.makedirs(os.path.dirname(path), mode=0o700, exist_ok=True)
+    with open(path, "a") as handle:
+        handle.write(json.dumps(record, sort_keys=True, default=str) + "\n")
+    try:
+        os.chmod(path, 0o600)
+    except OSError:
+        pass
+
+
+def plan_jobs(automation, attempts):
+    """Red launchd jobs that can be safely restarted."""
+    out = []
+    data = (automation or {}).get("data")
+    jobs = data.get("jobs") if isinstance(data, dict) else None
+    uid = os.getuid()
+    for job in jobs or []:
+        if not isinstance(job, dict) or job.get("state") != "red":
+            continue
+        name = job.get("name")
+        if not isinstance(name, str) or not LABEL_RE.match(name):
+            continue
+        label = job.get("label") or name
+        # A job deliberately awaiting activation is not broken.
+        if job.get("activation_required") is True:
+            continue
+        if not job.get("loaded"):
+            out.append({"kind": "job", "id": name, "what": "%s is not loaded" % label,
+                        "op": None,
+                        "why_report": "not loaded - bootstrapping its plist is an "
+                                      "install-time decision, not a repair"})
+            continue
+        if attempts.get(name, 0) >= MAX_ATTEMPTS:
+            out.append({"kind": "job", "id": name,
+                        "what": "%s still red after %d repair attempts" % (label, MAX_ATTEMPTS),
+                        "op": None,
+                        "why_report": "repeated failure - retrying again would only add noise"})
+            continue
+        target = "gui/%d/%s" % (uid, name)
+        out.append({
+            "kind": "job", "id": name, "what": "%s is red" % label,
+            "op": "exec", "argv": ["launchctl", "kickstart", "-k", target],
+            "undo": "launchctl kickstart %s" % target,
+        })
+    return out
+
+
+def plan_feeds(now, data_dir=DATA, cadence=None, dashboard_bin=DASHBOARD_BIN):
+    """Feeds whose collector has fallen well behind its own cadence."""
+    out = []
+    for feed, secs in sorted((cadence or CADENCE).items()):
+        env = load_json(os.path.join(data_dir, "%s.json" % feed))
+        argv = [dashboard_bin, "collect", feed, "--force"]
+        undo = "none needed - re-running a collector is idempotent"
+        if env is None:
+            out.append({"kind": "feed", "id": feed, "what": "%s feed is missing" % feed,
+                        "op": "exec", "argv": argv, "undo": undo})
+            continue
+        # A daily product stamping valid_until is fresh for its whole window even
+        # when it is hours old; feed_health() treats it that way and so must this.
+        if env.get("valid_until") is not None:
+            continue
+        epoch = env.get("generated_epoch")
+        if not isinstance(epoch, (int, float)) or isinstance(epoch, bool):
+            continue
+        age = now - epoch
+        if age <= secs * STALE_MULTIPLE:
+            continue
+        out.append({
+            "kind": "feed", "id": feed,
+            "what": "%s feed is %dm stale (cadence %ds)" % (feed, age // 60, secs),
+            "op": "exec", "argv": argv, "undo": undo,
+        })
+    return out
+
+
+# NO LOCKFILE REPAIR HERE, DELIBERATELY. The feed locks are advisory flock()
+# locks on persistent files (scripts/dashboard:1126-1135): the kernel releases
+# the lock when the collector exits, INCLUDING on SIGKILL, and the file is meant
+# to outlive the run. Its mtime therefore says nothing about whether a lock is
+# held -- every one of them looked "37 days stale" on a healthy machine. Deleting
+# one while a collector holds it lets a second collector create a fresh file and
+# take a second lock, which is the exact concurrency the lock exists to prevent.
+# A stale feed lock is not a reachable state; do not add a repair for it.
+
+
+def describe(item):
+    return " ".join(item["argv"]) if item.get("op") == "exec" else ""
+
+
+def perform(item, timeout_s=120):
+    """Do one repair."""
+    try:
+        done = subprocess.run(item["argv"], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                              timeout=timeout_s, check=False)
+    except (OSError, subprocess.SubprocessError) as exc:
+        return False, str(exc)[:200]
+    if done.returncode == 0:
+        return True, ""
+    return False, (done.stderr or b"").decode("utf-8", "replace").strip()[:200]
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--apply", action="store_true",
+                        help="perform the safe repairs (default: dry run)")
+    parser.add_argument("--json", action="store_true")
+    parser.add_argument("--self-test", action="store_true")
+    args = parser.parse_args(argv)
+    if args.self_test:
+        return self_test()
+
+    now = int(time.time())
+    if os.path.exists(DISABLE):
+        print("self-repair: DISABLE present at %s - stopping before any scan" % DISABLE)
+        return 0
+
+    state = load_json(HEARTBEAT) or {}
+    attempts = state.get("attempts") if isinstance(state.get("attempts"), dict) else {}
+    attempts = dict(attempts)
+
+    automation = load_json(os.path.join(DATA, "automation.json"))
+    plan = plan_jobs(automation, attempts) + plan_feeds(now)
+    fixable = [p for p in plan if p.get("op")]
+    reports = [p for p in plan if not p.get("op")]
+
+    done, failed = [], []
+    for item in fixable:
+        if not args.apply:
+            append_report(REPORT, dict(item, applied=False, ok=None, t=now))
+            continue
+        ok, err = perform(item)
+        append_report(REPORT, dict(item, applied=True, ok=ok, error=err, t=now))
+        (done if ok else failed).append(item)
+        attempts[item["id"]] = 0 if ok else attempts.get(item["id"], 0) + 1
+
+    write_json(HEARTBEAT, {
+        "last_run_epoch": now, "dry_run": not args.apply,
+        "planned": len(fixable), "repaired": len(done),
+        "failures": len(failed) + len(reports),
+        "attempts": dict((k, v) for k, v in attempts.items() if v),
+    })
+
+    if args.json:
+        print(json.dumps({"schema": 1, "generated_epoch": now, "dry_run": not args.apply,
+                          "fixable": fixable, "reports": reports,
+                          "repaired": done, "failed": failed},
+                         sort_keys=True, indent=2, default=str))
+        return 0
+
+    verb = "Would fix" if not args.apply else "Fixed"
+    if not fixable and not reports:
+        print("self-repair: nothing to do")
+    for item in fixable:
+        mark = "" if not args.apply else (" ok" if item in done else " FAILED")
+        print("%s: %s%s" % (verb, item["what"], mark))
+        print("      %s" % describe(item))
+    for item in reports:
+        print("Needs you: %s - %s" % (item["what"], item["why_report"]))
+    return 0
+
+
+def self_test():
+    failures = []
+
+    def check(name, condition):
+        print(("PASS " if condition else "FAIL ") + name)
+        if not condition:
+            failures.append(name)
+
+    def env(**kw):
+        return {"data": {"jobs": [kw]}}
+
+    plan = plan_jobs(env(name="com.x.job", label="Job", state="red", loaded=True), {})
+    check("a red loaded job is restarted",
+          len(plan) == 1 and plan[0]["argv"][:3] == ["launchctl", "kickstart", "-k"])
+
+    check("a green job is left alone",
+          plan_jobs(env(name="com.x.job", label="Job", state="green", loaded=True), {}) == [])
+
+    check("a job awaiting activation is not treated as broken",
+          plan_jobs(env(name="com.x.job", label="Job", state="red", loaded=True,
+                        activation_required=True), {}) == [])
+
+    unloaded = plan_jobs(env(name="com.x.job", label="Job", state="red", loaded=False), {})
+    check("an unloaded job is reported, not bootstrapped",
+          len(unloaded) == 1 and unloaded[0]["op"] is None)
+
+    retried = plan_jobs(env(name="com.x.job", label="Job", state="red", loaded=True),
+                        {"com.x.job": MAX_ATTEMPTS})
+    check("a job that keeps failing stops being retried",
+          len(retried) == 1 and retried[0]["op"] is None)
+
+    check("a hostile launchd label is refused",
+          plan_jobs(env(name="../../etc/passwd", label="X", state="red", loaded=True), {}) == [])
+
+    check("every planned repair carries an undo note",
+          all("undo" in p for p in plan_jobs(
+              env(name="com.x.job", label="J", state="red", loaded=True), {}) if p.get("op")))
+
+    import tempfile
+    now = int(time.time())
+    with tempfile.TemporaryDirectory() as tmp:
+        def feed(name, age, extra=None):
+            body = {"generated_epoch": now - age}
+            body.update(extra or {})
+            with open(os.path.join(tmp, "%s.json" % name), "w") as handle:
+                json.dump(body, handle)
+
+        feed("attention", 60)
+        feed("decisions", 10000)
+        # A daily product stamping valid_until is fresh for its whole window.
+        feed("brief", 30000, {"valid_until": now + 3600})
+        cadence = {"attention": 300, "decisions": 300, "brief": 300}
+        got = set(p["id"] for p in plan_feeds(now, tmp, cadence, "/bin/true"))
+        check("a badly stale feed is re-collected", "decisions" in got)
+        check("a fresh feed is left alone", "attention" not in got)
+        check("a daily product with valid_until is not treated as stale", "brief" not in got)
+
+    print("%d passed; %d failed" % (10 - len(failures), len(failures)))
+    return 1 if failures else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -478,6 +478,10 @@ w("chats.json", {"schema": 1, "feed": "chats",
                  "data": {"nodes": [{"id": "x:1",
                           "title": "Tre'vor \U0001F600 </script> chat"}],
                           "edges": [], "topics": [],
+                          # outcomes is browser-omitted: present here so the .js
+                          # transport projection is actually exercised by case 2.
+                          "outcomes": [{"card_id": "c1"}, {"card_id": "c2"}],
+                          "outcome_updates": [{"card_id": "c1"}],
                           "counts": {"last_full_ingest_age_s": 0,
                                      "full_ingest_state": "fresh",
                                      "full_ingest_stale": False}}})
@@ -727,6 +731,11 @@ c2() {
   if python3 - "$H/data" <<'PYEOF'
 import json, os, sys
 d = sys.argv[1]
+# The .js transport is the .json canonical MINUS payload the page never reads.
+# Whatever is omitted must be COUNTED in browser_omitted, never dropped quietly:
+# a page silently showing less than everything is the defect we are removing.
+OMIT = {"chats": ("outcomes", "outcome_updates", "outcome_extraction_health",
+                  "outcome_egress_counters")}
 for f in ("usage", "git", "chats", "automation", "decisions", "attention", "brief"):
     jc = open(os.path.join(d, f + ".json")).read()
     js = open(os.path.join(d, f + ".js")).read()
@@ -734,8 +743,21 @@ for f in ("usage", "git", "chats", "automation", "decisions", "attention", "brie
     payload = js[js.index(marker) + len(marker):]
     assert payload.endswith(";"), f
     payload = payload[:-1]
-    assert payload == jc, ("byte mismatch", f)          # strip wrapper, byte-equal
-    assert json.loads(payload) == json.loads(jc), f     # and deep-equal
+    canon, wire = json.loads(jc), json.loads(payload)
+    present = [k for k in OMIT.get(f, ()) if isinstance(canon.get("data"), dict)
+               and canon["data"].get(k) is not None]
+    if not present:
+        assert payload == jc, ("byte mismatch", f)      # strip wrapper, byte-equal
+        assert wire == canon, f                         # and deep-equal
+        continue
+    dropped = wire["data"].pop("browser_omitted", None)
+    assert dropped is not None, ("omission not reported", f)
+    assert sorted(dropped) == sorted(present), (dropped, present)
+    for k in present:
+        assert k not in wire["data"], ("omitted key still on the wire", f, k)
+        assert dropped[k] == len(canon["data"][k]), ("miscounted", f, k)
+        canon["data"].pop(k)
+    assert wire == canon, ("transport differs beyond the omitted keys", f)
 # hostile title survives roundtrip; .js is pure ASCII (emoji escaped by ensure_ascii)
 raw = open(os.path.join(d, "chats.js"), "rb").read()
 assert all(b < 128 for b in raw), "non-ascii bytes in .js"
