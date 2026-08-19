@@ -131,14 +131,6 @@ async function main() {
     }
   }
 
-  // The provider list, tabs and stat strip now sit behind the landing caret.
-  // Tests that inspect them open it exactly the way an operator does.
-  async function openDetail(page) {
-    const toggle = page.locator('#hr-toggle');
-    if (await toggle.getAttribute('aria-expanded') !== 'true') await toggle.click();
-    await page.locator('#hr-detail').waitFor({ state: 'visible' });
-  }
-
   async function test(name, body) {
     try {
       await body();
@@ -449,17 +441,12 @@ async function main() {
         for (const cd of await brief.locator('.hr-wcd').allInnerTexts()) {
           assert.match(cd, /resets in /, `brief line lost its countdown: ${cd}`);
         }
-        // The detail is collapsed until asked for.
-        assert.strictEqual(await page.locator('#hr-toggle').getAttribute('aria-expanded'), 'false');
-        assert.ok(await page.locator('#hr-detail').isHidden(), 'detail should start collapsed');
-        await openDetail(page);
-        assert.ok(await page.locator('#hr-detail').isVisible(), 'caret did not reveal the detail');
-        // The detail must open directly under the caret, not below a Needs-you
-        // list that can run to seven cards and push it off a 560px popover.
-        const order = await page.evaluate(() => Array.from(
-          document.querySelectorAll('#hr-brief,#hr-toggle,#hr-detail,#list')).map(n => n.id));
-        assert.deepStrictEqual(order, ['hr-brief', 'hr-toggle', 'hr-detail', 'list']);
-        assert.ok(await page.locator('#hr-list .hr-card').count() >= 1, 'detail list is empty');
+        // Providers and jobs are never hidden behind a caret. What collapses is
+        // the per-provider specifics, one card at a time.
+        assert.strictEqual(await page.locator('#hr-toggle').count(), 0, 'outer caret must not exist');
+        assert.ok(await page.locator('#hr-list').isVisible(), 'provider list must always be visible');
+        assert.ok(await page.locator('#stats').isVisible(), 'job stats must always be visible');
+        assert.ok(await page.locator('#hr-list .hr-card').count() >= 1, 'provider list is empty');
       });
     });
 
@@ -509,7 +496,6 @@ async function main() {
         headroom: headroom([row], { id: row.id, label: row.label, window_label: row.window_label,
           remaining_pct: row.remaining_pct, band: row.band }),
       })), {}, async page => {
-        await openDetail(page);
         const disclosure = page.locator('.hr-disclosure').first();
         assert.strictEqual(await disclosure.evaluate(node => node.tagName), 'BUTTON');
         assert.strictEqual(await disclosure.getAttribute('aria-expanded'), 'false');
@@ -518,6 +504,33 @@ async function main() {
         await disclosure.press('Enter');
         assert.strictEqual(await disclosure.getAttribute('aria-expanded'), 'true');
         assert.match(await page.locator(`#${controls}`).innerText(), /Synthetic Pro/);
+      });
+    });
+
+    // The panel re-renders every 3s and reloads every 120s. Without persistence an
+    // opened provider detail slams shut almost immediately, which makes the only
+    // remaining collapse unusable.
+    await test('an opened provider detail survives a re-render', async () => {
+      const row = quotaRow({ detail: { plan: 'Synthetic Pro' } });
+      const feed = headroom([row], { id: row.id, label: row.label, window_label: row.window_label,
+        remaining_pct: row.remaining_pct, band: row.band });
+      await withPanel(state(Object.assign(healthyCore(), { headroom: feed })), {}, async page => {
+        const disclosure = page.locator('.hr-disclosure').first();
+        assert.strictEqual(await disclosure.getAttribute('aria-expanded'), 'false');
+        await disclosure.click();
+        assert.strictEqual(await disclosure.getAttribute('aria-expanded'), 'true');
+
+        // Exactly what the 3s timer does: push the feed again and re-render.
+        await page.evaluate(f => window.MC_updateHeadroom(f), feed);
+        assert.strictEqual(await page.locator('.hr-disclosure').first().getAttribute('aria-expanded'),
+          'true', 'detail closed itself on re-render');
+        assert.match(await page.locator('#hr-list').innerText(), /Synthetic Pro/);
+
+        // Closing must stick too, not just opening.
+        await page.locator('.hr-disclosure').first().click();
+        await page.evaluate(f => window.MC_updateHeadroom(f), feed);
+        assert.strictEqual(await page.locator('.hr-disclosure').first().getAttribute('aria-expanded'),
+          'false', 'detail reopened itself on re-render');
       });
     });
 
@@ -540,7 +553,6 @@ async function main() {
         headroom: headroom([row], { id: row.id, label: row.label, window_label: row.window_label,
           remaining_pct: row.remaining_pct, band: row.band }),
       })), {}, async page => {
-        await openDetail(page);
         const disclosure = page.locator('.hr-disclosure').first();
         await disclosure.press('Enter');
         const controls = await disclosure.getAttribute('aria-controls');
@@ -557,7 +569,6 @@ async function main() {
         headroom: headroom([row], { id: row.id, label: row.label, window_label: row.window_label,
           remaining_pct: row.remaining_pct, band: row.band }),
       })), {}, async page => {
-        await openDetail(page);
         const tablist = page.locator('#hr-tabs');
         assert.strictEqual(await tablist.getAttribute('role'), 'tablist');
         assert(await tablist.getAttribute('aria-label'), 'tablist has no accessible label');
@@ -599,6 +610,7 @@ async function main() {
         const selectors = ['.mark', '.sub', '.pill', '.stat .lbl', '.section-head', '.badge', '.sev',
           '.opt .key', '.opt .tag', '.meta', '.hr-head .t', '.hr-tab', '.hr-wname', '.hr-wval',
           '.hr-wcd', '.hr-note-line', '.hr-name', '.hr-win', '.hr-flag', '.hr-val .unit',
+      '.hr-bname', '.hr-bage', '.hr-selfcheck',
           '.hr-sub', '.hr-detail', '.tbtn'];
         const sizes = await page.evaluate(list => list.map(selector => {
           const node = document.querySelector(selector);
