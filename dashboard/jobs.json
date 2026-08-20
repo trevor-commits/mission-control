@@ -145,11 +145,11 @@
       "err_log": "/Users/gillettes/.mobile-connect/log/launchd.err",
       "evidence": [
         {
-          "path": "/Users/gillettes/.mobile-connect/log/launchd.out",
+          "path": "/Users/gillettes/.mobile-connect/state/*",
           "role": "progress"
         }
       ],
-      "expected_freshness_s": 20,
+      "expected_freshness_s": 600,
       "kind": "keepalive",
       "label": "Mobile Connect",
       "name": "com.gillettes.mobile-connect",
