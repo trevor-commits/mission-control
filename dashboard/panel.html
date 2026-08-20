@@ -223,6 +223,11 @@ html[data-theme="dark"] {
 .hr-wval { font-size: 12px; font-weight: 750; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .hr-wcd { display: block; color: var(--faint); font-size: 12px; margin-top: 3px; font-variant-numeric: tabular-nums; font-family: ui-monospace, "SF Mono", Menlo, monospace; }
 .hr-wcd.wait { color: var(--red); font-weight: 650; }
+/* In the provider list the bars carry the meaning; a reset line under every
+   window turned one Claude card into nine lines of text. The wording is what
+   opening the card is for. The two-line summary at the top keeps its clocks. */
+#hr-list .hr-wcd, #hr-list .hr-note-line { display: none; }
+#hr-list .hr-row.open .hr-wcd, #hr-list .hr-row.open .hr-note-line { display: block; }
 .hr-note-line { color: var(--muted); font-size: 12px; margin-top: 4px; }
 .hr-top { display: flex; align-items: baseline; gap: 6px; }
 .hr-name { font-size: 12.5px; font-weight: 700; letter-spacing: -.01em; }
@@ -1133,14 +1138,22 @@ body.pin .hr-head { padding-top: 10px; }
     rows.forEach(function (r) {
       card.appendChild(hrWindowLine(r, rows.length > 1));
     });
+    // local_estimate is a PROVIDER fact carried on every one of that provider's
+    // window rows, so a per-row loop printed the same sentence three times on
+    // Claude. Emit each distinct line once.
+    var noteSeen = {};
     rows.forEach(function (r) {
       var le = (r.detail || {}).local_estimate;
+      var text = null;
       if (le && le.tokens_used != null) {
-        card.appendChild(el("div", "hr-note-line",
-          Number(le.tokens_used).toLocaleString() + " tokens this block" +
-          (le.burn_tpm ? " \u00b7 " + Number(le.burn_tpm).toLocaleString() + " tok/min (local estimate)" : "")));
+        text = Number(le.tokens_used).toLocaleString() + " tokens this block" +
+          (le.burn_tpm ? " \u00b7 " + Number(le.burn_tpm).toLocaleString() + " tok/min (local estimate)" : "");
       } else if (r.health !== "ok" && r.note && !(r.remaining_pct != null || r.balance_usd != null || r.value_label)) {
-        card.appendChild(el("div", "hr-note-line", r.note));
+        text = r.note;
+      }
+      if (text && !noteSeen[text]) {
+        noteSeen[text] = true;
+        card.appendChild(el("div", "hr-note-line", text));
       }
     });
     var sub = el("div", "hr-sub");

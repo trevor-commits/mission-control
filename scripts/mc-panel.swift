@@ -23,6 +23,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
   // Retained RunningBoard activity — anonymous menu-bar binaries otherwise get
   // Control Center "after-life.interrupted" / workspace invalidation and exit.
   var stayAliveActivity: NSObjectProtocol?
+  // Last full page load. Opening the panel used to reload panel.html every time,
+  // re-parsing the page and its feed scripts before anything could be shown.
+  var lastLoadAt = Date.distantPast
 
   func applicationDidFinishLaunching(_ notification: Notification) {
     ProcessInfo.processInfo.disableAutomaticTermination("Mission Control menu bar")
@@ -57,6 +60,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
     let pop = NSPopover()
     pop.contentSize = NSSize(width: 400, height: 560)
     pop.behavior = .applicationDefined
+    // NSPopover animates by default. The fade is the single biggest part of the
+    // perceived open delay for a panel this small.
+    pop.animates = false
     pop.delegate = self
     pop.contentViewController = NSViewController()
     pop.contentViewController!.view = web
@@ -64,11 +70,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
 
     reload()
     updateStatusTitle()
-    timer = Timer.scheduledTimer(withTimeInterval: 120, repeats: true) { [weak self] _ in
+    timer = Timer.scheduledTimer(withTimeInterval: 45, repeats: true) { [weak self] _ in
       self?.reload()
       self?.updateStatusTitle()
     }
-    // Live headroom: inject fresh collector data every 15 s (no page reloads).
+    // Live headroom: inject fresh collector data every 3 s (no page reloads).
     headroomTimer = Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { [weak self] _ in
       self?.pushHeadroom()
       self?.updateStatusTitle()
@@ -530,7 +536,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
   func showPopover(over button: NSStatusBarButton, activating: Bool) {
     refreshHeadroomNow()
     guard !popover.isShown else { return }
-    reload()
+    // Headroom is injected every 3s without a reload, and the timer below reloads
+    // the rest on its own cadence. Reloading again here only delayed the panel
+    // appearing; do it solely when the page really is old.
+    if Date().timeIntervalSince(lastLoadAt) > 45 { reload() }
     // Run after the status-item event completes. Showing synchronously lets the
     // opening mouse-down dismiss the popover before the matching mouse-up.
     DispatchQueue.main.async { [weak self, weak button] in
@@ -612,6 +621,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
       .appendingPathComponent(".mission-control/panel.html")
     let url = override.map { URL(fileURLWithPath: $0) } ?? home
     if FileManager.default.fileExists(atPath: url.path) {
+      lastLoadAt = Date()
       webView.loadFileURL(url, allowingReadAccessTo: url.deletingLastPathComponent())
     } else {
       let html = """

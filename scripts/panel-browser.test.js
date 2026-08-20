@@ -332,6 +332,10 @@ async function main() {
         }),
       });
       await withPanel(state(feeds), { before: 'try{localStorage.setItem("mc-hr-view","all")}catch(e){}' }, async page => {
+        // The list shows bars; the wording is what opening a card is for. Open
+        // them all, which is exactly what an operator does to read the clocks.
+        const cards = await page.locator('#hr-list .hr-disclosure').all();
+        for (const c of cards) await c.click();
         const cds = await page.locator('.hr-wcd').allInnerTexts();
         assert.ok(cds.some(t => /empty — resets in/.test(t)), `missing empty countdown: ${JSON.stringify(cds)}`);
         assert.ok(cds.some(t => /^resets in /.test(t) && !/empty —/.test(t)), `missing full countdown: ${JSON.stringify(cds)}`);
@@ -341,6 +345,32 @@ async function main() {
         assert.match(claude, /signed out/);
         assert.match(claude, /resets in /);
         assert.strictEqual(await page.locator('#hr-list .hr-wcd').count(), 5, 'a window dropped its reset line');
+      });
+    });
+
+    // A provider's local_estimate rides on every one of its window rows, so a
+    // per-row render printed the same sentence once per window -- three identical
+    // lines on Claude.
+    await test('a provider-level note is printed once, not once per window', async () => {
+      const est = { local_estimate: { tokens_used: 101095111, burn_tpm: 8667 } };
+      const mk = (id, wl, wc, pct) => quotaRow({ id: 'claude:' + id, provider: 'claude',
+        label: 'Claude', window_label: wl, window_class: wc, remaining_pct: pct, detail: est });
+      const rows = [mk('week', 'Weekly', 'week', 2), mk('5h', '5-hour', '5h', 92),
+                    mk('nq', 'nimbus quill', 'other', 100)];
+      await withPanel(state(Object.assign(healthyCore(), {
+        headroom: headroom(rows, { id: rows[0].id, label: 'Claude', window_label: 'Weekly',
+          remaining_pct: 2, band: 'red' }),
+      })), {}, async page => {
+        assert.strictEqual(await page.locator('#hr-list .hr-note-line').count(), 1,
+          'the provider note repeated once per window');
+        // Bars only until the card is opened.
+        assert.ok(await page.locator('#hr-list .hr-wcd').first().isHidden(),
+          'reset wording should be behind the card');
+        assert.strictEqual(await page.locator('#hr-list .hr-wcd').count(), 3,
+          'a window dropped its reset line from the DOM');
+        await page.locator('#hr-list .hr-disclosure').first().click();
+        assert.ok(await page.locator('#hr-list .hr-wcd').first().isVisible(),
+          'opening the card must reveal the wording');
       });
     });
 
