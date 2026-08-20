@@ -891,8 +891,39 @@ def _rank_attention_entries(entries):
     )
 
 
+def _run_usage_watch():
+    """Let the reset/silence detector add or retire its attention rows.
+
+    Runs here, on the existing 300s ticker, because a detector that only runs
+    when a human remembers to type it is itself the silent-watcher defect.
+    Fail-open: the attention feed must build even if the watcher breaks -- but
+    its failure is printed, so it lands in launchd.err.log rather than nowhere.
+    Tests set DASHBOARD_USAGE_WATCH=0 (via test-temp-root.sh) so hermetic runs
+    never read this machine's real usage history.
+    """
+    if os.environ.get("DASHBOARD_USAGE_WATCH", "1") == "0":
+        return
+    # RAW path, not _repo_script(): that helper shlex-quotes for shell command
+    # strings, and this repo path contains a space -- the quoted form fails
+    # os.path.isfile forever. subprocess gets an argv list, so no quoting.
+    tool = os.path.join(REPO, "scripts", "usage-watch")
+    if not os.path.isfile(tool):
+        sys.stderr.write("attention: usage-watch missing at %s\n" % tool)
+        return
+    try:
+        done = subprocess.run([tool, "--emit"], stdout=subprocess.DEVNULL,
+                              stderr=subprocess.PIPE, timeout=15, check=False)
+        if done.returncode != 0:
+            sys.stderr.write("attention: usage-watch exit %d: %s\n" % (
+                done.returncode,
+                (done.stderr or b"").decode("utf-8", "replace").strip()[:200]))
+    except (OSError, subprocess.SubprocessError) as exc:
+        sys.stderr.write("attention: usage-watch failed: %s\n" % str(exc)[:200])
+
+
 def _run_builtin_attention(_timeout_s):
     now = _now()
+    _run_usage_watch()
     entries = []
     counts = {"manual": 0, "decision": 0, "automation": 0, "decisions_filtered_out": 0}
 
