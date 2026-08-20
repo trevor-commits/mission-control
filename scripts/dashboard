@@ -367,6 +367,59 @@ BROWSER_OMIT = {
               "outcome_egress_counters"),
 }
 
+# Arrays the page renders but that grow without bound. loose_ends reached 16,387
+# rows (12 MB) -- no operator reads sixteen thousand loose ends, and the page
+# parses every one on open. Capped for the transport only; the canonical .json
+# keeps the full list, which is what morning-brief and chat-graph read.
+# NOT capped: nodes and edges. loose_ends joins to nodes by source_node, so
+# trimming nodes would silently blank the titles of rows that survive. That needs
+# referential work, not a cap.
+BROWSER_CAP = {"chats": {"loose_ends": 500}}
+# Most actionable first: worst severity, then the ones sitting longest.
+_SEVERITY_RANK = {"red": 0, "amber": 1, "yellow": 1, "grey": 2, "green": 3}
+
+
+def _cap_rank(row):
+    if not isinstance(row, dict):
+        return (9, 0)
+    rank = _SEVERITY_RANK.get(str(row.get("severity") or "").lower(), 4)
+    age = row.get("age_days")
+    age = age if isinstance(age, (int, float)) and not isinstance(age, bool) else 0
+    return (rank, -age)
+
+
+def _cap_rows(rows, limit):
+    """Worst-and-oldest first, but round-robin across `kind`.
+
+    A flat cap is useless here: register_unverified is 68% of the list, so the
+    first 500 rows by rank are all one kind and every other category -- dirty
+    repos, open todos, chat handoffs -- vanishes from the page entirely. Taking
+    turns between kinds keeps each category visible; within a kind the order is
+    still worst severity, then longest sitting.
+    """
+    buckets = {}
+    for row in rows:
+        kind = row.get("kind") if isinstance(row, dict) else None
+        buckets.setdefault(str(kind), []).append(row)
+    for rows_of_kind in buckets.values():
+        rows_of_kind.sort(key=_cap_rank)
+    # Smallest kinds first so a big one cannot starve them on the final turn.
+    order = sorted(buckets, key=lambda k: len(buckets[k]))
+    out = []
+    while len(out) < limit:
+        took = False
+        for kind in order:
+            if not buckets[kind]:
+                continue
+            out.append(buckets[kind].pop(0))
+            took = True
+            if len(out) >= limit:
+                break
+        if not took:
+            break
+    out.sort(key=_cap_rank)
+    return out
+
 
 def _browser_env(name, env):
     """Envelope for the .js transport, minus payload the page never reads.
@@ -376,17 +429,28 @@ def _browser_env(name, env):
     silently reporting nothing.
     """
     omit = BROWSER_OMIT.get(name)
-    if not omit or not isinstance(env, dict) or not isinstance(env.get("data"), dict):
+    caps = BROWSER_CAP.get(name) or {}
+    if (not omit and not caps) or not isinstance(env, dict) \
+            or not isinstance(env.get("data"), dict):
         return env
-    dropped = {}
+    dropped, capped = {}, {}
     data = dict(env["data"])
-    for key in omit:
+    for key in omit or ():
         value = data.pop(key, None)
         if value is not None:
             dropped[key] = len(value) if hasattr(value, "__len__") else 1
-    if not dropped:
+    for key, limit in caps.items():
+        value = data.get(key)
+        if not isinstance(value, list) or len(value) <= limit:
+            continue
+        data[key] = _cap_rows(value, limit)
+        capped[key] = {"shown": limit, "total": len(value)}
+    if not dropped and not capped:
         return env
-    data["browser_omitted"] = dropped
+    if dropped:
+        data["browser_omitted"] = dropped
+    if capped:
+        data["browser_capped"] = capped
     trimmed = dict(env)
     trimmed["data"] = data
     return trimmed
