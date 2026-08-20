@@ -1161,10 +1161,16 @@ body.pin .hr-head { padding-top: 10px; }
     var oldest = Math.max.apply(null, ages);
     if (oldest > 600) sub.appendChild(el("span", null, "updated " + (oldest < 3600 ? Math.round(oldest / 60) + "m" : Math.round(oldest / 3600) + "h") + " ago"));
     sub.appendChild(el("span", "sp"));
-    if (head.burn_per_hour != null && head.burn_per_hour > 0) {
+    // Burn rate and pace are claims about NOW. On a card whose data is stale or
+    // signed out they are 21-hour-old numbers wearing a live warning ("9.5%/h
+    // Unusually fast" next to "signed out", seen 2026-08-20) -- suppress them
+    // unless the headline row is live and healthy. The "updated Xh ago" line
+    // above stays: age is the one claim stale data can honestly make.
+    var headLive = head.confidence === "live" && head.health === "ok";
+    if (headLive && head.burn_per_hour != null && head.burn_per_hour > 0) {
       sub.appendChild(el("span", null, (head.kind === "quota" ? head.burn_per_hour.toFixed(1) + "%/h" : "$" + head.burn_per_hour.toFixed(2) + "/h")));
     }
-    if (head.pace === "unusual") sub.appendChild(el("span", "hr-pace unusual", "Unusually fast"));
+    if (headLive && head.pace === "unusual") sub.appendChild(el("span", "hr-pace unusual", "Unusually fast"));
     if (sub.children.length > 1) card.appendChild(sub);
     var det = el("div", "hr-detail");
     det.id = detailId;

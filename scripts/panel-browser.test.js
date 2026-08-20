@@ -520,6 +520,28 @@ async function main() {
       });
     });
 
+    // Burn rate and pace are claims about now; a signed-out card must not wear
+    // a 21-hour-old "Unusually fast" warning as if it were current.
+    await test('stale or signed-out cards do not show burn rate or pace', async () => {
+      const dark = quotaRow({ id: 'claude:week', provider: 'claude', label: 'Claude',
+        health: 'auth', confidence: 'stale', remaining_pct: null, age_s: 76000,
+        burn_per_hour: 9.5, pace: 'unusual' });
+      const live = quotaRow({ id: 'live:week', provider: 'live', label: 'LiveProv',
+        burn_per_hour: 3.2, pace: 'unusual' });
+      await withPanel(state(Object.assign(healthyCore(), {
+        headroom: headroom([dark, live], { id: live.id, label: live.label,
+          window_label: live.window_label, remaining_pct: live.remaining_pct, band: live.band }),
+      })), { before: 'try{localStorage.setItem("mc-hr-view","all")}catch(e){}' }, async page => {
+        const darkCard = await page.locator('.hr-card', { hasText: 'Claude' }).innerText();
+        assert.ok(!/Unusually fast/.test(darkCard), 'stale card wore a live pace warning');
+        assert.ok(!/9\.5%\/h/.test(darkCard), 'stale card showed a 21h-old burn rate');
+        assert.match(darkCard, /updated 21h ago/, 'age is the claim stale data may make');
+        const liveCard = await page.locator('.hr-card', { hasText: 'LiveProv' }).innerText();
+        assert.match(liveCard, /3\.2%\/h/, 'live burn rate must still show');
+        assert.match(liveCard, /Unusually fast/, 'live pace must still show');
+      });
+    });
+
     await test('provider disclosure is a native button with wired expanded state', async () => {
       const row = quotaRow({ detail: { plan: 'Synthetic Pro' }, note: 'Synthetic details' });
       await withPanel(state(Object.assign(healthyCore(), {
