@@ -125,3 +125,7 @@ SH
   export TMPDIR PATH
   hash -r 2>/dev/null || true
 }
+
+# The attention builtin invokes the usage-watch detector against this machine's
+# real usage history. Hermetic suites must never depend on live quota state.
+export DASHBOARD_USAGE_WATCH=0

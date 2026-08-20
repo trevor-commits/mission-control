@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""usage-watch — report AI quota resets and providers that stopped reporting.
+"""usage-watch - report AI quota resets and providers that stopped reporting.
 
 Why this exists: a Codex weekly window reset without anyone knowing. Alerting
 elsewhere only fires when a *value* crosses a threshold downward, so two whole
@@ -13,9 +13,27 @@ Both were already observable and neither was read. The per-run history at
 ai-headroom:919 already detects the reset shape internally purely to clear its
 burn samples. This reads that same signal and says it out loud.
 
+It runs inside `dashboard collect`'s attention cycle (every 300s), so findings
+reach the menu bar and panel through the attention lane that already exists.
+A detector that only runs when a human remembers to type it is itself the
+silent-watcher defect this repo is trying to remove.
+
+What gets emitted is deliberately narrow, because the attention board feeds the
+menu-bar count and a board that cries wolf gets ignored:
+
+  * silence      severity 1 (High)  a credentialed provider with no trusted
+                                    reading for 6h. Auto-resolved the moment the
+                                    provider reports again.
+  * early reset  severity 2 (Med)   a window that rolled over 30+ minutes before
+                                    the reset time the collector had predicted.
+                                    Auto-resolved after 6h - its value decays.
+  * routine reset  never emitted    GLM's 5-hour window resets five times a day;
+                                    that is a clock, not news. Printed by the
+                                    CLI and visible in --json only.
+
 Deliberately NOT a new store: no database, no second collector, no new feed.
-Findings are emitted through `dashboard attention add`, whose id is derived from
-the title and upserts, so repeat runs update one row instead of piling up.
+State is one small JSON with a high-water mark, the last-known reset
+predictions, and the attention ids this tool owns and must clean up.
 """
 
 import json
@@ -25,11 +43,13 @@ import sys
 import time
 
 HOME = os.path.expanduser("~")
-HISTORY = os.path.join(HOME, ".usage-snapshot", "headroom-history.jsonl")
-HEADROOM = os.path.join(HOME, ".mission-control", "data", "headroom.json")
-STATE_DIR = os.path.join(HOME, ".mission-control", "usage-watch")
+MC_HOME = os.environ.get("MISSION_CONTROL_HOME") or os.path.join(HOME, ".mission-control")
+HISTORY = os.environ.get("USAGE_WATCH_HISTORY") or os.path.join(
+    HOME, ".usage-snapshot", "headroom-history.jsonl")
+HEADROOM = os.path.join(MC_HOME, "data", "headroom.json")
+STATE_DIR = os.path.join(MC_HOME, "usage-watch")
 STATE = os.path.join(STATE_DIR, "state.json")
-DASHBOARD_BIN = os.path.join(HOME, ".mission-control", "bin", "dashboard")
+DASHBOARD_BIN = os.path.join(MC_HOME, "bin", "dashboard")
 
 # Same threshold ai-headroom:919 uses for the identical signal. One constant for
 # one concept: a second number here would drift away from it unnoticed.
@@ -37,6 +57,11 @@ RESET_DROP_PCT = 20.0
 # How long a provider Mission Control considers active may report nothing before
 # that silence is itself the finding.
 SILENCE_S = 6 * 3600
+# A reset this much before the collector's predicted resets_epoch is "early" --
+# the surprise Trevor asked to know about. Anything closer is the schedule.
+EARLY_MARGIN_S = 30 * 60
+# An early-reset notice decays: after this long the fresh window is old news.
+EARLY_RESET_TTL_S = 6 * 3600
 
 
 def _num(value):
@@ -104,19 +129,57 @@ def find_resets(history, drop_pct=RESET_DROP_PCT):
     return events
 
 
-def find_silence(headroom_path, now, limit_s=SILENCE_S):
+def classify_resets(events, predictions, margin_s=EARLY_MARGIN_S):
+    """Split cliff events into early (news) and routine (a clock ticking).
+
+    `predictions` are the resets_epoch values a PREVIOUS run recorded from the
+    live feed -- comparing against the current feed is useless because by the
+    time a cliff is visible the feed already shows the NEXT window's reset.
+    A cliff with no stored prediction is routine: without a schedule to be
+    early against, emitting it is guessing, and guesses train the operator to
+    ignore the board.
+    """
+    early, routine = [], []
+    for event in events:
+        predicted = _num(predictions.get(event["id"]))
+        if predicted is not None and event["t"] < predicted - margin_s:
+            event = dict(event, predicted_epoch=int(predicted),
+                         early_by_s=int(predicted - event["t"]))
+            early.append(event)
+        else:
+            routine.append(event)
+    return early, routine
+
+
+def read_headroom(path):
+    try:
+        with open(path, "r", errors="replace") as handle:
+            feed = json.load(handle)
+    except (OSError, ValueError):
+        return None
+    data = feed.get("data") if isinstance(feed, dict) else None
+    return data if isinstance(data, dict) else None
+
+
+def current_predictions(data):
+    """resets_epoch per quota row, recorded now so the NEXT run can compare."""
+    out = {}
+    for row in (data or {}).get("rows") or []:
+        if not isinstance(row, dict) or row.get("kind") != "quota":
+            continue
+        rid, resets = row.get("id"), _num(row.get("resets_epoch"))
+        if isinstance(rid, str) and resets is not None and resets > 0:
+            out[rid] = int(resets)
+    return out
+
+
+def find_silence(data, now, limit_s=SILENCE_S):
     """A provider Mission Control calls active that has no trustworthy row.
 
     This is the rule that would have caught an expired Claude token on day one
     instead of day seven and a half.
     """
-    try:
-        with open(headroom_path, "r", errors="replace") as handle:
-            feed = json.load(handle)
-    except (OSError, ValueError):
-        return []
-    data = feed.get("data") if isinstance(feed, dict) else None
-    if not isinstance(data, dict):
+    if data is None:
         return []
     summary = data.get("summary") if isinstance(data.get("summary"), dict) else {}
     rows = data.get("rows") if isinstance(data.get("rows"), list) else []
@@ -188,38 +251,91 @@ def human_age(seconds):
 
 
 def describe(event):
-    if event["kind"] == "reset":
-        when = time.strftime("%-I:%M %p", time.localtime(event["t"]))
+    if event["kind"] == "silence":
         return (
-            "%s quota reset" % event["id"],
-            "Used went %.0f%% to %.0f%% at %s — the window rolled over."
-            % (event["used_from"], event["used_to"], when),
-            3,
+            "%s usage is not reporting" % event["label"],
+            "No trustworthy reading for %s (health: %s). %s"
+            % (human_age(event["dark_s"]), event["health"], event["note"]),
+            1,
+        )
+    when = time.strftime("%-I:%M %p", time.localtime(event["t"]))
+    if event.get("early_by_s") is not None:
+        return (
+            "%s reset %s early" % (event["id"], human_age(event["early_by_s"])),
+            "Used went %.0f%% to %.0f%% at %s, %s before the predicted reset."
+            % (event["used_from"], event["used_to"], when,
+               human_age(event["early_by_s"])),
+            2,
         )
     return (
-        "%s usage is not reporting" % event["label"],
-        "No trustworthy reading for %s (health: %s). %s"
-        % (human_age(event["dark_s"]), event["health"], event["note"]),
-        1,
+        "%s quota reset" % event["id"],
+        "Used went %.0f%% to %.0f%% at %s - the window rolled over."
+        % (event["used_from"], event["used_to"], when),
+        3,
     )
 
 
-def emit(events, dashboard_bin=DASHBOARD_BIN, runner=None):
-    """Push findings through the attention lane that already reaches the panel."""
-    runner = runner or (lambda argv: subprocess.run(
-        argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=20, check=False
-    ).returncode)
-    sent = 0
-    for event in events:
+def _run_dashboard(args, runner=None, dashboard_bin=DASHBOARD_BIN):
+    """Run one dashboard subcommand; returns (exit_code, stdout)."""
+    if runner is not None:
+        return runner([dashboard_bin] + args)
+    try:
+        done = subprocess.run([dashboard_bin] + args, stdout=subprocess.PIPE,
+                              stderr=subprocess.PIPE, timeout=20, check=False)
+    except (OSError, subprocess.SubprocessError) as exc:
+        return 1, str(exc)[:120]
+    return done.returncode, (done.stdout or b"").decode("utf-8", "replace").strip()
+
+
+def sync_attention(now, silence, early, state, runner=None):
+    """Add what is newly wrong, and RESOLVE what this tool previously added.
+
+    An attention row this tool creates is this tool's to retire. Without the
+    resolve half, a recovered provider stays "not reporting" on the board
+    forever -- a lie in the opposite direction from the one it fixes.
+    """
+    emitted = state.get("emitted")
+    emitted = dict(emitted) if isinstance(emitted, dict) else {}
+    added, resolved = [], []
+
+    def add(key, event):
         title, why, severity = describe(event)
-        code = runner([
-            dashboard_bin, "attention", "add",
-            "--title", title[:90], "--why", why[:200],
-            "--severity", str(severity), "--source", "usage-watch",
-        ])
-        if code == 0:
-            sent += 1
-    return sent
+        code, out = _run_dashboard(
+            ["attention", "add", "--title", title[:90], "--why", why[:200],
+             "--severity", str(severity), "--source", "usage-watch"], runner)
+        if code == 0 and out.startswith("att:"):
+            emitted[key] = {"id": out.splitlines()[0].strip(), "t": int(now)}
+            added.append(key)
+
+    def resolve(key):
+        entry = emitted.get(key) or {}
+        att_id = entry.get("id")
+        if isinstance(att_id, str) and att_id.startswith("att:"):
+            code, _ = _run_dashboard(["attention", "resolve", att_id], runner)
+            if code != 0:
+                return  # keep it; retry next cycle rather than orphan the row
+        emitted.pop(key, None)
+        resolved.append(key)
+
+    silent_now = {"silence:" + e["provider"]: e for e in silence}
+    for key, event in silent_now.items():
+        if key not in emitted:
+            add(key, event)
+    for key in [k for k in emitted if k.startswith("silence:") and k not in silent_now]:
+        resolve(key)
+
+    for event in early:
+        key = "reset:%s:%d" % (event["id"], event["t"])
+        if key not in emitted:
+            add(key, event)
+    for key in [k for k in emitted if k.startswith("reset:")]:
+        entry = emitted.get(key) or {}
+        born = _num(entry.get("t"))
+        if born is not None and now - born >= EARLY_RESET_TTL_S:
+            resolve(key)
+
+    state["emitted"] = emitted
+    return added, resolved
 
 
 def run(argv):
@@ -237,43 +353,56 @@ def run(argv):
             sys.stderr.write("usage-watch: --since wants e.g. 48h, 7d, 90m\n")
             return 2
 
+    state = read_state(STATE)
+    predictions = state.get("predictions")
+    predictions = predictions if isinstance(predictions, dict) else {}
+
     history = load_history(HISTORY, since_epoch)
     resets = find_resets(history)
-    silence = find_silence(HEADROOM, now)
+    early_all, routine_all = classify_resets(resets, predictions)
+    data = read_headroom(HEADROOM)
+    silence = find_silence(data, now)
 
     # Idempotence: the history is append-only and this runs on a schedule. Without
     # a high-water mark every run re-reports the same reset, and a watcher that
     # cries wolf gets ignored -- which defeats the entire point of having one.
-    state = read_state(STATE)
     last_seen = state.get("last_reset_t")
     last_seen = int(last_seen) if isinstance(last_seen, (int, float)) else 0
-    fresh = [e for e in resets if e["t"] > last_seen]
+    early = [e for e in early_all if e["t"] > last_seen]
+    routine = [e for e in routine_all if e["t"] > last_seen]
 
-    events = fresh + silence
     if as_json:
         print(json.dumps({
-            "schema": 1, "generated_epoch": now,
-            "resets": resets, "new_resets": fresh, "silence": silence,
-            "history_entries": len(history),
+            "schema": 2, "generated_epoch": now,
+            "resets": resets, "early": early, "routine": routine,
+            "silence": silence, "history_entries": len(history),
         }, sort_keys=True, indent=2))
     else:
-        if not events:
+        if not (early or routine or silence):
             print("usage-watch: nothing new (%d history entries scanned)" % len(history))
-        for event in events:
+        for event in early + routine + silence:
             title, why, _ = describe(event)
-            print("%s — %s" % (title, why))
+            print("%s - %s" % (title, why))
 
-    if do_emit and events:
-        print("usage-watch: emitted %d to the attention lane" % emit(events), file=sys.stderr)
+    if do_emit:
+        added, resolved = sync_attention(now, silence, early, state)
+        if added or resolved:
+            print("usage-watch: attention +%d / resolved %d"
+                  % (len(added), len(resolved)), file=sys.stderr)
+
     if resets:
-        write_state(STATE, {"last_reset_t": max(e["t"] for e in resets)})
+        state["last_reset_t"] = max(e["t"] for e in resets)
+    state["predictions"] = current_predictions(data) or predictions
+    write_state(STATE, state)
     return 0
 
 
 def self_test():
     failures = []
+    ran = [0]
 
     def check(name, condition):
+        ran[0] += 1
         print(("PASS " if condition else "FAIL ") + name)
         if not condition:
             failures.append(name)
@@ -303,44 +432,87 @@ def self_test():
           find_resets([(100, [None, {"id": 5}, live("a:week", 90.0)]),
                        (160, [live("a:week", 1.0)])]) != [])
 
+    # Early vs routine: only a cliff well before the stored prediction is news.
+    cliff = {"kind": "reset", "id": "codex:week", "t": 1000, "used_from": 96.0,
+             "used_to": 0.0, "since_prev_s": 60}
+    early, routine = classify_resets([dict(cliff)], {"codex:week": 1000 + 7200})
+    check("a reset 2h before its predicted time is early",
+          len(early) == 1 and early[0]["early_by_s"] == 7200 and not routine)
+    early, routine = classify_resets([dict(cliff)], {"codex:week": 1000 + 600})
+    check("a reset near its predicted time is routine", not early and len(routine) == 1)
+    early, routine = classify_resets([dict(cliff)], {})
+    check("a reset with no stored prediction is routine, not a guess",
+          not early and len(routine) == 1)
+
     # Silence: an active provider with no trustworthy row is itself the finding.
-    import tempfile
-    with tempfile.TemporaryDirectory() as tmp:
-        path = os.path.join(tmp, "headroom.json")
-        with open(path, "w") as handle:
-            json.dump({"data": {
-                "summary": {"active_providers": ["claude", "cursor"]},
-                "rows": [
-                    {"provider": "claude", "label": "Claude", "health": "auth",
-                     "confidence": "stale", "age_s": 650360, "note": "no OAuth token"},
-                    {"provider": "cursor", "label": "Cursor", "health": "ok",
-                     "confidence": "live", "remaining_pct": 41.0, "age_s": 30},
-                ]}}, handle)
-        found = find_silence(path, int(time.time()))
-        check("an active provider with no trusted row is reported",
-              len(found) == 1 and found[0]["provider"] == "claude")
-        check("a healthy active provider is not reported",
-              all(f["provider"] != "cursor" for f in found))
+    now = int(time.time())
+    dark_data = {
+        "summary": {"active_providers": ["claude", "cursor"]},
+        "rows": [
+            {"provider": "claude", "label": "Claude", "health": "auth",
+             "confidence": "stale", "age_s": 650360, "note": "no OAuth token",
+             "kind": "quota", "id": "claude:week"},
+            {"provider": "cursor", "label": "Cursor", "health": "ok",
+             "confidence": "live", "remaining_pct": 41.0, "age_s": 30,
+             "kind": "quota", "id": "cursor:plan", "resets_epoch": now + 100},
+        ]}
+    found = find_silence(dark_data, now)
+    check("an active provider with no trusted row is reported",
+          len(found) == 1 and found[0]["provider"] == "claude")
+    check("a healthy active provider is not reported",
+          all(f["provider"] != "cursor" for f in found))
+    check("a short outage is below the silence threshold",
+          find_silence({"summary": {"active_providers": ["claude"]},
+                        "rows": [{"provider": "claude", "label": "Claude",
+                                  "health": "down", "confidence": "stale",
+                                  "age_s": 120}]}, now) == [])
+    check("predictions are read from live quota rows",
+          current_predictions(dark_data) == {"cursor:plan": now + 100})
 
-        # A brief gap is not silence.
-        with open(path, "w") as handle:
-            json.dump({"data": {
-                "summary": {"active_providers": ["claude"]},
-                "rows": [{"provider": "claude", "label": "Claude", "health": "down",
-                          "confidence": "stale", "age_s": 120}]}}, handle)
-        check("a short outage is below the silence threshold",
-              find_silence(path, int(time.time())) == [])
+    # Lifecycle: what this tool adds, this tool retires.
+    calls = []
 
-    # Emission is idempotent by construction: one stable title per finding.
-    sent = []
-    emit([{"kind": "silence", "label": "Claude", "dark_s": 650360,
-           "health": "auth", "note": "", "t": 0}],
-         dashboard_bin="/bin/true", runner=lambda argv: sent.append(argv) or 0)
-    check("silence emits one stable, upsertable title",
-          len(sent) == 1 and sent[0][sent[0].index("--title") + 1]
-          == "Claude usage is not reporting")
+    def runner2(argv):
+        calls.append(argv)
+        if argv[1:3] == ["attention", "add"]:
+            return 0, "att:" + ("%012d" % len(calls))
+        return 0, ""
 
-    print("%d passed; %d failed" % (9 - len(failures), len(failures)))
+    state = {}
+    silence_ev = [{"kind": "silence", "provider": "claude", "label": "Claude",
+                   "dark_s": 650360, "health": "auth", "note": "", "t": now}]
+    added, resolved = sync_attention(now, silence_ev, [], state, runner=runner2)
+    check("new silence adds one attention row",
+          added == ["silence:claude"] and "silence:claude" in state["emitted"])
+    calls.clear()
+    added, resolved = sync_attention(now, silence_ev, [], state, runner=runner2)
+    check("ongoing silence does not re-add", added == [] and calls == [])
+    added, resolved = sync_attention(now, [], [], state, runner=runner2)
+    check("recovery resolves the row this tool added",
+          resolved == ["silence:claude"] and state["emitted"] == {}
+          and calls and calls[-1][1:3] == ["attention", "resolve"])
+
+    early_ev = [dict(cliff, early_by_s=7200, predicted_epoch=1000 + 7200)]
+    calls.clear()
+    state = {}
+    sync_attention(now, [], early_ev, state, runner=runner2)
+    key = "reset:codex:week:1000"
+    check("an early reset adds one attention row", key in state["emitted"])
+    sync_attention(now + 60, [], early_ev, state, runner=runner2)
+    check("the same early reset is not re-added",
+          sum(1 for c in calls if c[1:3] == ["attention", "add"]) == 1)
+    added, resolved = sync_attention(now + EARLY_RESET_TTL_S + 1, [], [], state, runner=runner2)
+    check("an early-reset row expires after its TTL",
+          resolved == [key] and state["emitted"] == {})
+
+    # A failed resolve keeps the bookkeeping so the next cycle retries.
+    state = {"emitted": {"silence:claude": {"id": "att:aaaaaaaaaaaa", "t": now}}}
+    added, resolved = sync_attention(now, [], [], state,
+                                     runner=lambda argv: (1, ""))
+    check("a failed resolve is retried next cycle, not orphaned",
+          resolved == [] and "silence:claude" in state["emitted"])
+
+    print("%d passed; %d failed" % (ran[0] - len(failures), len(failures)))
     return 1 if failures else 0
 
 
