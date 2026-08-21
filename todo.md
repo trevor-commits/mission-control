@@ -40,6 +40,7 @@ Mirror every configured Linear issue here with the repo-side home that explains 
 ## Completed
 If it's not here, it isn't remembered.
 Preserve a durable completion trail for verified work instead of deleting it from active planning.
+- 2026-08-20 | Hermes interactive-work continuity monitor registered in Mission Control; live row green, focused 34 checks and full 26-suite verifier passed | owner: Hermes ops | record: Work Record `2026-08-20 — Register the Hermes interactive-work continuity watchdog` | linear: self-contained; repo-only.
 - 2026-08-18 | Usage reset countdowns: every Usage tab and compact-panel window keeps a 12px countdown, including full windows and empty waiting windows; signed-out Claude weekly still shows Wednesday 5pm PT | owner: Cursor `46ba944f-41f8-41c8-8d6b-c0b76bce90bb` | record: `records/2026-08-18-usage-reset-countdowns.md` | linear: self-contained; repo-only.
 - 2026-08-18 | Live usage sync: menu bar, Usage tab, and compact panel show the lowest live signed-in quota; signed-out Claude can no longer blank Codex/Cursor/GLM; ops monitoring registry lands with this change | owner: Cursor `b60f025b-cb97-4a82-8f55-866893c361c6` | record: `records/2026-08-18-live-usage-sync.md` | linear: self-contained; repo-only.
 - 2026-08-18 | Ops monitoring layer: registered Hermes `ops` profile jobs (ops tick chain + weekly backup verify) in the automation registry — full record in `records/2026-08-18-ops-monitoring-layer.md` | owner: Hermes subagent (kimi-k3); landed with usage-sync | linear: self-contained; repo-only.
@@ -91,6 +92,22 @@ Preserve a durable completion trail for verified work instead of deleting it fro
 - 2026-07-04 | ER-087 follow-up audit gaps — governance scaffold, product intent, tab wording, stale-ingest honesty, and Map smoke coverage landed in this change; full record below.
 
 ## Work Record Log
+
+### 2026-08-20 — Register the Hermes interactive-work continuity watchdog
+- Problem: Trevor's productive Hermes session hit a global 40-turn cap. The ops profile now has a deterministic five-minute watchdog, but Mission Control could not show whether that work-blocker monitor itself was fresh.
+- Reasoning: register the existing script-only cron as a pseudo interval job using its durable run stamp. Do not create another daemon, model call, or launchd label; the existing cron cadence is the runtime authority.
+- Diagnosis inputs: ops health-registry entry `interactive-work-continuity`; cron job `e1c124c445f0` (`every 5m`, `no_agent`, last status `ok`); freshness stamp under the ops profile state dir.
+- Implementation inputs: `dashboard/jobs.json` and the repo's automation-status contract.
+- Fix: added `hermes-interactive-work-continuity` as a pseudo interval job with a 600-second freshness budget and the five-minute monitor's run stamp as evidence.
+- Self-audit:
+  - method: parsed the registry, ran the live collector against the task worktree registry, inspected the exact row, ran `scripts/automation-status.test.sh`, then ran the full `scripts/verify.sh` matrix.
+  - outcome: live row `state=green`; focused automation-status suite `ALL PASS` (34 checks); full verifier `SUITES PASS=26 FAIL=0`.
+  - did not verify: dashboard visual rendering of this one row because no renderer code changed; the authoritative collector/test surfaces were exercised instead.
+- Ripple Check: only the automation registry and its durable todo records changed; existing pseudo-job tests already cover fresh/stale/missing evidence behavior, so no implementation/test-source change was required.
+- by: Hermes ops profile, Desktop session on 2026-08-20.
+- triggered by: Trevor's no-work-interruption settings audit and the ops-monitoring-contract requirement to register T2 monitors.
+- led to: Mission Control can now show this watchdog stale within ten minutes.
+- linear: self-contained / repo-only; no Mission Control Linear workspace is configured.
 
 ### 2026-08-18 — Uniform usage reset countdowns
 - Problem: Usage cards hid the reset clock unless `resets_epoch` was present. Empty GLM weekly (0% left) and unused 5-hour (100% left, clock not started) showed no wait time. Signed-out Claude weekly hid a known Wednesday 5pm PT reset because remaining percent was null. Panel clocks were static and used different copy from the Usage tab.
@@ -1066,6 +1083,19 @@ Keep materially new suggestions here so they survive beyond the current chat.
 - 2026-07-05 | recommendation: do not adopt the GitHub Copilot enterprise-observability stack (OpenTelemetry Collector, Prometheus, Grafana, OpenObserve, Superset, Metabase, Airbyte, Meltano, dbt-core, Great Expectations, TensorZero, Helicone, OpenLIT, traceAI, TraceRoot, Pull Request Analytics Action); treat `records/2026-07-04-dashboard-coding-tracker-search-audit.md` as the real same-niche repo map; if a chart is ever justified, prefer vendorable zero-dependency `leeoniya/uPlot` over Chart.js/ECharts/CDN — but not for V1. | why: Copilot recommended from the repo description alone (it said so); every headline pick runs as a background service, framework, or separate warehouse and collides with the explicit non-goals of offline single-file, single-user, no-server. Full evaluation in Feedback Decision Log 2026-07-05. | by: Claude Code (Opus 4.8) session `a9724039-6595-4205-a25b-bf361020250a`. | linear: self-contained until Linear is configured.
 
 ## Active Branch Ledger
+### `ops/interactive-work-continuity-20260820`
+- status: active — register the token-free five-minute Hermes work-continuity watchdog in Mission Control.
+- created: 2026-08-20
+- base: `origin/main` at `ebc12f929c278b2e078e658e382ef87a5a248c93`
+- responsible/source chat: Hermes ops Desktop session, Trevor request to remove work-stopping limits and audit settings.
+- last refreshed by chat: Hermes ops, 2026-08-20.
+- linked issue: none; `linear: self-contained`, repo-only.
+- plugin mirror status: not applicable; no Mission Control Linear workspace is configured.
+- merge expectation: focused registry/test commit, then fast-forward to `origin/main` if the focused suite passes.
+- exit checklist: JSON parse; live evidence freshness; `scripts/automation-status.test.sh`; commit/push containment; remove worktree and branch after main contains the commit.
+- delete-vs-retain outcome: pending verification and landing.
+- cleanup trigger: `origin/main` contains the exact commit and the canonical registry reads back the new job.
+
 ### `cursor/usage-reset-countdowns`
 - status: active. Uniform reset countdown on every Usage tab and compact-panel window.
 - created: 2026-08-18
@@ -1374,6 +1404,7 @@ If it's not here, it isn't remembered.
 - When a verification run closes or updates an audit finding, cross-reference the matching audit record entry and the chat or commit that performed the work.
 
 ## Test Evidence Log
+- 2026-08-20 | commands: JSON parse of `dashboard/jobs.json`; live `scripts/automation-status --json --registry dashboard/jobs.json`; `PYTHONDONTWRITEBYTECODE=1 /bin/bash scripts/automation-status.test.sh`; `PYTHONDONTWRITEBYTECODE=1 /bin/bash scripts/verify.sh` | result: live `hermes-interactive-work-continuity` row green; focused suite `ALL PASS` (34 checks); full verifier `SUITES PASS=26 FAIL=0` | log/PR reference: Work Record `2026-08-20 — Register the Hermes interactive-work continuity watchdog` | by: Hermes ops | linear: self-contained / repo-only.
 - 2026-08-18 | commands: `node scripts/dashboard-render-smoke.js .`; `node scripts/dashboard-browser.test.js`; `node scripts/panel-browser.test.js`; `PYTHONDONTWRITEBYTECODE=1 /bin/bash scripts/er134-usability.test.sh`; `PYTHONDONTWRITEBYTECODE=1 /bin/bash scripts/verify.sh` | result: render-smoke 8 tabs; dashboard browser 323; panel browser 14/0; ER-134 63/0; `SUITES PASS=26 FAIL=0` | log/PR reference: `records/2026-08-18-usage-reset-countdowns.md` | by: Cursor `46ba944f-41f8-41c8-8d6b-c0b76bce90bb` | linear: repo-only.
 - 2026-08-18 | commands: `python3 scripts/mc-panel-headroom.test.py`; `python3 scripts/mc-panel-summary.test.py`; `node scripts/panel-browser.test.js`; `node scripts/dashboard-browser.test.js`; `node scripts/dashboard-render-smoke.js .`; `PYTHONDONTWRITEBYTECODE=1 /bin/bash scripts/automation-status.test.sh`; `PYTHONDONTWRITEBYTECODE=1 python3 -B scripts/rollup-answer.test.py`; `PYTHONDONTWRITEBYTECODE=1 /bin/bash scripts/verify.sh` | result: native headroom 17/0; native summary 16/0; panel browser exit 0; dashboard browser 317; render-smoke 8 tabs; automation-status ALL PASS; isolated rollup 32/0; `SUITES PASS=26 FAIL=0` | log/PR reference: `records/2026-08-18-live-usage-sync.md` | by: Cursor `b60f025b-cb97-4a82-8f55-866893c361c6` | linear: repo-only.
 - 2026-08-18 | commands: `python3 json.load` on `dashboard/jobs.json`; live `scripts/automation-status --json --registry dashboard/jobs.json`; `PYTHONDONTWRITEBYTECODE=1 /bin/bash scripts/automation-status.test.sh`; `PYTHONDONTWRITEBYTECODE=1 /bin/bash scripts/verify.sh` | result: registry parses (16 jobs); live classification tick `awaiting-activation` + backup-verify `green`; focused suite ALL PASS; first full verifier `25/1` failed only the final source-artifact gate on `scripts/__pycache__` bytecode written by the earlier unguarded live classification run — artifact removed, rerun `SUITES PASS=26 FAIL=0` (browser/panel suites included) | log/PR reference: `records/2026-08-18-ops-monitoring-layer.md`; landed with usage-sync | by: Hermes subagent (kimi-k3) | linear: repo-only.
