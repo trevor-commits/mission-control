@@ -1084,17 +1084,17 @@ Keep materially new suggestions here so they survive beyond the current chat.
 
 ## Active Branch Ledger
 ### `ops/interactive-work-continuity-20260820`
-- status: active — register the token-free five-minute Hermes work-continuity watchdog in Mission Control.
+- status: landed — source commit `c46d8b4ac5a7c10fe4723e20c9ef3ee8e3577242` is the exact `origin/main` tip; local cleanup follows this records-only closeout.
 - created: 2026-08-20
 - base: `origin/main` at `ebc12f929c278b2e078e658e382ef87a5a248c93`
 - responsible/source chat: Hermes ops Desktop session, Trevor request to remove work-stopping limits and audit settings.
 - last refreshed by chat: Hermes ops, 2026-08-20.
 - linked issue: none; `linear: self-contained`, repo-only.
 - plugin mirror status: not applicable; no Mission Control Linear workspace is configured.
-- merge expectation: focused registry/test commit, then fast-forward to `origin/main` if the focused suite passes.
-- exit checklist: JSON parse; live evidence freshness; `scripts/automation-status.test.sh`; commit/push containment; remove worktree and branch after main contains the commit.
-- delete-vs-retain outcome: pending verification and landing.
-- cleanup trigger: `origin/main` contains the exact commit and the canonical registry reads back the new job.
+- merge expectation: fulfilled by fast-forward to `origin/main`.
+- exit checklist: [x] JSON parse; [x] live evidence freshness; [x] `scripts/automation-status.test.sh`; [x] full `scripts/verify.sh`; [x] exact commit/push containment; local worktree/branch cleanup follows this closeout record.
+- delete-vs-retain outcome: delete; no retained work is needed after `origin/main` containment.
+- cleanup trigger: this records-only closeout is contained by `origin/main`.
 
 ### `cursor/usage-reset-countdowns`
 - status: active. Uniform reset countdown on every Usage tab and compact-panel window.
@@ -1299,6 +1299,8 @@ Each active branch entry should include:
 - `linked PR/audit/completion record`
 
 ## Branch History
+
+- 2026-08-20 | `ops/interactive-work-continuity-20260820` | registered the script-only five-minute Hermes continuity monitor as a green Mission Control pseudo job; source commit `c46d8b4ac5a7c10fe4723e20c9ef3ee8e3577242` fast-forwarded to `origin/main` after focused 34-check and full 26-suite verification | cleanup disposition: delete local worktree/branch after this records-only closeout lands | source: Hermes ops Desktop session | linear: self-contained; repo-only.
 
 - 2026-08-15 | main-only consolidation | every safe local and provider tip is an ancestor of `main`. Twelve live side worktrees were removed. One absent registration was finalized. Fourteen obsolete local branches were deleted after independent recovery proof. | cleanup disposition: all seventeen non-main remote refs were later deleted through exact-OID leases. One app-managed detached checkout remains product-owned. | source: Codex `01a00647-2c65-7592-8c65-c76087de3bcf` | record: `records/2026-08-15-main-only-repository-consolidation.md`.
 - 2026-08-12 | stale PR closeout | PR #10 (`codex/phase0-work-record@9296e2c`) and PR #11 (`codex/rollup-answer-wiring@5153e2d`) were closed without merge after exact containment and remote archive-tag readback. Their remote branches were retained at this checkpoint, then deleted through exact-OID leases on 2026-08-15. Recovery tags and both verified bundles remain. | owner: Codex `019ff2ae-33b3-7e50-af39-3a08efef29a8` | linear: repo-only.
