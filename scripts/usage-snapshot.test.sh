@@ -229,9 +229,12 @@ EOF
   chmod +x "$T/bin/npx"
   local start elapsed rc leaked=0 pid
   start=$(date +%s)
+  # The synced collector waits KILL_GRACE_SECONDS (default 5) between SIGTERM
+  # and SIGKILL; pin it to 1 here so the bound below proves boundedness fast.
   NPX_PID_LOG="$T/npx-pids" \
   NPX_BIN="$T/bin/npx" \
   CCUSAGE_TIMEOUT_SECONDS=1 \
+  KILL_GRACE_SECONDS=1 \
   USAGE_SNAPSHOT_DIR="$T/state" \
   USAGE_CREDITS_FILE="$T/missing-credits.json" \
   CODEX_SESSIONS_DIR="$T/codex" \
@@ -243,7 +246,9 @@ EOF
   while IFS= read -r pid; do
     [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null && leaked=1
   done < "$T/npx-pids"
-  if [ "$rc" -eq 1 ] && [ "$elapsed" -le 7 ] && [ "$leaked" -eq 0 ] \
+  # 1s timeout + 1s grace + scheduling headroom; the bounded child's 124 maps
+  # to the collector's own nonzero SNAPSHOT_RC.
+  if [ "$rc" -eq 1 ] && [ "$elapsed" -le 10 ] && [ "$leaked" -eq 0 ] \
      && jq -e '[.providers[] | select(.provider=="claude")] | length==2 and all(.health=="down")' "$T/out" >/dev/null; then
     ok "hung ccusage commands time out, fail down, and leave no npx process"
   else
@@ -307,15 +312,17 @@ EOF
   chmod +x "$T/bin/glm-hang"
   local start rc elapsed pid leaked=0
   start=$(date +%s)
-  GLM_PID_FILE="$T/glm.pid" GLM_TIMEOUT_SECONDS=1 \
+  GLM_PID_FILE="$T/glm.pid" GLM_TIMEOUT_SECONDS=1 KILL_GRACE_SECONDS=1 \
   USAGE_SNAPSHOT_DIR="$T/state" USAGE_CREDITS_FILE="$T/missing-credits.json" \
   CODEX_SESSIONS_DIR="$T/codex" CLAUDE_GLM_BIN="$T/bin/glm-hang" \
   COPILOT_DB="$T/missing-copilot.db" HERMES_BIN="$T/bin/hermes" \
     /bin/bash "$USAGE" --no-ccusage --live-probes >"$T/out" 2>"$T/err"
   rc=$?; elapsed=$(( $(date +%s) - start )); pid=$(cat "$T/glm.pid")
   kill -0 "$pid" 2>/dev/null && leaked=1
-  if [ "$rc" -eq 1 ] && [ "$elapsed" -le 4 ] && [ "$leaked" -eq 0 ] \
-     && jq -e '.providers[] | select(.provider=="glm") | .health=="down"' "$T/out" >/dev/null; then
+  # 1s timeout + 1s grace + headroom; the bounded child's timeout maps to the
+  # collector's own nonzero SNAPSHOT_RC.
+  if [ "$rc" -eq 1 ] && [ "$elapsed" -le 8 ] && [ "$leaked" -eq 0 ] \
+     && jq -e '.providers[] | select(.provider=="glm" and .window=="plan" and .source=="claude-glm-doctor") | .health=="down"' "$T/out" >/dev/null; then
     ok "hung GLM doctor is bounded, down, and fully reaped"
   else no "hung GLM doctor blocked, leaked, or stayed healthy"; fi
 }
@@ -331,14 +338,16 @@ EOF
   chmod +x "$T/bin/notify-hang"
   local start rc elapsed pid leaked=0
   start=$(date +%s)
-  NOTIFY_PID_FILE="$T/notify.pid" NOTIFY_TIMEOUT_SECONDS=1 USAGE_NOTIFY_BIN="$T/bin/notify-hang" \
+  NOTIFY_PID_FILE="$T/notify.pid" NOTIFY_TIMEOUT_SECONDS=1 KILL_GRACE_SECONDS=1 USAGE_NOTIFY_BIN="$T/bin/notify-hang" \
   USAGE_SNAPSHOT_DIR="$T/state" USAGE_CREDITS_FILE="$T/credits.json" \
   CODEX_SESSIONS_DIR="$T/codex" CLAUDE_GLM_BIN="$T/bin/claude-glm" \
   COPILOT_DB="$T/missing-copilot.db" HERMES_BIN="$T/bin/hermes" \
     /bin/bash "$USAGE" --no-ccusage >"$T/out" 2>"$T/err"
   rc=$?; elapsed=$(( $(date +%s) - start )); pid=$(cat "$T/notify.pid")
   kill -0 "$pid" 2>/dev/null && leaked=1
-  if [ "$rc" -eq 1 ] && [ "$elapsed" -le 4 ] && [ "$leaked" -eq 0 ] \
+  # 1s timeout + 1s grace + headroom; the bounded child's timeout maps to the
+  # collector's own nonzero SNAPSHOT_RC.
+  if [ "$rc" -eq 1 ] && [ "$elapsed" -le 8 ] && [ "$leaked" -eq 0 ] \
      && grep -q 'notify failed' "$T/err" && ! ls "$T/state"/.credit-alert-* >/dev/null 2>&1; then
     ok "hung notification is bounded, reaped, and leaves a retryable failure"
   else no "hung notification blocked, leaked, or consumed its retry stamp"; fi
@@ -537,6 +546,156 @@ c24() {
   else no "selected rollout read failure returned a green unknown snapshot"; fi
 }
 
+c25() {
+  new_env
+  cat > "$T/bin/kimi-health" <<'EOF'
+#!/bin/sh
+printf '%s\n' "$*" > "$KIMI_ARGS_FILE"
+exit 0
+EOF
+  chmod +x "$T/bin/kimi-health"
+  KIMI_ARGS_FILE="$T/kimi-args" KIMI_HEALTH_BIN="$T/bin/kimi-health" \
+  USAGE_SNAPSHOT_DIR="$T/state" USAGE_CREDITS_FILE="$T/missing-credits.json" \
+  CODEX_SESSIONS_DIR="$T/codex" CLAUDE_GLM_BIN="$T/bin/claude-glm" \
+  COPILOT_DB="$T/missing-copilot.db" HERMES_BIN="$T/bin/hermes" \
+    /bin/bash "$USAGE" --no-ccusage --live-probes >"$T/out" 2>"$T/err"
+  if [ $? -eq 0 ] && [ "$(cat "$T/kimi-args")" = "--health" ] \
+     && jq -e 'any(.providers[]; .provider=="kimi" and .window=="plan" and .health=="ok" and .source=="kimi-health")' "$T/out" >/dev/null; then
+    ok "configured Kimi health probe uses fixed argv and reports healthy"
+  else no "configured Kimi health probe was missing, unhealthy, or received the wrong argv"; fi
+}
+
+c26() {
+  new_env
+  cat > "$T/bin/kimi-slow" <<'EOF'
+#!/bin/sh
+sleep 2
+EOF
+  chmod +x "$T/bin/kimi-slow"
+  USAGE_SNAPSHOT_TEST_FORCE_KILL_EPERM=1 KILL_GRACE_SECONDS=3 GLM_TIMEOUT_SECONDS=1 \
+  KIMI_HEALTH_BIN="$T/bin/kimi-slow" \
+  USAGE_SNAPSHOT_DIR="$T/state" USAGE_CREDITS_FILE="$T/missing-credits.json" \
+  CODEX_SESSIONS_DIR="$T/codex" CLAUDE_GLM_BIN="$T/bin/claude-glm" \
+  COPILOT_DB="$T/missing-copilot.db" HERMES_BIN="$T/bin/hermes" \
+    /bin/bash "$USAGE" --no-ccusage --live-probes >"$T/out" 2>"$T/err"
+  if [ $? -eq 1 ] \
+     && jq -e 'any(.providers[]; .provider=="kimi" and .window=="plan" and .health=="down" and .fetch_error=="kill_permission_denied")' "$T/out" >/dev/null; then
+    ok "Kimi termination uncertainty is explicit and does not look healthy"
+  else no "Kimi termination uncertainty was hidden or reported healthy"; fi
+}
+
+c27() {
+  new_env
+  mkdir -p "$T/state"
+  python3 - "$T/state/history.jsonl" <<'PY'
+import datetime
+import json
+import sys
+import time
+
+now = int(time.time())
+def iso(epoch):
+    return datetime.datetime.fromtimestamp(epoch, datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+rows = []
+for reset_offset, tokens in ((-7200, 1000), (-5400, 1200), (-3600, 1100)):
+    rows.append({"fetched_at": iso(now + reset_offset - 60), "providers": [{
+        "provider": "claude", "window": "session-5h", "tokens_used": tokens,
+        "burn_tpm": 0, "resets_at": iso(now + reset_offset),
+    }]})
+rows.append({"fetched_at": iso(now - 5), "providers": [{
+    "provider": "claude", "window": "session-5h", "tokens_used": 600,
+    "burn_tpm": 2, "resets_at": iso(now + 7200),
+}]})
+with open(sys.argv[1], "w") as out:
+    for row in rows:
+        out.write(json.dumps(row) + "\n")
+PY
+  USAGE_SNAPSHOT_DIR="$T/state" USAGE_CREDITS_FILE="$T/missing-credits.json" \
+  CODEX_SESSIONS_DIR="$T/codex" CLAUDE_GLM_BIN="$T/bin/claude-glm" \
+  COPILOT_DB="$T/missing-copilot.db" HERMES_BIN="$T/bin/hermes" \
+    /bin/bash "$USAGE" --no-ccusage >"$T/out" 2>"$T/err"
+  if [ $? -eq 0 ] \
+     && jq -e 'any(.providers[]; .provider=="claude" and .window=="session-5h" and .source=="usage-history" and .confidence=="estimated" and .inferred_ceiling_tokens==1200 and .inferred_used_pct==50)' "$T/out" >/dev/null; then
+    ok "fresh completed Claude cycles produce a bounded history estimate"
+  else no "Claude history estimate was absent, stale, or used the wrong ceiling"; fi
+}
+
+c28() {
+  new_env
+  local now
+  now=$(date +%s)
+  printf '{"generated_epoch":%s,"data":{"rows":[{"id":"glm:week","used_pct":37,"health":"ok","confidence":"live","resets_epoch":2000000000}]}}\n' "$now" > "$T/headroom.json"
+  GLM_HEADROOM_FILE="$T/headroom.json" GLM_HEADROOM_MAX_AGE_S=60 \
+  USAGE_SNAPSHOT_DIR="$T/state" USAGE_CREDITS_FILE="$T/missing-credits.json" \
+  CODEX_SESSIONS_DIR="$T/codex" CLAUDE_GLM_BIN="$T/bin/claude-glm" \
+  COPILOT_DB="$T/missing-copilot.db" HERMES_BIN="$T/bin/hermes" \
+    /bin/bash "$USAGE" --no-ccusage >"$T/out" 2>"$T/err"
+  if [ $? -eq 0 ] \
+     && jq -e 'any(.providers[]; .provider=="glm" and .window=="weekly" and .used_pct==37 and .health=="ok" and .confidence=="live" and .source=="zai-quota-limit")' "$T/out" >/dev/null; then
+    ok "fresh persisted GLM weekly headroom is exposed without a live probe"
+  else no "persisted GLM weekly headroom was missing, stale, or changed state"; fi
+}
+
+c29() {
+  new_env
+  local now
+  now=$(( $(date +%s) + 600 ))
+  printf '{"generated_epoch":%s,"data":{"rows":[{"id":"glm:week","used_pct":37,"health":"ok","confidence":"live","resets_epoch":2000000000}]}}\n' "$now" > "$T/headroom.json"
+  GLM_HEADROOM_FILE="$T/headroom.json" GLM_HEADROOM_MAX_AGE_S=3600 \
+  USAGE_SNAPSHOT_DIR="$T/state" USAGE_CREDITS_FILE="$T/missing-credits.json" \
+  CODEX_SESSIONS_DIR="$T/codex" CLAUDE_GLM_BIN="$T/bin/claude-glm" \
+  COPILOT_DB="$T/missing-copilot.db" HERMES_BIN="$T/bin/hermes" \
+    /bin/bash "$USAGE" --no-ccusage >"$T/out" 2>"$T/err"
+  if [ $? -eq 0 ] \
+     && jq -e 'any(.providers[]; .provider=="glm" and .window=="weekly" and .health=="ok" and .confidence=="stale" and (.notes | test("future")))' "$T/out" >/dev/null; then
+    ok "future-dated GLM headroom is stale and cannot look live"
+  else no "future-dated GLM headroom still looked live or hid its timestamp fault"; fi
+}
+
+c30() {
+  new_env
+  printf '%s\n' '{"generated_epoch":"not-an-epoch","data":{"rows":[{"id":"glm:week","used_pct":37,"health":"ok","confidence":"live","resets_epoch":2000000000}]}}' > "$T/headroom.json"
+  GLM_HEADROOM_FILE="$T/headroom.json" GLM_HEADROOM_MAX_AGE_S=3600 \
+  USAGE_SNAPSHOT_DIR="$T/state" USAGE_CREDITS_FILE="$T/missing-credits.json" \
+  CODEX_SESSIONS_DIR="$T/codex" CLAUDE_GLM_BIN="$T/bin/claude-glm" \
+  COPILOT_DB="$T/missing-copilot.db" HERMES_BIN="$T/bin/hermes" \
+    /bin/bash "$USAGE" --no-ccusage >"$T/out" 2>"$T/err"
+  if [ $? -eq 0 ] \
+     && jq -e 'any(.providers[]; .provider=="glm" and .window=="weekly" and .health=="ok" and .confidence=="stale" and (.notes | test("invalid source timestamp")))' "$T/out" >/dev/null; then
+    ok "malformed GLM headroom timestamp is stale without dropping the row"
+  else no "malformed GLM headroom timestamp crashed or looked live"; fi
+}
+
+c31() {
+  new_env
+  python3 -c 'import json,sys,time; json.dump({"generated_epoch":int(time.time()),"data":{"rows":[{"id":"glm:week","used_pct":37,"health":"<img src=x onerror=\"globalThis.__glm_cache_xss=1\">","confidence":"live","resets_epoch":2000000000}]}},open(sys.argv[1],"w"))' "$T/headroom.json"
+  GLM_HEADROOM_FILE="$T/headroom.json" GLM_HEADROOM_MAX_AGE_S=60 \
+  USAGE_SNAPSHOT_DIR="$T/state" USAGE_CREDITS_FILE="$T/missing-credits.json" \
+  CODEX_SESSIONS_DIR="$T/codex" CLAUDE_GLM_BIN="$T/bin/claude-glm" \
+  COPILOT_DB="$T/missing-copilot.db" HERMES_BIN="$T/bin/hermes" \
+    /bin/bash "$USAGE" --no-ccusage --html >"$T/out" 2>"$T/err"
+  if [ $? -eq 0 ] && [ -f "$T/state/dashboard.html" ] \
+     && jq -e 'any(.providers[]; .provider=="glm" and .window=="weekly" and .health=="unknown")' "$T/out" >/dev/null \
+     && ! grep -Fq '<img src=x' "$T/state/dashboard.html"; then
+    ok "cached GLM health is normalized before the usage page"
+  else no "cached GLM health reached the usage page as raw HTML"; fi
+}
+
+c32() {
+  new_env
+  python3 -c 'import json,sys; json.dump({"credits":[{"provider":"<img src=x onerror=\"globalThis.__credit_xss=1\">","kind":"credit","count":1}]},open(sys.argv[1],"w"))' "$T/credits.json"
+  USAGE_SNAPSHOT_DIR="$T/state" USAGE_CREDITS_FILE="$T/credits.json" \
+  CODEX_SESSIONS_DIR="$T/codex" CLAUDE_GLM_BIN="$T/bin/claude-glm" \
+  COPILOT_DB="$T/missing-copilot.db" HERMES_BIN="$T/bin/hermes" \
+    /bin/bash "$USAGE" --no-ccusage --html >"$T/out" 2>"$T/err"
+  if [ $? -eq 0 ] && [ -f "$T/state/dashboard.html" ] \
+     && jq -e 'any(.providers[]; .provider=="unknown" and .window=="credit:credit" and .health=="held")' "$T/out" >/dev/null \
+     && ! grep -Fq '<img src=x' "$T/state/dashboard.html"; then
+    ok "configured credit labels are normalized before the usage page"
+  else no "configured credit labels reached the usage page as raw HTML"; fi
+}
+
 c1
 c2
 c3
@@ -561,6 +720,14 @@ c21
 c22
 c23
 c24
+c25
+c26
+c27
+c28
+c29
+c30
+c31
+c32
 
 echo "----"
 echo "PASS=$PASS FAIL=$FAIL"

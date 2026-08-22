@@ -42,7 +42,8 @@ FIELD_CLASSES = frozenset((
 REQUIRED_INSTALL_RUNTIMES = (
     "dashboard", "chat-graph", "morning-brief", "morning-brief-deadman",
     "decision-alert", "mission_control_common.py", "queue_admission.py",
-    "compose-decision-prompt.py", "mc-panel.swift",
+    "compose-decision-prompt.py", "mc-panel.swift", "self-repair", "usage-watch",
+    "headroom-refresh",
 )
 REQUIRED_INSTALL_ASSETS = (
     "index.html", "vendor/cytoscape.min.js", "panel.html",

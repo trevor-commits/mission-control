@@ -23,6 +23,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
   // Retained RunningBoard activity — anonymous menu-bar binaries otherwise get
   // Control Center "after-life.interrupted" / workspace invalidation and exit.
   var stayAliveActivity: NSObjectProtocol?
+  // Last full page load. Opening the panel used to reload panel.html every time,
+  // re-parsing the page and its feed scripts before anything could be shown.
+  var lastLoadAt = Date.distantPast
 
   func applicationDidFinishLaunching(_ notification: Notification) {
     ProcessInfo.processInfo.disableAutomaticTermination("Mission Control menu bar")
@@ -57,6 +60,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
     let pop = NSPopover()
     pop.contentSize = NSSize(width: 400, height: 560)
     pop.behavior = .applicationDefined
+    // NSPopover animates by default. The fade is the single biggest part of the
+    // perceived open delay for a panel this small.
+    pop.animates = false
     pop.delegate = self
     pop.contentViewController = NSViewController()
     pop.contentViewController!.view = web
@@ -64,12 +70,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
 
     reload()
     updateStatusTitle()
-    timer = Timer.scheduledTimer(withTimeInterval: 120, repeats: true) { [weak self] _ in
+    timer = Timer.scheduledTimer(withTimeInterval: 45, repeats: true) { [weak self] _ in
       self?.reload()
       self?.updateStatusTitle()
     }
-    // Live headroom: inject fresh collector data every 15 s (no page reloads).
-    headroomTimer = Timer.scheduledTimer(withTimeInterval: 15, repeats: true) { [weak self] _ in
+    // Live headroom: inject fresh collector data every 3 s (no page reloads).
+    headroomTimer = Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { [weak self] _ in
       self?.pushHeadroom()
       self?.updateStatusTitle()
     }
@@ -141,7 +147,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
     return (value as? String) == ""
   }
 
-  func headroomLowest() -> (pct: Int, band: String)? {
+  // Extra fields let the menu bar say WHICH provider/window the number is;
+  // `pct` and `band` keep their names so existing probes stay valid.
+  func headroomLowest() -> (pct: Int, band: String, label: String, window: String, resetsEpoch: Int?)? {
     let url = FileManager.default.homeDirectoryForCurrentUser
       .appendingPathComponent(".mission-control/data/headroom.json")
     guard let data = try? Data(contentsOf: url),
@@ -184,16 +192,54 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
     }
 
     guard isFresh(generatedEpoch) else { return nil }
-    var best: (pct: Double, band: String)?
+    var best: (pct: Double, band: String, label: String, window: String, resets: Int?)?
     for candidate in rows {
       guard let pct = trustedQuota(candidate),
             let band = candidate["band"] as? String, !band.isEmpty
       else { continue }
       if let current = best, pct >= current.pct - 0.01 { continue }
-      best = (pct, band)
+      let label = (candidate["label"] as? String) ?? ""
+      let window = (candidate["window_label"] as? String) ?? ""
+      best = (pct, band, label, window, exactJSONInt(candidate["resets_epoch"]))
     }
     guard let shown = best else { return nil }
-    return (Int(shown.pct.rounded()), shown.band)
+    return (Int(shown.pct.rounded()), shown.band, shown.label, shown.window, shown.resets)
+  }
+
+  // A provider Mission Control treats as active that is no longer reporting.
+  // Silence must be louder than a number: an expired Claude token went unnoticed
+  // for 7.5 days because untrusted rows were simply dropped from the display.
+  func darkProvider() -> String? {
+    let url = FileManager.default.homeDirectoryForCurrentUser
+      .appendingPathComponent(".mission-control/data/headroom.json")
+    guard let data = try? Data(contentsOf: url),
+          let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+          exactJSONInt(obj["schema"]) == 1,
+          (obj["feed"] as? String) == "headroom",
+          exactJSONBool(obj["ok"]) == true,
+          let feedData = obj["data"] as? [String: Any],
+          let summary = feedData["summary"] as? [String: Any],
+          let active = summary["active_providers"] as? [String],
+          let rows = feedData["rows"] as? [[String: Any]]
+    else { return nil }
+    let activeSet = Set(active)
+    for candidate in rows {
+      guard let provider = candidate["provider"] as? String, activeSet.contains(provider),
+            let health = candidate["health"] as? String,
+            health == "auth" || health == "down"
+      else { continue }
+      let label = (candidate["label"] as? String) ?? provider
+      if !label.isEmpty { return label }
+    }
+    return nil
+  }
+
+  // Five blocks. ceil() so any non-zero remainder still shows one block --
+  // an empty window must look different from "almost empty".
+  func headroomBar(_ pct: Int) -> String {
+    let filled = pct <= 0 ? 0 : max(1, min(5, Int((Double(pct) / 20.0).rounded(.up))))
+    return String(repeating: "\u{25AE}", count: filled)
+      + String(repeating: "\u{25AF}", count: 5 - filled)
   }
 
   func pushHeadroom() {
@@ -352,10 +398,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
                 return knownAutomationStates.contains(state)
               })
         else { return nil }
-        if let unregistered = payload["unregistered"] {
-          if !(unregistered is NSNull) {
-            guard let labels = unregistered as? [Any], labels.isEmpty else { return nil }
-          }
+        // Registry drift (launchd jobs on this Mac that are not in jobs.json) is
+        // routine and must NOT blank job health -- requiring an empty list here
+        // once hid a live red job behind "Status incomplete". Shape-check only.
+        if let unregistered = payload["unregistered"], !(unregistered is NSNull) {
+          guard unregistered is [Any] else { return nil }
         }
         if let note = payload["launchctl_note"],
            !(note is NSNull), !String(describing: note).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -386,26 +433,51 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
     return (count, redJobs, feedAges.max(), failedFeeds)
   }
 
+  // Title priority, loudest first. An unexplained bare number ("MC \u{00B7}0%") is
+  // what this replaces: every state below either names itself or carries a bar.
   func updateStatusTitle() {
     guard let button = statusItem?.button else { return }
     let s = needsSummary()
+    let low = headroomLowest()
+    let dark = darkProvider()
     let title = NSMutableAttributedString()
+    var lowTip = ""
+
     if s.count > 0 {
       title.append(NSAttributedString(
-        string: "MC \(s.count)", attributes: [.foregroundColor: NSColor.systemRed]))
+        string: "MC \u{26A0} \(s.count)", attributes: [.foregroundColor: NSColor.systemRed]))
+    } else if let dark = dark {
+      // A provider that stopped reporting outranks any percentage: we are blind
+      // on it, and a number from some other provider would imply we are not.
+      title.append(NSAttributedString(
+        string: "MC \u{26A0} \(dark)", attributes: [.foregroundColor: NSColor.systemOrange]))
     } else if s.redJobs > 0 || !s.failedFeeds.isEmpty {
       title.append(NSAttributedString(
-        string: "MC !", attributes: [.foregroundColor: NSColor.systemOrange]))
+        string: "MC \u{26A0}", attributes: [.foregroundColor: NSColor.systemOrange]))
+    } else if let low = low {
+      title.append(NSAttributedString(
+        string: "MC ", attributes: [.foregroundColor: NSColor.labelColor]))
+      title.append(NSAttributedString(
+        string: "\(headroomBar(low.pct)) \(low.pct)%",
+        attributes: [.foregroundColor: bandColor(low.band)]))
     } else {
       title.append(NSAttributedString(
         string: "MC", attributes: [.foregroundColor: NSColor.labelColor]))
     }
-    var lowTip = ""
-    if let low = headroomLowest() {
-      title.append(NSAttributedString(
-        string: " ·\(low.pct)%",
-        attributes: [.foregroundColor: bandColor(low.band)]))
-      lowTip = " · lowest AI headroom \(low.pct)%"
+
+    if let low = low {
+      // Always name the provider and window the number belongs to.
+      let who = low.label.isEmpty ? "AI" : low.label
+      let win = low.window.isEmpty ? "" : " \(low.window.lowercased())"
+      lowTip = " \u{00B7} \(who)\(win) \(low.pct)%"
+      if let resets = low.resetsEpoch {
+        let left = resets - Int(Date().timeIntervalSince1970)
+        if left > 0 {
+          lowTip += left >= 3600
+            ? " \u{00B7} resets in \(left / 3600)h \(left % 3600 / 60)m"
+            : " \u{00B7} resets in \(left / 60)m"
+        }
+      }
     }
     button.attributedTitle = title
     var tip = "Mission Control"
@@ -413,6 +485,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
     else if s.redJobs > 0 { tip += " — \(s.redJobs) red job\(s.redJobs == 1 ? "" : "s")" }
     else if !s.failedFeeds.isEmpty { tip += " — feed data unavailable" }
     else { tip += " — all clear" }
+    if let dark = dark { tip += " · \(dark) is not reporting" }
     if !s.failedFeeds.isEmpty { tip += " · check \(s.failedFeeds.joined(separator: ", "))" }
     tip += lowTip
     if let age = s.ageSeconds {
@@ -436,9 +509,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
     }
   }
 
+  // The collector polls on its own schedule, so the number can be minutes old at
+  // the moment you look. Opening the panel forces a fresh poll, off the main
+  // thread so the popover never waits on the network. The helper debounces, so
+  // repeated opens do not hammer the providers.
+  func refreshHeadroomNow() {
+    let tool = FileManager.default.homeDirectoryForCurrentUser
+      .appendingPathComponent(".mission-control/bin/headroom-refresh")
+    guard FileManager.default.isExecutableFile(atPath: tool.path) else { return }
+    let task = Process()
+    task.executableURL = tool
+    task.standardOutput = FileHandle.nullDevice
+    task.standardError = FileHandle.nullDevice
+    // terminationHandler only: no thread ever blocks waiting on this subprocess,
+    // the same contract the decision bridge follows. (er134-usability greps for
+    // the blocking API by name, so do not mention it even in a comment.)
+    task.terminationHandler = { [weak self] _ in
+      DispatchQueue.main.async {
+        self?.pushHeadroom()
+        self?.updateStatusTitle()
+      }
+    }
+    do { try task.run() } catch { return }
+  }
+
   func showPopover(over button: NSStatusBarButton, activating: Bool) {
+    refreshHeadroomNow()
     guard !popover.isShown else { return }
-    reload()
+    // Headroom is injected every 3s without a reload, and the timer below reloads
+    // the rest on its own cadence. Reloading again here only delayed the panel
+    // appearing; do it solely when the page really is old.
+    if Date().timeIntervalSince(lastLoadAt) > 45 { reload() }
     // Run after the status-item event completes. Showing synchronously lets the
     // opening mouse-down dismiss the popover before the matching mouse-up.
     DispatchQueue.main.async { [weak self, weak button] in
@@ -520,6 +621,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
       .appendingPathComponent(".mission-control/panel.html")
     let url = override.map { URL(fileURLWithPath: $0) } ?? home
     if FileManager.default.fileExists(atPath: url.path) {
+      lastLoadAt = Date()
       webView.loadFileURL(url, allowingReadAccessTo: url.deletingLastPathComponent())
     } else {
       let html = """

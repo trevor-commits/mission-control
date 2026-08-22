@@ -1008,6 +1008,23 @@ html[data-theme="dark"] .mc-heat-l4 { background: #35b98a; }
   function looseSeverityState(s) {
     return { red: "red", amber: "amber", yellow: "amber", grey: "grey", green: "green" }[String(s || "").toLowerCase()] || "amber";
   }
+  // The browser transport caps loose_ends (16k rows, 12 MB) and records what it
+  // dropped. Saying "N open" while showing 500 of 16,387 is the same defect as a
+  // feed reporting nothing when it has no data: the page must never imply it is
+  // showing everything.
+  function looseEndsCap(data) {
+    var c = ((data || {}).browser_capped || {}).loose_ends;
+    if (!c || typeof c.shown !== "number" || typeof c.total !== "number") return null;
+    if (c.total <= c.shown) return null;
+    return c;
+  }
+  function looseEndsCapNote(data) {
+    var c = looseEndsCap(data);
+    if (!c) return null;
+    return "Showing " + c.shown.toLocaleString() + " of " + c.total.toLocaleString() +
+      " open items — the most urgent and longest-sitting of each kind. " +
+      "The full list stays in chats.json.";
+  }
   function looseEnds(data) {
     data = data || {};
     var nodes = data.nodes || [], byKey = {};
@@ -2702,6 +2719,7 @@ html[data-theme="dark"] .mc-heat-l4 { background: #35b98a; }
     // (live fix 2026-07-03: mismatch made every badge/cluster silently vanish)
     nodes.forEach(function (n) { n.key = nodeKey(n); });
     var openItems = looseEnds(data);
+    var capNote = looseEndsCapNote(data);
     var openCountByNode = {};
     openItems.forEach(function (o) { if (o.source_node) openCountByNode[o.source_node] = (openCountByNode[o.source_node] || 0) + 1; });
 
@@ -2730,6 +2748,7 @@ html[data-theme="dark"] .mc-heat-l4 { background: #35b98a; }
         type: "button", "aria-pressed": on ? "true" : "false",
         onclick: function () { chatFilter.providers[pr] = !chatFilter.providers[pr]; persistChatState(); rerender(); } }, providerLabel(pr)));
     });
+    if (capNote) p.body.appendChild(h("div", { class: "mc-note mc-cap-note" }, capNote));
     p.body.appendChild(filters);
 
     if (FOCUS_OPEN_END) p.body.appendChild(h("button", { class: "mc-chip mc-chip-btn mc-chip-on", type: "button",

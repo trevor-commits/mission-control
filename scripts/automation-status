@@ -127,6 +127,31 @@ def launchctl_list(binary):
         return ""
 
 
+def _self_check_receipt():
+    """Read the self-repair heartbeat, if it has ever run. Never fatal."""
+    path = os.path.join(
+        os.environ.get("MISSION_CONTROL_HOME")
+        or os.path.join(os.path.expanduser("~"), ".mission-control"),
+        "self-repair", "heartbeat.json")
+    try:
+        with open(path, "r", errors="replace") as handle:
+            value = json.load(handle)
+    except (OSError, ValueError):
+        return None
+    if not isinstance(value, dict):
+        return None
+    epoch = value.get("last_run_epoch")
+    if not isinstance(epoch, int) or isinstance(epoch, bool) or epoch <= 0:
+        return None
+    out = {"last_run_epoch": epoch}
+    for key in ("planned", "repaired", "failures"):
+        if isinstance(value.get(key), int) and not isinstance(value.get(key), bool):
+            out[key] = value[key]
+    if isinstance(value.get("dry_run"), bool):
+        out["dry_run"] = value["dry_run"]
+    return out
+
+
 def err_log_tail(path):
     p = _expand(path)
     if not p or not os.path.isfile(p):
@@ -527,15 +552,26 @@ def classify(entry, by_label, parse_ok, now=None):
         return result
 
     if nonzero:
-        result["state"] = "red"
-        return result
+        # For a keepalive job last_exit describes the PREVIOUS incarnation, which
+        # launchd has already restarted; -15 on logout and -9 on a kill are
+        # routine there. One that is loaded, holds a live pid, and has fresh
+        # evidence is healthy, and calling it red forever trains the operator to
+        # ignore red. A keepalive with STALE evidence still goes red: a live pid
+        # that has produced nothing is exactly the silent failure we care about.
+        keepalive_alive = (result["kind"] == "keepalive" and
+                           result["pid"] is not None and not stale)
+        if not keepalive_alive:
+            result["state"] = "red"
+            return result
 
     if result["semantic_status"] not in (None, "completed"):
         result["state"] = "yellow"
         return result
 
     needs_pid = result["kind"] == "keepalive"
-    if not stale and not nonzero and (not needs_pid or result["pid"] is not None):
+    # Same keepalive reasoning as above: exempting it from red but not from green
+    # would just park every healthy keepalive on a permanent yellow instead.
+    if not stale and (not nonzero or keepalive_alive) and (not needs_pid or result["pid"] is not None):
         result["state"] = "green"
     else:
         result["state"] = "yellow"
@@ -576,6 +612,12 @@ def collect(registry_path):
         "exceptions": exceptions,
         "counts": counts,
     }
+    # The repair pass leaves a receipt here so a DEAD repair pass is visible.
+    # The morning-brief deadman logged "install-unverified (missing)" for weeks
+    # with nobody told; a watchdog with no heartbeat is just a quieter outage.
+    self_check = _self_check_receipt()
+    if self_check is not None:
+        data["self_check"] = self_check
     if not parse_ok:
         data["launchctl_note"] = "launchctl output unparseable — all jobs degraded"
 

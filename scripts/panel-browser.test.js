@@ -150,6 +150,38 @@ async function main() {
       });
     });
 
+    // Registry drift is routine on this Mac (57 untracked launchd jobs vs 17
+    // tracked, 2026-08-19). Failing closed on it blanked every job state and hid
+    // a live red job behind "Status incomplete".
+    await test('registry drift still reports job health, including a red job', async () => {
+      const good = healthyCore();
+      const drifted = Object.assign({}, good, { automation: envelope('automation', {
+        jobs: [{ label: 'Mobile Connect', state: 'red' }],
+        counts: { red: 1 }, exceptions: 1,
+        unregistered: ['untracked.one', 'untracked.two'],
+      }) });
+      await withPanel(state(drifted), {}, async page => {
+        const pill = await page.locator('#status-pill').getAttribute('class');
+        assert.ok(/warn|bad/.test(pill), `drift must not read clear, got ${pill}`);
+        assert.match(await page.locator('#status-text').innerText(), /red job/i);
+        assert.strictEqual(await page.locator('#stat-jobs').innerText(), '0/1');
+        const list = await page.locator('#list').innerText();
+        assert.ok(!/Status incomplete/.test(list), 'drift must not blank job health');
+      });
+    });
+
+    // When something genuinely cannot be verified, say which feed and what to run.
+    await test('unverifiable status names the failing feed and the repair command', async () => {
+      const good = healthyCore();
+      const errors = { decisions: { ok: false, error: 'decision queue timed out after 30s', generated_epoch: NOW } };
+      await withPanel(state(good, errors), {}, async page => {
+        const list = await page.locator('#list').innerText();
+        assert.match(list, /Status incomplete/);
+        assert.match(list, /decisions/);
+        assert.match(list, /dashboard collect decisions --force/);
+      });
+    });
+
     await test('missing, malformed, stale, error, and partial core feeds fail closed', async () => {
       const good = healthyCore();
       const cases = [
@@ -201,9 +233,9 @@ async function main() {
         ['unknown automation state', Object.assign({}, good, { automation: envelope('automation', {
           jobs: [{ label: 'Unknown job', state: 'mystery' }], counts: {}, exceptions: 0,
         }) }), {}],
-        ['unregistered automation gap', Object.assign({}, good, { automation: envelope('automation', {
+        ['malformed unregistered value', Object.assign({}, good, { automation: envelope('automation', {
           jobs: [{ label: 'Collector', state: 'green' }], counts: { green: 1 }, exceptions: 0,
-          unregistered: ['untracked.job'],
+          unregistered: 'not-a-list',
         }) }), {}],
         ['automation launchctl parse gap', Object.assign({}, good, { automation: envelope('automation', {
           jobs: [{ label: 'Collector', state: 'green' }], counts: { green: 1 }, exceptions: 0,
@@ -300,6 +332,10 @@ async function main() {
         }),
       });
       await withPanel(state(feeds), { before: 'try{localStorage.setItem("mc-hr-view","all")}catch(e){}' }, async page => {
+        // The list shows bars; the wording is what opening a card is for. Open
+        // them all, which is exactly what an operator does to read the clocks.
+        const cards = await page.locator('#hr-list .hr-disclosure').all();
+        for (const c of cards) await c.click();
         const cds = await page.locator('.hr-wcd').allInnerTexts();
         assert.ok(cds.some(t => /empty — resets in/.test(t)), `missing empty countdown: ${JSON.stringify(cds)}`);
         assert.ok(cds.some(t => /^resets in /.test(t) && !/empty —/.test(t)), `missing full countdown: ${JSON.stringify(cds)}`);
@@ -308,7 +344,33 @@ async function main() {
         const claude = await page.locator('.hr-card', { hasText: 'Claude' }).innerText();
         assert.match(claude, /signed out/);
         assert.match(claude, /resets in /);
-        assert.strictEqual(await page.locator('.hr-wcd').count(), 5, 'a window dropped its reset line');
+        assert.strictEqual(await page.locator('#hr-list .hr-wcd').count(), 5, 'a window dropped its reset line');
+      });
+    });
+
+    // A provider's local_estimate rides on every one of its window rows, so a
+    // per-row render printed the same sentence once per window -- three identical
+    // lines on Claude.
+    await test('a provider-level note is printed once, not once per window', async () => {
+      const est = { local_estimate: { tokens_used: 101095111, burn_tpm: 8667 } };
+      const mk = (id, wl, wc, pct) => quotaRow({ id: 'claude:' + id, provider: 'claude',
+        label: 'Claude', window_label: wl, window_class: wc, remaining_pct: pct, detail: est });
+      const rows = [mk('week', 'Weekly', 'week', 2), mk('5h', '5-hour', '5h', 92),
+                    mk('nq', 'nimbus quill', 'other', 100)];
+      await withPanel(state(Object.assign(healthyCore(), {
+        headroom: headroom(rows, { id: rows[0].id, label: 'Claude', window_label: 'Weekly',
+          remaining_pct: 2, band: 'red' }),
+      })), {}, async page => {
+        assert.strictEqual(await page.locator('#hr-list .hr-note-line').count(), 1,
+          'the provider note repeated once per window');
+        // Bars only until the card is opened.
+        assert.ok(await page.locator('#hr-list .hr-wcd').first().isHidden(),
+          'reset wording should be behind the card');
+        assert.strictEqual(await page.locator('#hr-list .hr-wcd').count(), 3,
+          'a window dropped its reset line from the DOM');
+        await page.locator('#hr-list .hr-disclosure').first().click();
+        assert.ok(await page.locator('#hr-list .hr-wcd').first().isVisible(),
+          'opening the card must reveal the wording');
       });
     });
 
@@ -381,6 +443,105 @@ async function main() {
       });
     });
 
+    // Trevor's landing view: two labelled bars with live countdowns, everything
+    // else behind the caret. Before this the panel opened on four stat tiles that
+    // read "-" whenever a feeder hiccuped.
+    await test('panel opens on the tightest 5-hour and weekly windows with countdowns', async () => {
+      const rows = [
+        quotaRow({ id: 'a:5h', provider: 'a', label: 'Alpha', window_class: '5h',
+          window_label: '5-hour', remaining_pct: 62, resets_epoch: NOW + 5400 }),
+        quotaRow({ id: 'a:week', provider: 'a', label: 'Alpha', window_class: 'week',
+          window_label: 'Weekly', remaining_pct: 71, resets_epoch: NOW + 90000 }),
+        // Tighter weekly on another provider: the brief must prefer this one.
+        quotaRow({ id: 'b:week', provider: 'b', label: 'Beta', window_class: 'week',
+          window_label: 'Weekly', remaining_pct: 4, band: 'red', resets_epoch: NOW + 7200 }),
+      ];
+      await withPanel(state(Object.assign(healthyCore(), {
+        headroom: headroom(rows, { id: 'b:week', label: 'Beta', window_label: 'Weekly',
+          remaining_pct: 4, band: 'red' }),
+      })), {}, async page => {
+        const brief = page.locator('#hr-brief');
+        assert.strictEqual(await brief.locator('.hr-brow').count(), 2, 'expected exactly two lines');
+        const text = await brief.innerText();
+        assert.match(text, /Alpha · 5-hour/, 'five-hour line missing');
+        assert.match(text, /Beta · Weekly/, 'weekly line must show the tightest provider');
+        assert.ok(!/Alpha · Weekly/.test(text), 'a looser weekly window must not win');
+        // Every brief line carries a live reset countdown, same as the detail list.
+        assert.strictEqual(await brief.locator('.hr-wcd').count(), 2);
+        for (const cd of await brief.locator('.hr-wcd').allInnerTexts()) {
+          assert.match(cd, /resets in /, `brief line lost its countdown: ${cd}`);
+        }
+        // Providers and jobs are never hidden behind a caret. What collapses is
+        // the per-provider specifics, one card at a time.
+        assert.strictEqual(await page.locator('#hr-toggle').count(), 0, 'outer caret must not exist');
+        assert.ok(await page.locator('#hr-list').isVisible(), 'provider list must always be visible');
+        assert.ok(await page.locator('#stats').isVisible(), 'job stats must always be visible');
+        assert.ok(await page.locator('#hr-list .hr-card').count() >= 1, 'provider list is empty');
+      });
+    });
+
+    // A repair pass that silently died must not look like one that ran clean.
+    await test('self-check receipt is shown, and its absence is flagged', async () => {
+      const withJobs = extra => envelope('automation', Object.assign({
+        jobs: [{ label: 'Collector', state: 'green' }], counts: { green: 1 }, exceptions: 0,
+      }, extra));
+
+      await withPanel(state(Object.assign(healthyCore(), {
+        automation: withJobs({ self_check: { last_run_epoch: NOW - 7200, planned: 2, repaired: 2, dry_run: false } }),
+      })), {}, async page => {
+        const line = await page.locator('#hr-selfcheck').innerText();
+        assert.match(line, /Self-check 2h ago/);
+        assert.match(line, /repaired 2/);
+        assert.ok(!/warn/.test(await page.locator('#hr-selfcheck').getAttribute('class')));
+      });
+
+      // Never run at all.
+      await withPanel(state(Object.assign(healthyCore(), { automation: withJobs({}) })), {}, async page => {
+        assert.match(await page.locator('#hr-selfcheck').innerText(), /never run/i);
+        assert.match(await page.locator('#hr-selfcheck').getAttribute('class'), /warn/);
+      });
+
+      // Ran, then stopped running -- the failure mode that went unnoticed before.
+      await withPanel(state(Object.assign(healthyCore(), {
+        automation: withJobs({ self_check: { last_run_epoch: NOW - 4 * 86400, planned: 0, repaired: 0, dry_run: false } }),
+      })), {}, async page => {
+        assert.match(await page.locator('#hr-selfcheck').innerText(), /Self-check 4d ago/);
+        assert.match(await page.locator('#hr-selfcheck').getAttribute('class'), /warn/);
+      });
+    });
+
+    await test('brief states plainly when no live window exists', async () => {
+      const dark = quotaRow({ id: 'a:week', health: 'auth', confidence: 'stale',
+        remaining_pct: null, age_s: 650360 });
+      await withPanel(state(Object.assign(healthyCore(), {
+        headroom: headroom([dark], null),
+      })), {}, async page => {
+        assert.match(await page.locator('#hr-brief').innerText(), /No live 5-hour or weekly window/);
+      });
+    });
+
+    // Burn rate and pace are claims about now; a signed-out card must not wear
+    // a 21-hour-old "Unusually fast" warning as if it were current.
+    await test('stale or signed-out cards do not show burn rate or pace', async () => {
+      const dark = quotaRow({ id: 'claude:week', provider: 'claude', label: 'Claude',
+        health: 'auth', confidence: 'stale', remaining_pct: null, age_s: 76000,
+        burn_per_hour: 9.5, pace: 'unusual' });
+      const live = quotaRow({ id: 'live:week', provider: 'live', label: 'LiveProv',
+        burn_per_hour: 3.2, pace: 'unusual' });
+      await withPanel(state(Object.assign(healthyCore(), {
+        headroom: headroom([dark, live], { id: live.id, label: live.label,
+          window_label: live.window_label, remaining_pct: live.remaining_pct, band: live.band }),
+      })), { before: 'try{localStorage.setItem("mc-hr-view","all")}catch(e){}' }, async page => {
+        const darkCard = await page.locator('.hr-card', { hasText: 'Claude' }).innerText();
+        assert.ok(!/Unusually fast/.test(darkCard), 'stale card wore a live pace warning');
+        assert.ok(!/9\.5%\/h/.test(darkCard), 'stale card showed a 21h-old burn rate');
+        assert.match(darkCard, /updated 21h ago/, 'age is the claim stale data may make');
+        const liveCard = await page.locator('.hr-card', { hasText: 'LiveProv' }).innerText();
+        assert.match(liveCard, /3\.2%\/h/, 'live burn rate must still show');
+        assert.match(liveCard, /Unusually fast/, 'live pace must still show');
+      });
+    });
+
     await test('provider disclosure is a native button with wired expanded state', async () => {
       const row = quotaRow({ detail: { plan: 'Synthetic Pro' }, note: 'Synthetic details' });
       await withPanel(state(Object.assign(healthyCore(), {
@@ -395,6 +556,33 @@ async function main() {
         await disclosure.press('Enter');
         assert.strictEqual(await disclosure.getAttribute('aria-expanded'), 'true');
         assert.match(await page.locator(`#${controls}`).innerText(), /Synthetic Pro/);
+      });
+    });
+
+    // The panel re-renders every 3s and reloads every 120s. Without persistence an
+    // opened provider detail slams shut almost immediately, which makes the only
+    // remaining collapse unusable.
+    await test('an opened provider detail survives a re-render', async () => {
+      const row = quotaRow({ detail: { plan: 'Synthetic Pro' } });
+      const feed = headroom([row], { id: row.id, label: row.label, window_label: row.window_label,
+        remaining_pct: row.remaining_pct, band: row.band });
+      await withPanel(state(Object.assign(healthyCore(), { headroom: feed })), {}, async page => {
+        const disclosure = page.locator('.hr-disclosure').first();
+        assert.strictEqual(await disclosure.getAttribute('aria-expanded'), 'false');
+        await disclosure.click();
+        assert.strictEqual(await disclosure.getAttribute('aria-expanded'), 'true');
+
+        // Exactly what the 3s timer does: push the feed again and re-render.
+        await page.evaluate(f => window.MC_updateHeadroom(f), feed);
+        assert.strictEqual(await page.locator('.hr-disclosure').first().getAttribute('aria-expanded'),
+          'true', 'detail closed itself on re-render');
+        assert.match(await page.locator('#hr-list').innerText(), /Synthetic Pro/);
+
+        // Closing must stick too, not just opening.
+        await page.locator('.hr-disclosure').first().click();
+        await page.evaluate(f => window.MC_updateHeadroom(f), feed);
+        assert.strictEqual(await page.locator('.hr-disclosure').first().getAttribute('aria-expanded'),
+          'false', 'detail reopened itself on re-render');
       });
     });
 
@@ -474,6 +662,7 @@ async function main() {
         const selectors = ['.mark', '.sub', '.pill', '.stat .lbl', '.section-head', '.badge', '.sev',
           '.opt .key', '.opt .tag', '.meta', '.hr-head .t', '.hr-tab', '.hr-wname', '.hr-wval',
           '.hr-wcd', '.hr-note-line', '.hr-name', '.hr-win', '.hr-flag', '.hr-val .unit',
+      '.hr-bname', '.hr-bage', '.hr-selfcheck',
           '.hr-sub', '.hr-detail', '.tbtn'];
         const sizes = await page.evaluate(list => list.map(selector => {
           const node = document.querySelector(selector);
