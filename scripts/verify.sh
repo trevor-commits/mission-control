@@ -142,7 +142,7 @@ run "native panel headroom" python3 scripts/mc-panel-headroom.test.py
 run "native panel core feeds" python3 scripts/mc-panel-summary.test.py
 run "unfinished-work scanner" scripts/scan-unfinished-work --self-test
 run "OpenSpec strict" openspec validate --all --strict
-run "Python syntax" python3 -c 'import pathlib; files=["scripts/chat-graph","scripts/decision-alert","scripts/mission_control_common.py","scripts/outcome_extractor.py","scripts/compose-decision-prompt.py","scripts/harvest-morning-brief-proof","scripts/usage-watch","scripts/headroom-refresh","scripts/queue_admission.py"]; [compile(pathlib.Path(p).read_text(),p,"exec") for p in files]'
+run "Python syntax" python3 -c 'import pathlib; files=["scripts/chat-graph","scripts/decision-alert","scripts/mission_control_common.py","scripts/outcome_extractor.py","scripts/outcome_sources.py","scripts/compose-decision-prompt.py","scripts/harvest-morning-brief-proof","scripts/usage-watch","scripts/headroom-refresh","scripts/queue_admission.py"]; [compile(pathlib.Path(p).read_text(),p,"exec") for p in files]'
 run "shell syntax" /bin/bash -n scripts/dashboard scripts/*.test.sh scripts/test-temp-root.sh scripts/verify.sh
 run "source tree artifacts" source_tree_artifacts
 
