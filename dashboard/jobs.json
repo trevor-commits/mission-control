@@ -311,6 +311,21 @@
       "label": "Self-Repair Pass",
       "name": "com.gillettes.mission-control-repair",
       "schedule": "04:10 daily"
+    },
+    {
+      "evidence": [
+        {
+          "path": "/Users/gillettes/.hermes/profiles/ops/ops-data/state/interactive-work-continuity/last-run",
+          "role": "run",
+          "run_key": true
+        }
+      ],
+      "expected_freshness_s": 600,
+      "kind": "interval",
+      "label": "Hermes Interactive Work Continuity",
+      "name": "hermes-interactive-work-continuity",
+      "pseudo": true,
+      "schedule": "every 300s"
     }
   ]
 }
