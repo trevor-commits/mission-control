@@ -510,8 +510,25 @@ body.pin .hr-head { padding-top: 10px; }
   }
 
   function answerPendingText(d) {
+    var lifecycle = d && d.lifecycle;
+    var state = lifecycle && lifecycle.valid === true ? lifecycle.state : null;
+    var labels = {
+      answered_pending: "Answer recorded · awaiting delivery",
+      delivered: "Delivered · awaiting consumption",
+      consumed: "Consumed · awaiting execution",
+      running: "Running · awaiting live-result verification",
+      live_result_verified: "Live result verified · awaiting closure",
+      closed: "Closed"
+    };
     var raw = d && d.answer_pending && d.answer_pending.choice;
     var choice = +raw;
+    if (lifecycle && lifecycle.valid === false) {
+      return "Lifecycle evidence invalid · action blocked";
+    }
+    if (state && labels[state]) {
+      return labels[state] + (isFinite(choice) && choice > 0 && Math.floor(choice) === choice ?
+        " · choice " + choice : "");
+    }
     if (isFinite(choice) && choice > 0 && Math.floor(choice) === choice) {
       return "Awaiting owner consumption · choice " + choice + " recorded";
     }
@@ -645,7 +662,7 @@ body.pin .hr-head { padding-top: 10px; }
     var f = feeds();
     var dec = f.decisions || {};
     var pinned = Array.isArray((dec.data || {}).pinned) ? dec.data.pinned : [];
-    if (!pinned.length) return { rendered: 0, actionable: 0 };
+    if (!pinned.length) return { rendered: 0, actionable: 0, hasLifecycle: false };
     // The same question captured from several chats is ONE ask — show it once
     // with a count instead of three identical cards (seen live 2026-08-07).
     var seen = {}, deduped = [];
@@ -658,8 +675,9 @@ body.pin .hr-head { padding-top: 10px; }
     });
     var actionable = deduped.filter(function (d) { return !isAnswerPending(d); });
     var pending = deduped.filter(isAnswerPending);
+    var hasLifecycle = pending.some(function (d) { return d.lifecycle != null; });
     document.getElementById("title").textContent = actionable.length ? "Needs you" :
-      "Awaiting owner consumption";
+      (hasLifecycle ? "Decision follow-through" : "Awaiting owner consumption");
     // Bounded views keep actionable controls ahead of recorded receipts while
     // preserving the source order within both groups.
     actionable.concat(pending).slice(0, 5).forEach(function (d, i) {
@@ -668,7 +686,8 @@ body.pin .hr-head { padding-top: 10px; }
     if (deduped.length > 5) {
       list.appendChild(el("div", "more", "+" + (deduped.length - 5) + " more in full Mission Control"));
     }
-    return { rendered: deduped.length, actionable: actionable.length };
+    return { rendered: deduped.length, actionable: actionable.length,
+             hasLifecycle: hasLifecycle };
   }
 
   function render() {
@@ -686,6 +705,7 @@ body.pin .hr-head { padding-top: 10px; }
     var allClearVerified = coreVerified && jobs.length > 0;
     var needsTotal = 0;
     var renderedTotal = 0;
+    var hasLifecycle = false;
     if (attentionState.ok) {
       var top5 = ((attn.data || {}).top5) || [];
       var board = ((attn.data || {}).board) || [];
@@ -714,12 +734,14 @@ body.pin .hr-head { padding-top: 10px; }
         var decisionResult = renderFromDecisions(list);
         renderedTotal = decisionResult.rendered;
         needsTotal = decisionResult.actionable;
+        hasLifecycle = decisionResult.hasLifecycle;
       }
     } else {
       var fallbackResult = decisionsState.ok ? renderFromDecisions(list) :
-        { rendered: 0, actionable: 0 };
+        { rendered: 0, actionable: 0, hasLifecycle: false };
       renderedTotal = fallbackResult.rendered;
       needsTotal = fallbackResult.actionable;
+      hasLifecycle = fallbackResult.hasLifecycle;
     }
     if (renderedTotal === 0) {
       if (allClearVerified) renderEmpty(list);
@@ -744,7 +766,7 @@ body.pin .hr-head { padding-top: 10px; }
         : yellow + " job warning" + (yellow > 1 ? "s" : "");
     } else if (renderedTotal > 0 && coreVerified) {
       pill.className = "pill ok";
-      pillText.textContent = "Answers recorded";
+      pillText.textContent = hasLifecycle ? "Decision follow-through" : "Answers recorded";
     } else if (allClearVerified) {
       pill.className = "pill ok";
       pillText.textContent = "All clear";

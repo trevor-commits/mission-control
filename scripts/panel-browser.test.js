@@ -239,24 +239,33 @@ async function main() {
       });
     });
 
-    await test('answered-pending decisions remain read-only receipts and do not inflate Needs-you metrics', async () => {
-      const receipt = {
-        id: 'decision:333333333333333333333333',
-        question: 'Choose the recorded rollout window',
+    await test('decision lifecycle states remain separate read-only receipts and do not inflate Needs-you metrics', async () => {
+      const states = [
+        ['answered_pending', 'Answer recorded · awaiting delivery'],
+        ['delivered', 'Delivered · awaiting consumption'],
+        ['consumed', 'Consumed · awaiting execution'],
+        ['running', 'Running · awaiting live-result verification'],
+        ['live_result_verified', 'Live result verified · awaiting closure'],
+      ];
+      const receipts = states.map((entry, index) => ({
+        id: 'decision:' + String(index + 3).repeat(24),
+        question: 'Choose the recorded rollout window ' + index,
         options: ['Proceed', 'Wait'],
         recommended: 1,
         answer_pending: { choice: 2 },
-      };
+        lifecycle: { state: entry[0], valid: true },
+      }));
       await withPanel(state({
         attention: healthyCore().attention,
-        decisions: envelope('decisions', { pinned: [receipt], counts: { open: 1, structured_open: 1 } }),
+        decisions: envelope('decisions', { pinned: receipts, counts: { open: 5, structured_open: 5 } }),
         automation: healthyCore().automation,
       }), {}, async page => {
-        assert.strictEqual(await page.locator('#title').textContent(), 'Awaiting owner consumption');
-        assert.match(await page.locator('#list').innerText(), /Awaiting owner consumption · choice 2 recorded/);
+        assert.strictEqual(await page.locator('#title').textContent(), 'Decision follow-through');
+        const listText = await page.locator('#list').innerText();
+        states.forEach(entry => assert.match(listText, new RegExp(entry[1])));
         assert.strictEqual(await page.locator('#list button').count(), 0, 'pending receipt exposed an action');
         assert.strictEqual(await page.locator('#stat-needs').innerText(), '0');
-        assert.strictEqual(await page.locator('#status-text').innerText(), 'Answers recorded');
+        assert.strictEqual(await page.locator('#status-text').innerText(), 'Decision follow-through');
       });
     });
 

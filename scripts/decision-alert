@@ -56,12 +56,43 @@ RESOLUTION_TYPES = (
     "answering_user_turn", "downstream_resolution_key", "manual_resolution",
 )
 DECISION_STATES = ("open", "dismissed", "resolved")
+DECISION_LIFECYCLE = (
+    "answered_pending", "delivered", "consumed", "running",
+    "live_result_verified", "closed",
+)
+LIFECYCLE_TRANSITION_CONTRACT = {
+    "delivered": ("answered_pending", "provider_delivery_receipt", "delivered"),
+    "consumed": (
+        "delivered", ("answering_user_turn", "downstream_resolution_key"),
+        "accepted"),
+    "running": ("consumed", "execution_start_receipt", "started"),
+    "live_result_verified": (
+        "running", "live_result_receipt", "verified"),
+    "closed": (
+        "live_result_verified", "closure_receipt", "closed"),
+}
+LIFECYCLE_REQUESTED_ACTION = {
+    "awaiting_answer": "answer",
+    "answered_pending": "deliver",
+    "delivered": "consume",
+    "consumed": "start",
+    "running": "verify_live_result",
+    "live_result_verified": "close",
+    "closed": None,
+    "dismissed": None,
+    "legacy_resolved": None,
+    "invalid": "repair_lifecycle_evidence",
+}
 _ID_RE = re.compile(r"^decision:[0-9a-f]{24}$")
 _CARD_ID_RE = re.compile(r"^card:[0-9a-f]{16}$")
 _SCOPE_KEY_RE = re.compile(r"^scope:[0-9a-f]{40}$")
 _ARTIFACT_BATCH_RE = re.compile(
     r"^(?:rollup-[0-9a-f]{40}|\.rollup-stage\.[0-9a-f]{24})$")
+_SINGLE_STAGE_RE = re.compile(
+    r"^\.decision-(?:answer|prompt)-stage\.[0-9a-f]{24}$")
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+_LIFECYCLE_EVENT_ID_RE = re.compile(
+    r"^[A-Za-z0-9][A-Za-z0-9._:-]{7,191}$")
 
 
 class DecisionError(Exception):
@@ -373,16 +404,9 @@ def _latest_attempt(con, decision_id, fingerprint):
     return dict(row) if row else None
 
 
-def _active_answer_pending(con, row):
-    """Return the current-fingerprint pending marker while the row is open.
-
-    `answered_pending` is an immutable event interpretation, not a new state
-    enum. A changed fingerprint therefore deactivates the old marker without
-    rewriting history. Malformed local event detail fails toward suppression:
-    callers see an invalid marker instead of treating the decision as safely
-    unanswered.
-    """
-    if row is None or row["state"] != "open":
+def _answer_pending_marker(con, row):
+    """Return the latest current-fingerprint answered-pending event marker."""
+    if row is None:
         return None
     event = con.execute("""SELECT event_id,occurred_at,detail_json
         FROM decision_events
@@ -405,6 +429,105 @@ def _active_answer_pending(con, row):
     detail["event_id"] = event["event_id"]
     detail["occurred_at"] = event["occurred_at"]
     return detail
+
+
+def _active_answer_pending(con, row):
+    """Return the current-fingerprint pending marker while the row is open.
+
+    `answered_pending` is an immutable event interpretation, not a new state
+    enum. A changed fingerprint therefore deactivates the old marker without
+    rewriting history. Malformed local event detail fails toward suppression:
+    callers see an invalid marker instead of treating the decision as safely
+    unanswered.
+    """
+    if row is None or row["state"] != "open":
+        return None
+    return _answer_pending_marker(con, row)
+
+
+def _lifecycle_event_rows(con, decision_id, fingerprint):
+    placeholders = ",".join("?" for _ in DECISION_LIFECYCLE[1:])
+    return con.execute("""SELECT event_id,event_type,evidence_fingerprint,
+        occurred_at,evidence_type,evidence_ref,detail_json
+        FROM decision_events
+        WHERE decision_id=? AND evidence_fingerprint=?
+          AND event_type IN (%s)
+        ORDER BY event_id""" % placeholders,
+        [decision_id, fingerprint] + list(DECISION_LIFECYCLE[1:])).fetchall()
+
+
+def _decision_lifecycle(con, row):
+    """Derive the exact current-fingerprint lifecycle from immutable events."""
+    pending = _answer_pending_marker(con, row)
+    if pending is None:
+        state = {
+            "open": "awaiting_answer",
+            "dismissed": "dismissed",
+            "resolved": "legacy_resolved",
+        }.get(row["state"], "invalid")
+        return {"state": state, "valid": state != "invalid", "sequence": []}
+    if pending.get("valid") is not True:
+        return {
+            "state": "invalid", "valid": False,
+            "last_valid_state": None, "sequence": [],
+        }
+
+    state = "answered_pending"
+    sequence = [state]
+    latest = {
+        "event_id": pending.get("event_id"),
+        "occurred_at": pending.get("occurred_at"),
+        "evidence_type": "operator_choice",
+        "evidence_ref": pending.get("batch_key"),
+    }
+    seen_transition_ids = set()
+    for event in _lifecycle_event_rows(
+            con, row["decision_id"], row["evidence_fingerprint"]):
+        try:
+            detail = json.loads(event["detail_json"] or "null")
+        except (TypeError, ValueError):
+            detail = None
+        contract = LIFECYCLE_TRANSITION_CONTRACT.get(event["event_type"])
+        expected_previous = contract[0] if contract else None
+        transition_id = detail.get("transition_id") if isinstance(detail, dict) else None
+        valid = (
+            isinstance(detail, dict) and contract is not None and
+            state == expected_previous and
+            detail.get("from_state") == expected_previous and
+            detail.get("to_state") == event["event_type"] and
+            detail.get("expected_fingerprint") == row["evidence_fingerprint"] and
+            detail.get("resolution_key") == row["resolution_key"] and
+            detail.get("outcome") == contract[2] and
+            _LIFECYCLE_EVENT_ID_RE.match(str(transition_id or "")) and
+            transition_id not in seen_transition_ids)
+        if contract and isinstance(contract[1], tuple):
+            valid = valid and event["evidence_type"] in contract[1]
+        elif contract and contract[1] is not None:
+            valid = valid and event["evidence_type"] == contract[1]
+        if not valid:
+            return {
+                "state": "invalid", "valid": False,
+                "last_valid_state": state, "sequence": sequence,
+            }
+        seen_transition_ids.add(transition_id)
+        state = event["event_type"]
+        sequence.append(state)
+        latest = {
+            "event_id": event["event_id"],
+            "occurred_at": event["occurred_at"],
+            "evidence_type": event["evidence_type"],
+            "evidence_ref": event["evidence_ref"],
+            "transition_id": transition_id,
+        }
+    if ((state == "closed") != (row["state"] == "resolved")):
+        return {
+            "state": "invalid", "valid": False,
+            "last_valid_state": state, "sequence": sequence,
+        }
+    return {
+        "state": state, "valid": True, "sequence": sequence,
+        "latest": latest,
+    }
 
 
 def _presentation_from_text(text):
@@ -475,6 +598,9 @@ def _decision_dict(con, row):
     data["alert_attempt"] = _latest_attempt(
         con, data["id"], data["evidence_fingerprint"])
     data["answer_pending"] = _active_answer_pending(con, row)
+    data["lifecycle"] = _decision_lifecycle(con, row)
+    data["lifecycle"]["requested_action"] = LIFECYCLE_REQUESTED_ACTION.get(
+        data["lifecycle"].get("state"), "repair_lifecycle_evidence")
     # Consumers receive a structured packet and only need their prose parser for
     # old fixture/cache compatibility.
     data.update(_presentation_from_text(data.get("text")))
@@ -676,6 +802,135 @@ def dismiss(args):
         con.close()
 
 
+def _existing_lifecycle_transition(con, transition_id):
+    placeholders = ",".join("?" for _ in DECISION_LIFECYCLE[1:])
+    rows = con.execute("""SELECT event_id,decision_id,event_type,
+        evidence_fingerprint,evidence_type,evidence_ref,detail_json
+        FROM decision_events WHERE event_type IN (%s)
+        ORDER BY event_id""" % placeholders,
+        list(DECISION_LIFECYCLE[1:])).fetchall()
+    for event in rows:
+        try:
+            detail = json.loads(event["detail_json"] or "null")
+        except (TypeError, ValueError):
+            continue
+        if isinstance(detail, dict) and detail.get("transition_id") == transition_id:
+            return event, detail
+    return None, None
+
+
+def _record_lifecycle_transition(
+        con, row, to_state, transition_id, evidence_type, evidence_ref,
+        outcome, source, now):
+    if not _LIFECYCLE_EVENT_ID_RE.match(str(transition_id or "")):
+        raise DecisionError("invalid lifecycle event id")
+    contract = LIFECYCLE_TRANSITION_CONTRACT.get(to_state)
+    if contract is None:
+        raise DecisionError("unsupported lifecycle transition")
+
+    existing, detail = _existing_lifecycle_transition(con, transition_id)
+    if existing is not None:
+        exact = (
+            existing["decision_id"] == row["decision_id"] and
+            existing["event_type"] == to_state and
+            existing["evidence_fingerprint"] == row["evidence_fingerprint"] and
+            existing["evidence_type"] == evidence_type and
+            existing["evidence_ref"] == evidence_ref and
+            detail.get("resolution_key") == row["resolution_key"] and
+            detail.get("expected_fingerprint") == row["evidence_fingerprint"] and
+            detail.get("outcome") == outcome and
+            detail.get("source", "") == (source or ""))
+        if not exact:
+            raise DecisionError("lifecycle event id was replayed for another target")
+        return False
+
+    lifecycle = _decision_lifecycle(con, row)
+    if lifecycle.get("valid") is not True:
+        raise DecisionError("decision lifecycle is invalid")
+    expected_previous, expected_evidence, expected_outcome = contract
+    if lifecycle.get("state") != expected_previous:
+        raise DecisionError("illegal lifecycle transition")
+    if isinstance(expected_evidence, tuple):
+        evidence_matches = evidence_type in expected_evidence
+    else:
+        evidence_matches = evidence_type == expected_evidence
+    if not evidence_matches:
+        raise DecisionError("lifecycle evidence type does not match transition")
+    if outcome != expected_outcome:
+        raise DecisionError("lifecycle transition outcome is not successful")
+
+    event_detail = {
+        "schema": 1,
+        "transition_id": transition_id,
+        "from_state": expected_previous,
+        "to_state": to_state,
+        "expected_fingerprint": row["evidence_fingerprint"],
+        "resolution_key": row["resolution_key"],
+        "outcome": outcome,
+        "source": source or "",
+    }
+    _event(con, row["decision_id"], to_state, row["evidence_fingerprint"],
+           now, evidence_type, evidence_ref, detail=event_detail)
+    if to_state == "closed":
+        con.execute("""UPDATE decisions SET state='resolved',resolved_at=?,
+            resolution_evidence_type='lifecycle_closed',
+            resolution_evidence_ref=? WHERE decision_id=?""", (
+                now, evidence_ref, row["decision_id"],
+            ))
+    return True
+
+
+def transition(args):
+    now = _now()
+    counters = EgressCounters()
+    to_state = str(args.to_state or "")
+    if to_state == "consumed":
+        raise DecisionError(
+            "consumption requires graph-verified resolve evidence")
+    expected_fingerprint = _sanitize_required(
+        args.expected_fingerprint, IDENTIFIER,
+        "expected evidence fingerprint", counters)
+    if not _SHA256_RE.match(expected_fingerprint):
+        raise DecisionError("invalid expected evidence fingerprint")
+    resolution_key = _sanitize_required(
+        args.resolution_key, IDENTIFIER, "resolution-key", counters)
+    transition_id = _sanitize_required(
+        args.event_id, IDENTIFIER, "lifecycle event id", counters)
+    evidence_type = _sanitize_required(
+        args.evidence_type, IDENTIFIER, "lifecycle evidence type", counters)
+    evidence_ref = _sanitize_required(
+        args.evidence_ref, IDENTIFIER, "lifecycle evidence ref", counters)
+    outcome = _sanitize_required(
+        args.outcome, IDENTIFIER, "lifecycle outcome", counters)
+    source = _sanitize_optional(
+        getattr(args, "source", None), IDENTIFIER,
+        "lifecycle source", counters)
+
+    con = _connect()
+    try:
+        _tx(con)
+        row = _get(con, args.decision_id)
+        if row["evidence_fingerprint"] != expected_fingerprint:
+            raise DecisionError("lifecycle evidence fingerprint changed")
+        if row["resolution_key"] != resolution_key:
+            raise DecisionError("lifecycle target key does not exactly match decision")
+        changed = _record_lifecycle_transition(
+            con, row, to_state, transition_id, evidence_type, evidence_ref,
+            outcome, source, now)
+        con.commit()
+        decision = _decision_dict(con, _get(con, args.decision_id))
+        return {
+            "ok": True, "changed": changed, "replayed": not changed,
+            "decision": decision,
+            "egress_counters": counters.snapshot(),
+        }
+    except Exception:
+        con.rollback()
+        raise
+    finally:
+        con.close()
+
+
 def resolve(args):
     now = _now()
     counters = EgressCounters()
@@ -688,20 +943,44 @@ def resolve(args):
                                       "resolution-key", counters)
     source = _sanitize_optional(getattr(args, "source", None), IDENTIFIER,
                                 "resolve source", counters)
+    transition_id = _sanitize_optional(
+        getattr(args, "event_id", None), IDENTIFIER,
+        "lifecycle event id", counters)
     con = _connect()
     try:
         _tx(con)
         row = _get(con, args.decision_id)
-        pending = _active_answer_pending(con, row)
+        pending = _answer_pending_marker(con, row)
         if pending is not None and evidence_type == "manual_resolution":
             raise DecisionError(
                 "answered-pending decision requires verified owner consumption")
         if evidence_type != "manual_resolution":
             if not supplied_key or supplied_key != row["resolution_key"]:
                 raise DecisionError("resolution key does not exactly match decision")
-            _verified_resolution_evidence(evidence_type, evidence_ref, supplied_key)
         elif supplied_key is not None and supplied_key != row["resolution_key"]:
             raise DecisionError("manual resolution key does not exactly match decision")
+        if pending is not None:
+            if not transition_id:
+                raise DecisionError(
+                    "answered-pending consumption requires a stable event id")
+            existing, _detail = _existing_lifecycle_transition(
+                con, transition_id)
+            if existing is None:
+                _verified_resolution_evidence(
+                    evidence_type, evidence_ref, supplied_key)
+            changed = _record_lifecycle_transition(
+                con, row, "consumed", transition_id, evidence_type,
+                evidence_ref, "accepted", source, now)
+            con.commit()
+            return {
+                "ok": True, "changed": changed, "replayed": not changed,
+                "decision": _decision_dict(
+                    con, _get(con, args.decision_id)),
+                "egress_counters": counters.snapshot(),
+            }
+        if evidence_type != "manual_resolution":
+            _verified_resolution_evidence(
+                evidence_type, evidence_ref, supplied_key)
         changed = row["state"] != "resolved"
         if changed:
             con.execute("""UPDATE decisions SET state='resolved',resolved_at=?,
@@ -1020,6 +1299,137 @@ def _read_artifact_file(parent_fd, name, label):
         return b"".join(chunks)
     finally:
         os.close(fd)
+
+
+def _verify_single_artifact_proof(
+        decision_id, choice, answer_stage_name, answer_sha256,
+        prompt_stage_name, prompt_sha256):
+    if (not _SINGLE_STAGE_RE.match(str(answer_stage_name or "")) or
+            not answer_stage_name.startswith(".decision-answer-stage.")):
+        raise DecisionError("invalid single-answer stage name")
+    if (not _SINGLE_STAGE_RE.match(str(prompt_stage_name or "")) or
+            not prompt_stage_name.startswith(".decision-prompt-stage.")):
+        raise DecisionError("invalid single-prompt stage name")
+    if (not _SHA256_RE.match(str(answer_sha256 or "")) or
+            not _SHA256_RE.match(str(prompt_sha256 or ""))):
+        raise DecisionError("invalid single-answer artifact digest")
+    home = os.path.abspath(os.path.expanduser(os.environ.get(
+        "MISSION_CONTROL_HOME", "~/.mission-control")))
+    root_fd = answers_fd = prompts_fd = -1
+    try:
+        root_fd = _open_artifact_dir(None, home, "state")
+        answers_fd = _open_artifact_dir(root_fd, "answers", "answers")
+        prompts_fd = _open_artifact_dir(root_fd, "prompts", "prompts")
+        answer_raw = _read_artifact_file(
+            answers_fd, answer_stage_name, "single answer")
+        prompt_raw = _read_artifact_file(
+            prompts_fd, prompt_stage_name, "single prompt")
+        if (hashlib.sha256(answer_raw).hexdigest() != answer_sha256 or
+                hashlib.sha256(prompt_raw).hexdigest() != prompt_sha256):
+            raise DecisionError("single-answer artifact digest mismatch")
+        try:
+            answer = json.loads(answer_raw)
+        except (TypeError, ValueError):
+            raise DecisionError("single-answer artifact is invalid")
+        expected_prompt = os.path.join(home, "prompts", decision_id + ".md")
+        if (not isinstance(answer, dict) or
+                answer.get("decision_id") != decision_id or
+                answer.get("choice") != choice or
+                answer.get("prompt_path") != expected_prompt):
+            raise DecisionError("single-answer artifact does not match target")
+        prompt_text = prompt_raw.decode("utf-8", errors="strict")
+        if ("Decision id: `%s`" % decision_id not in prompt_text or
+                "Trevor choice: %d" % choice not in prompt_text):
+            raise DecisionError("single-answer prompt does not match target")
+    except UnicodeError:
+        raise DecisionError("single-answer prompt is invalid")
+    finally:
+        for fd in (prompts_fd, answers_fd, root_fd):
+            if fd >= 0:
+                os.close(fd)
+
+
+def answer_single(args):
+    now = _now()
+    counters = EgressCounters()
+    try:
+        choice = int(args.choice)
+    except (TypeError, ValueError):
+        raise DecisionError("single answer choice must be a positive integer")
+    if choice < 1:
+        raise DecisionError("single answer choice must be a positive integer")
+    expected_fingerprint = _sanitize_required(
+        args.expected_fingerprint, IDENTIFIER,
+        "expected evidence fingerprint", counters)
+    if not _SHA256_RE.match(expected_fingerprint):
+        raise DecisionError("invalid expected evidence fingerprint")
+    source = _sanitize_optional(
+        getattr(args, "source", None), IDENTIFIER,
+        "single answer source", counters)
+    resume_chat_id = _sanitize_optional(
+        getattr(args, "resume_chat_id", None), IDENTIFIER,
+        "single answer resume chat id", counters)
+    resume_provider = _sanitize_optional(
+        getattr(args, "resume_provider", None), IDENTIFIER,
+        "single answer resume provider", counters)
+    answer_sha256 = _sanitize_required(
+        args.answer_sha256, IDENTIFIER, "single answer digest", counters)
+    prompt_sha256 = _sanitize_required(
+        args.prompt_sha256, IDENTIFIER, "single prompt digest", counters)
+
+    con = _connect()
+    try:
+        _tx(con)
+        row = _get(con, args.decision_id)
+        if row["evidence_fingerprint"] != expected_fingerprint:
+            raise DecisionError("single answer evidence fingerprint changed")
+        _verify_single_artifact_proof(
+            row["decision_id"], choice, args.answer_stage_name,
+            answer_sha256, args.prompt_stage_name, prompt_sha256)
+        packet = {
+            "schema": 1,
+            "mode": "single",
+            "decision_id": row["decision_id"],
+            "choice": choice,
+            "evidence_fingerprint": row["evidence_fingerprint"],
+            "resolution_key": row["resolution_key"],
+            "source": source or "",
+            "resume_chat_id": resume_chat_id or "",
+            "resume_provider": resume_provider or "",
+            "answer_artifact": "answers/%s.json" % row["decision_id"],
+            "prompt_artifact": "prompts/%s.md" % row["decision_id"],
+            "answer_sha256": answer_sha256,
+            "prompt_sha256": prompt_sha256,
+        }
+        packet["batch_key"] = "single-%s" % _sha(_canonical(packet))[:40]
+        pending = _active_answer_pending(con, row)
+        if pending is None:
+            if row["state"] != "open":
+                raise DecisionError("decision is no longer open for this choice")
+            _event(con, row["decision_id"], "answered_pending",
+                   row["evidence_fingerprint"], now,
+                   evidence_type="operator_choice",
+                   evidence_ref=packet["batch_key"], detail=packet)
+            changed = True
+        else:
+            expected = dict(packet)
+            expected["valid"] = True
+            expected["event_id"] = pending.get("event_id")
+            expected["occurred_at"] = pending.get("occurred_at")
+            if any(pending.get(key) != value for key, value in expected.items()):
+                raise DecisionError("single answer conflicts with current pending choice")
+            changed = False
+        con.commit()
+        return {
+            "ok": True, "changed": changed, "replayed": not changed,
+            "decision": _decision_dict(con, _get(con, row["decision_id"])),
+            "egress_counters": counters.snapshot(),
+        }
+    except Exception:
+        con.rollback()
+        raise
+    finally:
+        con.close()
 
 
 def _verify_rollup_artifact_proof(
@@ -1957,10 +2367,23 @@ def _parser():
     p.add_argument("--evidence-type", required=True)
     p.add_argument("--evidence-ref", required=True)
     p.add_argument("--resolution-key")
+    p.add_argument("--event-id",
+                   help="stable producer event id; required for pending consumption")
     p.add_argument("--source",
                    help="who triggered this state change (e.g. telegram); "
                         "recorded in the decision_events detail, never in "
                         "resolution_evidence_ref (idempotent-replay key)")
+
+    p = sub.add_parser("transition")
+    p.add_argument("decision_id")
+    p.add_argument("--to", dest="to_state", required=True)
+    p.add_argument("--expected-fingerprint", required=True)
+    p.add_argument("--resolution-key", required=True)
+    p.add_argument("--event-id", required=True)
+    p.add_argument("--evidence-type", required=True)
+    p.add_argument("--evidence-ref", required=True)
+    p.add_argument("--outcome", required=True)
+    p.add_argument("--source")
 
     p = sub.add_parser("history")
     p.add_argument("decision_id")
@@ -1984,6 +2407,18 @@ def _parser():
     p.add_argument("--expected-scope-key", required=True)
     p.add_argument("--artifact-batch-name", required=True)
     p.add_argument("--artifact-manifest-sha256", required=True)
+    p.add_argument("--source")
+    p.add_argument("--resume-chat-id")
+    p.add_argument("--resume-provider")
+
+    p = sub.add_parser("answer-single")
+    p.add_argument("decision_id")
+    p.add_argument("choice", type=int)
+    p.add_argument("--expected-fingerprint", required=True)
+    p.add_argument("--answer-stage-name", required=True)
+    p.add_argument("--answer-sha256", required=True)
+    p.add_argument("--prompt-stage-name", required=True)
+    p.add_argument("--prompt-sha256", required=True)
     p.add_argument("--source")
     p.add_argument("--resume-chat-id")
     p.add_argument("--resume-provider")
@@ -2028,12 +2463,14 @@ def main(argv=None):
         handlers = {
             "ingest": ingest, "sync": ingest,
             "dismiss": dismiss, "resolve": resolve,
+            "transition": transition,
             "history": history, "list": list_decisions, "status": status,
             "sync-snapshot": sync_snapshot, "alert": alert,
             "alert-backfill": alert_backfill,
             "rollup": rollup_cards, "lanes": lanes,
             "plan-rollup-answer": plan_rollup_answer,
             "answer-rollup": answer_rollup,
+            "answer-single": answer_single,
             "admission-backfill": admission_backfill,
         }
         result = handlers[args.command](args)

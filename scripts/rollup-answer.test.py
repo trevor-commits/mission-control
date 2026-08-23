@@ -347,16 +347,93 @@ class RollupAnswerTests(unittest.TestCase):
         for decision_id in (ids["primary"], ids["equivalent"]):
             self.assertEqual(len(self._pending_events(decision_id)), 1)
 
-    def test_verified_consumption_resolves_only_the_exact_member(self) -> None:
+    def test_verified_consumption_advances_only_the_exact_member(self) -> None:
         fixture = self._three_member_card()
         ids = fixture["ids"]
         card_id = fixture["card"]["card_id"]
         self._dashboard(
             "decide", "answer-rollup", card_id, ids["primary"], "1")
 
+        primary = self._history(ids["primary"])["decision"]
+        fingerprint = primary["evidence_fingerprint"]
+        resolution_key = fixture["resolution_keys"][ids["primary"]]
+        self.assertEqual(primary["lifecycle"]["state"], "answered_pending")
+        self.assertEqual(primary["lifecycle"]["requested_action"], "deliver")
+
+        self._alert(
+            "transition", ids["primary"], "--to", "delivered",
+            "--expected-fingerprint", fingerprint,
+            "--resolution-key", resolution_key,
+            "--event-id", "delivery:failed-primary",
+            "--evidence-type", "provider_delivery_receipt",
+            "--evidence-ref", "provider:failed-primary",
+            "--outcome", "failed", ok=False)
+        self.assertEqual(
+            self._history(ids["primary"])["decision"]["lifecycle"]["state"],
+            "answered_pending")
+
+        delivered = self._alert(
+            "transition", ids["primary"], "--to", "delivered",
+            "--expected-fingerprint", fingerprint,
+            "--resolution-key", resolution_key,
+            "--event-id", "delivery:primary-001",
+            "--evidence-type", "provider_delivery_receipt",
+            "--evidence-ref", "provider:receipt-primary-001",
+            "--outcome", "delivered")
+        self.assertTrue(delivered["changed"])
+        self.assertEqual(delivered["decision"]["state"], "open")
+        self.assertEqual(delivered["decision"]["lifecycle"]["state"], "delivered")
+        self.assertEqual(
+            delivered["decision"]["lifecycle"]["requested_action"],
+            "consume")
+
+        replay = self._alert(
+            "transition", ids["primary"], "--to", "delivered",
+            "--expected-fingerprint", fingerprint,
+            "--resolution-key", resolution_key,
+            "--event-id", "delivery:primary-001",
+            "--evidence-type", "provider_delivery_receipt",
+            "--evidence-ref", "provider:receipt-primary-001",
+            "--outcome", "delivered")
+        self.assertFalse(replay["changed"])
+        self.assertTrue(replay["replayed"])
+
+        equivalent = self._history(ids["equivalent"])["decision"]
+        self._alert(
+            "transition", ids["equivalent"], "--to", "delivered",
+            "--expected-fingerprint", equivalent["evidence_fingerprint"],
+            "--resolution-key", fixture["resolution_keys"][ids["equivalent"]],
+            "--event-id", "delivery:primary-001",
+            "--evidence-type", "provider_delivery_receipt",
+            "--evidence-ref", "provider:receipt-primary-001",
+            "--outcome", "delivered", ok=False)
+
+        self._alert(
+            "transition", ids["primary"], "--to", "running",
+            "--expected-fingerprint", fingerprint,
+            "--resolution-key", resolution_key,
+            "--event-id", "execution:skip-consumption",
+            "--evidence-type", "execution_start_receipt",
+            "--evidence-ref", "executor:start-skipped",
+            "--outcome", "started", ok=False)
+
         self._alert(
             "resolve", ids["primary"], "--evidence-type", "manual_resolution",
             "--evidence-ref", "manual-not-consumption", ok=False)
+
+        self._alert(
+            "resolve", ids["primary"],
+            "--evidence-type", "answering_user_turn",
+            "--evidence-ref", "consumer:rejected",
+            "--resolution-key", resolution_key,
+            "--event-id", "consumption:rejected-primary", ok=False)
+
+        self._alert(
+            "resolve", ids["primary"],
+            "--evidence-type", "answering_user_turn",
+            "--evidence-ref", "wrong-task-consumption",
+            "--resolution-key", fixture["resolution_keys"][ids["equivalent"]],
+            "--event-id", "consumption:wrong-task", ok=False)
 
         graph = self.temp / "graph.db"
         con = sqlite3.connect(graph)
@@ -371,20 +448,123 @@ class RollupAnswerTests(unittest.TestCase):
         con.commit()
         con.close()
 
-        resolved = self._alert(
+        consumed = self._alert(
             "resolve", ids["primary"],
             "--evidence-type", "answering_user_turn",
             "--evidence-ref", evidence_ref,
-            "--resolution-key", fixture["resolution_keys"][ids["primary"]],
+            "--resolution-key", resolution_key,
+            "--event-id", "consumption:primary-001",
             extra_env={"CHAT_GRAPH_DB": str(graph)})
-        self.assertTrue(resolved["changed"])
-        self.assertEqual(resolved["decision"]["state"], "resolved")
-        self.assertIsNone(resolved["decision"]["answer_pending"])
+        self.assertTrue(consumed["changed"])
+        self.assertEqual(consumed["decision"]["state"], "open")
+        self.assertEqual(consumed["decision"]["lifecycle"]["state"], "consumed")
+        self.assertEqual(
+            consumed["decision"]["lifecycle"]["requested_action"], "start")
+        self.assertIsNotNone(consumed["decision"]["answer_pending"])
         self.assertEqual(self._history(ids["equivalent"])["decision"]["state"], "open")
+        self.assertEqual(
+            self._history(ids["equivalent"])["decision"]["lifecycle"]["state"],
+            "answered_pending")
         self.assertIsNotNone(
             self._history(ids["equivalent"])["decision"]["answer_pending"])
         self.assertIsNone(
             self._history(ids["independent"])["decision"]["answer_pending"])
+
+        replay = self._alert(
+            "resolve", ids["primary"],
+            "--evidence-type", "answering_user_turn",
+            "--evidence-ref", evidence_ref,
+            "--resolution-key", resolution_key,
+            "--event-id", "consumption:primary-001",
+            extra_env={"CHAT_GRAPH_DB": str(graph)})
+        self.assertFalse(replay["changed"])
+
+        self._alert(
+            "transition", ids["primary"], "--to", "closed",
+            "--expected-fingerprint", fingerprint,
+            "--resolution-key", resolution_key,
+            "--event-id", "closure:unverified-primary",
+            "--evidence-type", "closure_receipt",
+            "--evidence-ref", "closure:without-result",
+            "--outcome", "closed", ok=False)
+
+        running = self._alert(
+            "transition", ids["primary"], "--to", "running",
+            "--expected-fingerprint", fingerprint,
+            "--resolution-key", resolution_key,
+            "--event-id", "execution:primary-001",
+            "--evidence-type", "execution_start_receipt",
+            "--evidence-ref", "executor:start-primary-001",
+            "--outcome", "started")
+        self.assertEqual(running["decision"]["lifecycle"]["state"], "running")
+        self.assertEqual(
+            running["decision"]["lifecycle"]["requested_action"],
+            "verify_live_result")
+
+        self._alert(
+            "transition", ids["primary"], "--to", "live_result_verified",
+            "--expected-fingerprint", fingerprint,
+            "--resolution-key", resolution_key,
+            "--event-id", "result:unverified-primary",
+            "--evidence-type", "live_result_receipt",
+            "--evidence-ref", "result:unverified-primary",
+            "--outcome", "unverified", ok=False)
+        self._alert(
+            "transition", ids["primary"], "--to", "running",
+            "--expected-fingerprint", fingerprint,
+            "--resolution-key", resolution_key,
+            "--event-id", "execution:timeout-primary",
+            "--evidence-type", "execution_start_receipt",
+            "--evidence-ref", "executor:timeout-primary",
+            "--outcome", "timeout", ok=False)
+
+        verified = self._alert(
+            "transition", ids["primary"], "--to", "live_result_verified",
+            "--expected-fingerprint", fingerprint,
+            "--resolution-key", resolution_key,
+            "--event-id", "result:primary-001",
+            "--evidence-type", "live_result_receipt",
+            "--evidence-ref", "result:verified-primary-001",
+            "--outcome", "verified")
+        self.assertEqual(
+            verified["decision"]["lifecycle"]["state"],
+            "live_result_verified")
+        self.assertEqual(
+            verified["decision"]["lifecycle"]["requested_action"], "close")
+
+        closed = self._alert(
+            "transition", ids["primary"], "--to", "closed",
+            "--expected-fingerprint", fingerprint,
+            "--resolution-key", resolution_key,
+            "--event-id", "closure:primary-001",
+            "--evidence-type", "closure_receipt",
+            "--evidence-ref", "closure:receipt-primary-001",
+            "--outcome", "closed")
+        self.assertTrue(closed["changed"])
+        self.assertEqual(closed["decision"]["state"], "resolved")
+        self.assertEqual(closed["decision"]["lifecycle"]["state"], "closed")
+        self.assertIsNone(closed["decision"]["lifecycle"]["requested_action"])
+        self.assertIsNone(closed["decision"]["answer_pending"])
+
+        replay = self._alert(
+            "transition", ids["primary"], "--to", "closed",
+            "--expected-fingerprint", fingerprint,
+            "--resolution-key", resolution_key,
+            "--event-id", "closure:primary-001",
+            "--evidence-type", "closure_receipt",
+            "--evidence-ref", "closure:receipt-primary-001",
+            "--outcome", "closed")
+        self.assertFalse(replay["changed"])
+        self.assertTrue(replay["replayed"])
+
+        events = self._history(ids["primary"])["events"]
+        lifecycle_events = [event["event_type"] for event in events
+                            if event["event_type"] in {
+                                "answered_pending", "delivered", "consumed",
+                                "running", "live_result_verified", "closed"}]
+        self.assertEqual(lifecycle_events, [
+            "answered_pending", "delivered", "consumed", "running",
+            "live_result_verified", "closed"])
 
     def test_changed_evidence_unlocks_a_new_answer(self) -> None:
         first = self._ingest("solo-owner", "one", evidence="evidence-v1")
@@ -1374,10 +1554,28 @@ class RollupAnswerTests(unittest.TestCase):
             extra_env=brief_env)
 
         self.assertIn("prompt:", answered.stdout)
-        self.assertEqual(self._history(decision_id)["decision"]["state"], "resolved")
+        decision = self._history(decision_id)["decision"]
+        self.assertEqual(decision["state"], "open")
+        self.assertIsNotNone(decision["answer_pending"])
+        self.assertEqual(decision["answer_pending"]["mode"], "single")
+        self.assertEqual(decision["lifecycle"]["state"], "answered_pending")
         self.assertNotIn(decision_id, latest_path.read_text())
         self.assertNotIn(decision_id, brief_feed_path.read_text())
         self.assertFalse(marker.exists())
+
+        prompt_path = self.home / "prompts" / (decision_id + ".md")
+        prompt_before = prompt_path.read_bytes()
+        replay = self._proc(
+            ["/bin/bash", str(DASHBOARD), "decide", "answer", decision_id, "1"],
+            extra_env=brief_env)
+        self.assertIn("prompt:", replay.stdout)
+        self.assertEqual(prompt_path.read_bytes(), prompt_before)
+        events = self._pending_events(decision_id)
+        self.assertEqual(len(events), 1)
+        self._proc(
+            ["/bin/bash", str(DASHBOARD), "decide", "answer", decision_id, "2"],
+            ok=False, extra_env=brief_env)
+        self.assertEqual(len(self._pending_events(decision_id)), 1)
 
     def test_public_answer_fails_closed_for_inflight_brief_delivery(self) -> None:
         fixture = self._three_member_card()

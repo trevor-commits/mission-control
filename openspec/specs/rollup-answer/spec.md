@@ -1,7 +1,7 @@
 # rollup-answer Specification
 
 ## Purpose
-Define strict rollup-answer targeting, durable answered-pending receipts, recoverable publication and replay, verified consumption, local no-egress feed coherence, and actionable-first views.
+Define strict answer targeting, durable answered-pending receipts, recoverable publication and replay, exact decision follow-through, local no-egress feed coherence, and actionable-first views.
 ## Requirements
 ### Requirement: Strict rollup targeting
 The system MUST accept a rollup answer only for a current open card and primary decision, MUST target the primary plus only action+owner+target equivalents, and MUST return every independent or already-pending member visibly without changing it.
@@ -13,9 +13,11 @@ The system MUST accept a rollup answer only for a current open card and primary 
 ### Requirement: Durable answered-pending interpretation
 Every targeted member MUST remain `open` and MUST expose one current `answered_pending` event containing the choice, source/resume metadata, card, primary, batch, canonical manifest digest, member sets, and private artifact references.
 
+Single-decision answers MUST use the same non-terminal interpretation. Their event MUST bind the exact current fingerprint, resolution key, choice, source/resume metadata, final private artifact paths, and both staged artifact digests before publication.
+
 #### Scenario: A rollup answer is recorded
 - **WHEN** the operator answers a valid card
-- **THEN** all eligible targets remain open, show awaiting owner consumption, and receive no terminal resolution event
+- **THEN** all eligible targets remain open, show answer recorded and awaiting delivery, and receive no terminal resolution event
 
 ### Requirement: Pending suppression and visibility
 Current pending members MUST remain visible in local decision surfaces but MUST be excluded from ordinary alerts, Morning Brief `NEEDS YOU`, dismissal, and single-answer commands.
@@ -25,7 +27,7 @@ Current pending members MUST remain visible in local decision surfaces but MUST 
 - **THEN** the member is skipped with an explicit `answered_pending_consumption` reason and no send is attempted
 
 ### Requirement: Verified per-member consumption
-Current pending members MUST resolve only through existing graph-verified answering-user-turn or downstream-resolution-key evidence for that exact member.
+Current pending members MUST advance from `delivered` to `consumed` only through existing graph-verified answering-user-turn or downstream-resolution-key evidence for that exact member. Consumption MUST NOT resolve or close the decision.
 
 #### Scenario: Manual resolution is attempted
 - **WHEN** a caller tries `manual_resolution` on a current pending member
@@ -33,7 +35,36 @@ Current pending members MUST resolve only through existing graph-verified answer
 
 #### Scenario: Exact owner evidence is verified
 - **WHEN** chat graph proves the member's exact resolution key and evidence reference
-- **THEN** only that member resolves and other batch members remain open pending
+- **THEN** only that member becomes `consumed`; it and other batch members remain open until their own later lifecycle receipts
+
+### Requirement: Exact decision-delivery lifecycle
+Each current-fingerprint decision MUST advance deterministically through `answered_pending -> delivered -> consumed -> running -> live_result_verified -> closed`. Every transition MUST bind the exact decision id, evidence fingerprint, resolution key, stable producer event id, evidence type, evidence reference, successful outcome, source, and prior state. A transition MUST be idempotent only for an exact replay of the same event packet.
+
+#### Scenario: Delivery fails or times out
+- **WHEN** a delivery producer reports `failed` or `timeout` instead of a successful provider receipt
+- **THEN** the command fails, writes no transition, and the decision remains `answered_pending`
+
+#### Scenario: Consumer rejects or targets another task
+- **WHEN** graph evidence is absent, rejected, or bound to a different resolution key
+- **THEN** consumption fails and the decision remains `delivered`
+
+#### Scenario: A producer skips a state
+- **WHEN** a new event attempts `running`, `live_result_verified`, or `closed` without its exact predecessor
+- **THEN** the command fails without advancing the lifecycle
+
+#### Scenario: A stable event id is replayed
+- **WHEN** the same event id and exact target packet are submitted again
+- **THEN** the command returns an idempotent replay without another event
+- **AND WHEN** that event id is reused for another target or packet
+- **THEN** the command fails closed
+
+#### Scenario: Live result is not verified
+- **WHEN** execution reports timeout, failure, or an unverified completion claim
+- **THEN** the decision remains open and cannot close
+
+#### Scenario: Closure follows verified live evidence
+- **WHEN** exact receipts already prove delivery, consumption, execution start, and a live result
+- **THEN** an exact closure receipt records `closed` and only then changes the compatibility queue state to `resolved`
 
 ### Requirement: Atomic and recoverable batch publication
 The system MUST stage every private member artifact before the database transition, MUST record all target events plus the canonical manifest digest in one transaction, MUST bind pre/post-commit verification to the same held batch directory, and MUST publish the batch with one atomic directory rename.

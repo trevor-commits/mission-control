@@ -1747,8 +1747,25 @@ html[data-theme="dark"] .mc-heat-l4 { background: #35b98a; }
     return !!(decision && decision.answer_pending != null);
   }
   function answerPendingText(decision) {
+    var lifecycle = decision && decision.lifecycle;
+    var state = lifecycle && lifecycle.valid === true ? lifecycle.state : null;
+    var labels = {
+      answered_pending: "Answer recorded · awaiting delivery",
+      delivered: "Delivered · awaiting consumption",
+      consumed: "Consumed · awaiting execution",
+      running: "Running · awaiting live-result verification",
+      live_result_verified: "Live result verified · awaiting closure",
+      closed: "Closed"
+    };
     var raw = decision && decision.answer_pending && decision.answer_pending.choice;
     var choice = +raw;
+    if (lifecycle && lifecycle.valid === false) {
+      return "Lifecycle evidence invalid · action blocked";
+    }
+    if (state && labels[state]) {
+      return labels[state] + (isFinite(choice) && choice > 0 && Math.floor(choice) === choice ?
+        " · choice " + choice : "");
+    }
     if (isFinite(choice) && choice > 0 && Math.floor(choice) === choice) {
       return "Awaiting owner consumption · choice " + choice + " recorded";
     }
@@ -1763,9 +1780,12 @@ html[data-theme="dark"] .mc-heat-l4 { background: #35b98a; }
     opts = opts || {};
     var pendingCount = pinned.filter(isAnswerPending).length;
     var actionableCount = pinned.length - pendingCount;
+    var lifecycleCount = pinned.filter(function (decision) {
+      return isAnswerPending(decision) && decision.lifecycle != null;
+    }).length;
     var heading = actionableCount ?
       (opts.glance ? "Needs you" : "Decisions waiting for you") :
-      "Awaiting owner consumption";
+      (lifecycleCount ? "Decision follow-through" : "Awaiting owner consumption");
     var section = h("section", { class: opts.glance ? "mc-glance-card" : "mc-attention" });
     section.appendChild(h("div", { class: "mc-section-head" },
       h("h2", { text: heading }), ageSpan(g.epoch)));
@@ -1978,6 +1998,9 @@ html[data-theme="dark"] .mc-heat-l4 { background: #35b98a; }
     var homePinned = decisionGuard.ok && decisionGuard.data &&
       Array.isArray(decisionGuard.data.pinned) ? decisionGuard.data.pinned : [];
     var homeActionable = homePinned.filter(function (d) { return !isAnswerPending(d); }).length;
+    var homeHasLifecycle = homePinned.some(function (d) {
+      return isAnswerPending(d) && d.lifecycle != null;
+    });
     var homeNeedsAction = home.status === "attention" || homeActionable > 0;
     var hero = homeHeroState();
     var heroTone = hero.tone === "red" ? "mc-state-red" : hero.tone === "amber" ? "mc-state-amber" : "mc-state-green";
@@ -1999,7 +2022,9 @@ html[data-theme="dark"] .mc-heat-l4 { background: #35b98a; }
         h("div", { class: "mc-hero-stat-num" }, hero.ageShort),
         h("div", { class: "mc-hero-stat-lbl" }, "Feed age"))));
     glance.appendChild(h("h1", { class: "mc-glance-title" },
-      homeNeedsAction ? "Needs you" : (homePinned.length ? "Answers recorded" : "Needs you")));
+      homeNeedsAction ? "Needs you" : (homePinned.length ?
+        (homeHasLifecycle ? "Decision follow-through" : "Answers recorded") :
+        "Needs you")));
     var count = renderAttentionGlance(glance, 5);
     if (!count) count = renderPinnedDecisions(glance, 5, { glance: true });
     if (!count) {

@@ -717,13 +717,13 @@ def answer_transaction(
     home: str, decision_alert: str, decision_id: str, choice: int,
     resume_chat_id: str = "", resume_provider: str = "", source: str = "",
 ) -> tuple[dict, dict, str]:
-    """Resolve and publish one answer while pinning every private directory.
+    """Record and publish one pending answer while pinning every private directory.
 
     resume_chat_id/resume_provider are carried into the composed Goal prompt
     (build_prompt already renders them) so the resumed worker knows where to
     send a consumption receipt once it finishes the waiting work. source is
-    recorded on the decision_events row (never in resolution_evidence_ref,
-    which stays the mc-answer:<choice> idempotent-replay key)."""
+    bound into the immutable answered-pending event packet; later transition
+    receipts keep their own exact evidence references."""
     if not re.fullmatch(r"decision:[0-9a-f]{24}", decision_id):
         raise ValueError("decide answer: invalid decision id")
     if choice < 1:
@@ -755,16 +755,21 @@ def answer_transaction(
 
         history = _run_alert(decision_alert, home, "history", decision_id, "--json")
         decision = history.get("decision") or {}
-        if decision.get("answer_pending") is not None:
-            raise RuntimeError(
-                "decide answer: answered-pending decision awaits owner consumption")
+        pending = decision.get("answer_pending")
         evidence_ref = ((decision.get("resolution") or {}).get("evidence_ref"))
         evidence_type = ((decision.get("resolution") or {}).get("evidence_type"))
-        if decision.get("state") == "open":
-            recover = False
+        legacy_recover = False
+        if pending is not None:
+            if (pending.get("valid") is not True or
+                    pending.get("mode") != "single" or
+                    pending.get("choice") != choice):
+                raise RuntimeError(
+                    "decide answer: decision already has a different pending answer")
+        elif decision.get("state") == "open":
+            pass
         elif (decision.get("state") == "resolved" and evidence_type == "manual_resolution"
               and evidence_ref == "mc-answer:%d" % choice):
-            recover = True
+            legacy_recover = True
         else:
             raise RuntimeError("decide answer: decision is no longer open for this choice")
 
@@ -785,7 +790,8 @@ def answer_transaction(
         _safe_destination(answers_fd, answer_name, "answer")
         _safe_destination(prompts_fd, prompt_name, "prompt")
         prompt, label = build_prompt(
-            decision_id, choice, text, resume_chat_id, resume_provider)
+            decision_id, choice, text, resume_chat_id, resume_provider,
+            include_generated_at=False)
         prompt_path = os.path.join(home, "prompts", prompt_name)
         reason = "Trevor chose option %d via Mission Control" % choice
         answer = {
@@ -794,11 +800,12 @@ def answer_transaction(
             "reason": reason,
             "prompt_path": prompt_path,
         }
+        prompt_bytes = prompt.encode("utf-8")
+        answer_bytes = (json.dumps(answer, sort_keys=True) + "\n").encode("utf-8")
         prompt_stage = _write_stage(
-            prompts_fd, ".decision-prompt-stage.", prompt.encode("utf-8"))
+            prompts_fd, ".decision-prompt-stage.", prompt_bytes)
         answer_stage = _write_stage(
-            answers_fd, ".decision-answer-stage.",
-            (json.dumps(answer, sort_keys=True) + "\n").encode("utf-8"))
+            answers_fd, ".decision-answer-stage.", answer_bytes)
         _test_pause_after_stage(home_fd)
 
         # The decision stays open if either named path stopped referring to the
@@ -807,20 +814,27 @@ def answer_transaction(
         _validate_transaction_dirs(home, home_fd, answers_fd, prompts_fd)
         _safe_destination(answers_fd, answer_name, "answer")
         _safe_destination(prompts_fd, prompt_name, "prompt")
-        if recover:
+        if legacy_recover:
             decision_result = history
         else:
-            resolve_args = [
-                "resolve", decision_id,
-                "--evidence-type", "manual_resolution",
-                "--evidence-ref", "mc-answer:%d" % choice,
+            answer_args = [
+                "answer-single", decision_id, str(choice),
+                "--expected-fingerprint", decision["evidence_fingerprint"],
+                "--answer-stage-name", answer_stage,
+                "--answer-sha256", hashlib.sha256(answer_bytes).hexdigest(),
+                "--prompt-stage-name", prompt_stage,
+                "--prompt-sha256", hashlib.sha256(prompt_bytes).hexdigest(),
             ]
             if source:
-                resolve_args += ["--source", source]
-            resolve_args.append("--json")
-            decision_result = _run_alert(decision_alert, home, *resolve_args)
+                answer_args += ["--source", source]
+            if resume_chat_id:
+                answer_args += ["--resume-chat-id", resume_chat_id]
+            if resume_provider:
+                answer_args += ["--resume-provider", resume_provider]
+            answer_args.append("--json")
+            decision_result = _run_alert(decision_alert, home, *answer_args)
 
-        # A post-resolution directory swap cannot redirect publication. It is
+        # A post-recording directory swap cannot redirect publication. It is
         # rejected here, and exact-choice replay can finish the derived files.
         _validate_transaction_dirs(home, home_fd, answers_fd, prompts_fd)
         _safe_destination(answers_fd, answer_name, "answer")
