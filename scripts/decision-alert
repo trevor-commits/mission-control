@@ -26,7 +26,7 @@ import urllib.parse
 from mission_control_common import (
     DESKTOP_GLANCE_CTA, ACTION, IDENTIFIER, NARRATIVE,
                                     NOTIFICATION, EgressCounters,
-                                    sanitize_text)
+                                    sanitize_text, valid_lifecycle_source)
 import queue_admission
 
 
@@ -93,10 +93,9 @@ _ARTIFACT_BATCH_RE = re.compile(
 _SINGLE_STAGE_RE = re.compile(
     r"^\.decision-(?:answer|prompt)-stage\.[0-9a-f]{24}$")
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+_GRAPH_ITEM_KEY_RE = re.compile(r"^[0-9a-f]{40}$")
 _LIFECYCLE_EVENT_ID_RE = re.compile(
     r"^[A-Za-z0-9][A-Za-z0-9._:-]{7,191}$")
-_LIFECYCLE_SOURCE_RE = re.compile(
-    r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$")
 
 
 class DecisionError(Exception):
@@ -342,8 +341,81 @@ def _structured_origin_requires_anchor(source_kind, provenance):
     return (source_kind, provenance.casefold()) not in deterministic
 
 
-def _valid_lifecycle_source(value):
-    return bool(_LIFECYCLE_SOURCE_RE.match(str(value or "")))
+def _graph_identity_for_decision(row):
+    """Return the exact chat-graph row identity bound to a Tier-1 decision."""
+    item_key = str(row["resolution_key"] or "")
+    source_key = str(row["source_key"] or "")
+    suffix = ":" + item_key
+    if (row["source_kind"] != "chat" or
+            row["provenance"] != "chat-graph tier1" or
+            not _GRAPH_ITEM_KEY_RE.match(item_key) or
+            not source_key.startswith("outcome:") or
+            not source_key.endswith(suffix)):
+        raise DecisionError("decision lacks exact chat graph identity")
+    source_id = source_key[len("outcome:"):-len(suffix)]
+    identity = {
+        "source_id": source_id,
+        "kind": "chat_open_end",
+        "item_key": item_key,
+    }
+    if (not valid_lifecycle_source(source_id) or
+            row["anchor_ref"] != "chat-graph:%s:%s" % (
+                source_id, item_key)):
+        raise DecisionError("decision chat graph identity is inconsistent")
+    return identity
+
+
+def _verified_graph_consumption(row, evidence_type, evidence_ref):
+    """Verify consumption against one exact persisted chat-graph row."""
+    expected_evidence = {
+        "answering_user_turn": "answering_user_turn",
+        "downstream_resolution_key": "downstream_explicit",
+    }.get(evidence_type)
+    if expected_evidence is None:
+        raise DecisionError("resolution evidence type is not exact/allowed")
+    identity = _graph_identity_for_decision(row)
+    path = os.path.expanduser(os.environ.get(
+        "CHAT_GRAPH_DB", os.path.join("~", ".chat-graph", "graph.db")))
+    con = None
+    try:
+        con = sqlite3.connect("file:%s?mode=ro" % path, uri=True, timeout=5)
+        columns = {field[1] for field in con.execute(
+            "PRAGMA table_info(open_ends)").fetchall()}
+        required = {
+            "session_id", "kind", "item_key", "resolved_at",
+            "resolution_evidence_type", "resolution_evidence_ref",
+        }
+        if not required.issubset(columns):
+            raise DecisionError(
+                "verified graph consumption identity is unavailable")
+        rows = con.execute("""SELECT session_id,kind,item_key,resolved_at
+            FROM open_ends WHERE session_id=? AND kind=? AND item_key=?
+              AND resolved_at IS NOT NULL
+              AND resolution_evidence_type=? AND resolution_evidence_ref=?
+            ORDER BY resolved_at DESC""", (
+                identity["source_id"], identity["kind"],
+                identity["item_key"], expected_evidence,
+                evidence_ref)).fetchall()
+    except sqlite3.Error:
+        raise DecisionError("verified graph resolution evidence unavailable")
+    finally:
+        if con is not None:
+            con.close()
+    if not rows:
+        raise DecisionError(
+            "resolution evidence does not match decision graph identity")
+    proofs = set(rows)
+    if len(proofs) != 1:
+        raise DecisionError("graph resolution evidence is ambiguous")
+    source_id, kind, item_key, resolved_at = next(iter(proofs))
+    if (isinstance(resolved_at, bool) or
+            not isinstance(resolved_at, int) or resolved_at <= 0 or
+            source_id != identity["source_id"] or
+            kind != identity["kind"] or item_key != identity["item_key"]):
+        raise DecisionError("graph resolution evidence has invalid identity")
+    proof = dict(identity)
+    proof["resolved_at"] = resolved_at
+    return proof
 
 
 def _verified_resolution_evidence(evidence_type, evidence_ref, resolution_key):
@@ -381,7 +453,7 @@ def _verified_resolution_evidence(evidence_type, evidence_ref, resolution_key):
     if len(proofs) != 1:
         raise DecisionError("graph resolution evidence is ambiguous")
     resolved_at, source_id = next(iter(proofs))
-    if resolved_at <= 0 or not _valid_lifecycle_source(source_id):
+    if resolved_at <= 0 or not valid_lifecycle_source(source_id):
         raise DecisionError("graph resolution evidence has invalid identity")
     return {"resolved_at": resolved_at, "source_id": source_id}
 
@@ -448,7 +520,11 @@ def _answer_pending_marker(con, row):
         detail = {"valid": False}
     else:
         detail = dict(detail)
-        detail["valid"] = _valid_lifecycle_source(detail.get("source"))
+        detail["valid"] = valid_lifecycle_source(detail.get("source"))
+        detail["legacy_source_upgradeable"] = (
+            detail.get("source") == "" and
+            detail.get("schema") == 1 and
+            detail.get("mode") == "single")
     detail["event_id"] = event["event_id"]
     detail["occurred_at"] = event["occurred_at"]
     return detail
@@ -466,6 +542,34 @@ def _active_answer_pending(con, row):
     if row is None or row["state"] != "open":
         return None
     return _answer_pending_marker(con, row)
+
+
+def _legacy_single_pending_matches(con, pending, packet):
+    """Prove one pre-source-contract single receipt before upgrading it."""
+    if (pending.get("valid") is not False or
+            pending.get("legacy_source_upgradeable") is not True):
+        return False
+    legacy_packet = dict(packet)
+    legacy_packet["source"] = ""
+    legacy_packet["batch_key"] = "single-%s" % _sha(
+        _canonical({key: value for key, value in legacy_packet.items()
+                    if key != "batch_key"}))[:40]
+    mismatched = [key for key, value in legacy_packet.items()
+                  if pending.get(key) != value]
+    if mismatched:
+        raise DecisionError(
+            "legacy pending source upgrade fields do not match: %s" %
+            ",".join(sorted(mismatched)))
+    event = con.execute("""SELECT evidence_type,evidence_ref
+        FROM decision_events WHERE event_id=? AND event_type='answered_pending'
+          AND decision_id=? AND evidence_fingerprint=?""", (
+            pending.get("event_id"), packet["decision_id"],
+            packet["evidence_fingerprint"])).fetchone()
+    if (event is None or event["evidence_type"] != "operator_choice" or
+            event["evidence_ref"] != legacy_packet["batch_key"]):
+        raise DecisionError(
+            "legacy pending source upgrade event binding does not match")
+    return True
 
 
 def _lifecycle_event_rows(con, decision_id, fingerprint):
@@ -532,7 +636,7 @@ def _decision_lifecycle(con, row):
             detail.get("expected_fingerprint") == row["evidence_fingerprint"] and
             detail.get("resolution_key") == row["resolution_key"] and
             detail.get("outcome") == contract[2] and
-            _valid_lifecycle_source(detail.get("source")) and
+            valid_lifecycle_source(detail.get("source")) and
             _LIFECYCLE_EVENT_ID_RE.match(str(transition_id or "")) and
             transition_id not in seen_transition_ids)
         if contract and isinstance(contract[1], tuple):
@@ -541,13 +645,20 @@ def _decision_lifecycle(con, row):
             valid = valid and event["evidence_type"] == contract[1]
         if valid and event["event_type"] == "consumed":
             resolved_at = detail.get("resolved_at")
-            valid = (
+            try:
+                graph_identity = _graph_identity_for_decision(row)
+            except DecisionError:
+                graph_identity = None
+            valid = bool(
+                graph_identity and
                 isinstance(resolved_at, int) and
                 not isinstance(resolved_at, bool) and
                 resolved_at >= latest.get("occurred_at", 0) and
                 detail.get("delivered_event_id") == latest.get("event_id") and
                 detail.get("delivered_at") == latest.get("occurred_at") and
-                _valid_lifecycle_source(detail.get("source_id")) and
+                detail.get("source_id") == graph_identity["source_id"] and
+                detail.get("kind") == graph_identity["kind"] and
+                detail.get("item_key") == graph_identity["item_key"] and
                 _consumption_evidence_is_unique(con, event))
         if not valid:
             return {
@@ -568,6 +679,8 @@ def _decision_lifecycle(con, row):
         if event["event_type"] == "consumed":
             latest["resolved_at"] = detail.get("resolved_at")
             latest["source_id"] = detail.get("source_id")
+            latest["kind"] = detail.get("kind")
+            latest["item_key"] = detail.get("item_key")
     if ((state == "closed") != (row["state"] == "resolved")):
         return {
             "state": "invalid", "valid": False,
@@ -873,7 +986,7 @@ def _record_lifecycle_transition(
         outcome, source, now, graph_proof=None):
     if not _LIFECYCLE_EVENT_ID_RE.match(str(transition_id or "")):
         raise DecisionError("invalid lifecycle event id")
-    if not _valid_lifecycle_source(source):
+    if not valid_lifecycle_source(source):
         raise DecisionError("lifecycle source is required")
     contract = LIFECYCLE_TRANSITION_CONTRACT.get(to_state)
     if contract is None:
@@ -922,7 +1035,7 @@ def _record_lifecycle_transition(
     if to_state == "consumed":
         proof = graph_proof or {}
         resolved_at = proof.get("resolved_at")
-        source_id = proof.get("source_id")
+        graph_identity = _graph_identity_for_decision(row)
         delivered_at = (lifecycle.get("latest") or {}).get("occurred_at")
         delivered_event_id = (lifecycle.get("latest") or {}).get("event_id")
         if (isinstance(resolved_at, bool) or
@@ -931,8 +1044,10 @@ def _record_lifecycle_transition(
                 resolved_at < delivered_at):
             raise DecisionError(
                 "graph resolution evidence predates current delivery")
-        if not _valid_lifecycle_source(source_id):
-            raise DecisionError("graph resolution evidence has invalid identity")
+        if any(proof.get(key) != value
+               for key, value in graph_identity.items()):
+            raise DecisionError(
+                "graph resolution evidence targets another graph item")
         local_delivery_binding = {
             "delivered_event_id": delivered_event_id,
             "delivered_at": delivered_at,
@@ -984,6 +1099,8 @@ def transition(args):
     source = _sanitize_required(
         getattr(args, "source", None), IDENTIFIER,
         "lifecycle source", counters)
+    if not valid_lifecycle_source(source):
+        raise DecisionError("invalid lifecycle source")
 
     con = _connect()
     try:
@@ -1022,6 +1139,8 @@ def resolve(args):
                                       "resolution-key", counters)
     source = _sanitize_required(getattr(args, "source", None), IDENTIFIER,
                                 "resolve source", counters)
+    if not valid_lifecycle_source(source):
+        raise DecisionError("invalid resolve source")
     transition_id = _sanitize_optional(
         getattr(args, "event_id", None), IDENTIFIER,
         "lifecycle event id", counters)
@@ -1056,10 +1175,12 @@ def resolve(args):
             existing, existing_detail = _existing_lifecycle_transition(
                 con, transition_id)
             if existing is None:
-                graph_proof = _verified_resolution_evidence(
-                    evidence_type, evidence_ref, supplied_key)
+                graph_proof = _verified_graph_consumption(
+                    row, evidence_type, evidence_ref)
                 supplied_resolved_at = getattr(args, "resolved_at", None)
                 supplied_source_id = getattr(args, "source_id", None)
+                supplied_kind = getattr(args, "kind", None)
+                supplied_item_key = getattr(args, "item_key", None)
                 if (supplied_resolved_at is not None and
                         supplied_resolved_at != graph_proof["resolved_at"]):
                     raise DecisionError(
@@ -1068,10 +1189,20 @@ def resolve(args):
                         supplied_source_id != graph_proof["source_id"]):
                     raise DecisionError(
                         "graph snapshot source does not match durable evidence")
+                if (supplied_kind is not None and
+                        supplied_kind != graph_proof["kind"]):
+                    raise DecisionError(
+                        "graph snapshot kind does not match durable evidence")
+                if (supplied_item_key is not None and
+                        supplied_item_key != graph_proof["item_key"]):
+                    raise DecisionError(
+                        "graph snapshot item does not match durable evidence")
             else:
                 graph_proof = {
                     "resolved_at": (existing_detail or {}).get("resolved_at"),
                     "source_id": (existing_detail or {}).get("source_id"),
+                    "kind": (existing_detail or {}).get("kind"),
+                    "item_key": (existing_detail or {}).get("item_key"),
                     "delivered_event_id": (
                         existing_detail or {}).get("delivered_event_id"),
                     "delivered_at": (existing_detail or {}).get("delivered_at"),
@@ -1475,6 +1606,8 @@ def answer_single(args):
     source = _sanitize_optional(
         getattr(args, "source", None), IDENTIFIER,
         "single answer source", counters) or DEFAULT_ANSWER_SOURCE
+    if not valid_lifecycle_source(source):
+        raise DecisionError("invalid single answer source")
     resume_chat_id = _sanitize_optional(
         getattr(args, "resume_chat_id", None), IDENTIFIER,
         "single answer resume chat id", counters)
@@ -1515,6 +1648,17 @@ def answer_single(args):
         if pending is None:
             if row["state"] != "open":
                 raise DecisionError("decision is no longer open for this choice")
+            _event(con, row["decision_id"], "answered_pending",
+                   row["evidence_fingerprint"], now,
+                   evidence_type="operator_choice",
+                   evidence_ref=packet["batch_key"], detail=packet)
+            changed = True
+        elif pending.get("legacy_source_upgradeable") is True:
+            if not _legacy_single_pending_matches(con, pending, packet):
+                raise DecisionError(
+                    "legacy pending source upgrade evidence does not match")
+            packet["source_upgrade_from_event_id"] = pending["event_id"]
+            packet["source_upgrade_from_evidence_ref"] = pending["batch_key"]
             _event(con, row["decision_id"], "answered_pending",
                    row["evidence_fingerprint"], now,
                    evidence_type="operator_choice",
@@ -1630,6 +1774,8 @@ def answer_rollup(args):
     source = (_sanitize_optional(getattr(args, "source", None), IDENTIFIER,
                                  "rollup answer source", counters) or
               DEFAULT_ANSWER_SOURCE)
+    if not valid_lifecycle_source(source):
+        raise DecisionError("invalid rollup answer source")
     resume_chat_id = _sanitize_optional(
         getattr(args, "resume_chat_id", None), IDENTIFIER,
         "rollup answer resume chat id", counters)
@@ -1845,18 +1991,19 @@ def _load_feed(name):
 
 
 def _graph_consumption_event_id(row, evidence_type, evidence_ref,
-                                resolved_at, source_id, delivery):
+                                graph_proof, delivery):
     packet = [
         "chat-graph-consumption-v1", row["decision_id"],
         row["evidence_fingerprint"], row["resolution_key"], evidence_type,
-        evidence_ref, resolved_at, source_id, delivery.get("transition_id"),
-        delivery.get("occurred_at"),
+        evidence_ref, graph_proof["resolved_at"], graph_proof["source_id"],
+        graph_proof["kind"], graph_proof["item_key"],
+        delivery.get("transition_id"), delivery.get("occurred_at"),
     ]
     return "chat-graph:%s" % _sha(_canonical(packet))[:40]
 
 
 def _graph_consumption_matches(con, row, evidence_type, evidence_ref,
-                               resolved_at, source_id):
+                               graph_proof):
     events = con.execute("""SELECT evidence_type,evidence_ref,detail_json
         FROM decision_events WHERE decision_id=? AND evidence_fingerprint=?
           AND event_type='consumed'""", (
@@ -1870,8 +2017,10 @@ def _graph_consumption_matches(con, row, evidence_type, evidence_ref,
         if (isinstance(detail, dict) and
                 event["evidence_type"] == evidence_type and
                 event["evidence_ref"] == evidence_ref and
-                detail.get("resolved_at") == resolved_at and
-                detail.get("source_id") == source_id and
+                detail.get("resolved_at") == graph_proof["resolved_at"] and
+                detail.get("source_id") == graph_proof["source_id"] and
+                detail.get("kind") == graph_proof["kind"] and
+                detail.get("item_key") == graph_proof["item_key"] and
                 detail.get("source") == GRAPH_LIFECYCLE_SOURCE):
             return True
     return False
@@ -2016,21 +2165,37 @@ def sync_snapshot(args):
             source_id = _sanitize_required(
                 change.get("source_id"), IDENTIFIER,
                 "graph resolution source id")
+            kind = _sanitize_required(
+                change.get("kind"), IDENTIFIER,
+                "graph resolution kind")
         except DecisionError:
             invalid += 1
             dropped += 1
             continue
         if (not evidence_type or isinstance(resolved_at, bool) or
                 not isinstance(resolved_at, int) or resolved_at <= 0 or
-                not _valid_lifecycle_source(source_id)):
+                not valid_lifecycle_source(source_id) or
+                kind != "chat_open_end" or
+                not _GRAPH_ITEM_KEY_RE.match(item_key)):
             invalid += 1
             dropped += 1
             continue
         con = _connect()
         try:
+            source_key = "outcome:%s:%s" % (source_id, item_key)
+            anchor_ref = "chat-graph:%s:%s" % (source_id, item_key)
             rows = con.execute("""SELECT * FROM decisions
-                WHERE resolution_key=? AND state='open'""", (item_key,)).fetchall()
+                WHERE resolution_key=? AND source_kind='chat'
+                  AND source_key=? AND provenance='chat-graph tier1'
+                  AND anchor_ref=? AND state='open'""", (
+                    item_key, source_key, anchor_ref)).fetchall()
             candidates = []
+            graph_proof = {
+                "resolved_at": resolved_at,
+                "source_id": source_id,
+                "kind": kind,
+                "item_key": item_key,
+            }
             for row in rows:
                 lifecycle = _decision_lifecycle(con, row)
                 lifecycle_state = lifecycle.get("state")
@@ -2044,7 +2209,7 @@ def sync_snapshot(args):
                         "consumed", "running", "live_result_verified"):
                     if _graph_consumption_matches(
                             con, row, evidence_type, evidence_ref,
-                            resolved_at, source_id):
+                            graph_proof):
                         already_consumed += 1
                     else:
                         invalid += 1
@@ -2056,13 +2221,13 @@ def sync_snapshot(args):
             unmatched += 1
         for row, delivery in candidates:
             event_id = _graph_consumption_event_id(
-                row, evidence_type, evidence_ref, resolved_at, source_id,
-                delivery)
+                row, evidence_type, evidence_ref, graph_proof, delivery)
             packet = argparse.Namespace(
                 decision_id=row["decision_id"], evidence_type=evidence_type,
                 evidence_ref=evidence_ref, resolution_key=item_key,
                 event_id=event_id, source=GRAPH_LIFECYCLE_SOURCE,
                 resolved_at=resolved_at, source_id=source_id,
+                kind=kind, item_key=item_key,
                 expected_fingerprint=row["evidence_fingerprint"],
             )
             try:

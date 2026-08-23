@@ -113,15 +113,30 @@ class RollupAnswerTests(unittest.TestCase):
 
     def _ingest(self, owner: str, item: str, *, evidence: str | None = None,
                 text: str = TEXT) -> dict:
-        resolution_key = "rk-%s-%s" % (owner, item)
+        resolution_key = hashlib.sha1(
+            ("%s:%s" % (owner, item)).encode("utf-8")).hexdigest()
         result = self._alert(
             "ingest", "--source-kind", "chat",
-            "--source-key", "outcome:%s:%s" % (owner, item),
+            "--source-key", "outcome:%s:%s" % (owner, resolution_key),
             "--text", text,
             "--evidence", evidence or ("evidence-%s-%s" % (owner, item)),
             "--trust", "structured", "--provenance", "chat-graph tier1",
-            "--resolution-key", resolution_key)
+            "--resolution-key", resolution_key,
+            "--anchor", "chat-graph:%s:%s" % (owner, resolution_key))
         result["resolution_key"] = resolution_key
+        return result
+
+    def _ingest_graph_item(self, owner: str, item_key: str, *,
+                           evidence: str | None = None) -> dict:
+        result = self._alert(
+            "ingest", "--source-kind", "chat",
+            "--source-key", "outcome:%s:%s" % (owner, item_key),
+            "--text", TEXT,
+            "--evidence", evidence or ("evidence-%s" % owner),
+            "--trust", "structured", "--provenance", "chat-graph tier1",
+            "--resolution-key", item_key,
+            "--anchor", "chat-graph:%s:%s" % (owner, item_key))
+        result["resolution_key"] = item_key
         return result
 
     def _three_member_card(self) -> dict:
@@ -649,6 +664,98 @@ class RollupAnswerTests(unittest.TestCase):
         status = self._alert("status")
         self.assertEqual(status["data"]["lifecycle_counts"]["invalid"], 1)
 
+    def test_parent_commit_pending_source_upgrades_without_rewriting_evidence(
+            self) -> None:
+        ingested = self._ingest("legacy-owner", "one")
+        decision = ingested["decision"]
+        decision_id = decision["id"]
+        self._answer_single(decision_id)
+        db = self.home / "decisions" / "decisions.db"
+        con = sqlite3.connect(db)
+        legacy_event_id, raw_detail = con.execute("""SELECT event_id,detail_json
+            FROM decision_events WHERE decision_id=?
+              AND event_type='answered_pending'""", (decision_id,)).fetchone()
+        legacy = json.loads(raw_detail)
+        legacy["source"] = ""
+        legacy.pop("batch_key")
+        canonical = json.dumps(
+            legacy, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
+        legacy["batch_key"] = "single-%s" % hashlib.sha256(
+            canonical.encode("utf-8")).hexdigest()[:40]
+        original_detail = json.dumps(
+            legacy, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
+        con.execute("""UPDATE decision_events SET evidence_ref=?,detail_json=?
+            WHERE event_id=?""", (
+                legacy["batch_key"], original_detail, legacy_event_id))
+        con.commit()
+        con.close()
+
+        before = self._history(decision_id)["decision"]
+        self.assertFalse(before["answer_pending"]["valid"])
+        self.assertTrue(
+            before["answer_pending"]["legacy_source_upgradeable"])
+        upgraded_proc = self._proc([
+            "/bin/bash", str(DASHBOARD), "decide", "answer",
+            decision_id, "1",
+        ])
+        upgraded = json.loads(upgraded_proc.stdout.splitlines()[0])
+        self.assertEqual(upgraded["choice"], 1)
+        history = self._history(decision_id)
+        pending_events = [
+            event for event in history["events"]
+            if event["event_type"] == "answered_pending"]
+        self.assertEqual(len(pending_events), 2)
+        self.assertEqual(pending_events[0]["detail"]["source"], "")
+        self.assertEqual(
+            pending_events[1]["detail"]["source"], "mission-control")
+        self.assertEqual(
+            pending_events[1]["detail"]["source_upgrade_from_event_id"],
+            legacy_event_id)
+        self.assertEqual(
+            history["decision"]["lifecycle"]["state"], "answered_pending")
+        self.assertTrue(history["decision"]["answer_pending"]["valid"])
+        con = sqlite3.connect(db)
+        preserved = con.execute(
+            "SELECT detail_json FROM decision_events WHERE event_id=?",
+            (legacy_event_id,)).fetchone()[0]
+        con.close()
+        self.assertEqual(preserved, original_detail)
+
+    def test_lifecycle_source_accepts_64_and_rejects_65_before_staging(
+            self) -> None:
+        accepted = self._ingest("source-boundary", "accepted")
+        accepted_id = accepted["decision"]["id"]
+        source_64 = "s" * 64
+        self._proc([
+            "/bin/bash", str(DASHBOARD), "decide", "answer",
+            accepted_id, "1", "--source", source_64,
+        ])
+        accepted_history = self._history(accepted_id)
+        self.assertEqual(
+            accepted_history["decision"]["answer_pending"]["source"],
+            source_64)
+        self.assertEqual(
+            accepted_history["decision"]["lifecycle"]["state"],
+            "answered_pending")
+
+        rejected = self._ingest("source-boundary", "rejected")
+        rejected_id = rejected["decision"]["id"]
+        before = self._state_snapshot()
+        self._proc([
+            "/bin/bash", str(DASHBOARD), "decide", "answer",
+            rejected_id, "1", "--source", "s" * 65,
+        ], ok=False)
+        self.assertEqual(self._state_snapshot(), before)
+        rejected_history = self._history(rejected_id)
+        self.assertIsNone(rejected_history["decision"]["answer_pending"])
+        self.assertEqual(
+            rejected_history["decision"]["lifecycle"]["state"],
+            "awaiting_answer")
+        self.assertFalse(any(
+            path.name.startswith((
+                ".decision-answer-stage.", ".decision-prompt-stage."))
+            for path in self.home.rglob("*")))
+
     def test_graph_consumption_is_fresh_and_receipt_is_not_cross_fingerprint(
             self) -> None:
         first = self._ingest("receipt-owner", "one", evidence="evidence-v1")
@@ -746,6 +853,85 @@ class RollupAnswerTests(unittest.TestCase):
             self._history(decision_id)["decision"]["lifecycle"]["state"],
             "delivered")
 
+    def test_graph_consumption_binds_source_kind_and_item_identity(self) -> None:
+        item_key = "a" * 40
+        owner_a = self._ingest_graph_item("owner-a", item_key)
+        decision_id = owner_a["decision"]["id"]
+        self._answer_single(decision_id)
+        self._deliver(decision_id, "delivery:identity-a", "provider:identity-a")
+
+        graph = self.temp / "graph.db"
+        con = sqlite3.connect(graph)
+        con.execute("""CREATE TABLE open_ends(
+            session_id TEXT, kind TEXT, item_key TEXT, resolved_at INTEGER,
+            resolution_evidence_type TEXT, resolution_evidence_ref TEXT)""")
+        con.execute("INSERT INTO open_ends VALUES(?,?,?,?,?,?)", (
+            "owner-b", "chat_open_end", item_key, 1784368801,
+            "downstream_explicit", "owner-b-proof"))
+        con.commit()
+        con.close()
+
+        owner_b_change = {
+            "item_key": item_key,
+            "kind": "chat_open_end",
+            "change_type": "resolved",
+            "resolved_at": 1784368801,
+            "source_id": "owner-b",
+            "resolution_evidence_type": "downstream_explicit",
+            "resolution_evidence_ref": "owner-b-proof",
+        }
+        self._write_chat_change(owner_b_change)
+        wrong_owner = self._alert(
+            "sync-snapshot", extra_env={"CHAT_GRAPH_DB": str(graph)})
+        self.assertEqual(wrong_owner["data"]["sync"]["consumed"], 0)
+        self.assertEqual(wrong_owner["data"]["sync"]["unmatched"], 1)
+        self.assertEqual(
+            self._history(decision_id)["decision"]["lifecycle"]["state"],
+            "delivered")
+
+        missing_kind = dict(owner_b_change)
+        missing_kind.pop("kind")
+        self._write_chat_change(missing_kind)
+        malformed = self._alert(
+            "sync-snapshot", extra_env={"CHAT_GRAPH_DB": str(graph)})
+        self.assertEqual(malformed["data"]["sync"]["invalid"], 1)
+
+        owner_a_change = dict(owner_b_change)
+        owner_a_change.update({
+            "source_id": "owner-a",
+            "resolution_evidence_ref": "owner-a-proof",
+        })
+        con = sqlite3.connect(graph)
+        con.execute("INSERT INTO open_ends VALUES(?,?,?,?,?,?)", (
+            "owner-a", "closeout_handoff", item_key, 1784368801,
+            "downstream_explicit", "owner-a-proof"))
+        con.commit()
+        con.close()
+        self._write_chat_change(owner_a_change)
+        wrong_kind = self._alert(
+            "sync-snapshot", extra_env={"CHAT_GRAPH_DB": str(graph)})
+        self.assertEqual(wrong_kind["data"]["sync"]["consumed"], 0)
+        self.assertEqual(wrong_kind["data"]["sync"]["invalid"], 1)
+        self.assertEqual(
+            self._history(decision_id)["decision"]["lifecycle"]["state"],
+            "delivered")
+
+        con = sqlite3.connect(graph)
+        con.execute("INSERT INTO open_ends VALUES(?,?,?,?,?,?)", (
+            "owner-a", "chat_open_end", item_key, 1784368801,
+            "downstream_explicit", "owner-a-proof"))
+        con.commit()
+        con.close()
+        consumed = self._alert(
+            "sync-snapshot", extra_env={"CHAT_GRAPH_DB": str(graph)})
+        self.assertEqual(consumed["data"]["sync"]["consumed"], 1)
+        event = next(
+            event for event in self._history(decision_id)["events"]
+            if event["event_type"] == "consumed")
+        self.assertEqual(event["detail"]["source_id"], "owner-a")
+        self.assertEqual(event["detail"]["kind"], "chat_open_end")
+        self.assertEqual(event["detail"]["item_key"], item_key)
+
     def test_graph_watcher_consumes_only_delivered_with_deterministic_event(
             self) -> None:
         first = self._ingest("watch-owner", "one")
@@ -765,6 +951,7 @@ class RollupAnswerTests(unittest.TestCase):
         con.close()
         change = {
             "item_key": resolution_key,
+            "kind": "chat_open_end",
             "change_type": "resolved",
             "resolved_at": 1784368801,
             "source_id": "watch-owner",
@@ -808,7 +995,7 @@ class RollupAnswerTests(unittest.TestCase):
                  if e["event_type"] == "consumed"]), 1)
 
         invalid = dict(change)
-        invalid["item_key"] = "rk-missing-source"
+        invalid["item_key"] = "b" * 40
         invalid.pop("source_id")
         self._write_chat_change(invalid)
         malformed = self._alert(

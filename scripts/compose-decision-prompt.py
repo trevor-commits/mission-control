@@ -16,7 +16,9 @@ import tempfile
 import time
 from datetime import datetime, timezone
 
-from mission_control_common import IDENTIFIER, sanitize_text
+from mission_control_common import (
+    IDENTIFIER, sanitize_text, valid_lifecycle_source,
+)
 
 
 _ROLLUP_METADATA_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/+@-]{0,255}$")
@@ -730,6 +732,8 @@ def answer_transaction(
     if choice < 1:
         raise ValueError("decide answer: choice must be >= 1")
     source = source or DEFAULT_ANSWER_SOURCE
+    if not valid_lifecycle_source(source):
+        raise ValueError("decide answer: invalid lifecycle source")
     home = os.path.abspath(os.path.expanduser(home))
     parent = os.path.dirname(home)
     if not os.path.isdir(parent):
@@ -762,7 +766,8 @@ def answer_transaction(
         evidence_type = ((decision.get("resolution") or {}).get("evidence_type"))
         legacy_recover = False
         if pending is not None:
-            if (pending.get("valid") is not True or
+            if ((pending.get("valid") is not True and
+                 pending.get("legacy_source_upgradeable") is not True) or
                     pending.get("mode") != "single" or
                     pending.get("choice") != choice):
                 raise RuntimeError(
@@ -802,8 +807,22 @@ def answer_transaction(
             "reason": reason,
             "prompt_path": prompt_path,
         }
-        prompt_bytes = prompt.encode("utf-8")
-        answer_bytes = (json.dumps(answer, sort_keys=True) + "\n").encode("utf-8")
+        if (pending is not None and
+                pending.get("legacy_source_upgradeable") is True):
+            prompt_bytes = _read_private_file(
+                prompts_fd, prompt_name, "legacy single prompt")
+            answer_bytes = _read_private_file(
+                answers_fd, answer_name, "legacy single answer")
+            if (hashlib.sha256(prompt_bytes).hexdigest() !=
+                    pending.get("prompt_sha256") or
+                    hashlib.sha256(answer_bytes).hexdigest() !=
+                    pending.get("answer_sha256")):
+                raise RuntimeError(
+                    "decide answer: legacy pending artifacts do not match receipt")
+        else:
+            prompt_bytes = prompt.encode("utf-8")
+            answer_bytes = (
+                json.dumps(answer, sort_keys=True) + "\n").encode("utf-8")
         prompt_stage = _write_stage(
             prompts_fd, ".decision-prompt-stage.", prompt_bytes)
         answer_stage = _write_stage(
@@ -891,6 +910,8 @@ def answer_rollup_transaction(
                 "decide answer-rollup: invalid %s" % label)
         metadata.append(clean)
     source, resume_chat_id, resume_provider = metadata
+    if not valid_lifecycle_source(source):
+        raise ValueError("decide answer-rollup: invalid lifecycle source")
     home = os.path.abspath(os.path.expanduser(home))
     parent = os.path.dirname(home)
     if not os.path.isdir(parent):

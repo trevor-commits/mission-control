@@ -133,10 +133,10 @@ python3 - "$CHAT_GRAPH_DB" <<'PY'
 import sqlite3,sys
 c=sqlite3.connect(sys.argv[1])
 c.execute('''CREATE TABLE open_ends(
-  session_id TEXT, item_key TEXT, resolved_at INTEGER, resolution_evidence_type TEXT,
+  session_id TEXT, kind TEXT, item_key TEXT, resolved_at INTEGER, resolution_evidence_type TEXT,
   resolution_evidence_ref TEXT)''')
-c.execute("INSERT INTO open_ends VALUES(?,?,?,?,?)",
-          ("repo-a","merge:branch-a",1783673999,"answering_user_turn","parent:turn-10"))
+c.execute("INSERT INTO open_ends VALUES(?,?,?,?,?,?)",
+          ("repo-a","chat_open_end","merge:branch-a",1783673999,"answering_user_turn","parent:turn-10"))
 c.commit()
 PY
 RES="$(run_json resolve "$ID" --evidence-type answering_user_turn \
@@ -392,13 +392,13 @@ ROLLED="$(run_json sync-snapshot)" || ROLLED=""
 python3 - "$CHAT_GRAPH_DB" <<'PY'
 import sqlite3,sys
 c=sqlite3.connect(sys.argv[1])
-c.execute("INSERT INTO open_ends VALUES(?,?,?,?,?)",
-          ("session-safe","a"*40,1783933204,"downstream_explicit","child-session"))
+c.execute("INSERT INTO open_ends VALUES(?,?,?,?,?,?)",
+          ("session-safe","chat_open_end","a"*40,1783933204,"downstream_explicit","child-session"))
 c.commit()
 PY
 python3 - "$MISSION_CONTROL_HOME/data/chats.json" <<'PY'
 import json,sys
-change={"item_key":"a"*40,"change_type":"resolved",
+change={"item_key":"a"*40,"kind":"chat_open_end","change_type":"resolved",
         "source_id":"session-safe","resolved_at":1783933204,
         "resolution_evidence_type":"downstream_explicit",
         "resolution_evidence_ref":"child-session"}
