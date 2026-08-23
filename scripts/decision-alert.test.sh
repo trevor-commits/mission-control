@@ -112,7 +112,8 @@ else fail "deterministically anchored model decision may be confirmed"; fi
 
 # Absence/generic completion cannot resolve; exact evidence or manual resolution can.
 if ! run_json resolve "$ID" --evidence-type downstream_resolution_key \
-  --evidence-ref child:turn-9 --resolution-key wrong:key >"$T/wrong.out" 2>"$T/wrong.err"; then
+  --evidence-ref child:turn-9 --resolution-key wrong:key --source test-suite \
+  >"$T/wrong.out" 2>"$T/wrong.err"; then
   pass "wrong downstream key cannot resolve"
 else fail "wrong downstream key cannot resolve"; fi
 OPEN="$(run_json list --state open)" || OPEN=""
@@ -123,7 +124,7 @@ PY
 then pass "decision remains open after non-exact evidence"
 else fail "decision remains open after non-exact evidence"; fi
 if ! run_json resolve "$ID" --evidence-type downstream_resolution_key \
-  --evidence-ref unverified-random-string --resolution-key merge:branch-a \
+  --evidence-ref unverified-random-string --resolution-key merge:branch-a --source test-suite \
   >"$T/unverified.out" 2>"$T/unverified.err"; then
   pass "matching caller-supplied key without graph evidence cannot resolve"
 else fail "matching caller-supplied key without graph evidence cannot resolve"; fi
@@ -132,14 +133,14 @@ python3 - "$CHAT_GRAPH_DB" <<'PY'
 import sqlite3,sys
 c=sqlite3.connect(sys.argv[1])
 c.execute('''CREATE TABLE open_ends(
-  item_key TEXT, resolved_at INTEGER, resolution_evidence_type TEXT,
+  session_id TEXT, item_key TEXT, resolved_at INTEGER, resolution_evidence_type TEXT,
   resolution_evidence_ref TEXT)''')
-c.execute("INSERT INTO open_ends VALUES(?,?,?,?)",
-          ("merge:branch-a",1783673999,"answering_user_turn","parent:turn-10"))
+c.execute("INSERT INTO open_ends VALUES(?,?,?,?,?)",
+          ("repo-a","merge:branch-a",1783673999,"answering_user_turn","parent:turn-10"))
 c.commit()
 PY
 RES="$(run_json resolve "$ID" --evidence-type answering_user_turn \
-  --evidence-ref parent:turn-10 --resolution-key merge:branch-a)" || RES=""
+  --evidence-ref parent:turn-10 --resolution-key merge:branch-a --source test-suite)" || RES=""
 if python3 - "$RES" <<'PY'
 import json,sys
 d=json.loads(sys.argv[1])["decision"]
@@ -391,13 +392,14 @@ ROLLED="$(run_json sync-snapshot)" || ROLLED=""
 python3 - "$CHAT_GRAPH_DB" <<'PY'
 import sqlite3,sys
 c=sqlite3.connect(sys.argv[1])
-c.execute("INSERT INTO open_ends VALUES(?,?,?,?)",
-          ("a"*40,1783933204,"downstream_explicit","child-session"))
+c.execute("INSERT INTO open_ends VALUES(?,?,?,?,?)",
+          ("session-safe","a"*40,1783933204,"downstream_explicit","child-session"))
 c.commit()
 PY
 python3 - "$MISSION_CONTROL_HOME/data/chats.json" <<'PY'
 import json,sys
 change={"item_key":"a"*40,"change_type":"resolved",
+        "source_id":"session-safe","resolved_at":1783933204,
         "resolution_evidence_type":"downstream_explicit",
         "resolution_evidence_ref":"child-session"}
 json.dump({"schema":1,"data":{"outcomes":[],"loose_end_changes":[change]}},
@@ -426,9 +428,14 @@ assert b["data"]["sync"]["resolved"]==1
 assert b["data"]["sync"]["omission_resolves"] is False
 assert b["data"]["sync"]["structured_omission_resolves"] is False
 assert b["data"]["sync"]["inferred_exact_supersession_resolves"] is True
-assert match3==[] and c["data"]["sync"]["resolved"]==1
+assert len(match3)==1 and match3[0]["state"]=="open"
+assert c["data"]["sync"]["resolved"]==0
+assert c["data"]["sync"]["resolved_semantics"]=="compatibility_queue_alias"
+assert c["data"]["sync"]["resolved_compatibility"]==c["data"]["sync"]["resolved"]
+assert c["data"]["sync"]["pre_delivery"]==1
+assert c["data"]["sync"]["invalid"]==0
 PY
-then pass "Tier-1 evidence persists while stale inferred Tier-2 needs supersede safely"
+then pass "Tier-1 evidence persists, pre-delivery proof waits, and stale inferred Tier-2 needs supersede safely"
 else fail "Tier-1 evidence in Tier-2 sync contract"; fi
 
 # Provider/session rollback is local: one surviving Tier-2 provider cannot keep
@@ -516,7 +523,7 @@ CONTEXT_DISMISS_ID="$(sed -n '1p' "$T/context-ids")"
 CONTEXT_RESOLVE_ID="$(sed -n '2p' "$T/context-ids")"
 run_json dismiss "$CONTEXT_DISMISS_ID" --reason "not needed" >/dev/null
 run_json resolve "$CONTEXT_RESOLVE_ID" --evidence-type manual_resolution \
-  --evidence-ref operator-reviewed >/dev/null
+  --evidence-ref operator-reviewed --source test-suite >/dev/null
 python3 - "$MISSION_CONTROL_HOME/data/chats.json" <<'PY'
 import json,sys
 def card(sid):
@@ -565,6 +572,10 @@ import json,os,sqlite3,stat,sys
 x=json.loads(sys.argv[1]); db=sys.argv[2]
 assert x["schema"] == 1 and x["feed"] == "decisions"
 assert x["ok"] is True and x["error"] is None and x["cadence_s"] == 300
+assert x["data"]["counts_semantics"] == "compatibility_queue_alias"
+assert x["data"]["compatibility_counts"] == x["data"]["counts"]
+assert sum(x["data"]["lifecycle_counts"].values()) == sum(
+    x["data"]["counts"][state] for state in ("open", "dismissed", "resolved"))
 assert all(d["trust"] == "structured" and d["state"] == "open" for d in x["data"]["pinned"])
 assert all(d["trust"] == "inferred" for d in x["data"]["inferred"])
 p=next(d for d in x["data"]["pinned"] if d["source_key"]=="presentation-contract")

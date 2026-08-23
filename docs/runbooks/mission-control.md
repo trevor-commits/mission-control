@@ -65,12 +65,16 @@ It combines usage, git, chats, and automation feeds from the ER-087 scripts into
 
 Mission Control owns the deterministic lifecycle `answered_pending -> delivered -> consumed -> running -> live_result_verified -> closed`. History or bot memory is not transition proof.
 
-- `scripts/decision-alert transition <decision-id> --to delivered --expected-fingerprint <sha256> --resolution-key <exact-key> --event-id <stable-event-id> --evidence-type provider_delivery_receipt --evidence-ref <provider-receipt> --outcome delivered`
-- Consumption uses the existing graph verifier: `scripts/decision-alert resolve <decision-id> --evidence-type answering_user_turn --evidence-ref <graph-receipt> --resolution-key <exact-key> --event-id <stable-event-id>`. It records `consumed`; it does not resolve.
+- `scripts/decision-alert transition <decision-id> --to delivered --expected-fingerprint <sha256> --resolution-key <exact-key> --event-id <stable-event-id> --evidence-type provider_delivery_receipt --evidence-ref <provider-receipt> --outcome delivered --source <stable-producer>`
+- Consumption uses the existing graph verifier: `scripts/decision-alert resolve <decision-id> --evidence-type answering_user_turn --evidence-ref <graph-receipt> --resolution-key <exact-key> --expected-fingerprint <sha256> --event-id <stable-event-id> --source <stable-producer>`. It records `consumed`; it does not resolve.
 - `running` requires `execution_start_receipt` plus outcome `started`.
 - `live_result_verified` requires `live_result_receipt` plus outcome `verified`.
 - `closed` requires `closure_receipt` plus outcome `closed`; only this transition changes the compatibility queue state to `resolved`.
+- Every lifecycle event has a stable nonempty source. Public transition and resolve commands require `--source`; answer writers default to `mission-control`; the graph watcher uses `chat-graph`.
+- Graph consumption binds the current fingerprint, current delivery time, exact resolution key, receipt reference, graph `resolved_at`, and graph `source_id`. A receipt older than the current delivery or already used by another fingerprint fails closed.
+- `sync-snapshot` derives a deterministic `chat-graph:<sha>` event ID and advances only a current `delivered` decision. Its `data.sync` counters separate `consumed`, `already_consumed`, `pre_delivery`, `invalid`, and `unmatched`; legacy `resolved` is labeled `compatibility_queue_alias` and mirrored as `resolved_compatibility`. Omission is never consumption proof.
 - Every non-consumption transition also requires the current fingerprint, exact resolution key, stable event id, and evidence reference. Exact replay is a no-op; skipped states, reused event ids, failed delivery, rejection, timeout, and unverified completion fail closed.
+- `status` exposes `lifecycle_counts` separately from labeled `compatibility_counts`; `counts` remains a `compatibility_queue_alias` for installed v1 renderers.
 - Home and the menu-bar panel render each state separately and keep every pre-closure row read-only. No lifecycle command sends a notification, starts work, or creates a scheduler.
 
 ## Decision-queue admission, rollup, and severity bypass (Phase 0 item 0.3)

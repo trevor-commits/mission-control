@@ -20,6 +20,7 @@ from mission_control_common import IDENTIFIER, sanitize_text
 
 
 _ROLLUP_METADATA_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/+@-]{0,255}$")
+DEFAULT_ANSWER_SOURCE = "mission-control"
 
 
 def parse_options(text: str) -> list[str]:
@@ -728,6 +729,7 @@ def answer_transaction(
         raise ValueError("decide answer: invalid decision id")
     if choice < 1:
         raise ValueError("decide answer: choice must be >= 1")
+    source = source or DEFAULT_ANSWER_SOURCE
     home = os.path.abspath(os.path.expanduser(home))
     parent = os.path.dirname(home)
     if not os.path.isdir(parent):
@@ -872,6 +874,7 @@ def answer_rollup_transaction(
         raise ValueError("decide answer-rollup: invalid primary decision id")
     if choice < 1:
         raise ValueError("decide answer-rollup: choice must be >= 1")
+    source = source or DEFAULT_ANSWER_SOURCE
     metadata = []
     for value, label in (
         (source, "source"),

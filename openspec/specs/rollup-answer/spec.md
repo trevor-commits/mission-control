@@ -48,6 +48,24 @@ Each current-fingerprint decision MUST advance deterministically through `answer
 - **WHEN** graph evidence is absent, rejected, or bound to a different resolution key
 - **THEN** consumption fails and the decision remains `delivered`
 
+#### Scenario: Graph proof predates current delivery or was already consumed
+- **WHEN** graph `resolved_at` is older than the current delivered event or its evidence reference was bound to another evidence fingerprint
+- **THEN** consumption fails and the current decision remains `delivered`
+
+#### Scenario: Consumption omits the current fingerprint
+- **WHEN** a graph consumer omits the expected fingerprint or supplies an older fingerprint
+- **THEN** consumption fails even when its resolution key and evidence reference otherwise match
+
+#### Scenario: Graph watcher observes a resolution
+- **WHEN** `sync-snapshot` receives a complete graph resolution for a current `delivered` decision
+- **THEN** it records one deterministic `chat-graph`-sourced consumed event carrying `resolved_at` and `source_id`
+- **AND WHEN** the decision is pre-delivery or the graph change is malformed
+- **THEN** it advances nothing and reports `pre_delivery` or `invalid` separately
+
+#### Scenario: A lifecycle event has no stable source
+- **WHEN** a producer omits `source` or persisted lifecycle detail loses it
+- **THEN** the command rejects the write or the reducer reports lifecycle state `invalid`
+
 #### Scenario: A producer skips a state
 - **WHEN** a new event attempts `running`, `live_result_verified`, or `closed` without its exact predecessor
 - **THEN** the command fails without advancing the lifecycle
@@ -65,6 +83,10 @@ Each current-fingerprint decision MUST advance deterministically through `answer
 #### Scenario: Closure follows verified live evidence
 - **WHEN** exact receipts already prove delivery, consumption, execution start, and a live result
 - **THEN** an exact closure receipt records `closed` and only then changes the compatibility queue state to `resolved`
+
+#### Scenario: Status reports exact follow-through counts
+- **WHEN** a consumer reads decision status
+- **THEN** `lifecycle_counts` reports each exact lifecycle state separately and compatibility queue counts remain explicitly labeled
 
 ### Requirement: Atomic and recoverable batch publication
 The system MUST stage every private member artifact before the database transition, MUST record all target events plus the canonical manifest digest in one transaction, MUST bind pre/post-commit verification to the same held batch directory, and MUST publish the batch with one atomic directory rename.

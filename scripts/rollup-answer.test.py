@@ -153,6 +153,33 @@ class RollupAnswerTests(unittest.TestCase):
         return [e for e in self._history(decision_id)["events"]
                 if e["event_type"] == "answered_pending"]
 
+    def _answer_single(self, decision_id: str, choice: int = 1) -> dict:
+        self._proc([
+            "/bin/bash", str(DASHBOARD), "decide", "answer",
+            decision_id, str(choice),
+        ])
+        return self._history(decision_id)
+
+    def _deliver(self, decision_id: str, event_id: str,
+                 evidence_ref: str) -> dict:
+        decision = self._history(decision_id)["decision"]
+        return self._alert(
+            "transition", decision_id, "--to", "delivered",
+            "--expected-fingerprint", decision["evidence_fingerprint"],
+            "--resolution-key", decision["resolution_key"],
+            "--event-id", event_id,
+            "--evidence-type", "provider_delivery_receipt",
+            "--evidence-ref", evidence_ref,
+            "--outcome", "delivered", "--source", "test-suite")
+
+    def _write_chat_change(self, change: dict) -> None:
+        data_dir = self.home / "data"
+        data_dir.mkdir(mode=0o700, exist_ok=True)
+        (data_dir / "chats.json").write_text(json.dumps({
+            "schema": 1,
+            "data": {"outcomes": [], "loose_end_changes": [change]},
+        }))
+
     def _state_snapshot(self) -> list[tuple[str, str, int, bytes | str]]:
         snapshot = []
         for path in sorted(self.home.rglob("*")):
@@ -367,7 +394,7 @@ class RollupAnswerTests(unittest.TestCase):
             "--event-id", "delivery:failed-primary",
             "--evidence-type", "provider_delivery_receipt",
             "--evidence-ref", "provider:failed-primary",
-            "--outcome", "failed", ok=False)
+            "--outcome", "failed", "--source", "test-suite", ok=False)
         self.assertEqual(
             self._history(ids["primary"])["decision"]["lifecycle"]["state"],
             "answered_pending")
@@ -379,7 +406,7 @@ class RollupAnswerTests(unittest.TestCase):
             "--event-id", "delivery:primary-001",
             "--evidence-type", "provider_delivery_receipt",
             "--evidence-ref", "provider:receipt-primary-001",
-            "--outcome", "delivered")
+            "--outcome", "delivered", "--source", "test-suite")
         self.assertTrue(delivered["changed"])
         self.assertEqual(delivered["decision"]["state"], "open")
         self.assertEqual(delivered["decision"]["lifecycle"]["state"], "delivered")
@@ -394,7 +421,7 @@ class RollupAnswerTests(unittest.TestCase):
             "--event-id", "delivery:primary-001",
             "--evidence-type", "provider_delivery_receipt",
             "--evidence-ref", "provider:receipt-primary-001",
-            "--outcome", "delivered")
+            "--outcome", "delivered", "--source", "test-suite")
         self.assertFalse(replay["changed"])
         self.assertTrue(replay["replayed"])
 
@@ -406,7 +433,7 @@ class RollupAnswerTests(unittest.TestCase):
             "--event-id", "delivery:primary-001",
             "--evidence-type", "provider_delivery_receipt",
             "--evidence-ref", "provider:receipt-primary-001",
-            "--outcome", "delivered", ok=False)
+            "--outcome", "delivered", "--source", "test-suite", ok=False)
 
         self._alert(
             "transition", ids["primary"], "--to", "running",
@@ -415,25 +442,30 @@ class RollupAnswerTests(unittest.TestCase):
             "--event-id", "execution:skip-consumption",
             "--evidence-type", "execution_start_receipt",
             "--evidence-ref", "executor:start-skipped",
-            "--outcome", "started", ok=False)
+            "--outcome", "started", "--source", "test-suite", ok=False)
 
         self._alert(
             "resolve", ids["primary"], "--evidence-type", "manual_resolution",
-            "--evidence-ref", "manual-not-consumption", ok=False)
+            "--evidence-ref", "manual-not-consumption",
+            "--source", "test-suite", ok=False)
 
         self._alert(
             "resolve", ids["primary"],
             "--evidence-type", "answering_user_turn",
             "--evidence-ref", "consumer:rejected",
             "--resolution-key", resolution_key,
-            "--event-id", "consumption:rejected-primary", ok=False)
+            "--event-id", "consumption:rejected-primary",
+            "--expected-fingerprint", fingerprint,
+            "--source", "test-suite", ok=False)
 
         self._alert(
             "resolve", ids["primary"],
             "--evidence-type", "answering_user_turn",
             "--evidence-ref", "wrong-task-consumption",
             "--resolution-key", fixture["resolution_keys"][ids["equivalent"]],
-            "--event-id", "consumption:wrong-task", ok=False)
+            "--event-id", "consumption:wrong-task",
+            "--expected-fingerprint", fingerprint,
+            "--source", "test-suite", ok=False)
 
         graph = self.temp / "graph.db"
         con = sqlite3.connect(graph)
@@ -454,6 +486,8 @@ class RollupAnswerTests(unittest.TestCase):
             "--evidence-ref", evidence_ref,
             "--resolution-key", resolution_key,
             "--event-id", "consumption:primary-001",
+            "--expected-fingerprint", fingerprint,
+            "--source", "test-suite",
             extra_env={"CHAT_GRAPH_DB": str(graph)})
         self.assertTrue(consumed["changed"])
         self.assertEqual(consumed["decision"]["state"], "open")
@@ -476,6 +510,8 @@ class RollupAnswerTests(unittest.TestCase):
             "--evidence-ref", evidence_ref,
             "--resolution-key", resolution_key,
             "--event-id", "consumption:primary-001",
+            "--expected-fingerprint", fingerprint,
+            "--source", "test-suite",
             extra_env={"CHAT_GRAPH_DB": str(graph)})
         self.assertFalse(replay["changed"])
 
@@ -486,7 +522,7 @@ class RollupAnswerTests(unittest.TestCase):
             "--event-id", "closure:unverified-primary",
             "--evidence-type", "closure_receipt",
             "--evidence-ref", "closure:without-result",
-            "--outcome", "closed", ok=False)
+            "--outcome", "closed", "--source", "test-suite", ok=False)
 
         running = self._alert(
             "transition", ids["primary"], "--to", "running",
@@ -495,7 +531,7 @@ class RollupAnswerTests(unittest.TestCase):
             "--event-id", "execution:primary-001",
             "--evidence-type", "execution_start_receipt",
             "--evidence-ref", "executor:start-primary-001",
-            "--outcome", "started")
+            "--outcome", "started", "--source", "test-suite")
         self.assertEqual(running["decision"]["lifecycle"]["state"], "running")
         self.assertEqual(
             running["decision"]["lifecycle"]["requested_action"],
@@ -508,7 +544,7 @@ class RollupAnswerTests(unittest.TestCase):
             "--event-id", "result:unverified-primary",
             "--evidence-type", "live_result_receipt",
             "--evidence-ref", "result:unverified-primary",
-            "--outcome", "unverified", ok=False)
+            "--outcome", "unverified", "--source", "test-suite", ok=False)
         self._alert(
             "transition", ids["primary"], "--to", "running",
             "--expected-fingerprint", fingerprint,
@@ -516,7 +552,7 @@ class RollupAnswerTests(unittest.TestCase):
             "--event-id", "execution:timeout-primary",
             "--evidence-type", "execution_start_receipt",
             "--evidence-ref", "executor:timeout-primary",
-            "--outcome", "timeout", ok=False)
+            "--outcome", "timeout", "--source", "test-suite", ok=False)
 
         verified = self._alert(
             "transition", ids["primary"], "--to", "live_result_verified",
@@ -525,7 +561,7 @@ class RollupAnswerTests(unittest.TestCase):
             "--event-id", "result:primary-001",
             "--evidence-type", "live_result_receipt",
             "--evidence-ref", "result:verified-primary-001",
-            "--outcome", "verified")
+            "--outcome", "verified", "--source", "test-suite")
         self.assertEqual(
             verified["decision"]["lifecycle"]["state"],
             "live_result_verified")
@@ -539,7 +575,7 @@ class RollupAnswerTests(unittest.TestCase):
             "--event-id", "closure:primary-001",
             "--evidence-type", "closure_receipt",
             "--evidence-ref", "closure:receipt-primary-001",
-            "--outcome", "closed")
+            "--outcome", "closed", "--source", "test-suite")
         self.assertTrue(closed["changed"])
         self.assertEqual(closed["decision"]["state"], "resolved")
         self.assertEqual(closed["decision"]["lifecycle"]["state"], "closed")
@@ -553,7 +589,7 @@ class RollupAnswerTests(unittest.TestCase):
             "--event-id", "closure:primary-001",
             "--evidence-type", "closure_receipt",
             "--evidence-ref", "closure:receipt-primary-001",
-            "--outcome", "closed")
+            "--outcome", "closed", "--source", "test-suite")
         self.assertFalse(replay["changed"])
         self.assertTrue(replay["replayed"])
 
@@ -565,6 +601,239 @@ class RollupAnswerTests(unittest.TestCase):
         self.assertEqual(lifecycle_events, [
             "answered_pending", "delivered", "consumed", "running",
             "live_result_verified", "closed"])
+
+    def test_lifecycle_requires_source_and_reducer_rejects_missing_source(
+            self) -> None:
+        ingested = self._ingest("source-owner", "one")
+        decision_id = ingested["decision"]["id"]
+        self._answer_single(decision_id)
+        pending = self._history(decision_id)["decision"]
+        self.assertEqual(pending["answer_pending"]["source"], "mission-control")
+        self.assertEqual(pending["lifecycle"]["state"], "answered_pending")
+
+        self._alert(
+            "resolve", decision_id,
+            "--evidence-type", "answering_user_turn",
+            "--evidence-ref", "consumer:missing-source",
+            "--resolution-key", pending["resolution_key"],
+            "--event-id", "consumption:missing-source", ok=False)
+
+        self._alert(
+            "transition", decision_id, "--to", "delivered",
+            "--expected-fingerprint", pending["evidence_fingerprint"],
+            "--resolution-key", pending["resolution_key"],
+            "--event-id", "delivery:missing-source",
+            "--evidence-type", "provider_delivery_receipt",
+            "--evidence-ref", "provider:missing-source",
+            "--outcome", "delivered", ok=False)
+        delivered = self._deliver(
+            decision_id, "delivery:source-bound", "provider:source-bound")
+        self.assertEqual(delivered["decision"]["lifecycle"]["state"], "delivered")
+
+        db = self.home / "decisions" / "decisions.db"
+        con = sqlite3.connect(db)
+        row = con.execute("""SELECT event_id,detail_json FROM decision_events
+            WHERE decision_id=? AND event_type='delivered'""",
+                          (decision_id,)).fetchone()
+        self.assertIsNotNone(row)
+        detail = json.loads(row[1])
+        detail.pop("source", None)
+        con.execute("UPDATE decision_events SET detail_json=? WHERE event_id=?",
+                    (json.dumps(detail, sort_keys=True), row[0]))
+        con.commit()
+        con.close()
+
+        invalid = self._history(decision_id)["decision"]["lifecycle"]
+        self.assertFalse(invalid["valid"])
+        self.assertEqual(invalid["state"], "invalid")
+        status = self._alert("status")
+        self.assertEqual(status["data"]["lifecycle_counts"]["invalid"], 1)
+
+    def test_graph_consumption_is_fresh_and_receipt_is_not_cross_fingerprint(
+            self) -> None:
+        first = self._ingest("receipt-owner", "one", evidence="evidence-v1")
+        decision_id = first["decision"]["id"]
+        resolution_key = first["resolution_key"]
+        self._answer_single(decision_id)
+        self._deliver(decision_id, "delivery:receipt-v1", "provider:receipt-v1")
+
+        graph = self.temp / "graph.db"
+        con = sqlite3.connect(graph)
+        con.execute("""CREATE TABLE open_ends(
+            session_id TEXT, kind TEXT, item_key TEXT, resolved_at INTEGER,
+            resolution_evidence_type TEXT, resolution_evidence_ref TEXT)""")
+        shared_ref = "turn-receipt-owner-consumed"
+        con.execute("INSERT INTO open_ends VALUES(?,?,?,?,?,?)", (
+            "receipt-owner", "chat_open_end", resolution_key, 1784368801,
+            "answering_user_turn", shared_ref))
+        con.commit()
+        con.close()
+
+        self._alert(
+            "resolve", decision_id,
+            "--evidence-type", "answering_user_turn",
+            "--evidence-ref", shared_ref,
+            "--resolution-key", resolution_key,
+            "--event-id", "consumption:missing-fingerprint",
+            "--source", "test-suite", ok=False,
+            extra_env={"CHAT_GRAPH_DB": str(graph)})
+        self._alert(
+            "resolve", decision_id,
+            "--evidence-type", "answering_user_turn",
+            "--evidence-ref", shared_ref,
+            "--resolution-key", resolution_key,
+            "--event-id", "consumption:stale-fingerprint",
+            "--expected-fingerprint", "0" * 64,
+            "--source", "test-suite", ok=False,
+            extra_env={"CHAT_GRAPH_DB": str(graph)})
+
+        first_consumed = self._alert(
+            "resolve", decision_id,
+            "--evidence-type", "answering_user_turn",
+            "--evidence-ref", shared_ref,
+            "--resolution-key", resolution_key,
+            "--event-id", "consumption:receipt-v1",
+            "--expected-fingerprint", first["decision"]["evidence_fingerprint"],
+            "--source", "test-suite",
+            extra_env={"CHAT_GRAPH_DB": str(graph)})
+        consumed_event = next(
+            event for event in self._history(decision_id)["events"]
+            if event["event_type"] == "consumed")
+        self.assertEqual(consumed_event["detail"]["resolved_at"], 1784368801)
+        self.assertEqual(consumed_event["detail"]["source_id"], "receipt-owner")
+        self.assertIsInstance(consumed_event["detail"]["delivered_event_id"], int)
+        self.assertEqual(consumed_event["detail"]["delivered_at"], 1784368800)
+        self.assertEqual(first_consumed["decision"]["lifecycle"]["state"], "consumed")
+
+        self.env["DECISION_ALERT_NOW_EPOCH"] = "1784368802"
+        second = self._ingest("receipt-owner", "one", evidence="evidence-v2")
+        self.assertNotEqual(
+            first["decision"]["evidence_fingerprint"],
+            second["decision"]["evidence_fingerprint"])
+        self._answer_single(decision_id, 2)
+        self._deliver(decision_id, "delivery:receipt-v2", "provider:receipt-v2")
+
+        con = sqlite3.connect(graph)
+        con.execute("INSERT INTO open_ends VALUES(?,?,?,?,?,?)", (
+            "receipt-owner", "chat_open_end", resolution_key, 1784368801,
+            "answering_user_turn", "turn-stale-for-v2"))
+        con.execute("UPDATE open_ends SET resolved_at=1784368803 WHERE "
+                    "resolution_evidence_ref=?", (shared_ref,))
+        con.commit()
+        con.close()
+
+        stale = self._alert(
+            "resolve", decision_id,
+            "--evidence-type", "answering_user_turn",
+            "--evidence-ref", "turn-stale-for-v2",
+            "--resolution-key", resolution_key,
+            "--event-id", "consumption:stale-v2",
+            "--expected-fingerprint", second["decision"]["evidence_fingerprint"],
+            "--source", "test-suite", ok=False,
+            extra_env={"CHAT_GRAPH_DB": str(graph)})
+        self.assertIn("predates current delivery", stale["stderr"])
+        reused = self._alert(
+            "resolve", decision_id,
+            "--evidence-type", "answering_user_turn",
+            "--evidence-ref", shared_ref,
+            "--resolution-key", resolution_key,
+            "--event-id", "consumption:reused-v2",
+            "--expected-fingerprint", second["decision"]["evidence_fingerprint"],
+            "--source", "test-suite", ok=False,
+            extra_env={"CHAT_GRAPH_DB": str(graph)})
+        self.assertIn("already bound", reused["stderr"])
+        self.assertEqual(
+            self._history(decision_id)["decision"]["lifecycle"]["state"],
+            "delivered")
+
+    def test_graph_watcher_consumes_only_delivered_with_deterministic_event(
+            self) -> None:
+        first = self._ingest("watch-owner", "one")
+        decision_id = first["decision"]["id"]
+        resolution_key = first["resolution_key"]
+        self._answer_single(decision_id)
+
+        graph = self.temp / "graph.db"
+        con = sqlite3.connect(graph)
+        con.execute("""CREATE TABLE open_ends(
+            session_id TEXT, kind TEXT, item_key TEXT, resolved_at INTEGER,
+            resolution_evidence_type TEXT, resolution_evidence_ref TEXT)""")
+        con.execute("INSERT INTO open_ends VALUES(?,?,?,?,?,?)", (
+            "watch-owner", "chat_open_end", resolution_key, 1784368801,
+            "downstream_explicit", "watch-child-result"))
+        con.commit()
+        con.close()
+        change = {
+            "item_key": resolution_key,
+            "change_type": "resolved",
+            "resolved_at": 1784368801,
+            "source_id": "watch-owner",
+            "resolution_evidence_type": "downstream_explicit",
+            "resolution_evidence_ref": "watch-child-result",
+        }
+        self._write_chat_change(change)
+
+        pre_delivery = self._alert(
+            "sync-snapshot", extra_env={"CHAT_GRAPH_DB": str(graph)})
+        self.assertEqual(pre_delivery["data"]["sync"]["resolved_semantics"],
+                         "compatibility_queue_alias")
+        self.assertEqual(pre_delivery["data"]["sync"]["resolved_compatibility"],
+                         pre_delivery["data"]["sync"]["resolved"])
+        self.assertEqual(pre_delivery["data"]["sync"]["pre_delivery"], 1)
+        self.assertEqual(pre_delivery["data"]["sync"]["invalid"], 0)
+        self.assertEqual(
+            self._history(decision_id)["decision"]["lifecycle"]["state"],
+            "answered_pending")
+
+        self._deliver(decision_id, "delivery:watch-owner", "provider:watch-owner")
+        consumed = self._alert(
+            "sync-snapshot", extra_env={"CHAT_GRAPH_DB": str(graph)})
+        self.assertEqual(consumed["data"]["sync"]["consumed"], 1)
+        history = self._history(decision_id)
+        self.assertEqual(history["decision"]["lifecycle"]["state"], "consumed")
+        event = next(e for e in history["events"] if e["event_type"] == "consumed")
+        self.assertRegex(event["detail"]["transition_id"],
+                         r"^chat-graph:[0-9a-f]{40}$")
+        self.assertEqual(event["detail"]["source"], "chat-graph")
+        self.assertEqual(event["detail"]["resolved_at"], 1784368801)
+        self.assertEqual(event["detail"]["source_id"], "watch-owner")
+        self.assertIsInstance(event["detail"]["delivered_event_id"], int)
+        self.assertEqual(event["detail"]["delivered_at"], 1784368800)
+        replay = self._alert(
+            "sync-snapshot", extra_env={"CHAT_GRAPH_DB": str(graph)})
+        self.assertEqual(replay["data"]["sync"]["consumed"], 0)
+        self.assertEqual(replay["data"]["sync"]["already_consumed"], 1)
+        self.assertEqual(
+            len([e for e in self._history(decision_id)["events"]
+                 if e["event_type"] == "consumed"]), 1)
+
+        invalid = dict(change)
+        invalid["item_key"] = "rk-missing-source"
+        invalid.pop("source_id")
+        self._write_chat_change(invalid)
+        malformed = self._alert(
+            "sync-snapshot", extra_env={"CHAT_GRAPH_DB": str(graph)})
+        self.assertEqual(malformed["data"]["sync"]["invalid"], 1)
+        self.assertEqual(malformed["data"]["sync"]["pre_delivery"], 0)
+
+    def test_status_separates_lifecycle_counts_from_compatibility_counts(
+            self) -> None:
+        waiting = self._ingest("status-owner", "waiting")
+        pending = self._ingest("status-owner", "pending")
+        self._answer_single(pending["decision"]["id"])
+
+        status = self._alert("status")
+        lifecycle = status["data"]["lifecycle_counts"]
+        self.assertEqual(lifecycle["awaiting_answer"], 1)
+        self.assertEqual(lifecycle["answered_pending"], 1)
+        self.assertEqual(sum(lifecycle.values()), 2)
+        self.assertEqual(status["data"]["counts_semantics"],
+                         "compatibility_queue_alias")
+        self.assertEqual(status["data"]["compatibility_counts"],
+                         status["data"]["counts"])
+        self.assertEqual(status["data"]["compatibility_counts"]["open"], 2)
+        self.assertIn(waiting["decision"]["id"],
+                      [d["id"] for d in status["data"]["pinned"]])
 
     def test_changed_evidence_unlocks_a_new_answer(self) -> None:
         first = self._ingest("solo-owner", "one", evidence="evidence-v1")

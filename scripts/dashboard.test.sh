@@ -2719,7 +2719,8 @@ PY
   env -u DASHBOARD_CMD_DECISIONS REPO_ROOT="$REPO" MISSION_CONTROL_HOME="$mch" \
     bash "$DASH" collect --force decisions >/dev/null 2>&1
   MISSION_CONTROL_HOME="$mch" "$REPO/scripts/decision-alert" resolve "$recover_did" \
-    --evidence-type manual_resolution --evidence-ref mc-answer:1 --json >/dev/null || miss=1
+    --evidence-type manual_resolution --evidence-ref mc-answer:1 \
+    --source dashboard-test --json >/dev/null || miss=1
   [ ! -e "$mch/answers/$recover_did.json" ] && [ ! -e "$mch/prompts/$recover_did.md" ] || miss=1
   env -u DASHBOARD_CMD_DECISIONS REPO_ROOT="$REPO" MISSION_CONTROL_HOME="$mch" \
     bash "$DASH" decide answer "$recover_did" 1 >"$mch/recover.out" 2>"$mch/recover.err" || miss=1

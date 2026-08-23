@@ -60,6 +60,8 @@ DECISION_LIFECYCLE = (
     "answered_pending", "delivered", "consumed", "running",
     "live_result_verified", "closed",
 )
+DEFAULT_ANSWER_SOURCE = "mission-control"
+GRAPH_LIFECYCLE_SOURCE = "chat-graph"
 LIFECYCLE_TRANSITION_CONTRACT = {
     "delivered": ("answered_pending", "provider_delivery_receipt", "delivered"),
     "consumed": (
@@ -93,6 +95,8 @@ _SINGLE_STAGE_RE = re.compile(
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 _LIFECYCLE_EVENT_ID_RE = re.compile(
     r"^[A-Za-z0-9][A-Za-z0-9._:-]{7,191}$")
+_LIFECYCLE_SOURCE_RE = re.compile(
+    r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$")
 
 
 class DecisionError(Exception):
@@ -338,6 +342,10 @@ def _structured_origin_requires_anchor(source_kind, provenance):
     return (source_kind, provenance.casefold()) not in deterministic
 
 
+def _valid_lifecycle_source(value):
+    return bool(_LIFECYCLE_SOURCE_RE.match(str(value or "")))
+
+
 def _verified_resolution_evidence(evidence_type, evidence_ref, resolution_key):
     """Verify automatic closure against chat-graph's persisted evidence row."""
     if evidence_type == "manual_resolution":
@@ -352,15 +360,30 @@ def _verified_resolution_evidence(evidence_type, evidence_ref, resolution_key):
         "CHAT_GRAPH_DB", os.path.join("~", ".chat-graph", "graph.db")))
     try:
         con = sqlite3.connect("file:%s?mode=ro" % path, uri=True, timeout=5)
-        row = con.execute("""SELECT 1 FROM open_ends
+        columns = {row[1] for row in con.execute(
+            "PRAGMA table_info(open_ends)").fetchall()}
+        source_column = "session_id" if "session_id" in columns else "NULL"
+        rows = con.execute("""SELECT resolved_at,%s FROM open_ends
             WHERE item_key=? AND resolved_at IS NOT NULL
               AND resolution_evidence_type=? AND resolution_evidence_ref=?
-            LIMIT 1""", (resolution_key, expected, evidence_ref)).fetchone()
+            ORDER BY resolved_at DESC""" % source_column,
+            (resolution_key, expected, evidence_ref)).fetchall()
         con.close()
     except sqlite3.Error:
         raise DecisionError("verified graph resolution evidence unavailable")
-    if row is None:
+    if not rows:
         raise DecisionError("resolution evidence is not verified by chat graph")
+    proofs = set()
+    for resolved_at, source_id in rows:
+        if isinstance(resolved_at, bool) or not isinstance(resolved_at, int):
+            raise DecisionError("graph resolution evidence has invalid freshness")
+        proofs.add((resolved_at, str(source_id or resolution_key)))
+    if len(proofs) != 1:
+        raise DecisionError("graph resolution evidence is ambiguous")
+    resolved_at, source_id = next(iter(proofs))
+    if resolved_at <= 0 or not _valid_lifecycle_source(source_id):
+        raise DecisionError("graph resolution evidence has invalid identity")
+    return {"resolved_at": resolved_at, "source_id": source_id}
 
 
 def _fingerprint(text, evidence, trust, provenance, action_argv, resolution_key,
@@ -425,7 +448,7 @@ def _answer_pending_marker(con, row):
         detail = {"valid": False}
     else:
         detail = dict(detail)
-        detail["valid"] = True
+        detail["valid"] = _valid_lifecycle_source(detail.get("source"))
     detail["event_id"] = event["event_id"]
     detail["occurred_at"] = event["occurred_at"]
     return detail
@@ -456,6 +479,16 @@ def _lifecycle_event_rows(con, decision_id, fingerprint):
         [decision_id, fingerprint] + list(DECISION_LIFECYCLE[1:])).fetchall()
 
 
+def _consumption_evidence_is_unique(con, event):
+    """Bind a graph receipt to one immutable decision fingerprint."""
+    row = con.execute("""SELECT 1 FROM decision_events
+        WHERE event_type='consumed' AND evidence_ref=?
+          AND event_id<>? LIMIT 1""", (
+            event["evidence_ref"], event["event_id"],
+        )).fetchone()
+    return row is None
+
+
 def _decision_lifecycle(con, row):
     """Derive the exact current-fingerprint lifecycle from immutable events."""
     pending = _answer_pending_marker(con, row)
@@ -479,6 +512,7 @@ def _decision_lifecycle(con, row):
         "occurred_at": pending.get("occurred_at"),
         "evidence_type": "operator_choice",
         "evidence_ref": pending.get("batch_key"),
+        "source": pending.get("source"),
     }
     seen_transition_ids = set()
     for event in _lifecycle_event_rows(
@@ -498,12 +532,23 @@ def _decision_lifecycle(con, row):
             detail.get("expected_fingerprint") == row["evidence_fingerprint"] and
             detail.get("resolution_key") == row["resolution_key"] and
             detail.get("outcome") == contract[2] and
+            _valid_lifecycle_source(detail.get("source")) and
             _LIFECYCLE_EVENT_ID_RE.match(str(transition_id or "")) and
             transition_id not in seen_transition_ids)
         if contract and isinstance(contract[1], tuple):
             valid = valid and event["evidence_type"] in contract[1]
         elif contract and contract[1] is not None:
             valid = valid and event["evidence_type"] == contract[1]
+        if valid and event["event_type"] == "consumed":
+            resolved_at = detail.get("resolved_at")
+            valid = (
+                isinstance(resolved_at, int) and
+                not isinstance(resolved_at, bool) and
+                resolved_at >= latest.get("occurred_at", 0) and
+                detail.get("delivered_event_id") == latest.get("event_id") and
+                detail.get("delivered_at") == latest.get("occurred_at") and
+                _valid_lifecycle_source(detail.get("source_id")) and
+                _consumption_evidence_is_unique(con, event))
         if not valid:
             return {
                 "state": "invalid", "valid": False,
@@ -518,7 +563,11 @@ def _decision_lifecycle(con, row):
             "evidence_type": event["evidence_type"],
             "evidence_ref": event["evidence_ref"],
             "transition_id": transition_id,
+            "source": detail.get("source"),
         }
+        if event["event_type"] == "consumed":
+            latest["resolved_at"] = detail.get("resolved_at")
+            latest["source_id"] = detail.get("source_id")
     if ((state == "closed") != (row["state"] == "resolved")):
         return {
             "state": "invalid", "valid": False,
@@ -821,12 +870,28 @@ def _existing_lifecycle_transition(con, transition_id):
 
 def _record_lifecycle_transition(
         con, row, to_state, transition_id, evidence_type, evidence_ref,
-        outcome, source, now):
+        outcome, source, now, graph_proof=None):
     if not _LIFECYCLE_EVENT_ID_RE.match(str(transition_id or "")):
         raise DecisionError("invalid lifecycle event id")
+    if not _valid_lifecycle_source(source):
+        raise DecisionError("lifecycle source is required")
     contract = LIFECYCLE_TRANSITION_CONTRACT.get(to_state)
     if contract is None:
         raise DecisionError("unsupported lifecycle transition")
+
+    expected_previous, expected_evidence, expected_outcome = contract
+    event_detail = {
+        "schema": 1,
+        "transition_id": transition_id,
+        "from_state": expected_previous,
+        "to_state": to_state,
+        "expected_fingerprint": row["evidence_fingerprint"],
+        "resolution_key": row["resolution_key"],
+        "outcome": outcome,
+        "source": source,
+    }
+    if graph_proof is not None:
+        event_detail.update(graph_proof)
 
     existing, detail = _existing_lifecycle_transition(con, transition_id)
     if existing is not None:
@@ -836,10 +901,7 @@ def _record_lifecycle_transition(
             existing["evidence_fingerprint"] == row["evidence_fingerprint"] and
             existing["evidence_type"] == evidence_type and
             existing["evidence_ref"] == evidence_ref and
-            detail.get("resolution_key") == row["resolution_key"] and
-            detail.get("expected_fingerprint") == row["evidence_fingerprint"] and
-            detail.get("outcome") == outcome and
-            detail.get("source", "") == (source or ""))
+            detail == event_detail)
         if not exact:
             raise DecisionError("lifecycle event id was replayed for another target")
         return False
@@ -847,7 +909,6 @@ def _record_lifecycle_transition(
     lifecycle = _decision_lifecycle(con, row)
     if lifecycle.get("valid") is not True:
         raise DecisionError("decision lifecycle is invalid")
-    expected_previous, expected_evidence, expected_outcome = contract
     if lifecycle.get("state") != expected_previous:
         raise DecisionError("illegal lifecycle transition")
     if isinstance(expected_evidence, tuple):
@@ -858,17 +919,35 @@ def _record_lifecycle_transition(
         raise DecisionError("lifecycle evidence type does not match transition")
     if outcome != expected_outcome:
         raise DecisionError("lifecycle transition outcome is not successful")
-
-    event_detail = {
-        "schema": 1,
-        "transition_id": transition_id,
-        "from_state": expected_previous,
-        "to_state": to_state,
-        "expected_fingerprint": row["evidence_fingerprint"],
-        "resolution_key": row["resolution_key"],
-        "outcome": outcome,
-        "source": source or "",
-    }
+    if to_state == "consumed":
+        proof = graph_proof or {}
+        resolved_at = proof.get("resolved_at")
+        source_id = proof.get("source_id")
+        delivered_at = (lifecycle.get("latest") or {}).get("occurred_at")
+        delivered_event_id = (lifecycle.get("latest") or {}).get("event_id")
+        if (isinstance(resolved_at, bool) or
+                not isinstance(resolved_at, int) or
+                not isinstance(delivered_at, int) or
+                resolved_at < delivered_at):
+            raise DecisionError(
+                "graph resolution evidence predates current delivery")
+        if not _valid_lifecycle_source(source_id):
+            raise DecisionError("graph resolution evidence has invalid identity")
+        local_delivery_binding = {
+            "delivered_event_id": delivered_event_id,
+            "delivered_at": delivered_at,
+        }
+        for key, value in local_delivery_binding.items():
+            if key in proof and proof.get(key) != value:
+                raise DecisionError(
+                    "graph resolution evidence targets another delivery")
+        event_detail.update(local_delivery_binding)
+        reused = con.execute("""SELECT 1 FROM decision_events
+            WHERE event_type='consumed' AND evidence_ref=? LIMIT 1""",
+            (evidence_ref,)).fetchone()
+        if reused is not None:
+            raise DecisionError(
+                "graph resolution evidence is already bound to another fingerprint")
     _event(con, row["decision_id"], to_state, row["evidence_fingerprint"],
            now, evidence_type, evidence_ref, detail=event_detail)
     if to_state == "closed":
@@ -902,7 +981,7 @@ def transition(args):
         args.evidence_ref, IDENTIFIER, "lifecycle evidence ref", counters)
     outcome = _sanitize_required(
         args.outcome, IDENTIFIER, "lifecycle outcome", counters)
-    source = _sanitize_optional(
+    source = _sanitize_required(
         getattr(args, "source", None), IDENTIFIER,
         "lifecycle source", counters)
 
@@ -941,11 +1020,17 @@ def resolve(args):
                                       "resolution evidence ref", counters)
     supplied_key = _sanitize_optional(args.resolution_key, IDENTIFIER,
                                       "resolution-key", counters)
-    source = _sanitize_optional(getattr(args, "source", None), IDENTIFIER,
+    source = _sanitize_required(getattr(args, "source", None), IDENTIFIER,
                                 "resolve source", counters)
     transition_id = _sanitize_optional(
         getattr(args, "event_id", None), IDENTIFIER,
         "lifecycle event id", counters)
+    expected_fingerprint = _sanitize_optional(
+        getattr(args, "expected_fingerprint", None), IDENTIFIER,
+        "expected evidence fingerprint", counters)
+    if (expected_fingerprint is not None and
+            not _SHA256_RE.match(expected_fingerprint)):
+        raise DecisionError("invalid expected evidence fingerprint")
     con = _connect()
     try:
         _tx(con)
@@ -960,17 +1045,41 @@ def resolve(args):
         elif supplied_key is not None and supplied_key != row["resolution_key"]:
             raise DecisionError("manual resolution key does not exactly match decision")
         if pending is not None:
+            if not expected_fingerprint:
+                raise DecisionError(
+                    "answered-pending consumption requires current fingerprint")
+            if row["evidence_fingerprint"] != expected_fingerprint:
+                raise DecisionError("lifecycle evidence fingerprint changed")
             if not transition_id:
                 raise DecisionError(
                     "answered-pending consumption requires a stable event id")
-            existing, _detail = _existing_lifecycle_transition(
+            existing, existing_detail = _existing_lifecycle_transition(
                 con, transition_id)
             if existing is None:
-                _verified_resolution_evidence(
+                graph_proof = _verified_resolution_evidence(
                     evidence_type, evidence_ref, supplied_key)
+                supplied_resolved_at = getattr(args, "resolved_at", None)
+                supplied_source_id = getattr(args, "source_id", None)
+                if (supplied_resolved_at is not None and
+                        supplied_resolved_at != graph_proof["resolved_at"]):
+                    raise DecisionError(
+                        "graph snapshot freshness does not match durable evidence")
+                if (supplied_source_id is not None and
+                        supplied_source_id != graph_proof["source_id"]):
+                    raise DecisionError(
+                        "graph snapshot source does not match durable evidence")
+            else:
+                graph_proof = {
+                    "resolved_at": (existing_detail or {}).get("resolved_at"),
+                    "source_id": (existing_detail or {}).get("source_id"),
+                    "delivered_event_id": (
+                        existing_detail or {}).get("delivered_event_id"),
+                    "delivered_at": (existing_detail or {}).get("delivered_at"),
+                }
             changed = _record_lifecycle_transition(
                 con, row, "consumed", transition_id, evidence_type,
-                evidence_ref, "accepted", source, now)
+                evidence_ref, "accepted", source, now,
+                graph_proof=graph_proof)
             con.commit()
             return {
                 "ok": True, "changed": changed, "replayed": not changed,
@@ -990,7 +1099,7 @@ def resolve(args):
                 ))
             _event(con, args.decision_id, "resolved",
                    row["evidence_fingerprint"], now, evidence_type, evidence_ref,
-                   detail={"source": source} if source else None)
+                   detail={"source": source})
         else:
             if (row["resolution_evidence_type"] != evidence_type or
                     row["resolution_evidence_ref"] != evidence_ref):
@@ -1365,7 +1474,7 @@ def answer_single(args):
         raise DecisionError("invalid expected evidence fingerprint")
     source = _sanitize_optional(
         getattr(args, "source", None), IDENTIFIER,
-        "single answer source", counters)
+        "single answer source", counters) or DEFAULT_ANSWER_SOURCE
     resume_chat_id = _sanitize_optional(
         getattr(args, "resume_chat_id", None), IDENTIFIER,
         "single answer resume chat id", counters)
@@ -1393,7 +1502,7 @@ def answer_single(args):
             "choice": choice,
             "evidence_fingerprint": row["evidence_fingerprint"],
             "resolution_key": row["resolution_key"],
-            "source": source or "",
+            "source": source,
             "resume_chat_id": resume_chat_id or "",
             "resume_provider": resume_provider or "",
             "answer_artifact": "answers/%s.json" % row["decision_id"],
@@ -1518,8 +1627,9 @@ def _verify_rollup_artifact_proof(
 def answer_rollup(args):
     now = _now()
     counters = EgressCounters()
-    source = _sanitize_optional(getattr(args, "source", None), IDENTIFIER,
-                                "rollup answer source", counters)
+    source = (_sanitize_optional(getattr(args, "source", None), IDENTIFIER,
+                                 "rollup answer source", counters) or
+              DEFAULT_ANSWER_SOURCE)
     resume_chat_id = _sanitize_optional(
         getattr(args, "resume_chat_id", None), IDENTIFIER,
         "rollup answer resume chat id", counters)
@@ -1562,7 +1672,7 @@ def answer_rollup(args):
                 "target_ids": plan["target_ids"],
                 "independent_ids": plan["independent_ids"],
                 "already_pending_ids": plan["already_pending_ids"],
-                "source": source or "",
+                "source": source,
                 "resume_chat_id": resume_chat_id or "",
                 "resume_provider": resume_provider or "",
                 "artifact_manifest_sha256": args.artifact_manifest_sha256,
@@ -1592,7 +1702,7 @@ def answer_rollup(args):
                 "target_ids": plan["target_ids"],
                 "independent_ids": plan["independent_ids"],
                 "already_pending_ids": plan["already_pending_ids"],
-                "source": source or "",
+                "source": source,
                 "resume_chat_id": resume_chat_id or "",
                 "resume_provider": resume_provider or "",
                 "artifact_manifest_sha256": args.artifact_manifest_sha256,
@@ -1688,8 +1798,23 @@ def status(_args):
         counts["inferred"] = len(inferred)
         counts["answered_pending"] = sum(
             d.get("answer_pending") is not None for d in pinned)
+        lifecycle_states = (
+            "awaiting_answer",) + DECISION_LIFECYCLE + (
+                "dismissed", "legacy_resolved", "invalid")
+        lifecycle_counts = {state: 0 for state in lifecycle_states}
+        for decision in decisions:
+            lifecycle_state = (decision.get("lifecycle") or {}).get("state")
+            if lifecycle_state not in lifecycle_counts:
+                lifecycle_state = "invalid"
+            lifecycle_counts[lifecycle_state] += 1
         data = {
+            # `counts` is retained for the installed v1 renderers. Its label
+            # prevents consumers from mistaking compatibility queue state for
+            # the exact follow-through lifecycle.
             "counts": counts,
+            "counts_semantics": "compatibility_queue_alias",
+            "compatibility_counts": dict(counts),
+            "lifecycle_counts": lifecycle_counts,
             "pinned": pinned,
             "inferred": inferred,
         }
@@ -1719,6 +1844,39 @@ def _load_feed(name):
     return data if isinstance(data, dict) else {}
 
 
+def _graph_consumption_event_id(row, evidence_type, evidence_ref,
+                                resolved_at, source_id, delivery):
+    packet = [
+        "chat-graph-consumption-v1", row["decision_id"],
+        row["evidence_fingerprint"], row["resolution_key"], evidence_type,
+        evidence_ref, resolved_at, source_id, delivery.get("transition_id"),
+        delivery.get("occurred_at"),
+    ]
+    return "chat-graph:%s" % _sha(_canonical(packet))[:40]
+
+
+def _graph_consumption_matches(con, row, evidence_type, evidence_ref,
+                               resolved_at, source_id):
+    events = con.execute("""SELECT evidence_type,evidence_ref,detail_json
+        FROM decision_events WHERE decision_id=? AND evidence_fingerprint=?
+          AND event_type='consumed'""", (
+            row["decision_id"], row["evidence_fingerprint"],
+        )).fetchall()
+    for event in events:
+        try:
+            detail = json.loads(event["detail_json"] or "null")
+        except (TypeError, ValueError):
+            continue
+        if (isinstance(detail, dict) and
+                event["evidence_type"] == evidence_type and
+                event["evidence_ref"] == evidence_ref and
+                detail.get("resolved_at") == resolved_at and
+                detail.get("source_id") == source_id and
+                detail.get("source") == GRAPH_LIFECYCLE_SOURCE):
+            return True
+    return False
+
+
 def sync_snapshot(args):
     """Sync structured decisions and reversible inferred follow-ups."""
     chats = _load_feed("chats")
@@ -1727,6 +1885,7 @@ def sync_snapshot(args):
     current_tier2 = {}
     current_sessions = set()
     stored = dropped = resolved = 0
+    consumed = pre_delivery = invalid = already_consumed = unmatched = 0
     for card in chats.get("outcomes") or []:
         if not isinstance(card, dict) or card.get("method") not in ("tier1", "tier2"):
             continue
@@ -1846,32 +2005,88 @@ def sync_snapshot(args):
         if not isinstance(change, dict) or change.get("change_type") != "resolved":
             continue
         evidence_type = evidence_map.get(change.get("resolution_evidence_type"))
-        item_key = str(change.get("item_key") or "")
-        evidence_ref = str(change.get("resolution_evidence_ref") or "")
-        if not evidence_type or not item_key or not evidence_ref:
+        resolved_at = change.get("resolved_at")
+        try:
+            item_key = _sanitize_required(
+                change.get("item_key"), IDENTIFIER,
+                "graph resolution key")
+            evidence_ref = _sanitize_required(
+                change.get("resolution_evidence_ref"), IDENTIFIER,
+                "graph resolution evidence ref")
+            source_id = _sanitize_required(
+                change.get("source_id"), IDENTIFIER,
+                "graph resolution source id")
+        except DecisionError:
+            invalid += 1
+            dropped += 1
+            continue
+        if (not evidence_type or isinstance(resolved_at, bool) or
+                not isinstance(resolved_at, int) or resolved_at <= 0 or
+                not _valid_lifecycle_source(source_id)):
+            invalid += 1
+            dropped += 1
             continue
         con = _connect()
         try:
-            ids = [row[0] for row in con.execute("""SELECT decision_id FROM decisions
-                WHERE resolution_key=? AND state='open'""", (item_key,)).fetchall()]
+            rows = con.execute("""SELECT * FROM decisions
+                WHERE resolution_key=? AND state='open'""", (item_key,)).fetchall()
+            candidates = []
+            for row in rows:
+                lifecycle = _decision_lifecycle(con, row)
+                lifecycle_state = lifecycle.get("state")
+                if lifecycle.get("valid") is not True:
+                    invalid += 1
+                elif lifecycle_state in ("awaiting_answer", "answered_pending"):
+                    pre_delivery += 1
+                elif lifecycle_state == "delivered":
+                    candidates.append((dict(row), lifecycle.get("latest") or {}))
+                elif lifecycle_state in (
+                        "consumed", "running", "live_result_verified"):
+                    if _graph_consumption_matches(
+                            con, row, evidence_type, evidence_ref,
+                            resolved_at, source_id):
+                        already_consumed += 1
+                    else:
+                        invalid += 1
+                else:
+                    invalid += 1
         finally:
             con.close()
-        for decision_id in ids:
+        if not rows:
+            unmatched += 1
+        for row, delivery in candidates:
+            event_id = _graph_consumption_event_id(
+                row, evidence_type, evidence_ref, resolved_at, source_id,
+                delivery)
             packet = argparse.Namespace(
-                decision_id=decision_id, evidence_type=evidence_type,
+                decision_id=row["decision_id"], evidence_type=evidence_type,
                 evidence_ref=evidence_ref, resolution_key=item_key,
+                event_id=event_id, source=GRAPH_LIFECYCLE_SOURCE,
+                resolved_at=resolved_at, source_id=source_id,
+                expected_fingerprint=row["evidence_fingerprint"],
             )
             try:
                 if resolve(packet).get("changed"):
-                    resolved += 1
+                    consumed += 1
+                else:
+                    already_consumed += 1
             except DecisionError:
                 dropped += 1
+                invalid += 1
     result = status(args)
     result["data"]["sync"] = {
-        "source": "chat-graph tier1 and tier2 outcomes",
+        "source": GRAPH_LIFECYCLE_SOURCE,
+        "provenance": "chat-graph tier1 and tier2 outcomes",
         "seen": len(seen),
         "stored": stored,
         "resolved": resolved,
+        "resolved_semantics": "compatibility_queue_alias",
+        "resolved_compatibility": resolved,
+        "consumed": consumed,
+        "pre_delivery": pre_delivery,
+        "invalid": invalid,
+        "already_consumed": already_consumed,
+        "unmatched": unmatched,
         "dropped": dropped,
         "structured_omission_resolves": False,
         "inferred_exact_supersession_resolves": True,
@@ -2369,7 +2584,9 @@ def _parser():
     p.add_argument("--resolution-key")
     p.add_argument("--event-id",
                    help="stable producer event id; required for pending consumption")
-    p.add_argument("--source",
+    p.add_argument("--expected-fingerprint",
+                   help="current sha256; required for pending consumption")
+    p.add_argument("--source", required=True,
                    help="who triggered this state change (e.g. telegram); "
                         "recorded in the decision_events detail, never in "
                         "resolution_evidence_ref (idempotent-replay key)")
@@ -2383,7 +2600,7 @@ def _parser():
     p.add_argument("--evidence-type", required=True)
     p.add_argument("--evidence-ref", required=True)
     p.add_argument("--outcome", required=True)
-    p.add_argument("--source")
+    p.add_argument("--source", required=True)
 
     p = sub.add_parser("history")
     p.add_argument("decision_id")
