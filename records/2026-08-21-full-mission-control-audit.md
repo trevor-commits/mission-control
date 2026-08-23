@@ -59,9 +59,21 @@ No P0 finding was found.
 
 ## What was not tested
 
-- A live `dashboard install` was not run because it changes the active local installation and LaunchAgent state. Hermetic installer and attestation tests passed instead.
-- A natural scheduled collector run was not awaited. The collector’s behavior was tested with controlled inputs.
-- No separate human reviewer has reviewed this change. Three isolated agent reviews were used. The first found the timestamp defect. The second found raw cache markup. The third passed the normalizer and recommended render-time escaping, which this audit then added and tested.
+- A live `dashboard install` was not run during the audit itself because it changes the active local installation and LaunchAgent state. Hermetic installer and attestation tests passed instead. The audit record was left open on exactly this point, and the follow-through below closes it.
+- A natural scheduled collector run was not awaited during the audit. The collector’s behavior was tested with controlled inputs.
+
+## Live follow-through (2026-08-22)
+
+Trevor asked to implement everything the audit had left open. Both deferred live checks were then executed for real:
+
+- `scripts/dashboard install` ran against the live home at commit `5477e66`. It installed 12 runtimes and 4 assets. It skipped the four activation-gated jobs as designed. It reported the refresher agent already current and bootstrapped. It wrote a fresh stamp with `provenance=head` and `head_sha=5477e66a…`. Every stamped runtime and asset hash recomputed clean against the installed bytes.
+- The installed `bin/dashboard` copy is byte-identical to HEAD's `scripts/dashboard` with only `REPO_ROOT_DEFAULT` baked in. The hardened collector path is therefore what production runs. Feeders execute from repo siblings via `_repo_script`, so the audited usage-snapshot is invoked directly from this repository.
+- The registered refresher (`com.gillettes.mission-control`, 300s interval) was kickstarted and exited 0. All eight persisted feeds are fresh and `ok=true` afterward: automation, usage, git (55 repos), chats, decisions, attention, brief (last nightly run 2026-08-22 12:00), and headroom (61s old). The live usage feed shows the hardened collector working. The GLM weekly row carries a real reset time, and the codex/claude rows carry window mapping.
+- Pre-existing log noise (`decision queue timed out after 30s` lines) predates this follow-through: the error log’s last write is 2026-08-20 14:54, while the decisions feed has been fresh and healthy since. No new degraded cycle appeared after the kickstart.
+
+The two audit caveats are therefore discharged with live evidence rather than hermetic substitutes.
+
+No separate human reviewer has reviewed this change. Three isolated agent reviews were used. The first found the timestamp defect. The second found raw cache markup. The third passed the normalizer and recommended render-time escaping, which this audit then added and tested.
 
 ## Skeptical second pass
 
@@ -71,7 +83,7 @@ A future rewrite becomes justified only if local files no longer support the dat
 
 ## Follow-up status
 
-No new P0 or P1 follow-up remains. The existing operator decisions in `todo.md` remain the correct queue. No further audit-created work is required.
+No new P0 or P1 follow-up remains. The existing operator decisions in `todo.md` remain the correct queue. The audit's two deferred live checks were executed on 2026-08-22 and are recorded under Live follow-through above. No further audit-created work is required.
 
 ## Ownership
 
