@@ -486,7 +486,8 @@ class RollupAnswerTests(unittest.TestCase):
         con = sqlite3.connect(graph)
         con.execute("""CREATE TABLE open_ends(
             session_id TEXT, kind TEXT, item_key TEXT, resolved_at INTEGER,
-            resolution_evidence_type TEXT, resolution_evidence_ref TEXT)""")
+            resolution_evidence_type TEXT, resolution_evidence_ref TEXT,
+            UNIQUE(session_id, kind, item_key))""")
         evidence_ref = "turn-owner-a-consumed-one"
         con.execute("INSERT INTO open_ends VALUES(?,?,?,?,?,?)", (
             "owner-a", "chat_open_end",
@@ -664,6 +665,39 @@ class RollupAnswerTests(unittest.TestCase):
         status = self._alert("status")
         self.assertEqual(status["data"]["lifecycle_counts"]["invalid"], 1)
 
+    def test_lifecycle_reducer_rejects_missing_persisted_receipt_fields(
+            self) -> None:
+        cases = (
+            ("answered_pending", "evidence_type"),
+            ("answered_pending", "evidence_ref"),
+            ("delivered", "evidence_type"),
+            ("delivered", "evidence_ref"),
+        )
+        for index, (event_type, column) in enumerate(cases):
+            with self.subTest(event_type=event_type, column=column):
+                ingested = self._ingest(
+                    "receipt-field-owner-%d" % index, "one")
+                decision_id = ingested["decision"]["id"]
+                self._answer_single(decision_id)
+                if event_type == "delivered":
+                    self._deliver(
+                        decision_id,
+                        "delivery:receipt-field-%d" % index,
+                        "provider:receipt-field-%d" % index)
+
+                db = self.home / "decisions" / "decisions.db"
+                con = sqlite3.connect(db)
+                con.execute(
+                    "UPDATE decision_events SET %s=NULL "
+                    "WHERE decision_id=? AND event_type=?" % column,
+                    (decision_id, event_type))
+                con.commit()
+                con.close()
+
+                lifecycle = self._history(decision_id)["decision"]["lifecycle"]
+                self.assertFalse(lifecycle["valid"])
+                self.assertEqual(lifecycle["state"], "invalid")
+
     def test_parent_commit_pending_source_upgrades_without_rewriting_evidence(
             self) -> None:
         ingested = self._ingest("legacy-owner", "one")
@@ -756,6 +790,75 @@ class RollupAnswerTests(unittest.TestCase):
                 ".decision-answer-stage.", ".decision-prompt-stage."))
             for path in self.home.rglob("*")))
 
+    def test_graph_consumption_rejects_duplicate_capable_identity_schema(
+            self) -> None:
+        ingested = self._ingest_graph_item("duplicate-owner", "d" * 40)
+        decision_id = ingested["decision"]["id"]
+        self._answer_single(decision_id)
+        self._deliver(
+            decision_id, "delivery:duplicate-rows", "provider:duplicate-rows")
+
+        graph = self.temp / "duplicate-graph.db"
+        con = sqlite3.connect(graph)
+        con.execute("""CREATE TABLE open_ends(
+            session_id TEXT, kind TEXT, item_key TEXT, resolved_at INTEGER,
+            resolution_evidence_type TEXT, resolution_evidence_ref TEXT)""")
+        receipt = (
+            "duplicate-owner", "chat_open_end", ingested["resolution_key"],
+            1784368801, "answering_user_turn", "turn-duplicate-consumed",
+        )
+        con.executemany("INSERT INTO open_ends VALUES(?,?,?,?,?,?)",
+                        (receipt, receipt))
+        con.commit()
+        con.close()
+
+        rejected = self._alert(
+            "resolve", decision_id,
+            "--evidence-type", "answering_user_turn",
+            "--evidence-ref", "turn-duplicate-consumed",
+            "--resolution-key", ingested["resolution_key"],
+            "--event-id", "consumption:duplicate-rows",
+            "--expected-fingerprint",
+            ingested["decision"]["evidence_fingerprint"],
+            "--source", "test-suite", ok=False,
+            extra_env={"CHAT_GRAPH_DB": str(graph)})
+        self.assertIn("unique identity", rejected["stderr"])
+        history = self._history(decision_id)
+        self.assertEqual(history["decision"]["lifecycle"]["state"], "delivered")
+        self.assertFalse(any(
+            event["event_type"] == "consumed" for event in history["events"]))
+
+    def test_legacy_resolution_rejects_duplicate_capable_identity_schema(
+            self) -> None:
+        ingested = self._ingest_graph_item("legacy-duplicate-owner", "e" * 40)
+        decision_id = ingested["decision"]["id"]
+        graph = self.temp / "legacy-duplicate-graph.db"
+        con = sqlite3.connect(graph)
+        con.execute("""CREATE TABLE open_ends(
+            session_id TEXT, kind TEXT, item_key TEXT, resolved_at INTEGER,
+            resolution_evidence_type TEXT, resolution_evidence_ref TEXT)""")
+        receipt = (
+            "legacy-duplicate-owner", "chat_open_end",
+            ingested["resolution_key"], 1784368801,
+            "answering_user_turn", "turn-legacy-duplicate-consumed",
+        )
+        con.executemany("INSERT INTO open_ends VALUES(?,?,?,?,?,?)",
+                        (receipt, receipt))
+        con.commit()
+        con.close()
+
+        rejected = self._alert(
+            "resolve", decision_id,
+            "--evidence-type", "answering_user_turn",
+            "--evidence-ref", "turn-legacy-duplicate-consumed",
+            "--resolution-key", ingested["resolution_key"],
+            "--event-id", "resolution:legacy-duplicate-rows",
+            "--source", "test-suite", ok=False,
+            extra_env={"CHAT_GRAPH_DB": str(graph)})
+        self.assertIn("unique identity", rejected["stderr"])
+        self.assertEqual(
+            self._history(decision_id)["decision"]["state"], "open")
+
     def test_graph_consumption_is_fresh_and_receipt_is_not_cross_fingerprint(
             self) -> None:
         first = self._ingest("receipt-owner", "one", evidence="evidence-v1")
@@ -768,7 +871,8 @@ class RollupAnswerTests(unittest.TestCase):
         con = sqlite3.connect(graph)
         con.execute("""CREATE TABLE open_ends(
             session_id TEXT, kind TEXT, item_key TEXT, resolved_at INTEGER,
-            resolution_evidence_type TEXT, resolution_evidence_ref TEXT)""")
+            resolution_evidence_type TEXT, resolution_evidence_ref TEXT,
+            UNIQUE(session_id, kind, item_key))""")
         shared_ref = "turn-receipt-owner-consumed"
         con.execute("INSERT INTO open_ends VALUES(?,?,?,?,?,?)", (
             "receipt-owner", "chat_open_end", resolution_key, 1784368801,
@@ -821,11 +925,11 @@ class RollupAnswerTests(unittest.TestCase):
         self._deliver(decision_id, "delivery:receipt-v2", "provider:receipt-v2")
 
         con = sqlite3.connect(graph)
-        con.execute("INSERT INTO open_ends VALUES(?,?,?,?,?,?)", (
-            "receipt-owner", "chat_open_end", resolution_key, 1784368801,
-            "answering_user_turn", "turn-stale-for-v2"))
-        con.execute("UPDATE open_ends SET resolved_at=1784368803 WHERE "
-                    "resolution_evidence_ref=?", (shared_ref,))
+        con.execute("""UPDATE open_ends SET resolved_at=1784368801,
+            resolution_evidence_type='answering_user_turn',
+            resolution_evidence_ref='turn-stale-for-v2'
+            WHERE session_id='receipt-owner' AND kind='chat_open_end'
+              AND item_key=?""", (resolution_key,))
         con.commit()
         con.close()
 
@@ -839,6 +943,14 @@ class RollupAnswerTests(unittest.TestCase):
             "--source", "test-suite", ok=False,
             extra_env={"CHAT_GRAPH_DB": str(graph)})
         self.assertIn("predates current delivery", stale["stderr"])
+
+        con = sqlite3.connect(graph)
+        con.execute("""UPDATE open_ends SET resolved_at=1784368803,
+            resolution_evidence_ref=? WHERE session_id='receipt-owner'
+              AND kind='chat_open_end' AND item_key=?""",
+                    (shared_ref, resolution_key))
+        con.commit()
+        con.close()
         reused = self._alert(
             "resolve", decision_id,
             "--evidence-type", "answering_user_turn",
@@ -864,7 +976,8 @@ class RollupAnswerTests(unittest.TestCase):
         con = sqlite3.connect(graph)
         con.execute("""CREATE TABLE open_ends(
             session_id TEXT, kind TEXT, item_key TEXT, resolved_at INTEGER,
-            resolution_evidence_type TEXT, resolution_evidence_ref TEXT)""")
+            resolution_evidence_type TEXT, resolution_evidence_ref TEXT,
+            UNIQUE(session_id, kind, item_key))""")
         con.execute("INSERT INTO open_ends VALUES(?,?,?,?,?,?)", (
             "owner-b", "chat_open_end", item_key, 1784368801,
             "downstream_explicit", "owner-b-proof"))
@@ -943,7 +1056,8 @@ class RollupAnswerTests(unittest.TestCase):
         con = sqlite3.connect(graph)
         con.execute("""CREATE TABLE open_ends(
             session_id TEXT, kind TEXT, item_key TEXT, resolved_at INTEGER,
-            resolution_evidence_type TEXT, resolution_evidence_ref TEXT)""")
+            resolution_evidence_type TEXT, resolution_evidence_ref TEXT,
+            UNIQUE(session_id, kind, item_key))""")
         con.execute("INSERT INTO open_ends VALUES(?,?,?,?,?,?)", (
             "watch-owner", "chat_open_end", resolution_key, 1784368801,
             "downstream_explicit", "watch-child-result"))
@@ -1044,6 +1158,37 @@ class RollupAnswerTests(unittest.TestCase):
         self.assertNotEqual(events[0]["evidence_fingerprint"],
                             events[1]["evidence_fingerprint"])
         self.assertEqual(self._history(decision_id)["decision"]["state"], "open")
+
+    def test_returning_fingerprint_does_not_resurrect_old_lifecycle(self) -> None:
+        first = self._ingest(
+            "returning-fingerprint-owner", "one", evidence="evidence-v1")
+        decision_id = first["decision"]["id"]
+        fingerprint_v1 = first["decision"]["evidence_fingerprint"]
+        self._answer_single(decision_id)
+        self._deliver(
+            decision_id, "delivery:returning-v1", "provider:returning-v1")
+        before = self._history(decision_id)
+        self.assertEqual(before["decision"]["lifecycle"]["state"], "delivered")
+
+        self.env["DECISION_ALERT_NOW_EPOCH"] = "1784368801"
+        second = self._ingest(
+            "returning-fingerprint-owner", "one", evidence="evidence-v2")
+        self.assertNotEqual(
+            second["decision"]["evidence_fingerprint"], fingerprint_v1)
+        self.env["DECISION_ALERT_NOW_EPOCH"] = "1784368802"
+        returned = self._ingest(
+            "returning-fingerprint-owner", "one", evidence="evidence-v1")
+        self.assertEqual(
+            returned["decision"]["evidence_fingerprint"], fingerprint_v1)
+
+        after = self._history(decision_id)
+        self.assertIsNone(after["decision"]["answer_pending"])
+        self.assertEqual(
+            after["decision"]["lifecycle"]["state"], "awaiting_answer")
+        self.assertEqual(
+            [event["event_type"] for event in after["events"]],
+            ["observed", "answered_pending", "delivered",
+             "evidence_changed", "evidence_changed"])
 
     def test_partial_current_pending_set_fails_closed(self) -> None:
         fixture = self._three_member_card()

@@ -96,6 +96,8 @@ _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 _GRAPH_ITEM_KEY_RE = re.compile(r"^[0-9a-f]{40}$")
 _LIFECYCLE_EVENT_ID_RE = re.compile(
     r"^[A-Za-z0-9][A-Za-z0-9._:-]{7,191}$")
+_SQLITE_SCHEMA_NAME_RE = re.compile(r"^[A-Za-z0-9_]+$")
+_GRAPH_IDENTITY_UNIQUE_COLUMNS = ("session_id", "kind", "item_key")
 
 
 class DecisionError(Exception):
@@ -365,6 +367,24 @@ def _graph_identity_for_decision(row):
     return identity
 
 
+def _graph_has_unique_identity(con):
+    """Require the exact non-partial identity UNIQUE used by chat-graph."""
+    for index in con.execute("PRAGMA index_list('open_ends')").fetchall():
+        if len(index) < 3 or index[2] != 1:
+            continue
+        if len(index) > 4 and index[4] != 0:
+            continue
+        name = index[1]
+        if (not isinstance(name, str) or
+                not _SQLITE_SCHEMA_NAME_RE.fullmatch(name)):
+            continue
+        columns = tuple(row[2] for row in con.execute(
+            "PRAGMA index_info(%s)" % name).fetchall())
+        if columns == _GRAPH_IDENTITY_UNIQUE_COLUMNS:
+            return True
+    return False
+
+
 def _verified_graph_consumption(row, evidence_type, evidence_ref):
     """Verify consumption against one exact persisted chat-graph row."""
     expected_evidence = {
@@ -385,9 +405,10 @@ def _verified_graph_consumption(row, evidence_type, evidence_ref):
             "session_id", "kind", "item_key", "resolved_at",
             "resolution_evidence_type", "resolution_evidence_ref",
         }
-        if not required.issubset(columns):
+        if (not required.issubset(columns) or
+                not _graph_has_unique_identity(con)):
             raise DecisionError(
-                "verified graph consumption identity is unavailable")
+                "verified graph consumption unique identity is unavailable")
         rows = con.execute("""SELECT session_id,kind,item_key,resolved_at
             FROM open_ends WHERE session_id=? AND kind=? AND item_key=?
               AND resolved_at IS NOT NULL
@@ -404,10 +425,9 @@ def _verified_graph_consumption(row, evidence_type, evidence_ref):
     if not rows:
         raise DecisionError(
             "resolution evidence does not match decision graph identity")
-    proofs = set(rows)
-    if len(proofs) != 1:
+    if len(rows) != 1:
         raise DecisionError("graph resolution evidence is ambiguous")
-    source_id, kind, item_key, resolved_at = next(iter(proofs))
+    source_id, kind, item_key, resolved_at = rows[0]
     if (isinstance(resolved_at, bool) or
             not isinstance(resolved_at, int) or resolved_at <= 0 or
             source_id != identity["source_id"] or
@@ -430,21 +450,33 @@ def _verified_resolution_evidence(evidence_type, evidence_ref, resolution_key):
         raise DecisionError("resolution evidence type is not exact/allowed")
     path = os.path.expanduser(os.environ.get(
         "CHAT_GRAPH_DB", os.path.join("~", ".chat-graph", "graph.db")))
+    con = None
     try:
         con = sqlite3.connect("file:%s?mode=ro" % path, uri=True, timeout=5)
         columns = {row[1] for row in con.execute(
             "PRAGMA table_info(open_ends)").fetchall()}
-        source_column = "session_id" if "session_id" in columns else "NULL"
+        required = {
+            "session_id", "kind", "item_key", "resolved_at",
+            "resolution_evidence_type", "resolution_evidence_ref",
+        }
+        if (not required.issubset(columns) or
+                not _graph_has_unique_identity(con)):
+            raise DecisionError(
+                "verified graph resolution unique identity is unavailable")
         rows = con.execute("""SELECT resolved_at,%s FROM open_ends
             WHERE item_key=? AND resolved_at IS NOT NULL
               AND resolution_evidence_type=? AND resolution_evidence_ref=?
-            ORDER BY resolved_at DESC""" % source_column,
+            ORDER BY resolved_at DESC""" % "session_id",
             (resolution_key, expected, evidence_ref)).fetchall()
-        con.close()
     except sqlite3.Error:
         raise DecisionError("verified graph resolution evidence unavailable")
+    finally:
+        if con is not None:
+            con.close()
     if not rows:
         raise DecisionError("resolution evidence is not verified by chat graph")
+    if len(rows) != 1:
+        raise DecisionError("graph resolution evidence is ambiguous")
     proofs = set()
     for resolved_at, source_id in rows:
         if isinstance(resolved_at, bool) or not isinstance(resolved_at, int):
@@ -499,16 +531,38 @@ def _latest_attempt(con, decision_id, fingerprint):
     return dict(row) if row else None
 
 
+def _current_evidence_activation_event_id(con, row):
+    """Return the immutable event that began the current evidence epoch."""
+    event = con.execute("""SELECT event_id FROM decision_events
+        WHERE decision_id=? AND evidence_fingerprint=?
+          AND event_type IN ('observed','evidence_changed','recurrence')
+        ORDER BY event_id DESC LIMIT 1""", (
+            row["decision_id"], row["evidence_fingerprint"],
+        )).fetchone()
+    return event["event_id"] if event is not None else None
+
+
+def _persisted_receipt_ref_is_valid(value):
+    """Validate a required receipt reference read from durable SQLite state."""
+    return (isinstance(value, str) and bool(value) and
+            value == value.strip())
+
+
 def _answer_pending_marker(con, row):
     """Return the latest current-fingerprint answered-pending event marker."""
     if row is None:
         return None
-    event = con.execute("""SELECT event_id,occurred_at,detail_json
+    activation_event_id = _current_evidence_activation_event_id(con, row)
+    if activation_event_id is None:
+        return None
+    event = con.execute("""SELECT event_id,occurred_at,evidence_type,
+            evidence_ref,detail_json
         FROM decision_events
         WHERE decision_id=? AND event_type='answered_pending'
-          AND evidence_fingerprint=?
+          AND evidence_fingerprint=? AND event_id>?
         ORDER BY event_id DESC LIMIT 1""", (
             row["decision_id"], row["evidence_fingerprint"],
+            activation_event_id,
         )).fetchone()
     if event is None:
         return None
@@ -520,8 +574,14 @@ def _answer_pending_marker(con, row):
         detail = {"valid": False}
     else:
         detail = dict(detail)
-        detail["valid"] = valid_lifecycle_source(detail.get("source"))
+        binding_valid = (
+            event["evidence_type"] == "operator_choice" and
+            _persisted_receipt_ref_is_valid(event["evidence_ref"]) and
+            event["evidence_ref"] == detail.get("batch_key"))
+        detail["valid"] = (
+            binding_valid and valid_lifecycle_source(detail.get("source")))
         detail["legacy_source_upgradeable"] = (
+            binding_valid and
             detail.get("source") == "" and
             detail.get("schema") == 1 and
             detail.get("mode") == "single")
@@ -572,15 +632,17 @@ def _legacy_single_pending_matches(con, pending, packet):
     return True
 
 
-def _lifecycle_event_rows(con, decision_id, fingerprint):
+def _lifecycle_event_rows(con, decision_id, fingerprint, after_event_id):
     placeholders = ",".join("?" for _ in DECISION_LIFECYCLE[1:])
     return con.execute("""SELECT event_id,event_type,evidence_fingerprint,
         occurred_at,evidence_type,evidence_ref,detail_json
         FROM decision_events
         WHERE decision_id=? AND evidence_fingerprint=?
+          AND event_id>?
           AND event_type IN (%s)
         ORDER BY event_id""" % placeholders,
-        [decision_id, fingerprint] + list(DECISION_LIFECYCLE[1:])).fetchall()
+        [decision_id, fingerprint, after_event_id] +
+        list(DECISION_LIFECYCLE[1:])).fetchall()
 
 
 def _consumption_evidence_is_unique(con, event):
@@ -620,7 +682,8 @@ def _decision_lifecycle(con, row):
     }
     seen_transition_ids = set()
     for event in _lifecycle_event_rows(
-            con, row["decision_id"], row["evidence_fingerprint"]):
+            con, row["decision_id"], row["evidence_fingerprint"],
+            pending["event_id"]):
         try:
             detail = json.loads(event["detail_json"] or "null")
         except (TypeError, ValueError):
@@ -637,6 +700,7 @@ def _decision_lifecycle(con, row):
             detail.get("resolution_key") == row["resolution_key"] and
             detail.get("outcome") == contract[2] and
             valid_lifecycle_source(detail.get("source")) and
+            _persisted_receipt_ref_is_valid(event["evidence_ref"]) and
             _LIFECYCLE_EVENT_ID_RE.match(str(transition_id or "")) and
             transition_id not in seen_transition_ids)
         if contract and isinstance(contract[1], tuple):

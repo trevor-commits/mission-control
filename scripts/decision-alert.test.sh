@@ -134,7 +134,7 @@ import sqlite3,sys
 c=sqlite3.connect(sys.argv[1])
 c.execute('''CREATE TABLE open_ends(
   session_id TEXT, kind TEXT, item_key TEXT, resolved_at INTEGER, resolution_evidence_type TEXT,
-  resolution_evidence_ref TEXT)''')
+  resolution_evidence_ref TEXT, UNIQUE(session_id, kind, item_key))''')
 c.execute("INSERT INTO open_ends VALUES(?,?,?,?,?,?)",
           ("repo-a","chat_open_end","merge:branch-a",1783673999,"answering_user_turn","parent:turn-10"))
 c.commit()
