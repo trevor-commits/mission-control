@@ -1,7 +1,7 @@
 # rollup-answer Specification
 
 ## Purpose
-Define strict rollup-answer targeting, durable answered-pending receipts, recoverable publication and replay, verified consumption, local no-egress feed coherence, and actionable-first views.
+Define strict answer targeting, durable answered-pending receipts, recoverable publication and replay, exact decision follow-through, local no-egress feed coherence, and actionable-first views.
 ## Requirements
 ### Requirement: Strict rollup targeting
 The system MUST accept a rollup answer only for a current open card and primary decision, MUST target the primary plus only action+owner+target equivalents, and MUST return every independent or already-pending member visibly without changing it.
@@ -13,9 +13,11 @@ The system MUST accept a rollup answer only for a current open card and primary 
 ### Requirement: Durable answered-pending interpretation
 Every targeted member MUST remain `open` and MUST expose one current `answered_pending` event containing the choice, source/resume metadata, card, primary, batch, canonical manifest digest, member sets, and private artifact references.
 
+Single-decision answers MUST use the same non-terminal interpretation. Their event MUST bind the exact current fingerprint, resolution key, choice, source/resume metadata, final private artifact paths, and both staged artifact digests before publication.
+
 #### Scenario: A rollup answer is recorded
 - **WHEN** the operator answers a valid card
-- **THEN** all eligible targets remain open, show awaiting owner consumption, and receive no terminal resolution event
+- **THEN** all eligible targets remain open, show answer recorded and awaiting delivery, and receive no terminal resolution event
 
 ### Requirement: Pending suppression and visibility
 Current pending members MUST remain visible in local decision surfaces but MUST be excluded from ordinary alerts, Morning Brief `NEEDS YOU`, dismissal, and single-answer commands.
@@ -25,7 +27,7 @@ Current pending members MUST remain visible in local decision surfaces but MUST 
 - **THEN** the member is skipped with an explicit `answered_pending_consumption` reason and no send is attempted
 
 ### Requirement: Verified per-member consumption
-Current pending members MUST resolve only through existing graph-verified answering-user-turn or downstream-resolution-key evidence for that exact member.
+Current pending members MUST advance from `delivered` to `consumed` only through existing graph-verified answering-user-turn or downstream-resolution-key evidence for that exact member. Consumption MUST NOT resolve or close the decision.
 
 #### Scenario: Manual resolution is attempted
 - **WHEN** a caller tries `manual_resolution` on a current pending member
@@ -33,7 +35,71 @@ Current pending members MUST resolve only through existing graph-verified answer
 
 #### Scenario: Exact owner evidence is verified
 - **WHEN** chat graph proves the member's exact resolution key and evidence reference
-- **THEN** only that member resolves and other batch members remain open pending
+- **THEN** only that member becomes `consumed`; it and other batch members remain open until their own later lifecycle receipts
+
+### Requirement: Exact decision-delivery lifecycle
+Each current-fingerprint decision MUST advance deterministically through `answered_pending -> delivered -> consumed -> running -> live_result_verified -> closed`. Every transition MUST bind the exact decision id, evidence fingerprint, resolution key, stable producer event id, evidence type, evidence reference, successful outcome, source, and prior state. A transition MUST be idempotent only for an exact replay of the same event packet.
+
+#### Scenario: Delivery fails or times out
+- **WHEN** a delivery producer reports `failed` or `timeout` instead of a successful provider receipt
+- **THEN** the command fails, writes no transition, and the decision remains `answered_pending`
+
+#### Scenario: Consumer rejects or targets another task
+- **WHEN** graph evidence is absent, rejected, or bound to a different resolution key
+- **THEN** consumption fails and the decision remains `delivered`
+
+#### Scenario: Graph proof predates current delivery or was already consumed
+- **WHEN** graph `resolved_at` is older than the current delivered event or its evidence reference was bound to another evidence fingerprint
+- **THEN** consumption fails and the current decision remains `delivered`
+
+#### Scenario: Consumption omits the current fingerprint
+- **WHEN** a graph consumer omits the expected fingerprint or supplies an older fingerprint
+- **THEN** consumption fails even when its resolution key and evidence reference otherwise match
+
+#### Scenario: Graph watcher observes a resolution
+- **WHEN** `sync-snapshot` receives a complete graph resolution for a current `delivered` decision
+- **THEN** it records one deterministic `chat-graph`-sourced consumed event carrying `resolved_at` and `source_id`
+- **AND WHEN** the decision is pre-delivery or the graph change is malformed
+- **THEN** it advances nothing and reports `pre_delivery` or `invalid` separately
+
+#### Scenario: A lifecycle event has no stable source
+- **WHEN** a producer omits `source` or persisted lifecycle detail loses it
+- **THEN** the command rejects the write or the reducer reports lifecycle state `invalid`
+
+#### Scenario: A pre-source rollup receipt is replayed
+- **WHEN** an exact current rollup has the source-less event rows and source-less manifest produced by the former public writer
+- **THEN** replay verifies every current member, generation, event binding, historical batch field, manifest digest, and private artifact byte before writing a distinct generation-bound batch and appending source-bound successor events
+- **AND** the historical event JSON and published batch remain unchanged
+- **AND** later lifecycle reduction and exact replay revalidate the historical manifest, answer bytes, and prompt bytes
+- **AND WHEN** the claimed predecessor, target set, batch, manifest, or artifact proof differs
+- **THEN** the upgrade fails closed without weakening source validation or advancing lifecycle state
+
+#### Scenario: A producer skips a state
+- **WHEN** a new event attempts `running`, `live_result_verified`, or `closed` without its exact predecessor
+- **THEN** the command fails without advancing the lifecycle
+
+#### Scenario: A stable event id is replayed
+- **WHEN** the same event id and exact target packet are submitted again
+- **THEN** the command returns an idempotent replay without another event
+- **AND WHEN** that event id is reused for another target or packet
+- **THEN** the command fails closed
+
+#### Scenario: A prior fingerprint returns in a new evidence generation
+- **WHEN** evidence changes from v1 to v2, later returns to v1, and the operator records a new answer
+- **THEN** an old v1 transition event id is not an idempotent replay for the new answer generation
+- **AND** the old event fails closed while a fresh exact transition can advance the decision
+
+#### Scenario: Live result is not verified
+- **WHEN** execution reports timeout, failure, or an unverified completion claim
+- **THEN** the decision remains open and cannot close
+
+#### Scenario: Closure follows verified live evidence
+- **WHEN** exact receipts already prove delivery, consumption, execution start, and a live result
+- **THEN** an exact closure receipt records `closed` and only then changes the compatibility queue state to `resolved`
+
+#### Scenario: Status reports exact follow-through counts
+- **WHEN** a consumer reads decision status
+- **THEN** `lifecycle_counts` reports each exact lifecycle state separately and compatibility queue counts remain explicitly labeled
 
 ### Requirement: Atomic and recoverable batch publication
 The system MUST stage every private member artifact before the database transition, MUST record all target events plus the canonical manifest digest in one transaction, MUST bind pre/post-commit verification to the same held batch directory, and MUST publish the batch with one atomic directory rename.
@@ -84,6 +150,11 @@ Exact current scope plus choice MUST be idempotent; a conflicting choice or part
 #### Scenario: Evidence changes
 - **WHEN** an answered-pending member is re-ingested with a materially different evidence fingerprint
 - **THEN** the prior pending event remains in history but is no longer active and a new answer may be recorded
+
+#### Scenario: A prior rollup fingerprint returns
+- **WHEN** a rollup member changes from v1 to v2, later returns to v1, and receives the same choice again
+- **THEN** the new activation event produces a distinct generation-bound batch and pending receipt
+- **AND** the historical batch remains preserved while exact replay within the new generation stays idempotent
 
 ### Requirement: Public decision-feed coherence without egress
 The public dashboard answer and rollup-answer commands MUST run the strict decisions collector with automatic alerts disabled, MUST reconcile the persisted Morning Brief and strict public brief feed before reporting full success, and MUST surface a committed-but-refresh-failed result without sending to any provider or changing delivery cursors.

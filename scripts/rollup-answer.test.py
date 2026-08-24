@@ -113,15 +113,30 @@ class RollupAnswerTests(unittest.TestCase):
 
     def _ingest(self, owner: str, item: str, *, evidence: str | None = None,
                 text: str = TEXT) -> dict:
-        resolution_key = "rk-%s-%s" % (owner, item)
+        resolution_key = hashlib.sha1(
+            ("%s:%s" % (owner, item)).encode("utf-8")).hexdigest()
         result = self._alert(
             "ingest", "--source-kind", "chat",
-            "--source-key", "outcome:%s:%s" % (owner, item),
+            "--source-key", "outcome:%s:%s" % (owner, resolution_key),
             "--text", text,
             "--evidence", evidence or ("evidence-%s-%s" % (owner, item)),
             "--trust", "structured", "--provenance", "chat-graph tier1",
-            "--resolution-key", resolution_key)
+            "--resolution-key", resolution_key,
+            "--anchor", "chat-graph:%s:%s" % (owner, resolution_key))
         result["resolution_key"] = resolution_key
+        return result
+
+    def _ingest_graph_item(self, owner: str, item_key: str, *,
+                           evidence: str | None = None) -> dict:
+        result = self._alert(
+            "ingest", "--source-kind", "chat",
+            "--source-key", "outcome:%s:%s" % (owner, item_key),
+            "--text", TEXT,
+            "--evidence", evidence or ("evidence-%s" % owner),
+            "--trust", "structured", "--provenance", "chat-graph tier1",
+            "--resolution-key", item_key,
+            "--anchor", "chat-graph:%s:%s" % (owner, item_key))
+        result["resolution_key"] = item_key
         return result
 
     def _three_member_card(self) -> dict:
@@ -152,6 +167,33 @@ class RollupAnswerTests(unittest.TestCase):
     def _pending_events(self, decision_id: str) -> list[dict]:
         return [e for e in self._history(decision_id)["events"]
                 if e["event_type"] == "answered_pending"]
+
+    def _answer_single(self, decision_id: str, choice: int = 1) -> dict:
+        self._proc([
+            "/bin/bash", str(DASHBOARD), "decide", "answer",
+            decision_id, str(choice),
+        ])
+        return self._history(decision_id)
+
+    def _deliver(self, decision_id: str, event_id: str,
+                 evidence_ref: str) -> dict:
+        decision = self._history(decision_id)["decision"]
+        return self._alert(
+            "transition", decision_id, "--to", "delivered",
+            "--expected-fingerprint", decision["evidence_fingerprint"],
+            "--resolution-key", decision["resolution_key"],
+            "--event-id", event_id,
+            "--evidence-type", "provider_delivery_receipt",
+            "--evidence-ref", evidence_ref,
+            "--outcome", "delivered", "--source", "test-suite")
+
+    def _write_chat_change(self, change: dict) -> None:
+        data_dir = self.home / "data"
+        data_dir.mkdir(mode=0o700, exist_ok=True)
+        (data_dir / "chats.json").write_text(json.dumps({
+            "schema": 1,
+            "data": {"outcomes": [], "loose_end_changes": [change]},
+        }))
 
     def _state_snapshot(self) -> list[tuple[str, str, int, bytes | str]]:
         snapshot = []
@@ -184,6 +226,105 @@ class RollupAnswerTests(unittest.TestCase):
             con.close()
         for suffix in ("-wal", "-shm"):
             Path(str(path) + suffix).unlink(missing_ok=True)
+
+    def _rewrite_rollup_as_parent_source_less(
+            self, result: dict) -> dict:
+        """Reproduce the public origin/main rollup receipt written pre-source."""
+        current_batch = Path(result["batch_path"])
+        plan = self._alert(
+            "plan-rollup-answer", result["card_id"],
+            result["primary_decision_id"], str(result["choice"]))
+        fingerprints = {
+            decision_id: self._history(decision_id)["decision"][
+                "evidence_fingerprint"]
+            for decision_id in plan["member_ids"]
+        }
+        legacy_scope_packet = {
+            "schema": 1,
+            "card_id": result["card_id"],
+            "primary_decision_id": result["primary_decision_id"],
+            "members": [[decision_id, fingerprints[decision_id]]
+                        for decision_id in plan["member_ids"]],
+            "target_ids": result["target_ids"],
+            "independent_ids": result["independent_ids"],
+            "already_pending_ids": result["already_pending_ids"],
+        }
+        scope_json = json.dumps(
+            legacy_scope_packet, ensure_ascii=True, sort_keys=True,
+            separators=(",", ":"))
+        legacy_scope_key = "scope:%s" % hashlib.sha256(
+            scope_json.encode()).hexdigest()[:40]
+        batch_json = json.dumps(
+            ["rollup-answer-v1", legacy_scope_key, result["choice"]],
+            ensure_ascii=True, sort_keys=True, separators=(",", ":"))
+        legacy_batch_key = "rollup-%s" % hashlib.sha256(
+            batch_json.encode()).hexdigest()[:40]
+        self.assertNotEqual(legacy_batch_key, result["batch_key"])
+
+        manifest_path = current_batch / "manifest.json"
+        manifest = json.loads(manifest_path.read_text())
+        artifacts = manifest["artifacts"]
+        for decision_id in result["target_ids"]:
+            answer_path = current_batch / "answers" / (decision_id + ".json")
+            answer = json.loads(answer_path.read_text())
+            answer["batch_key"] = legacy_batch_key
+            answer["prompt_path"] = answer["prompt_path"].replace(
+                result["batch_key"], legacy_batch_key)
+            answer_bytes = (json.dumps(answer, sort_keys=True) + "\n").encode()
+            answer_path.write_bytes(answer_bytes)
+            artifacts[decision_id]["answer_sha256"] = hashlib.sha256(
+                answer_bytes).hexdigest()
+        manifest["batch_key"] = legacy_batch_key
+        manifest["scope_key"] = legacy_scope_key
+        manifest["source"] = ""
+        legacy_manifest = (json.dumps(manifest, sort_keys=True) + "\n").encode()
+        manifest_path.write_bytes(legacy_manifest)
+        manifest_sha256 = hashlib.sha256(legacy_manifest).hexdigest()
+        legacy_batch = current_batch.parent / legacy_batch_key
+        current_batch.rename(legacy_batch)
+
+        db = self.home / "decisions" / "decisions.db"
+        con = sqlite3.connect(db)
+        rows = con.execute("""SELECT event_id,decision_id,evidence_ref,detail_json
+            FROM decision_events WHERE event_type='answered_pending'
+              AND decision_id IN (%s) ORDER BY event_id""" %
+            ",".join("?" for _ in result["target_ids"]),
+            result["target_ids"]).fetchall()
+        self.assertEqual(len(rows), len(result["target_ids"]))
+        originals = {}
+        event_ids = {}
+        for event_id, decision_id, evidence_ref, raw_detail in rows:
+            detail = json.loads(raw_detail)
+            detail["scope_key"] = legacy_scope_key
+            detail["batch_key"] = legacy_batch_key
+            detail["source"] = ""
+            detail["artifact_manifest_sha256"] = manifest_sha256
+            detail["answer_artifact"] = detail["answer_artifact"].replace(
+                result["batch_key"], legacy_batch_key)
+            detail["prompt_artifact"] = detail["prompt_artifact"].replace(
+                result["batch_key"], legacy_batch_key)
+            legacy_detail = json.dumps(
+                detail, ensure_ascii=True, sort_keys=True,
+                separators=(",", ":"))
+            con.execute(
+                "UPDATE decision_events SET evidence_ref=?,detail_json=? "
+                "WHERE event_id=?",
+                (legacy_batch_key, legacy_detail, event_id))
+            originals[decision_id] = legacy_detail
+            event_ids[decision_id] = event_id
+            self.assertEqual(evidence_ref, result["batch_key"])
+        con.commit()
+        con.close()
+        return {
+            "batch": legacy_batch,
+            "batch_key": legacy_batch_key,
+            "scope_key": legacy_scope_key,
+            "current_batch": current_batch,
+            "manifest": legacy_manifest,
+            "manifest_sha256": manifest_sha256,
+            "event_details": originals,
+            "event_ids": event_ids,
+        }
 
     def _seed_brief_inputs(self) -> None:
         data_dir = self.home / "data"
@@ -347,22 +488,105 @@ class RollupAnswerTests(unittest.TestCase):
         for decision_id in (ids["primary"], ids["equivalent"]):
             self.assertEqual(len(self._pending_events(decision_id)), 1)
 
-    def test_verified_consumption_resolves_only_the_exact_member(self) -> None:
+    def test_verified_consumption_advances_only_the_exact_member(self) -> None:
         fixture = self._three_member_card()
         ids = fixture["ids"]
         card_id = fixture["card"]["card_id"]
         self._dashboard(
             "decide", "answer-rollup", card_id, ids["primary"], "1")
 
+        primary = self._history(ids["primary"])["decision"]
+        fingerprint = primary["evidence_fingerprint"]
+        resolution_key = fixture["resolution_keys"][ids["primary"]]
+        self.assertEqual(primary["lifecycle"]["state"], "answered_pending")
+        self.assertEqual(primary["lifecycle"]["requested_action"], "deliver")
+
+        self._alert(
+            "transition", ids["primary"], "--to", "delivered",
+            "--expected-fingerprint", fingerprint,
+            "--resolution-key", resolution_key,
+            "--event-id", "delivery:failed-primary",
+            "--evidence-type", "provider_delivery_receipt",
+            "--evidence-ref", "provider:failed-primary",
+            "--outcome", "failed", "--source", "test-suite", ok=False)
+        self.assertEqual(
+            self._history(ids["primary"])["decision"]["lifecycle"]["state"],
+            "answered_pending")
+
+        delivered = self._alert(
+            "transition", ids["primary"], "--to", "delivered",
+            "--expected-fingerprint", fingerprint,
+            "--resolution-key", resolution_key,
+            "--event-id", "delivery:primary-001",
+            "--evidence-type", "provider_delivery_receipt",
+            "--evidence-ref", "provider:receipt-primary-001",
+            "--outcome", "delivered", "--source", "test-suite")
+        self.assertTrue(delivered["changed"])
+        self.assertEqual(delivered["decision"]["state"], "open")
+        self.assertEqual(delivered["decision"]["lifecycle"]["state"], "delivered")
+        self.assertEqual(
+            delivered["decision"]["lifecycle"]["requested_action"],
+            "consume")
+
+        replay = self._alert(
+            "transition", ids["primary"], "--to", "delivered",
+            "--expected-fingerprint", fingerprint,
+            "--resolution-key", resolution_key,
+            "--event-id", "delivery:primary-001",
+            "--evidence-type", "provider_delivery_receipt",
+            "--evidence-ref", "provider:receipt-primary-001",
+            "--outcome", "delivered", "--source", "test-suite")
+        self.assertFalse(replay["changed"])
+        self.assertTrue(replay["replayed"])
+
+        equivalent = self._history(ids["equivalent"])["decision"]
+        self._alert(
+            "transition", ids["equivalent"], "--to", "delivered",
+            "--expected-fingerprint", equivalent["evidence_fingerprint"],
+            "--resolution-key", fixture["resolution_keys"][ids["equivalent"]],
+            "--event-id", "delivery:primary-001",
+            "--evidence-type", "provider_delivery_receipt",
+            "--evidence-ref", "provider:receipt-primary-001",
+            "--outcome", "delivered", "--source", "test-suite", ok=False)
+
+        self._alert(
+            "transition", ids["primary"], "--to", "running",
+            "--expected-fingerprint", fingerprint,
+            "--resolution-key", resolution_key,
+            "--event-id", "execution:skip-consumption",
+            "--evidence-type", "execution_start_receipt",
+            "--evidence-ref", "executor:start-skipped",
+            "--outcome", "started", "--source", "test-suite", ok=False)
+
         self._alert(
             "resolve", ids["primary"], "--evidence-type", "manual_resolution",
-            "--evidence-ref", "manual-not-consumption", ok=False)
+            "--evidence-ref", "manual-not-consumption",
+            "--source", "test-suite", ok=False)
+
+        self._alert(
+            "resolve", ids["primary"],
+            "--evidence-type", "answering_user_turn",
+            "--evidence-ref", "consumer:rejected",
+            "--resolution-key", resolution_key,
+            "--event-id", "consumption:rejected-primary",
+            "--expected-fingerprint", fingerprint,
+            "--source", "test-suite", ok=False)
+
+        self._alert(
+            "resolve", ids["primary"],
+            "--evidence-type", "answering_user_turn",
+            "--evidence-ref", "wrong-task-consumption",
+            "--resolution-key", fixture["resolution_keys"][ids["equivalent"]],
+            "--event-id", "consumption:wrong-task",
+            "--expected-fingerprint", fingerprint,
+            "--source", "test-suite", ok=False)
 
         graph = self.temp / "graph.db"
         con = sqlite3.connect(graph)
         con.execute("""CREATE TABLE open_ends(
             session_id TEXT, kind TEXT, item_key TEXT, resolved_at INTEGER,
-            resolution_evidence_type TEXT, resolution_evidence_ref TEXT)""")
+            resolution_evidence_type TEXT, resolution_evidence_ref TEXT,
+            UNIQUE(session_id, kind, item_key))""")
         evidence_ref = "turn-owner-a-consumed-one"
         con.execute("INSERT INTO open_ends VALUES(?,?,?,?,?,?)", (
             "owner-a", "chat_open_end",
@@ -371,20 +595,795 @@ class RollupAnswerTests(unittest.TestCase):
         con.commit()
         con.close()
 
-        resolved = self._alert(
+        consumed = self._alert(
             "resolve", ids["primary"],
             "--evidence-type", "answering_user_turn",
             "--evidence-ref", evidence_ref,
-            "--resolution-key", fixture["resolution_keys"][ids["primary"]],
+            "--resolution-key", resolution_key,
+            "--event-id", "consumption:primary-001",
+            "--expected-fingerprint", fingerprint,
+            "--source", "test-suite",
             extra_env={"CHAT_GRAPH_DB": str(graph)})
-        self.assertTrue(resolved["changed"])
-        self.assertEqual(resolved["decision"]["state"], "resolved")
-        self.assertIsNone(resolved["decision"]["answer_pending"])
+        self.assertTrue(consumed["changed"])
+        self.assertEqual(consumed["decision"]["state"], "open")
+        self.assertEqual(consumed["decision"]["lifecycle"]["state"], "consumed")
+        self.assertEqual(
+            consumed["decision"]["lifecycle"]["requested_action"], "start")
+        self.assertIsNotNone(consumed["decision"]["answer_pending"])
         self.assertEqual(self._history(ids["equivalent"])["decision"]["state"], "open")
+        self.assertEqual(
+            self._history(ids["equivalent"])["decision"]["lifecycle"]["state"],
+            "answered_pending")
         self.assertIsNotNone(
             self._history(ids["equivalent"])["decision"]["answer_pending"])
         self.assertIsNone(
             self._history(ids["independent"])["decision"]["answer_pending"])
+
+        replay = self._alert(
+            "resolve", ids["primary"],
+            "--evidence-type", "answering_user_turn",
+            "--evidence-ref", evidence_ref,
+            "--resolution-key", resolution_key,
+            "--event-id", "consumption:primary-001",
+            "--expected-fingerprint", fingerprint,
+            "--source", "test-suite",
+            extra_env={"CHAT_GRAPH_DB": str(graph)})
+        self.assertFalse(replay["changed"])
+
+        self._alert(
+            "transition", ids["primary"], "--to", "closed",
+            "--expected-fingerprint", fingerprint,
+            "--resolution-key", resolution_key,
+            "--event-id", "closure:unverified-primary",
+            "--evidence-type", "closure_receipt",
+            "--evidence-ref", "closure:without-result",
+            "--outcome", "closed", "--source", "test-suite", ok=False)
+
+        running = self._alert(
+            "transition", ids["primary"], "--to", "running",
+            "--expected-fingerprint", fingerprint,
+            "--resolution-key", resolution_key,
+            "--event-id", "execution:primary-001",
+            "--evidence-type", "execution_start_receipt",
+            "--evidence-ref", "executor:start-primary-001",
+            "--outcome", "started", "--source", "test-suite")
+        self.assertEqual(running["decision"]["lifecycle"]["state"], "running")
+        self.assertEqual(
+            running["decision"]["lifecycle"]["requested_action"],
+            "verify_live_result")
+
+        self._alert(
+            "transition", ids["primary"], "--to", "live_result_verified",
+            "--expected-fingerprint", fingerprint,
+            "--resolution-key", resolution_key,
+            "--event-id", "result:unverified-primary",
+            "--evidence-type", "live_result_receipt",
+            "--evidence-ref", "result:unverified-primary",
+            "--outcome", "unverified", "--source", "test-suite", ok=False)
+        self._alert(
+            "transition", ids["primary"], "--to", "running",
+            "--expected-fingerprint", fingerprint,
+            "--resolution-key", resolution_key,
+            "--event-id", "execution:timeout-primary",
+            "--evidence-type", "execution_start_receipt",
+            "--evidence-ref", "executor:timeout-primary",
+            "--outcome", "timeout", "--source", "test-suite", ok=False)
+
+        verified = self._alert(
+            "transition", ids["primary"], "--to", "live_result_verified",
+            "--expected-fingerprint", fingerprint,
+            "--resolution-key", resolution_key,
+            "--event-id", "result:primary-001",
+            "--evidence-type", "live_result_receipt",
+            "--evidence-ref", "result:verified-primary-001",
+            "--outcome", "verified", "--source", "test-suite")
+        self.assertEqual(
+            verified["decision"]["lifecycle"]["state"],
+            "live_result_verified")
+        self.assertEqual(
+            verified["decision"]["lifecycle"]["requested_action"], "close")
+
+        closed = self._alert(
+            "transition", ids["primary"], "--to", "closed",
+            "--expected-fingerprint", fingerprint,
+            "--resolution-key", resolution_key,
+            "--event-id", "closure:primary-001",
+            "--evidence-type", "closure_receipt",
+            "--evidence-ref", "closure:receipt-primary-001",
+            "--outcome", "closed", "--source", "test-suite")
+        self.assertTrue(closed["changed"])
+        self.assertEqual(closed["decision"]["state"], "resolved")
+        self.assertEqual(closed["decision"]["lifecycle"]["state"], "closed")
+        self.assertIsNone(closed["decision"]["lifecycle"]["requested_action"])
+        self.assertIsNone(closed["decision"]["answer_pending"])
+
+        replay = self._alert(
+            "transition", ids["primary"], "--to", "closed",
+            "--expected-fingerprint", fingerprint,
+            "--resolution-key", resolution_key,
+            "--event-id", "closure:primary-001",
+            "--evidence-type", "closure_receipt",
+            "--evidence-ref", "closure:receipt-primary-001",
+            "--outcome", "closed", "--source", "test-suite")
+        self.assertFalse(replay["changed"])
+        self.assertTrue(replay["replayed"])
+
+        events = self._history(ids["primary"])["events"]
+        lifecycle_events = [event["event_type"] for event in events
+                            if event["event_type"] in {
+                                "answered_pending", "delivered", "consumed",
+                                "running", "live_result_verified", "closed"}]
+        self.assertEqual(lifecycle_events, [
+            "answered_pending", "delivered", "consumed", "running",
+            "live_result_verified", "closed"])
+
+    def test_lifecycle_requires_source_and_reducer_rejects_missing_source(
+            self) -> None:
+        ingested = self._ingest("source-owner", "one")
+        decision_id = ingested["decision"]["id"]
+        self._answer_single(decision_id)
+        pending = self._history(decision_id)["decision"]
+        self.assertEqual(pending["answer_pending"]["source"], "mission-control")
+        self.assertEqual(pending["lifecycle"]["state"], "answered_pending")
+
+        self._alert(
+            "resolve", decision_id,
+            "--evidence-type", "answering_user_turn",
+            "--evidence-ref", "consumer:missing-source",
+            "--resolution-key", pending["resolution_key"],
+            "--event-id", "consumption:missing-source", ok=False)
+
+        self._alert(
+            "transition", decision_id, "--to", "delivered",
+            "--expected-fingerprint", pending["evidence_fingerprint"],
+            "--resolution-key", pending["resolution_key"],
+            "--event-id", "delivery:missing-source",
+            "--evidence-type", "provider_delivery_receipt",
+            "--evidence-ref", "provider:missing-source",
+            "--outcome", "delivered", ok=False)
+        delivered = self._deliver(
+            decision_id, "delivery:source-bound", "provider:source-bound")
+        self.assertEqual(delivered["decision"]["lifecycle"]["state"], "delivered")
+
+        db = self.home / "decisions" / "decisions.db"
+        con = sqlite3.connect(db)
+        row = con.execute("""SELECT event_id,detail_json FROM decision_events
+            WHERE decision_id=? AND event_type='delivered'""",
+                          (decision_id,)).fetchone()
+        self.assertIsNotNone(row)
+        detail = json.loads(row[1])
+        detail.pop("source", None)
+        con.execute("UPDATE decision_events SET detail_json=? WHERE event_id=?",
+                    (json.dumps(detail, sort_keys=True), row[0]))
+        con.commit()
+        con.close()
+
+        invalid = self._history(decision_id)["decision"]["lifecycle"]
+        self.assertFalse(invalid["valid"])
+        self.assertEqual(invalid["state"], "invalid")
+        status = self._alert("status")
+        self.assertEqual(status["data"]["lifecycle_counts"]["invalid"], 1)
+
+    def test_lifecycle_reducer_rejects_missing_persisted_receipt_fields(
+            self) -> None:
+        cases = (
+            ("answered_pending", "evidence_type"),
+            ("answered_pending", "evidence_ref"),
+            ("delivered", "evidence_type"),
+            ("delivered", "evidence_ref"),
+        )
+        for index, (event_type, column) in enumerate(cases):
+            with self.subTest(event_type=event_type, column=column):
+                ingested = self._ingest(
+                    "receipt-field-owner-%d" % index, "one")
+                decision_id = ingested["decision"]["id"]
+                self._answer_single(decision_id)
+                if event_type == "delivered":
+                    self._deliver(
+                        decision_id,
+                        "delivery:receipt-field-%d" % index,
+                        "provider:receipt-field-%d" % index)
+
+                db = self.home / "decisions" / "decisions.db"
+                con = sqlite3.connect(db)
+                con.execute(
+                    "UPDATE decision_events SET %s=NULL "
+                    "WHERE decision_id=? AND event_type=?" % column,
+                    (decision_id, event_type))
+                con.commit()
+                con.close()
+
+                lifecycle = self._history(decision_id)["decision"]["lifecycle"]
+                self.assertFalse(lifecycle["valid"])
+                self.assertEqual(lifecycle["state"], "invalid")
+
+    def test_parent_commit_pending_source_upgrades_without_rewriting_evidence(
+            self) -> None:
+        ingested = self._ingest("legacy-owner", "one")
+        decision = ingested["decision"]
+        decision_id = decision["id"]
+        self._answer_single(decision_id)
+        db = self.home / "decisions" / "decisions.db"
+        con = sqlite3.connect(db)
+        legacy_event_id, raw_detail = con.execute("""SELECT event_id,detail_json
+            FROM decision_events WHERE decision_id=?
+              AND event_type='answered_pending'""", (decision_id,)).fetchone()
+        legacy = json.loads(raw_detail)
+        legacy["source"] = ""
+        legacy.pop("batch_key")
+        canonical = json.dumps(
+            legacy, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
+        legacy["batch_key"] = "single-%s" % hashlib.sha256(
+            canonical.encode("utf-8")).hexdigest()[:40]
+        original_detail = json.dumps(
+            legacy, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
+        con.execute("""UPDATE decision_events SET evidence_ref=?,detail_json=?
+            WHERE event_id=?""", (
+                legacy["batch_key"], original_detail, legacy_event_id))
+        con.commit()
+        con.close()
+
+        before = self._history(decision_id)["decision"]
+        self.assertFalse(before["answer_pending"]["valid"])
+        self.assertTrue(
+            before["answer_pending"]["legacy_source_upgradeable"])
+        upgraded_proc = self._proc([
+            "/bin/bash", str(DASHBOARD), "decide", "answer",
+            decision_id, "1",
+        ])
+        upgraded = json.loads(upgraded_proc.stdout.splitlines()[0])
+        self.assertEqual(upgraded["choice"], 1)
+        history = self._history(decision_id)
+        pending_events = [
+            event for event in history["events"]
+            if event["event_type"] == "answered_pending"]
+        self.assertEqual(len(pending_events), 2)
+        self.assertEqual(pending_events[0]["detail"]["source"], "")
+        self.assertEqual(
+            pending_events[1]["detail"]["source"], "mission-control")
+        self.assertEqual(
+            pending_events[1]["detail"]["source_upgrade_from_event_id"],
+            legacy_event_id)
+        self.assertEqual(
+            history["decision"]["lifecycle"]["state"], "answered_pending")
+        self.assertTrue(history["decision"]["answer_pending"]["valid"])
+        con = sqlite3.connect(db)
+        preserved = con.execute(
+            "SELECT detail_json FROM decision_events WHERE event_id=?",
+            (legacy_event_id,)).fetchone()[0]
+        con.close()
+        self.assertEqual(preserved, original_detail)
+
+    def test_parent_commit_rollup_source_upgrades_without_rewriting_evidence(
+            self) -> None:
+        fixture = self._three_member_card()
+        card_id = fixture["card"]["card_id"]
+        ids = fixture["ids"]
+        first = self._dashboard(
+            "decide", "answer-rollup", card_id, ids["primary"], "1")
+        legacy = self._rewrite_rollup_as_parent_source_less(first)
+
+        before = self._history(ids["primary"])["decision"]
+        self.assertFalse(before["answer_pending"]["valid"])
+        self.assertTrue(
+            before["answer_pending"]["legacy_rollup_source_upgradeable"])
+        self.assertEqual(before["lifecycle"]["state"], "invalid")
+        upgraded = self._dashboard(
+            "decide", "answer-rollup", card_id, ids["primary"], "1")
+        self.assertTrue(upgraded["changed"])
+        self.assertFalse(upgraded["replayed"])
+        self.assertFalse(Path(upgraded["batch_path"]).is_symlink())
+        self.assertEqual(Path(upgraded["batch_path"]), legacy["current_batch"])
+        self.assertNotEqual(Path(upgraded["batch_path"]), legacy["batch"])
+        self.assertEqual(
+            (legacy["batch"] / "manifest.json").read_bytes(),
+            legacy["manifest"])
+        self.assertEqual(
+            json.loads((Path(upgraded["batch_path"]) /
+                        "manifest.json").read_text())["source"],
+            "mission-control")
+
+        db = self.home / "decisions" / "decisions.db"
+        con = sqlite3.connect(db)
+        for decision_id in first["target_ids"]:
+            events = con.execute("""SELECT event_id,evidence_ref,detail_json
+                FROM decision_events WHERE decision_id=?
+                  AND event_type='answered_pending' ORDER BY event_id""",
+                (decision_id,)).fetchall()
+            self.assertEqual(len(events), 2)
+            self.assertEqual(events[0][0], legacy["event_ids"][decision_id])
+            self.assertEqual(events[0][2], legacy["event_details"][decision_id])
+            successor = json.loads(events[1][2])
+            self.assertEqual(successor["source"], "mission-control")
+            self.assertEqual(
+                successor["source_upgrade_from_event_id"], events[0][0])
+            self.assertEqual(
+                successor["source_upgrade_from_evidence_ref"], events[0][1])
+            self.assertEqual(
+                successor["source_upgrade_from_scope_key"],
+                legacy["scope_key"])
+            self.assertEqual(
+                successor["source_upgrade_from_artifact_manifest_sha256"],
+                legacy["manifest_sha256"])
+        con.close()
+        after = self._history(ids["primary"])["decision"]
+        self.assertTrue(after["answer_pending"]["valid"])
+        self.assertTrue(
+            after["answer_pending"]["rollup_source_upgrade_valid"])
+        self.assertEqual(after["lifecycle"]["state"], "answered_pending")
+
+        replay = self._dashboard(
+            "decide", "answer-rollup", card_id, ids["primary"], "1")
+        self.assertTrue(replay["replayed"])
+        self.assertFalse(replay["changed"])
+        self.assertEqual(
+            (legacy["batch"] / "manifest.json").read_bytes(),
+            legacy["manifest"])
+        for decision_id in first["target_ids"]:
+            self.assertEqual(len(self._pending_events(decision_id)), 2)
+
+    def test_rollup_source_upgrade_lineage_tamper_fails_closed(self) -> None:
+        fixture = self._three_member_card()
+        card_id = fixture["card"]["card_id"]
+        ids = fixture["ids"]
+        first = self._dashboard(
+            "decide", "answer-rollup", card_id, ids["primary"], "1")
+        legacy = self._rewrite_rollup_as_parent_source_less(first)
+        self._dashboard(
+            "decide", "answer-rollup", card_id, ids["primary"], "1")
+
+        db = self.home / "decisions" / "decisions.db"
+        con = sqlite3.connect(db)
+        old_id = legacy["event_ids"][ids["primary"]]
+        original = con.execute(
+            "SELECT detail_json FROM decision_events WHERE event_id=?",
+            (old_id,)).fetchone()[0]
+        tampered = json.loads(original)
+        tampered["choice"] = 2
+        con.execute(
+            "UPDATE decision_events SET detail_json=? WHERE event_id=?",
+            (json.dumps(tampered, sort_keys=True, separators=(",", ":")),
+             old_id))
+        con.commit()
+        con.close()
+
+        current = self._history(ids["primary"])["decision"]
+        self.assertFalse(current["answer_pending"]["valid"])
+        self.assertFalse(
+            current["answer_pending"]["rollup_source_upgrade_valid"])
+        self.assertEqual(current["lifecycle"]["state"], "invalid")
+        failed = self._dashboard(
+            "decide", "answer-rollup", card_id, ids["primary"], "1",
+            ok=False)
+        self.assertIn(
+            "current answered-pending marker is invalid", failed["stderr"])
+
+    def _assert_rollup_source_upgrade_artifact_tamper_fails_closed(
+            self, artifact: str) -> None:
+        fixture = self._three_member_card()
+        card_id = fixture["card"]["card_id"]
+        ids = fixture["ids"]
+        first = self._dashboard(
+            "decide", "answer-rollup", card_id, ids["primary"], "1")
+        legacy = self._rewrite_rollup_as_parent_source_less(first)
+        self._dashboard(
+            "decide", "answer-rollup", card_id, ids["primary"], "1")
+
+        if artifact == "manifest":
+            path = legacy["batch"] / "manifest.json"
+        elif artifact == "answer":
+            path = legacy["batch"] / "answers" / (ids["primary"] + ".json")
+        elif artifact == "prompt":
+            path = legacy["batch"] / "prompts" / (ids["primary"] + ".md")
+        else:
+            self.fail("unknown legacy artifact kind")
+        path.write_bytes(path.read_bytes() + b"post-upgrade-tamper\n")
+
+        current = self._history(ids["primary"])["decision"]
+        self.assertFalse(current["answer_pending"]["valid"])
+        self.assertFalse(
+            current["answer_pending"]["rollup_source_upgrade_valid"])
+        self.assertEqual(current["lifecycle"]["state"], "invalid")
+        failed = self._dashboard(
+            "decide", "answer-rollup", card_id, ids["primary"], "1",
+            ok=False)
+        self.assertIn(
+            "current answered-pending marker is invalid", failed["stderr"])
+        for decision_id in first["target_ids"]:
+            self.assertEqual(len(self._pending_events(decision_id)), 2)
+
+    def test_rollup_source_upgrade_manifest_tamper_fails_closed(self) -> None:
+        self._assert_rollup_source_upgrade_artifact_tamper_fails_closed(
+            "manifest")
+
+    def test_rollup_source_upgrade_answer_tamper_fails_closed(self) -> None:
+        self._assert_rollup_source_upgrade_artifact_tamper_fails_closed(
+            "answer")
+
+    def test_rollup_source_upgrade_prompt_tamper_fails_closed(self) -> None:
+        self._assert_rollup_source_upgrade_artifact_tamper_fails_closed(
+            "prompt")
+
+    def test_lifecycle_source_accepts_64_and_rejects_65_before_staging(
+            self) -> None:
+        accepted = self._ingest("source-boundary", "accepted")
+        accepted_id = accepted["decision"]["id"]
+        source_64 = "s" * 64
+        self._proc([
+            "/bin/bash", str(DASHBOARD), "decide", "answer",
+            accepted_id, "1", "--source", source_64,
+        ])
+        accepted_history = self._history(accepted_id)
+        self.assertEqual(
+            accepted_history["decision"]["answer_pending"]["source"],
+            source_64)
+        self.assertEqual(
+            accepted_history["decision"]["lifecycle"]["state"],
+            "answered_pending")
+
+        rejected = self._ingest("source-boundary", "rejected")
+        rejected_id = rejected["decision"]["id"]
+        before = self._state_snapshot()
+        self._proc([
+            "/bin/bash", str(DASHBOARD), "decide", "answer",
+            rejected_id, "1", "--source", "s" * 65,
+        ], ok=False)
+        self.assertEqual(self._state_snapshot(), before)
+        rejected_history = self._history(rejected_id)
+        self.assertIsNone(rejected_history["decision"]["answer_pending"])
+        self.assertEqual(
+            rejected_history["decision"]["lifecycle"]["state"],
+            "awaiting_answer")
+        self.assertFalse(any(
+            path.name.startswith((
+                ".decision-answer-stage.", ".decision-prompt-stage."))
+            for path in self.home.rglob("*")))
+
+    def test_graph_consumption_rejects_duplicate_capable_identity_schema(
+            self) -> None:
+        ingested = self._ingest_graph_item("duplicate-owner", "d" * 40)
+        decision_id = ingested["decision"]["id"]
+        self._answer_single(decision_id)
+        self._deliver(
+            decision_id, "delivery:duplicate-rows", "provider:duplicate-rows")
+
+        graph = self.temp / "duplicate-graph.db"
+        con = sqlite3.connect(graph)
+        con.execute("""CREATE TABLE open_ends(
+            session_id TEXT, kind TEXT, item_key TEXT, resolved_at INTEGER,
+            resolution_evidence_type TEXT, resolution_evidence_ref TEXT)""")
+        receipt = (
+            "duplicate-owner", "chat_open_end", ingested["resolution_key"],
+            1784368801, "answering_user_turn", "turn-duplicate-consumed",
+        )
+        con.executemany("INSERT INTO open_ends VALUES(?,?,?,?,?,?)",
+                        (receipt, receipt))
+        con.commit()
+        con.close()
+
+        rejected = self._alert(
+            "resolve", decision_id,
+            "--evidence-type", "answering_user_turn",
+            "--evidence-ref", "turn-duplicate-consumed",
+            "--resolution-key", ingested["resolution_key"],
+            "--event-id", "consumption:duplicate-rows",
+            "--expected-fingerprint",
+            ingested["decision"]["evidence_fingerprint"],
+            "--source", "test-suite", ok=False,
+            extra_env={"CHAT_GRAPH_DB": str(graph)})
+        self.assertIn("unique identity", rejected["stderr"])
+        history = self._history(decision_id)
+        self.assertEqual(history["decision"]["lifecycle"]["state"], "delivered")
+        self.assertFalse(any(
+            event["event_type"] == "consumed" for event in history["events"]))
+
+    def test_legacy_resolution_rejects_duplicate_capable_identity_schema(
+            self) -> None:
+        ingested = self._ingest_graph_item("legacy-duplicate-owner", "e" * 40)
+        decision_id = ingested["decision"]["id"]
+        graph = self.temp / "legacy-duplicate-graph.db"
+        con = sqlite3.connect(graph)
+        con.execute("""CREATE TABLE open_ends(
+            session_id TEXT, kind TEXT, item_key TEXT, resolved_at INTEGER,
+            resolution_evidence_type TEXT, resolution_evidence_ref TEXT)""")
+        receipt = (
+            "legacy-duplicate-owner", "chat_open_end",
+            ingested["resolution_key"], 1784368801,
+            "answering_user_turn", "turn-legacy-duplicate-consumed",
+        )
+        con.executemany("INSERT INTO open_ends VALUES(?,?,?,?,?,?)",
+                        (receipt, receipt))
+        con.commit()
+        con.close()
+
+        rejected = self._alert(
+            "resolve", decision_id,
+            "--evidence-type", "answering_user_turn",
+            "--evidence-ref", "turn-legacy-duplicate-consumed",
+            "--resolution-key", ingested["resolution_key"],
+            "--event-id", "resolution:legacy-duplicate-rows",
+            "--source", "test-suite", ok=False,
+            extra_env={"CHAT_GRAPH_DB": str(graph)})
+        self.assertIn("unique identity", rejected["stderr"])
+        self.assertEqual(
+            self._history(decision_id)["decision"]["state"], "open")
+
+    def test_graph_consumption_is_fresh_and_receipt_is_not_cross_fingerprint(
+            self) -> None:
+        first = self._ingest("receipt-owner", "one", evidence="evidence-v1")
+        decision_id = first["decision"]["id"]
+        resolution_key = first["resolution_key"]
+        self._answer_single(decision_id)
+        self._deliver(decision_id, "delivery:receipt-v1", "provider:receipt-v1")
+
+        graph = self.temp / "graph.db"
+        con = sqlite3.connect(graph)
+        con.execute("""CREATE TABLE open_ends(
+            session_id TEXT, kind TEXT, item_key TEXT, resolved_at INTEGER,
+            resolution_evidence_type TEXT, resolution_evidence_ref TEXT,
+            UNIQUE(session_id, kind, item_key))""")
+        shared_ref = "turn-receipt-owner-consumed"
+        con.execute("INSERT INTO open_ends VALUES(?,?,?,?,?,?)", (
+            "receipt-owner", "chat_open_end", resolution_key, 1784368801,
+            "answering_user_turn", shared_ref))
+        con.commit()
+        con.close()
+
+        self._alert(
+            "resolve", decision_id,
+            "--evidence-type", "answering_user_turn",
+            "--evidence-ref", shared_ref,
+            "--resolution-key", resolution_key,
+            "--event-id", "consumption:missing-fingerprint",
+            "--source", "test-suite", ok=False,
+            extra_env={"CHAT_GRAPH_DB": str(graph)})
+        self._alert(
+            "resolve", decision_id,
+            "--evidence-type", "answering_user_turn",
+            "--evidence-ref", shared_ref,
+            "--resolution-key", resolution_key,
+            "--event-id", "consumption:stale-fingerprint",
+            "--expected-fingerprint", "0" * 64,
+            "--source", "test-suite", ok=False,
+            extra_env={"CHAT_GRAPH_DB": str(graph)})
+
+        first_consumed = self._alert(
+            "resolve", decision_id,
+            "--evidence-type", "answering_user_turn",
+            "--evidence-ref", shared_ref,
+            "--resolution-key", resolution_key,
+            "--event-id", "consumption:receipt-v1",
+            "--expected-fingerprint", first["decision"]["evidence_fingerprint"],
+            "--source", "test-suite",
+            extra_env={"CHAT_GRAPH_DB": str(graph)})
+        consumed_event = next(
+            event for event in self._history(decision_id)["events"]
+            if event["event_type"] == "consumed")
+        self.assertEqual(consumed_event["detail"]["resolved_at"], 1784368801)
+        self.assertEqual(consumed_event["detail"]["source_id"], "receipt-owner")
+        self.assertIsInstance(consumed_event["detail"]["delivered_event_id"], int)
+        self.assertEqual(consumed_event["detail"]["delivered_at"], 1784368800)
+        self.assertEqual(first_consumed["decision"]["lifecycle"]["state"], "consumed")
+
+        self.env["DECISION_ALERT_NOW_EPOCH"] = "1784368802"
+        second = self._ingest("receipt-owner", "one", evidence="evidence-v2")
+        self.assertNotEqual(
+            first["decision"]["evidence_fingerprint"],
+            second["decision"]["evidence_fingerprint"])
+        self._answer_single(decision_id, 2)
+        self._deliver(decision_id, "delivery:receipt-v2", "provider:receipt-v2")
+
+        con = sqlite3.connect(graph)
+        con.execute("""UPDATE open_ends SET resolved_at=1784368801,
+            resolution_evidence_type='answering_user_turn',
+            resolution_evidence_ref='turn-stale-for-v2'
+            WHERE session_id='receipt-owner' AND kind='chat_open_end'
+              AND item_key=?""", (resolution_key,))
+        con.commit()
+        con.close()
+
+        stale = self._alert(
+            "resolve", decision_id,
+            "--evidence-type", "answering_user_turn",
+            "--evidence-ref", "turn-stale-for-v2",
+            "--resolution-key", resolution_key,
+            "--event-id", "consumption:stale-v2",
+            "--expected-fingerprint", second["decision"]["evidence_fingerprint"],
+            "--source", "test-suite", ok=False,
+            extra_env={"CHAT_GRAPH_DB": str(graph)})
+        self.assertIn("predates current delivery", stale["stderr"])
+
+        con = sqlite3.connect(graph)
+        con.execute("""UPDATE open_ends SET resolved_at=1784368803,
+            resolution_evidence_ref=? WHERE session_id='receipt-owner'
+              AND kind='chat_open_end' AND item_key=?""",
+                    (shared_ref, resolution_key))
+        con.commit()
+        con.close()
+        reused = self._alert(
+            "resolve", decision_id,
+            "--evidence-type", "answering_user_turn",
+            "--evidence-ref", shared_ref,
+            "--resolution-key", resolution_key,
+            "--event-id", "consumption:reused-v2",
+            "--expected-fingerprint", second["decision"]["evidence_fingerprint"],
+            "--source", "test-suite", ok=False,
+            extra_env={"CHAT_GRAPH_DB": str(graph)})
+        self.assertIn("already bound", reused["stderr"])
+        self.assertEqual(
+            self._history(decision_id)["decision"]["lifecycle"]["state"],
+            "delivered")
+
+    def test_graph_consumption_binds_source_kind_and_item_identity(self) -> None:
+        item_key = "a" * 40
+        owner_a = self._ingest_graph_item("owner-a", item_key)
+        decision_id = owner_a["decision"]["id"]
+        self._answer_single(decision_id)
+        self._deliver(decision_id, "delivery:identity-a", "provider:identity-a")
+
+        graph = self.temp / "graph.db"
+        con = sqlite3.connect(graph)
+        con.execute("""CREATE TABLE open_ends(
+            session_id TEXT, kind TEXT, item_key TEXT, resolved_at INTEGER,
+            resolution_evidence_type TEXT, resolution_evidence_ref TEXT,
+            UNIQUE(session_id, kind, item_key))""")
+        con.execute("INSERT INTO open_ends VALUES(?,?,?,?,?,?)", (
+            "owner-b", "chat_open_end", item_key, 1784368801,
+            "downstream_explicit", "owner-b-proof"))
+        con.commit()
+        con.close()
+
+        owner_b_change = {
+            "item_key": item_key,
+            "kind": "chat_open_end",
+            "change_type": "resolved",
+            "resolved_at": 1784368801,
+            "source_id": "owner-b",
+            "resolution_evidence_type": "downstream_explicit",
+            "resolution_evidence_ref": "owner-b-proof",
+        }
+        self._write_chat_change(owner_b_change)
+        wrong_owner = self._alert(
+            "sync-snapshot", extra_env={"CHAT_GRAPH_DB": str(graph)})
+        self.assertEqual(wrong_owner["data"]["sync"]["consumed"], 0)
+        self.assertEqual(wrong_owner["data"]["sync"]["unmatched"], 1)
+        self.assertEqual(
+            self._history(decision_id)["decision"]["lifecycle"]["state"],
+            "delivered")
+
+        missing_kind = dict(owner_b_change)
+        missing_kind.pop("kind")
+        self._write_chat_change(missing_kind)
+        malformed = self._alert(
+            "sync-snapshot", extra_env={"CHAT_GRAPH_DB": str(graph)})
+        self.assertEqual(malformed["data"]["sync"]["invalid"], 1)
+
+        owner_a_change = dict(owner_b_change)
+        owner_a_change.update({
+            "source_id": "owner-a",
+            "resolution_evidence_ref": "owner-a-proof",
+        })
+        con = sqlite3.connect(graph)
+        con.execute("INSERT INTO open_ends VALUES(?,?,?,?,?,?)", (
+            "owner-a", "closeout_handoff", item_key, 1784368801,
+            "downstream_explicit", "owner-a-proof"))
+        con.commit()
+        con.close()
+        self._write_chat_change(owner_a_change)
+        wrong_kind = self._alert(
+            "sync-snapshot", extra_env={"CHAT_GRAPH_DB": str(graph)})
+        self.assertEqual(wrong_kind["data"]["sync"]["consumed"], 0)
+        self.assertEqual(wrong_kind["data"]["sync"]["invalid"], 1)
+        self.assertEqual(
+            self._history(decision_id)["decision"]["lifecycle"]["state"],
+            "delivered")
+
+        con = sqlite3.connect(graph)
+        con.execute("INSERT INTO open_ends VALUES(?,?,?,?,?,?)", (
+            "owner-a", "chat_open_end", item_key, 1784368801,
+            "downstream_explicit", "owner-a-proof"))
+        con.commit()
+        con.close()
+        consumed = self._alert(
+            "sync-snapshot", extra_env={"CHAT_GRAPH_DB": str(graph)})
+        self.assertEqual(consumed["data"]["sync"]["consumed"], 1)
+        event = next(
+            event for event in self._history(decision_id)["events"]
+            if event["event_type"] == "consumed")
+        self.assertEqual(event["detail"]["source_id"], "owner-a")
+        self.assertEqual(event["detail"]["kind"], "chat_open_end")
+        self.assertEqual(event["detail"]["item_key"], item_key)
+
+    def test_graph_watcher_consumes_only_delivered_with_deterministic_event(
+            self) -> None:
+        first = self._ingest("watch-owner", "one")
+        decision_id = first["decision"]["id"]
+        resolution_key = first["resolution_key"]
+        self._answer_single(decision_id)
+
+        graph = self.temp / "graph.db"
+        con = sqlite3.connect(graph)
+        con.execute("""CREATE TABLE open_ends(
+            session_id TEXT, kind TEXT, item_key TEXT, resolved_at INTEGER,
+            resolution_evidence_type TEXT, resolution_evidence_ref TEXT,
+            UNIQUE(session_id, kind, item_key))""")
+        con.execute("INSERT INTO open_ends VALUES(?,?,?,?,?,?)", (
+            "watch-owner", "chat_open_end", resolution_key, 1784368801,
+            "downstream_explicit", "watch-child-result"))
+        con.commit()
+        con.close()
+        change = {
+            "item_key": resolution_key,
+            "kind": "chat_open_end",
+            "change_type": "resolved",
+            "resolved_at": 1784368801,
+            "source_id": "watch-owner",
+            "resolution_evidence_type": "downstream_explicit",
+            "resolution_evidence_ref": "watch-child-result",
+        }
+        self._write_chat_change(change)
+
+        pre_delivery = self._alert(
+            "sync-snapshot", extra_env={"CHAT_GRAPH_DB": str(graph)})
+        self.assertEqual(pre_delivery["data"]["sync"]["resolved_semantics"],
+                         "compatibility_queue_alias")
+        self.assertEqual(pre_delivery["data"]["sync"]["resolved_compatibility"],
+                         pre_delivery["data"]["sync"]["resolved"])
+        self.assertEqual(pre_delivery["data"]["sync"]["pre_delivery"], 1)
+        self.assertEqual(pre_delivery["data"]["sync"]["invalid"], 0)
+        self.assertEqual(
+            self._history(decision_id)["decision"]["lifecycle"]["state"],
+            "answered_pending")
+
+        self._deliver(decision_id, "delivery:watch-owner", "provider:watch-owner")
+        consumed = self._alert(
+            "sync-snapshot", extra_env={"CHAT_GRAPH_DB": str(graph)})
+        self.assertEqual(consumed["data"]["sync"]["consumed"], 1)
+        history = self._history(decision_id)
+        self.assertEqual(history["decision"]["lifecycle"]["state"], "consumed")
+        event = next(e for e in history["events"] if e["event_type"] == "consumed")
+        self.assertRegex(event["detail"]["transition_id"],
+                         r"^chat-graph:[0-9a-f]{40}$")
+        self.assertEqual(event["detail"]["source"], "chat-graph")
+        self.assertEqual(event["detail"]["resolved_at"], 1784368801)
+        self.assertEqual(event["detail"]["source_id"], "watch-owner")
+        self.assertIsInstance(event["detail"]["delivered_event_id"], int)
+        self.assertEqual(event["detail"]["delivered_at"], 1784368800)
+        replay = self._alert(
+            "sync-snapshot", extra_env={"CHAT_GRAPH_DB": str(graph)})
+        self.assertEqual(replay["data"]["sync"]["consumed"], 0)
+        self.assertEqual(replay["data"]["sync"]["already_consumed"], 1)
+        self.assertEqual(
+            len([e for e in self._history(decision_id)["events"]
+                 if e["event_type"] == "consumed"]), 1)
+
+        invalid = dict(change)
+        invalid["item_key"] = "b" * 40
+        invalid.pop("source_id")
+        self._write_chat_change(invalid)
+        malformed = self._alert(
+            "sync-snapshot", extra_env={"CHAT_GRAPH_DB": str(graph)})
+        self.assertEqual(malformed["data"]["sync"]["invalid"], 1)
+        self.assertEqual(malformed["data"]["sync"]["pre_delivery"], 0)
+
+    def test_status_separates_lifecycle_counts_from_compatibility_counts(
+            self) -> None:
+        waiting = self._ingest("status-owner", "waiting")
+        pending = self._ingest("status-owner", "pending")
+        self._answer_single(pending["decision"]["id"])
+
+        status = self._alert("status")
+        lifecycle = status["data"]["lifecycle_counts"]
+        self.assertEqual(lifecycle["awaiting_answer"], 1)
+        self.assertEqual(lifecycle["answered_pending"], 1)
+        self.assertEqual(sum(lifecycle.values()), 2)
+        self.assertEqual(status["data"]["counts_semantics"],
+                         "compatibility_queue_alias")
+        self.assertEqual(status["data"]["compatibility_counts"],
+                         status["data"]["counts"])
+        self.assertEqual(status["data"]["compatibility_counts"]["open"], 2)
+        self.assertIn(waiting["decision"]["id"],
+                      [d["id"] for d in status["data"]["pinned"]])
 
     def test_changed_evidence_unlocks_a_new_answer(self) -> None:
         first = self._ingest("solo-owner", "one", evidence="evidence-v1")
@@ -408,6 +1407,119 @@ class RollupAnswerTests(unittest.TestCase):
         self.assertNotEqual(events[0]["evidence_fingerprint"],
                             events[1]["evidence_fingerprint"])
         self.assertEqual(self._history(decision_id)["decision"]["state"], "open")
+
+    def test_returning_fingerprint_does_not_resurrect_old_lifecycle(self) -> None:
+        first = self._ingest(
+            "returning-fingerprint-owner", "one", evidence="evidence-v1")
+        decision_id = first["decision"]["id"]
+        fingerprint_v1 = first["decision"]["evidence_fingerprint"]
+        self._answer_single(decision_id)
+        self._deliver(
+            decision_id, "delivery:returning-v1", "provider:returning-v1")
+        before = self._history(decision_id)
+        self.assertEqual(before["decision"]["lifecycle"]["state"], "delivered")
+
+        self.env["DECISION_ALERT_NOW_EPOCH"] = "1784368801"
+        second = self._ingest(
+            "returning-fingerprint-owner", "one", evidence="evidence-v2")
+        self.assertNotEqual(
+            second["decision"]["evidence_fingerprint"], fingerprint_v1)
+        self.env["DECISION_ALERT_NOW_EPOCH"] = "1784368802"
+        returned = self._ingest(
+            "returning-fingerprint-owner", "one", evidence="evidence-v1")
+        self.assertEqual(
+            returned["decision"]["evidence_fingerprint"], fingerprint_v1)
+
+        after = self._history(decision_id)
+        self.assertIsNone(after["decision"]["answer_pending"])
+        self.assertEqual(
+            after["decision"]["lifecycle"]["state"], "awaiting_answer")
+        self.assertEqual(
+            [event["event_type"] for event in after["events"]],
+            ["observed", "answered_pending", "delivered",
+             "evidence_changed", "evidence_changed"])
+
+        self._answer_single(decision_id)
+        current = self._history(decision_id)["decision"]
+        stale_replay = self._alert(
+            "transition", decision_id, "--to", "delivered",
+            "--expected-fingerprint", current["evidence_fingerprint"],
+            "--resolution-key", current["resolution_key"],
+            "--event-id", "delivery:returning-v1",
+            "--evidence-type", "provider_delivery_receipt",
+            "--evidence-ref", "provider:returning-v1",
+            "--outcome", "delivered", "--source", "test-suite",
+            ok=False)
+        self.assertIn("evidence generation", stale_replay["stderr"])
+        self.assertEqual(
+            self._history(decision_id)["decision"]["lifecycle"]["state"],
+            "answered_pending")
+
+        delivered = self._deliver(
+            decision_id, "delivery:returning-v1-current",
+            "provider:returning-v1-current")
+        self.assertEqual(delivered["decision"]["lifecycle"]["state"],
+                         "delivered")
+
+    def test_returning_fingerprint_rollup_gets_a_new_generation_batch(self) -> None:
+        first = self._ingest(
+            "returning-rollup-owner", "one", evidence="evidence-v1")
+        decision_id = first["decision"]["id"]
+        fingerprint_v1 = first["decision"]["evidence_fingerprint"]
+        first_card = next(
+            card for card in self._alert("rollup")["cards"]
+            if any(member["decision_id"] == decision_id
+                   for member in card["members"]))
+        first_answer = self._dashboard(
+            "decide", "answer-rollup", first_card["card_id"],
+            decision_id, "1")
+        first_batch = Path(first_answer["batch_path"])
+        self.assertTrue(first_batch.is_dir())
+
+        self.env["DECISION_ALERT_NOW_EPOCH"] = "1784368801"
+        second = self._ingest(
+            "returning-rollup-owner", "one", evidence="evidence-v2")
+        self.assertNotEqual(
+            second["decision"]["evidence_fingerprint"], fingerprint_v1)
+        self.env["DECISION_ALERT_NOW_EPOCH"] = "1784368802"
+        returned = self._ingest(
+            "returning-rollup-owner", "one", evidence="evidence-v1")
+        self.assertEqual(
+            returned["decision"]["evidence_fingerprint"], fingerprint_v1)
+
+        returned_card = next(
+            card for card in self._alert("rollup")["cards"]
+            if any(member["decision_id"] == decision_id
+                   for member in card["members"]))
+        self.assertEqual(returned_card["card_id"], first_card["card_id"])
+        current_answer = self._dashboard(
+            "decide", "answer-rollup", returned_card["card_id"],
+            decision_id, "1")
+        self.assertTrue(current_answer["changed"])
+        self.assertFalse(current_answer["replayed"])
+        self.assertNotEqual(current_answer["batch_key"],
+                            first_answer["batch_key"])
+        self.assertTrue(Path(current_answer["batch_path"]).is_dir())
+        self.assertTrue(first_batch.is_dir())
+
+        history = self._history(decision_id)
+        self.assertEqual(
+            history["decision"]["lifecycle"]["state"], "answered_pending")
+        pending_events = [
+            event for event in history["events"]
+            if event["event_type"] == "answered_pending"
+        ]
+        self.assertEqual(
+            [event["evidence_ref"] for event in pending_events],
+            [first_answer["batch_key"], current_answer["batch_key"]])
+        self.assertEqual(
+            history["decision"]["answer_pending"]["batch_key"],
+            current_answer["batch_key"])
+        replay = self._dashboard(
+            "decide", "answer-rollup", returned_card["card_id"],
+            decision_id, "1")
+        self.assertTrue(replay["replayed"])
+        self.assertEqual(replay["batch_key"], current_answer["batch_key"])
 
     def test_partial_current_pending_set_fails_closed(self) -> None:
         fixture = self._three_member_card()
@@ -1374,10 +2486,28 @@ class RollupAnswerTests(unittest.TestCase):
             extra_env=brief_env)
 
         self.assertIn("prompt:", answered.stdout)
-        self.assertEqual(self._history(decision_id)["decision"]["state"], "resolved")
+        decision = self._history(decision_id)["decision"]
+        self.assertEqual(decision["state"], "open")
+        self.assertIsNotNone(decision["answer_pending"])
+        self.assertEqual(decision["answer_pending"]["mode"], "single")
+        self.assertEqual(decision["lifecycle"]["state"], "answered_pending")
         self.assertNotIn(decision_id, latest_path.read_text())
         self.assertNotIn(decision_id, brief_feed_path.read_text())
         self.assertFalse(marker.exists())
+
+        prompt_path = self.home / "prompts" / (decision_id + ".md")
+        prompt_before = prompt_path.read_bytes()
+        replay = self._proc(
+            ["/bin/bash", str(DASHBOARD), "decide", "answer", decision_id, "1"],
+            extra_env=brief_env)
+        self.assertIn("prompt:", replay.stdout)
+        self.assertEqual(prompt_path.read_bytes(), prompt_before)
+        events = self._pending_events(decision_id)
+        self.assertEqual(len(events), 1)
+        self._proc(
+            ["/bin/bash", str(DASHBOARD), "decide", "answer", decision_id, "2"],
+            ok=False, extra_env=brief_env)
+        self.assertEqual(len(self._pending_events(decision_id)), 1)
 
     def test_public_answer_fails_closed_for_inflight_brief_delivery(self) -> None:
         fixture = self._three_member_card()

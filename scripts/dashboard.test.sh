@@ -2657,7 +2657,11 @@ prompt=open(sys.argv[4]).read()
 history=json.load(open(sys.argv[5]))
 choice=answer["choice"]
 assert "Trevor choice: %s" % choice in prompt, (choice,prompt)
-assert history["decision"]["resolution"]["evidence_ref"] == "mc-answer:%s" % choice
+decision=history["decision"]
+assert decision["state"] == "open", decision
+assert decision["answer_pending"]["choice"] == choice, decision
+assert decision["answer_pending"]["mode"] == "single", decision
+assert decision["lifecycle"]["state"] == "answered_pending", decision
 PY
   done
   if [ "$miss" -eq 0 ]; then
@@ -2667,7 +2671,7 @@ PY
   fi
 }
 
-c48() { # blocked publication stays open; exact resolved state is recoverable
+c48() { # blocked publication stays open; exact answered-pending state is recoverable
   local mch created did victim first_rc=0 miss=0 recover_created recover_did
   mch="$(newhome)"; victim="$mch/outside-answer.json"
   created="$(MISSION_CONTROL_HOME="$mch" "$REPO/scripts/decision-alert" ingest \
@@ -2701,10 +2705,11 @@ import json,sys
 answer=json.load(open(sys.argv[1]));prompt=open(sys.argv[2]).read();history=json.load(open(sys.argv[3]))
 assert answer["choice"] == 1
 assert "Trevor choice: 1" in prompt
-assert history["decision"]["state"] == "resolved"
-assert history["decision"]["resolution"]["evidence_ref"] == "mc-answer:1"
+assert history["decision"]["state"] == "open"
+assert history["decision"]["answer_pending"]["choice"] == 1
+assert history["decision"]["lifecycle"]["state"] == "answered_pending"
 PY
-  # Model a crash after the SQLite resolution but before either staged artifact
+    # Model a crash after the SQLite pending event but before either staged artifact
   # is published. Exact-choice replay must derive both files and return success.
   recover_created="$(MISSION_CONTROL_HOME="$mch" "$REPO/scripts/decision-alert" ingest \
     --source-kind manual --source-key "answer-post-resolve-recovery" \
@@ -2714,7 +2719,8 @@ PY
   env -u DASHBOARD_CMD_DECISIONS REPO_ROOT="$REPO" MISSION_CONTROL_HOME="$mch" \
     bash "$DASH" collect --force decisions >/dev/null 2>&1
   MISSION_CONTROL_HOME="$mch" "$REPO/scripts/decision-alert" resolve "$recover_did" \
-    --evidence-type manual_resolution --evidence-ref mc-answer:1 --json >/dev/null || miss=1
+    --evidence-type manual_resolution --evidence-ref mc-answer:1 \
+    --source dashboard-test --json >/dev/null || miss=1
   [ ! -e "$mch/answers/$recover_did.json" ] && [ ! -e "$mch/prompts/$recover_did.md" ] || miss=1
   env -u DASHBOARD_CMD_DECISIONS REPO_ROOT="$REPO" MISSION_CONTROL_HOME="$mch" \
     bash "$DASH" decide answer "$recover_did" 1 >"$mch/recover.out" 2>"$mch/recover.err" || miss=1
@@ -2726,7 +2732,7 @@ PY
   if [ "$miss" -eq 0 ]; then
     ok "decide-answer: blocked sidecar stays open and exact-choice recovery completes coherently"
   else
-    no "decide-answer: blocked sidecar caused partial or unretryable resolution"
+    no "decide-answer: blocked sidecar caused partial or unretryable answered-pending state"
   fi
 }
 

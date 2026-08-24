@@ -26,7 +26,7 @@ import urllib.parse
 from mission_control_common import (
     DESKTOP_GLANCE_CTA, ACTION, IDENTIFIER, NARRATIVE,
                                     NOTIFICATION, EgressCounters,
-                                    sanitize_text)
+                                    sanitize_text, valid_lifecycle_source)
 import queue_admission
 
 
@@ -56,12 +56,49 @@ RESOLUTION_TYPES = (
     "answering_user_turn", "downstream_resolution_key", "manual_resolution",
 )
 DECISION_STATES = ("open", "dismissed", "resolved")
+DECISION_LIFECYCLE = (
+    "answered_pending", "delivered", "consumed", "running",
+    "live_result_verified", "closed",
+)
+DEFAULT_ANSWER_SOURCE = "mission-control"
+GRAPH_LIFECYCLE_SOURCE = "chat-graph"
+LIFECYCLE_TRANSITION_CONTRACT = {
+    "delivered": ("answered_pending", "provider_delivery_receipt", "delivered"),
+    "consumed": (
+        "delivered", ("answering_user_turn", "downstream_resolution_key"),
+        "accepted"),
+    "running": ("consumed", "execution_start_receipt", "started"),
+    "live_result_verified": (
+        "running", "live_result_receipt", "verified"),
+    "closed": (
+        "live_result_verified", "closure_receipt", "closed"),
+}
+LIFECYCLE_REQUESTED_ACTION = {
+    "awaiting_answer": "answer",
+    "answered_pending": "deliver",
+    "delivered": "consume",
+    "consumed": "start",
+    "running": "verify_live_result",
+    "live_result_verified": "close",
+    "closed": None,
+    "dismissed": None,
+    "legacy_resolved": None,
+    "invalid": "repair_lifecycle_evidence",
+}
 _ID_RE = re.compile(r"^decision:[0-9a-f]{24}$")
 _CARD_ID_RE = re.compile(r"^card:[0-9a-f]{16}$")
 _SCOPE_KEY_RE = re.compile(r"^scope:[0-9a-f]{40}$")
+_ROLLUP_BATCH_RE = re.compile(r"^rollup-[0-9a-f]{40}$")
 _ARTIFACT_BATCH_RE = re.compile(
     r"^(?:rollup-[0-9a-f]{40}|\.rollup-stage\.[0-9a-f]{24})$")
+_SINGLE_STAGE_RE = re.compile(
+    r"^\.decision-(?:answer|prompt)-stage\.[0-9a-f]{24}$")
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+_GRAPH_ITEM_KEY_RE = re.compile(r"^[0-9a-f]{40}$")
+_LIFECYCLE_EVENT_ID_RE = re.compile(
+    r"^[A-Za-z0-9][A-Za-z0-9._:-]{7,191}$")
+_SQLITE_SCHEMA_NAME_RE = re.compile(r"^[A-Za-z0-9_]+$")
+_GRAPH_IDENTITY_UNIQUE_COLUMNS = ("session_id", "kind", "item_key")
 
 
 class DecisionError(Exception):
@@ -307,6 +344,101 @@ def _structured_origin_requires_anchor(source_kind, provenance):
     return (source_kind, provenance.casefold()) not in deterministic
 
 
+def _graph_identity_for_decision(row):
+    """Return the exact chat-graph row identity bound to a Tier-1 decision."""
+    item_key = str(row["resolution_key"] or "")
+    source_key = str(row["source_key"] or "")
+    suffix = ":" + item_key
+    if (row["source_kind"] != "chat" or
+            row["provenance"] != "chat-graph tier1" or
+            not _GRAPH_ITEM_KEY_RE.match(item_key) or
+            not source_key.startswith("outcome:") or
+            not source_key.endswith(suffix)):
+        raise DecisionError("decision lacks exact chat graph identity")
+    source_id = source_key[len("outcome:"):-len(suffix)]
+    identity = {
+        "source_id": source_id,
+        "kind": "chat_open_end",
+        "item_key": item_key,
+    }
+    if (not valid_lifecycle_source(source_id) or
+            row["anchor_ref"] != "chat-graph:%s:%s" % (
+                source_id, item_key)):
+        raise DecisionError("decision chat graph identity is inconsistent")
+    return identity
+
+
+def _graph_has_unique_identity(con):
+    """Require the exact non-partial identity UNIQUE used by chat-graph."""
+    for index in con.execute("PRAGMA index_list('open_ends')").fetchall():
+        if len(index) < 3 or index[2] != 1:
+            continue
+        if len(index) > 4 and index[4] != 0:
+            continue
+        name = index[1]
+        if (not isinstance(name, str) or
+                not _SQLITE_SCHEMA_NAME_RE.fullmatch(name)):
+            continue
+        columns = tuple(row[2] for row in con.execute(
+            "PRAGMA index_info(%s)" % name).fetchall())
+        if columns == _GRAPH_IDENTITY_UNIQUE_COLUMNS:
+            return True
+    return False
+
+
+def _verified_graph_consumption(row, evidence_type, evidence_ref):
+    """Verify consumption against one exact persisted chat-graph row."""
+    expected_evidence = {
+        "answering_user_turn": "answering_user_turn",
+        "downstream_resolution_key": "downstream_explicit",
+    }.get(evidence_type)
+    if expected_evidence is None:
+        raise DecisionError("resolution evidence type is not exact/allowed")
+    identity = _graph_identity_for_decision(row)
+    path = os.path.expanduser(os.environ.get(
+        "CHAT_GRAPH_DB", os.path.join("~", ".chat-graph", "graph.db")))
+    con = None
+    try:
+        con = sqlite3.connect("file:%s?mode=ro" % path, uri=True, timeout=5)
+        columns = {field[1] for field in con.execute(
+            "PRAGMA table_info(open_ends)").fetchall()}
+        required = {
+            "session_id", "kind", "item_key", "resolved_at",
+            "resolution_evidence_type", "resolution_evidence_ref",
+        }
+        if (not required.issubset(columns) or
+                not _graph_has_unique_identity(con)):
+            raise DecisionError(
+                "verified graph consumption unique identity is unavailable")
+        rows = con.execute("""SELECT session_id,kind,item_key,resolved_at
+            FROM open_ends WHERE session_id=? AND kind=? AND item_key=?
+              AND resolved_at IS NOT NULL
+              AND resolution_evidence_type=? AND resolution_evidence_ref=?
+            ORDER BY resolved_at DESC""", (
+                identity["source_id"], identity["kind"],
+                identity["item_key"], expected_evidence,
+                evidence_ref)).fetchall()
+    except sqlite3.Error:
+        raise DecisionError("verified graph resolution evidence unavailable")
+    finally:
+        if con is not None:
+            con.close()
+    if not rows:
+        raise DecisionError(
+            "resolution evidence does not match decision graph identity")
+    if len(rows) != 1:
+        raise DecisionError("graph resolution evidence is ambiguous")
+    source_id, kind, item_key, resolved_at = rows[0]
+    if (isinstance(resolved_at, bool) or
+            not isinstance(resolved_at, int) or resolved_at <= 0 or
+            source_id != identity["source_id"] or
+            kind != identity["kind"] or item_key != identity["item_key"]):
+        raise DecisionError("graph resolution evidence has invalid identity")
+    proof = dict(identity)
+    proof["resolved_at"] = resolved_at
+    return proof
+
+
 def _verified_resolution_evidence(evidence_type, evidence_ref, resolution_key):
     """Verify automatic closure against chat-graph's persisted evidence row."""
     if evidence_type == "manual_resolution":
@@ -319,17 +451,44 @@ def _verified_resolution_evidence(evidence_type, evidence_ref, resolution_key):
         raise DecisionError("resolution evidence type is not exact/allowed")
     path = os.path.expanduser(os.environ.get(
         "CHAT_GRAPH_DB", os.path.join("~", ".chat-graph", "graph.db")))
+    con = None
     try:
         con = sqlite3.connect("file:%s?mode=ro" % path, uri=True, timeout=5)
-        row = con.execute("""SELECT 1 FROM open_ends
+        columns = {row[1] for row in con.execute(
+            "PRAGMA table_info(open_ends)").fetchall()}
+        required = {
+            "session_id", "kind", "item_key", "resolved_at",
+            "resolution_evidence_type", "resolution_evidence_ref",
+        }
+        if (not required.issubset(columns) or
+                not _graph_has_unique_identity(con)):
+            raise DecisionError(
+                "verified graph resolution unique identity is unavailable")
+        rows = con.execute("""SELECT resolved_at,%s FROM open_ends
             WHERE item_key=? AND resolved_at IS NOT NULL
               AND resolution_evidence_type=? AND resolution_evidence_ref=?
-            LIMIT 1""", (resolution_key, expected, evidence_ref)).fetchone()
-        con.close()
+            ORDER BY resolved_at DESC""" % "session_id",
+            (resolution_key, expected, evidence_ref)).fetchall()
     except sqlite3.Error:
         raise DecisionError("verified graph resolution evidence unavailable")
-    if row is None:
+    finally:
+        if con is not None:
+            con.close()
+    if not rows:
         raise DecisionError("resolution evidence is not verified by chat graph")
+    if len(rows) != 1:
+        raise DecisionError("graph resolution evidence is ambiguous")
+    proofs = set()
+    for resolved_at, source_id in rows:
+        if isinstance(resolved_at, bool) or not isinstance(resolved_at, int):
+            raise DecisionError("graph resolution evidence has invalid freshness")
+        proofs.add((resolved_at, str(source_id or resolution_key)))
+    if len(proofs) != 1:
+        raise DecisionError("graph resolution evidence is ambiguous")
+    resolved_at, source_id = next(iter(proofs))
+    if resolved_at <= 0 or not valid_lifecycle_source(source_id):
+        raise DecisionError("graph resolution evidence has invalid identity")
+    return {"resolved_at": resolved_at, "source_id": source_id}
 
 
 def _fingerprint(text, evidence, trust, provenance, action_argv, resolution_key,
@@ -373,23 +532,132 @@ def _latest_attempt(con, decision_id, fingerprint):
     return dict(row) if row else None
 
 
-def _active_answer_pending(con, row):
-    """Return the current-fingerprint pending marker while the row is open.
-
-    `answered_pending` is an immutable event interpretation, not a new state
-    enum. A changed fingerprint therefore deactivates the old marker without
-    rewriting history. Malformed local event detail fails toward suppression:
-    callers see an invalid marker instead of treating the decision as safely
-    unanswered.
-    """
-    if row is None or row["state"] != "open":
-        return None
-    event = con.execute("""SELECT event_id,occurred_at,detail_json
-        FROM decision_events
-        WHERE decision_id=? AND event_type='answered_pending'
-          AND evidence_fingerprint=?
+def _current_evidence_activation_event_id(con, row):
+    """Return the immutable event that began the current evidence epoch."""
+    event = con.execute("""SELECT event_id FROM decision_events
+        WHERE decision_id=? AND evidence_fingerprint=?
+          AND event_type IN ('observed','evidence_changed','recurrence')
         ORDER BY event_id DESC LIMIT 1""", (
             row["decision_id"], row["evidence_fingerprint"],
+        )).fetchone()
+    return event["event_id"] if event is not None else None
+
+
+def _persisted_receipt_ref_is_valid(value):
+    """Validate a required receipt reference read from durable SQLite state."""
+    return (isinstance(value, str) and bool(value) and
+            value == value.strip())
+
+
+def _rollup_source_upgrade_lineage_valid(con, event, detail):
+    """Prove a source-bound rollup receipt is an append-only legacy upgrade."""
+    if (not _ROLLUP_BATCH_RE.match(str(detail.get("batch_key") or "")) or
+            detail.get("schema") != 1 or detail.get("mode") is not None or
+            not valid_lifecycle_source(detail.get("source"))):
+        return False
+    prior_event_id = detail.get("source_upgrade_from_event_id")
+    prior_evidence_ref = detail.get("source_upgrade_from_evidence_ref")
+    prior_scope_key = detail.get("source_upgrade_from_scope_key")
+    prior_manifest_sha256 = detail.get(
+        "source_upgrade_from_artifact_manifest_sha256")
+    if (isinstance(prior_event_id, bool) or
+            not isinstance(prior_event_id, int) or
+            prior_event_id <= 0 or prior_event_id >= event["event_id"] or
+            not _ROLLUP_BATCH_RE.match(str(prior_evidence_ref or "")) or
+            not _SCOPE_KEY_RE.match(str(prior_scope_key or "")) or
+            not _SHA256_RE.match(str(prior_manifest_sha256 or ""))):
+        return False
+    prior = con.execute("""SELECT evidence_type,evidence_ref,detail_json
+        FROM decision_events WHERE event_id=? AND event_type='answered_pending'
+          AND decision_id=? AND evidence_fingerprint=?""", (
+            prior_event_id, event["decision_id"],
+            event["evidence_fingerprint"])).fetchone()
+    if (prior is None or prior["evidence_type"] != "operator_choice" or
+            prior["evidence_ref"] != prior_evidence_ref):
+        return False
+    try:
+        prior_detail = json.loads(prior["detail_json"] or "null")
+    except (TypeError, ValueError):
+        return False
+    base_keys = {
+        "schema", "scope_key", "batch_key", "card_id",
+        "primary_decision_id", "choice", "member_ids", "target_ids",
+        "independent_ids", "already_pending_ids", "source",
+        "resume_chat_id", "resume_provider", "artifact_manifest_sha256",
+        "answer_artifact", "prompt_artifact",
+    }
+    upgrade_keys = {
+        "source_upgrade_from_event_id",
+        "source_upgrade_from_evidence_ref",
+        "source_upgrade_from_scope_key",
+        "source_upgrade_from_artifact_manifest_sha256",
+    }
+    if (not isinstance(prior_detail, dict) or
+            set(prior_detail) != base_keys or
+            set(detail) != base_keys | upgrade_keys or
+            prior_detail.get("schema") != 1 or
+            prior_detail.get("source") != "" or
+            prior_detail.get("batch_key") != prior_evidence_ref or
+            prior_detail.get("scope_key") != prior_scope_key or
+            prior_detail.get("artifact_manifest_sha256") !=
+            prior_manifest_sha256 or
+            detail.get("batch_key") == prior_evidence_ref or
+            detail.get("scope_key") == prior_scope_key):
+        return False
+    unchanged = (
+        "card_id", "primary_decision_id", "choice", "member_ids",
+        "target_ids", "independent_ids", "already_pending_ids",
+        "resume_chat_id", "resume_provider",
+    )
+    if any(prior_detail.get(key) != detail.get(key) for key in unchanged):
+        return False
+    decision_id = event["decision_id"]
+    paths_valid = (
+        prior_detail.get("answer_artifact") ==
+        "answer-batches/%s/answers/%s.json" % (
+            prior_evidence_ref, decision_id) and
+        prior_detail.get("prompt_artifact") ==
+        "answer-batches/%s/prompts/%s.md" % (
+            prior_evidence_ref, decision_id) and
+        detail.get("answer_artifact") ==
+        "answer-batches/%s/answers/%s.json" % (
+            detail.get("batch_key"), decision_id) and
+        detail.get("prompt_artifact") ==
+        "answer-batches/%s/prompts/%s.md" % (
+            detail.get("batch_key"), decision_id))
+    if not paths_valid:
+        return False
+    legacy_plan = {
+        key: prior_detail.get(key) for key in (
+            "batch_key", "scope_key", "card_id", "primary_decision_id",
+            "choice", "member_ids", "target_ids", "independent_ids",
+            "already_pending_ids")
+    }
+    try:
+        _verify_rollup_artifact_proof(
+            legacy_plan, prior_evidence_ref, prior_manifest_sha256, "",
+            prior_detail.get("resume_chat_id"),
+            prior_detail.get("resume_provider"))
+    except (DecisionError, KeyError, OSError, TypeError, ValueError):
+        return False
+    return True
+
+
+def _answer_pending_marker(con, row):
+    """Return the latest current-fingerprint answered-pending event marker."""
+    if row is None:
+        return None
+    activation_event_id = _current_evidence_activation_event_id(con, row)
+    if activation_event_id is None:
+        return None
+    event = con.execute("""SELECT event_id,decision_id,evidence_fingerprint,
+            occurred_at,evidence_type,evidence_ref,detail_json
+        FROM decision_events
+        WHERE decision_id=? AND event_type='answered_pending'
+          AND evidence_fingerprint=? AND event_id>?
+        ORDER BY event_id DESC LIMIT 1""", (
+            row["decision_id"], row["evidence_fingerprint"],
+            activation_event_id,
         )).fetchone()
     if event is None:
         return None
@@ -401,10 +669,307 @@ def _active_answer_pending(con, row):
         detail = {"valid": False}
     else:
         detail = dict(detail)
-        detail["valid"] = True
+        binding_valid = (
+            event["evidence_type"] == "operator_choice" and
+            _persisted_receipt_ref_is_valid(event["evidence_ref"]) and
+            event["evidence_ref"] == detail.get("batch_key"))
+        rollup_upgrade_claimed = (
+            _ROLLUP_BATCH_RE.match(str(detail.get("batch_key") or "")) and
+            ("source_upgrade_from_event_id" in detail or
+             "source_upgrade_from_evidence_ref" in detail or
+             "source_upgrade_from_scope_key" in detail or
+             "source_upgrade_from_artifact_manifest_sha256" in detail))
+        rollup_upgrade_valid = (
+            _rollup_source_upgrade_lineage_valid(con, event, detail)
+            if rollup_upgrade_claimed else False)
+        detail["valid"] = (
+            binding_valid and valid_lifecycle_source(detail.get("source")) and
+            (not rollup_upgrade_claimed or rollup_upgrade_valid))
+        detail["legacy_source_upgradeable"] = (
+            binding_valid and
+            detail.get("source") == "" and
+            detail.get("schema") == 1 and
+            detail.get("mode") == "single")
+        detail["legacy_rollup_source_upgradeable"] = (
+            binding_valid and detail.get("source") == "" and
+            detail.get("schema") == 1 and detail.get("mode") is None and
+            bool(_ROLLUP_BATCH_RE.match(str(detail.get("batch_key") or ""))) and
+            bool(_SCOPE_KEY_RE.match(str(detail.get("scope_key") or ""))) and
+            bool(_CARD_ID_RE.match(str(detail.get("card_id") or ""))) and
+            bool(_ID_RE.match(str(
+                detail.get("primary_decision_id") or ""))) and
+            bool(_SHA256_RE.match(str(
+                detail.get("artifact_manifest_sha256") or ""))))
+        detail["rollup_source_upgrade_valid"] = rollup_upgrade_valid
     detail["event_id"] = event["event_id"]
     detail["occurred_at"] = event["occurred_at"]
     return detail
+
+
+def _active_answer_pending(con, row):
+    """Return the current-fingerprint pending marker while the row is open.
+
+    `answered_pending` is an immutable event interpretation, not a new state
+    enum. A changed fingerprint therefore deactivates the old marker without
+    rewriting history. Malformed local event detail fails toward suppression:
+    callers see an invalid marker instead of treating the decision as safely
+    unanswered.
+    """
+    if row is None or row["state"] != "open":
+        return None
+    return _answer_pending_marker(con, row)
+
+
+def _legacy_single_pending_matches(con, pending, packet):
+    """Prove one pre-source-contract single receipt before upgrading it."""
+    if (pending.get("valid") is not False or
+            pending.get("legacy_source_upgradeable") is not True):
+        return False
+    legacy_packet = dict(packet)
+    legacy_packet["source"] = ""
+    legacy_packet["batch_key"] = "single-%s" % _sha(
+        _canonical({key: value for key, value in legacy_packet.items()
+                    if key != "batch_key"}))[:40]
+    mismatched = [key for key, value in legacy_packet.items()
+                  if pending.get(key) != value]
+    if mismatched:
+        raise DecisionError(
+            "legacy pending source upgrade fields do not match: %s" %
+            ",".join(sorted(mismatched)))
+    event = con.execute("""SELECT evidence_type,evidence_ref
+        FROM decision_events WHERE event_id=? AND event_type='answered_pending'
+          AND decision_id=? AND evidence_fingerprint=?""", (
+            pending.get("event_id"), packet["decision_id"],
+            packet["evidence_fingerprint"])).fetchone()
+    if (event is None or event["evidence_type"] != "operator_choice" or
+            event["evidence_ref"] != legacy_packet["batch_key"]):
+        raise DecisionError(
+            "legacy pending source upgrade event binding does not match")
+    return True
+
+
+_PENDING_DERIVED_KEYS = {
+    "event_id", "occurred_at", "valid", "legacy_source_upgradeable",
+    "legacy_rollup_source_upgradeable", "rollup_source_upgrade_valid",
+}
+
+
+def _legacy_rollup_pending_set_matches(con, plan, by_id):
+    """Prove every target is the exact pre-source rollup receipt and batch."""
+    primary = next(
+        (target for target in plan["targets"]
+         if target["id"] == plan["primary_decision_id"]), None)
+    pending = (primary or {}).get("answer_pending") or {}
+    resume_chat_id = pending.get("resume_chat_id")
+    resume_provider = pending.get("resume_provider")
+    manifest_sha256 = pending.get("artifact_manifest_sha256")
+    if (not isinstance(resume_chat_id, str) or
+            not isinstance(resume_provider, str) or
+            not _SHA256_RE.match(str(manifest_sha256 or ""))):
+        raise DecisionError("legacy rollup pending metadata is invalid")
+    legacy_scope_packet = {
+        "schema": 1,
+        "card_id": plan["card_id"],
+        "primary_decision_id": plan["primary_decision_id"],
+        "members": [[decision_id, by_id[decision_id]["evidence_fingerprint"]]
+                    for decision_id in plan["member_ids"]],
+        "target_ids": plan["target_ids"],
+        "independent_ids": plan["independent_ids"],
+        "already_pending_ids": plan["already_pending_ids"],
+    }
+    legacy_scope_key = "scope:%s" % _sha(
+        _canonical(legacy_scope_packet))[:40]
+    legacy_batch_key = "rollup-%s" % _sha(_canonical(
+        ["rollup-answer-v1", legacy_scope_key, plan["choice"]]))[:40]
+    if (legacy_scope_key == plan["scope_key"] or
+            legacy_batch_key == plan["batch_key"]):
+        raise DecisionError("legacy rollup identity is not historical")
+    common = {
+        "schema": 1,
+        "scope_key": legacy_scope_key,
+        "batch_key": legacy_batch_key,
+        "card_id": plan["card_id"],
+        "primary_decision_id": plan["primary_decision_id"],
+        "choice": plan["choice"],
+        "member_ids": plan["member_ids"],
+        "target_ids": plan["target_ids"],
+        "independent_ids": plan["independent_ids"],
+        "already_pending_ids": plan["already_pending_ids"],
+        "source": "",
+        "resume_chat_id": resume_chat_id,
+        "resume_provider": resume_provider,
+        "artifact_manifest_sha256": manifest_sha256,
+    }
+    seen_event_ids = set()
+    for target in plan["targets"]:
+        item = target.get("answer_pending") or {}
+        expected = dict(common)
+        expected["answer_artifact"] = (
+            "answer-batches/%s/answers/%s.json" % (
+                legacy_batch_key, target["id"]))
+        expected["prompt_artifact"] = (
+            "answer-batches/%s/prompts/%s.md" % (
+                legacy_batch_key, target["id"]))
+        persisted = {
+            key: value for key, value in item.items()
+            if key not in _PENDING_DERIVED_KEYS
+        }
+        event_id = item.get("event_id")
+        if (item.get("valid") is not False or
+                item.get("legacy_rollup_source_upgradeable") is not True or
+                persisted != expected or
+                isinstance(event_id, bool) or not isinstance(event_id, int) or
+                event_id in seen_event_ids):
+            raise DecisionError("legacy rollup pending evidence does not match")
+        seen_event_ids.add(event_id)
+        event = con.execute("""SELECT evidence_type,evidence_ref,detail_json
+            FROM decision_events WHERE event_id=?
+              AND event_type='answered_pending' AND decision_id=?
+              AND evidence_fingerprint=?""", (
+                event_id, target["id"],
+                target["evidence_fingerprint"])).fetchone()
+        if (event is None or event["evidence_type"] != "operator_choice" or
+                event["evidence_ref"] != legacy_batch_key):
+            raise DecisionError(
+                "legacy rollup pending event binding does not match")
+        try:
+            stored = json.loads(event["detail_json"] or "null")
+        except (TypeError, ValueError):
+            stored = None
+        if stored != expected:
+            raise DecisionError(
+                "legacy rollup pending event detail does not match")
+    return {
+        "scope_key": legacy_scope_key,
+        "batch_key": legacy_batch_key,
+        "artifact_manifest_sha256": manifest_sha256,
+        "resume_chat_id": resume_chat_id,
+        "resume_provider": resume_provider,
+    }
+
+
+def _lifecycle_event_rows(con, decision_id, fingerprint, after_event_id):
+    placeholders = ",".join("?" for _ in DECISION_LIFECYCLE[1:])
+    return con.execute("""SELECT event_id,event_type,evidence_fingerprint,
+        occurred_at,evidence_type,evidence_ref,detail_json
+        FROM decision_events
+        WHERE decision_id=? AND evidence_fingerprint=?
+          AND event_id>?
+          AND event_type IN (%s)
+        ORDER BY event_id""" % placeholders,
+        [decision_id, fingerprint, after_event_id] +
+        list(DECISION_LIFECYCLE[1:])).fetchall()
+
+
+def _consumption_evidence_is_unique(con, event):
+    """Bind a graph receipt to one immutable decision fingerprint."""
+    row = con.execute("""SELECT 1 FROM decision_events
+        WHERE event_type='consumed' AND evidence_ref=?
+          AND event_id<>? LIMIT 1""", (
+            event["evidence_ref"], event["event_id"],
+        )).fetchone()
+    return row is None
+
+
+def _decision_lifecycle(con, row):
+    """Derive the exact current-fingerprint lifecycle from immutable events."""
+    pending = _answer_pending_marker(con, row)
+    if pending is None:
+        state = {
+            "open": "awaiting_answer",
+            "dismissed": "dismissed",
+            "resolved": "legacy_resolved",
+        }.get(row["state"], "invalid")
+        return {"state": state, "valid": state != "invalid", "sequence": []}
+    if pending.get("valid") is not True:
+        return {
+            "state": "invalid", "valid": False,
+            "last_valid_state": None, "sequence": [],
+        }
+
+    state = "answered_pending"
+    sequence = [state]
+    latest = {
+        "event_id": pending.get("event_id"),
+        "occurred_at": pending.get("occurred_at"),
+        "evidence_type": "operator_choice",
+        "evidence_ref": pending.get("batch_key"),
+        "source": pending.get("source"),
+    }
+    seen_transition_ids = set()
+    for event in _lifecycle_event_rows(
+            con, row["decision_id"], row["evidence_fingerprint"],
+            pending["event_id"]):
+        try:
+            detail = json.loads(event["detail_json"] or "null")
+        except (TypeError, ValueError):
+            detail = None
+        contract = LIFECYCLE_TRANSITION_CONTRACT.get(event["event_type"])
+        expected_previous = contract[0] if contract else None
+        transition_id = detail.get("transition_id") if isinstance(detail, dict) else None
+        valid = (
+            isinstance(detail, dict) and contract is not None and
+            state == expected_previous and
+            detail.get("from_state") == expected_previous and
+            detail.get("to_state") == event["event_type"] and
+            detail.get("expected_fingerprint") == row["evidence_fingerprint"] and
+            detail.get("resolution_key") == row["resolution_key"] and
+            detail.get("outcome") == contract[2] and
+            valid_lifecycle_source(detail.get("source")) and
+            _persisted_receipt_ref_is_valid(event["evidence_ref"]) and
+            _LIFECYCLE_EVENT_ID_RE.match(str(transition_id or "")) and
+            transition_id not in seen_transition_ids)
+        if contract and isinstance(contract[1], tuple):
+            valid = valid and event["evidence_type"] in contract[1]
+        elif contract and contract[1] is not None:
+            valid = valid and event["evidence_type"] == contract[1]
+        if valid and event["event_type"] == "consumed":
+            resolved_at = detail.get("resolved_at")
+            try:
+                graph_identity = _graph_identity_for_decision(row)
+            except DecisionError:
+                graph_identity = None
+            valid = bool(
+                graph_identity and
+                isinstance(resolved_at, int) and
+                not isinstance(resolved_at, bool) and
+                resolved_at >= latest.get("occurred_at", 0) and
+                detail.get("delivered_event_id") == latest.get("event_id") and
+                detail.get("delivered_at") == latest.get("occurred_at") and
+                detail.get("source_id") == graph_identity["source_id"] and
+                detail.get("kind") == graph_identity["kind"] and
+                detail.get("item_key") == graph_identity["item_key"] and
+                _consumption_evidence_is_unique(con, event))
+        if not valid:
+            return {
+                "state": "invalid", "valid": False,
+                "last_valid_state": state, "sequence": sequence,
+            }
+        seen_transition_ids.add(transition_id)
+        state = event["event_type"]
+        sequence.append(state)
+        latest = {
+            "event_id": event["event_id"],
+            "occurred_at": event["occurred_at"],
+            "evidence_type": event["evidence_type"],
+            "evidence_ref": event["evidence_ref"],
+            "transition_id": transition_id,
+            "source": detail.get("source"),
+        }
+        if event["event_type"] == "consumed":
+            latest["resolved_at"] = detail.get("resolved_at")
+            latest["source_id"] = detail.get("source_id")
+            latest["kind"] = detail.get("kind")
+            latest["item_key"] = detail.get("item_key")
+    if ((state == "closed") != (row["state"] == "resolved")):
+        return {
+            "state": "invalid", "valid": False,
+            "last_valid_state": state, "sequence": sequence,
+        }
+    return {
+        "state": state, "valid": True, "sequence": sequence,
+        "latest": latest,
+    }
 
 
 def _presentation_from_text(text):
@@ -475,6 +1040,9 @@ def _decision_dict(con, row):
     data["alert_attempt"] = _latest_attempt(
         con, data["id"], data["evidence_fingerprint"])
     data["answer_pending"] = _active_answer_pending(con, row)
+    data["lifecycle"] = _decision_lifecycle(con, row)
+    data["lifecycle"]["requested_action"] = LIFECYCLE_REQUESTED_ACTION.get(
+        data["lifecycle"].get("state"), "repair_lifecycle_evidence")
     # Consumers receive a structured packet and only need their prose parser for
     # old fixture/cache compatibility.
     data.update(_presentation_from_text(data.get("text")))
@@ -676,6 +1244,182 @@ def dismiss(args):
         con.close()
 
 
+def _existing_lifecycle_transition(con, transition_id, after_event_id):
+    """Return one replay only when it belongs to the current answer generation."""
+    placeholders = ",".join("?" for _ in DECISION_LIFECYCLE[1:])
+    rows = con.execute("""SELECT event_id,decision_id,event_type,
+        evidence_fingerprint,evidence_type,evidence_ref,detail_json
+        FROM decision_events WHERE event_type IN (%s)
+        ORDER BY event_id""" % placeholders,
+        list(DECISION_LIFECYCLE[1:])).fetchall()
+    matches = []
+    for event in rows:
+        try:
+            detail = json.loads(event["detail_json"] or "null")
+        except (TypeError, ValueError):
+            continue
+        if isinstance(detail, dict) and detail.get("transition_id") == transition_id:
+            matches.append((event, detail))
+    if not matches:
+        return None, None
+    current = [match for match in matches
+               if match[0]["event_id"] > after_event_id]
+    if len(matches) != 1 or len(current) != 1:
+        raise DecisionError(
+            "lifecycle event id belongs to another evidence generation")
+    return current[0]
+
+
+def _record_lifecycle_transition(
+        con, row, to_state, transition_id, evidence_type, evidence_ref,
+        outcome, source, now, graph_proof=None):
+    if not _LIFECYCLE_EVENT_ID_RE.match(str(transition_id or "")):
+        raise DecisionError("invalid lifecycle event id")
+    if not valid_lifecycle_source(source):
+        raise DecisionError("lifecycle source is required")
+    contract = LIFECYCLE_TRANSITION_CONTRACT.get(to_state)
+    if contract is None:
+        raise DecisionError("unsupported lifecycle transition")
+
+    expected_previous, expected_evidence, expected_outcome = contract
+    event_detail = {
+        "schema": 1,
+        "transition_id": transition_id,
+        "from_state": expected_previous,
+        "to_state": to_state,
+        "expected_fingerprint": row["evidence_fingerprint"],
+        "resolution_key": row["resolution_key"],
+        "outcome": outcome,
+        "source": source,
+    }
+    if graph_proof is not None:
+        event_detail.update(graph_proof)
+
+    lifecycle = _decision_lifecycle(con, row)
+    if lifecycle.get("valid") is not True:
+        raise DecisionError("decision lifecycle is invalid")
+    pending = _answer_pending_marker(con, row)
+    if pending is None or not isinstance(pending.get("event_id"), int):
+        raise DecisionError("decision lifecycle has no current answer generation")
+    existing, detail = _existing_lifecycle_transition(
+        con, transition_id, pending["event_id"])
+    if existing is not None:
+        exact = (
+            existing["decision_id"] == row["decision_id"] and
+            existing["event_type"] == to_state and
+            existing["evidence_fingerprint"] == row["evidence_fingerprint"] and
+            existing["evidence_type"] == evidence_type and
+            existing["evidence_ref"] == evidence_ref and
+            detail == event_detail)
+        if not exact:
+            raise DecisionError("lifecycle event id was replayed for another target")
+        return False
+
+    if lifecycle.get("state") != expected_previous:
+        raise DecisionError("illegal lifecycle transition")
+    if isinstance(expected_evidence, tuple):
+        evidence_matches = evidence_type in expected_evidence
+    else:
+        evidence_matches = evidence_type == expected_evidence
+    if not evidence_matches:
+        raise DecisionError("lifecycle evidence type does not match transition")
+    if outcome != expected_outcome:
+        raise DecisionError("lifecycle transition outcome is not successful")
+    if to_state == "consumed":
+        proof = graph_proof or {}
+        resolved_at = proof.get("resolved_at")
+        graph_identity = _graph_identity_for_decision(row)
+        delivered_at = (lifecycle.get("latest") or {}).get("occurred_at")
+        delivered_event_id = (lifecycle.get("latest") or {}).get("event_id")
+        if (isinstance(resolved_at, bool) or
+                not isinstance(resolved_at, int) or
+                not isinstance(delivered_at, int) or
+                resolved_at < delivered_at):
+            raise DecisionError(
+                "graph resolution evidence predates current delivery")
+        if any(proof.get(key) != value
+               for key, value in graph_identity.items()):
+            raise DecisionError(
+                "graph resolution evidence targets another graph item")
+        local_delivery_binding = {
+            "delivered_event_id": delivered_event_id,
+            "delivered_at": delivered_at,
+        }
+        for key, value in local_delivery_binding.items():
+            if key in proof and proof.get(key) != value:
+                raise DecisionError(
+                    "graph resolution evidence targets another delivery")
+        event_detail.update(local_delivery_binding)
+        reused = con.execute("""SELECT 1 FROM decision_events
+            WHERE event_type='consumed' AND evidence_ref=? LIMIT 1""",
+            (evidence_ref,)).fetchone()
+        if reused is not None:
+            raise DecisionError(
+                "graph resolution evidence is already bound to another fingerprint")
+    _event(con, row["decision_id"], to_state, row["evidence_fingerprint"],
+           now, evidence_type, evidence_ref, detail=event_detail)
+    if to_state == "closed":
+        con.execute("""UPDATE decisions SET state='resolved',resolved_at=?,
+            resolution_evidence_type='lifecycle_closed',
+            resolution_evidence_ref=? WHERE decision_id=?""", (
+                now, evidence_ref, row["decision_id"],
+            ))
+    return True
+
+
+def transition(args):
+    now = _now()
+    counters = EgressCounters()
+    to_state = str(args.to_state or "")
+    if to_state == "consumed":
+        raise DecisionError(
+            "consumption requires graph-verified resolve evidence")
+    expected_fingerprint = _sanitize_required(
+        args.expected_fingerprint, IDENTIFIER,
+        "expected evidence fingerprint", counters)
+    if not _SHA256_RE.match(expected_fingerprint):
+        raise DecisionError("invalid expected evidence fingerprint")
+    resolution_key = _sanitize_required(
+        args.resolution_key, IDENTIFIER, "resolution-key", counters)
+    transition_id = _sanitize_required(
+        args.event_id, IDENTIFIER, "lifecycle event id", counters)
+    evidence_type = _sanitize_required(
+        args.evidence_type, IDENTIFIER, "lifecycle evidence type", counters)
+    evidence_ref = _sanitize_required(
+        args.evidence_ref, IDENTIFIER, "lifecycle evidence ref", counters)
+    outcome = _sanitize_required(
+        args.outcome, IDENTIFIER, "lifecycle outcome", counters)
+    source = _sanitize_required(
+        getattr(args, "source", None), IDENTIFIER,
+        "lifecycle source", counters)
+    if not valid_lifecycle_source(source):
+        raise DecisionError("invalid lifecycle source")
+
+    con = _connect()
+    try:
+        _tx(con)
+        row = _get(con, args.decision_id)
+        if row["evidence_fingerprint"] != expected_fingerprint:
+            raise DecisionError("lifecycle evidence fingerprint changed")
+        if row["resolution_key"] != resolution_key:
+            raise DecisionError("lifecycle target key does not exactly match decision")
+        changed = _record_lifecycle_transition(
+            con, row, to_state, transition_id, evidence_type, evidence_ref,
+            outcome, source, now)
+        con.commit()
+        decision = _decision_dict(con, _get(con, args.decision_id))
+        return {
+            "ok": True, "changed": changed, "replayed": not changed,
+            "decision": decision,
+            "egress_counters": counters.snapshot(),
+        }
+    except Exception:
+        con.rollback()
+        raise
+    finally:
+        con.close()
+
+
 def resolve(args):
     now = _now()
     counters = EgressCounters()
@@ -686,22 +1430,90 @@ def resolve(args):
                                       "resolution evidence ref", counters)
     supplied_key = _sanitize_optional(args.resolution_key, IDENTIFIER,
                                       "resolution-key", counters)
-    source = _sanitize_optional(getattr(args, "source", None), IDENTIFIER,
+    source = _sanitize_required(getattr(args, "source", None), IDENTIFIER,
                                 "resolve source", counters)
+    if not valid_lifecycle_source(source):
+        raise DecisionError("invalid resolve source")
+    transition_id = _sanitize_optional(
+        getattr(args, "event_id", None), IDENTIFIER,
+        "lifecycle event id", counters)
+    expected_fingerprint = _sanitize_optional(
+        getattr(args, "expected_fingerprint", None), IDENTIFIER,
+        "expected evidence fingerprint", counters)
+    if (expected_fingerprint is not None and
+            not _SHA256_RE.match(expected_fingerprint)):
+        raise DecisionError("invalid expected evidence fingerprint")
     con = _connect()
     try:
         _tx(con)
         row = _get(con, args.decision_id)
-        pending = _active_answer_pending(con, row)
+        pending = _answer_pending_marker(con, row)
         if pending is not None and evidence_type == "manual_resolution":
             raise DecisionError(
                 "answered-pending decision requires verified owner consumption")
         if evidence_type != "manual_resolution":
             if not supplied_key or supplied_key != row["resolution_key"]:
                 raise DecisionError("resolution key does not exactly match decision")
-            _verified_resolution_evidence(evidence_type, evidence_ref, supplied_key)
         elif supplied_key is not None and supplied_key != row["resolution_key"]:
             raise DecisionError("manual resolution key does not exactly match decision")
+        if pending is not None:
+            if not expected_fingerprint:
+                raise DecisionError(
+                    "answered-pending consumption requires current fingerprint")
+            if row["evidence_fingerprint"] != expected_fingerprint:
+                raise DecisionError("lifecycle evidence fingerprint changed")
+            if not transition_id:
+                raise DecisionError(
+                    "answered-pending consumption requires a stable event id")
+            existing, existing_detail = _existing_lifecycle_transition(
+                con, transition_id, pending["event_id"])
+            if existing is None:
+                graph_proof = _verified_graph_consumption(
+                    row, evidence_type, evidence_ref)
+                supplied_resolved_at = getattr(args, "resolved_at", None)
+                supplied_source_id = getattr(args, "source_id", None)
+                supplied_kind = getattr(args, "kind", None)
+                supplied_item_key = getattr(args, "item_key", None)
+                if (supplied_resolved_at is not None and
+                        supplied_resolved_at != graph_proof["resolved_at"]):
+                    raise DecisionError(
+                        "graph snapshot freshness does not match durable evidence")
+                if (supplied_source_id is not None and
+                        supplied_source_id != graph_proof["source_id"]):
+                    raise DecisionError(
+                        "graph snapshot source does not match durable evidence")
+                if (supplied_kind is not None and
+                        supplied_kind != graph_proof["kind"]):
+                    raise DecisionError(
+                        "graph snapshot kind does not match durable evidence")
+                if (supplied_item_key is not None and
+                        supplied_item_key != graph_proof["item_key"]):
+                    raise DecisionError(
+                        "graph snapshot item does not match durable evidence")
+            else:
+                graph_proof = {
+                    "resolved_at": (existing_detail or {}).get("resolved_at"),
+                    "source_id": (existing_detail or {}).get("source_id"),
+                    "kind": (existing_detail or {}).get("kind"),
+                    "item_key": (existing_detail or {}).get("item_key"),
+                    "delivered_event_id": (
+                        existing_detail or {}).get("delivered_event_id"),
+                    "delivered_at": (existing_detail or {}).get("delivered_at"),
+                }
+            changed = _record_lifecycle_transition(
+                con, row, "consumed", transition_id, evidence_type,
+                evidence_ref, "accepted", source, now,
+                graph_proof=graph_proof)
+            con.commit()
+            return {
+                "ok": True, "changed": changed, "replayed": not changed,
+                "decision": _decision_dict(
+                    con, _get(con, args.decision_id)),
+                "egress_counters": counters.snapshot(),
+            }
+        if evidence_type != "manual_resolution":
+            _verified_resolution_evidence(
+                evidence_type, evidence_ref, supplied_key)
         changed = row["state"] != "resolved"
         if changed:
             con.execute("""UPDATE decisions SET state='resolved',resolved_at=?,
@@ -711,7 +1523,7 @@ def resolve(args):
                 ))
             _event(con, args.decision_id, "resolved",
                    row["evidence_fingerprint"], now, evidence_type, evidence_ref,
-                   detail={"source": source} if source else None)
+                   detail={"source": source})
         else:
             if (row["resolution_evidence_type"] != evidence_type or
                     row["resolution_evidence_ref"] != evidence_ref):
@@ -850,6 +1662,8 @@ def _open_rollup_rows(con):
     for row in rows:
         d = dict(row)
         d.update(queue_admission.classify_row(d.get("text")))
+        d["evidence_activation_event_id"] = (
+            _current_evidence_activation_event_id(con, row))
         d["answer_pending"] = _active_answer_pending(con, row)
         enriched.append(d)
     return enriched
@@ -881,7 +1695,10 @@ def _rollup_answer_plan(con, card_id, primary_decision_id, choice):
         members, primary_decision_id)
     primary = by_id[primary_decision_id]
     primary_pending = primary.get("answer_pending")
+    legacy_rollup_upgrade = False
     if primary_pending is not None:
+        legacy_rollup_upgrade = (
+            primary_pending.get("legacy_rollup_source_upgradeable") is True)
         prior_targets = primary_pending.get("target_ids")
         prior_independent = primary_pending.get("independent_ids")
         prior_already_pending = primary_pending.get("already_pending_ids")
@@ -890,7 +1707,8 @@ def _rollup_answer_plan(con, card_id, primary_decision_id, choice):
             all(isinstance(items, list) for items in prior_lists) and
             all(isinstance(item, str)
                 for items in prior_lists for item in items))
-        if (primary_pending.get("valid") is not True or
+        if ((primary_pending.get("valid") is not True and
+             not legacy_rollup_upgrade) or
                 not prior_lists_valid or
                 primary_pending.get("member_ids") != member_ids or
                 primary_decision_id not in (prior_targets or []) or
@@ -926,12 +1744,25 @@ def _rollup_answer_plan(con, card_id, primary_decision_id, choice):
         if options and choice > len(options):
             raise DecisionError("rollup answer choice is out of range")
 
+    member_generations = []
+    for decision_id in member_ids:
+        activation_event_id = by_id[decision_id].get(
+            "evidence_activation_event_id")
+        if (isinstance(activation_event_id, bool) or
+                not isinstance(activation_event_id, int) or
+                activation_event_id <= 0):
+            raise DecisionError(
+                "rollup member lacks a current evidence generation")
+        member_generations.append([
+            decision_id,
+            by_id[decision_id]["evidence_fingerprint"],
+            activation_event_id,
+        ])
     scope_packet = {
         "schema": 1,
         "card_id": card_id,
         "primary_decision_id": primary_decision_id,
-        "members": [[decision_id, by_id[decision_id]["evidence_fingerprint"]]
-                    for decision_id in member_ids],
+        "members": member_generations,
         "target_ids": target_ids,
         "independent_ids": independent_ids,
         "already_pending_ids": already_pending_ids,
@@ -953,7 +1784,7 @@ def _rollup_answer_plan(con, card_id, primary_decision_id, choice):
             "prompt_artifact": "answer-batches/%s/prompts/%s.md" % (
                 batch_key, decision_id),
         })
-    return {
+    plan = {
         "ok": True,
         "card_id": card_id,
         "primary_decision_id": primary_decision_id,
@@ -966,6 +1797,11 @@ def _rollup_answer_plan(con, card_id, primary_decision_id, choice):
         "already_pending_ids": already_pending_ids,
         "targets": targets,
     }
+    if legacy_rollup_upgrade:
+        plan["legacy_rollup_source_upgrade"] = (
+            _legacy_rollup_pending_set_matches(con, plan, by_id))
+        plan["legacy_rollup_source_upgradeable"] = True
+    return plan
 
 
 def _readonly_rollup_answer_plan(card_id, primary_decision_id, choice):
@@ -1020,6 +1856,150 @@ def _read_artifact_file(parent_fd, name, label):
         return b"".join(chunks)
     finally:
         os.close(fd)
+
+
+def _verify_single_artifact_proof(
+        decision_id, choice, answer_stage_name, answer_sha256,
+        prompt_stage_name, prompt_sha256):
+    if (not _SINGLE_STAGE_RE.match(str(answer_stage_name or "")) or
+            not answer_stage_name.startswith(".decision-answer-stage.")):
+        raise DecisionError("invalid single-answer stage name")
+    if (not _SINGLE_STAGE_RE.match(str(prompt_stage_name or "")) or
+            not prompt_stage_name.startswith(".decision-prompt-stage.")):
+        raise DecisionError("invalid single-prompt stage name")
+    if (not _SHA256_RE.match(str(answer_sha256 or "")) or
+            not _SHA256_RE.match(str(prompt_sha256 or ""))):
+        raise DecisionError("invalid single-answer artifact digest")
+    home = os.path.abspath(os.path.expanduser(os.environ.get(
+        "MISSION_CONTROL_HOME", "~/.mission-control")))
+    root_fd = answers_fd = prompts_fd = -1
+    try:
+        root_fd = _open_artifact_dir(None, home, "state")
+        answers_fd = _open_artifact_dir(root_fd, "answers", "answers")
+        prompts_fd = _open_artifact_dir(root_fd, "prompts", "prompts")
+        answer_raw = _read_artifact_file(
+            answers_fd, answer_stage_name, "single answer")
+        prompt_raw = _read_artifact_file(
+            prompts_fd, prompt_stage_name, "single prompt")
+        if (hashlib.sha256(answer_raw).hexdigest() != answer_sha256 or
+                hashlib.sha256(prompt_raw).hexdigest() != prompt_sha256):
+            raise DecisionError("single-answer artifact digest mismatch")
+        try:
+            answer = json.loads(answer_raw)
+        except (TypeError, ValueError):
+            raise DecisionError("single-answer artifact is invalid")
+        expected_prompt = os.path.join(home, "prompts", decision_id + ".md")
+        if (not isinstance(answer, dict) or
+                answer.get("decision_id") != decision_id or
+                answer.get("choice") != choice or
+                answer.get("prompt_path") != expected_prompt):
+            raise DecisionError("single-answer artifact does not match target")
+        prompt_text = prompt_raw.decode("utf-8", errors="strict")
+        if ("Decision id: `%s`" % decision_id not in prompt_text or
+                "Trevor choice: %d" % choice not in prompt_text):
+            raise DecisionError("single-answer prompt does not match target")
+    except UnicodeError:
+        raise DecisionError("single-answer prompt is invalid")
+    finally:
+        for fd in (prompts_fd, answers_fd, root_fd):
+            if fd >= 0:
+                os.close(fd)
+
+
+def answer_single(args):
+    now = _now()
+    counters = EgressCounters()
+    try:
+        choice = int(args.choice)
+    except (TypeError, ValueError):
+        raise DecisionError("single answer choice must be a positive integer")
+    if choice < 1:
+        raise DecisionError("single answer choice must be a positive integer")
+    expected_fingerprint = _sanitize_required(
+        args.expected_fingerprint, IDENTIFIER,
+        "expected evidence fingerprint", counters)
+    if not _SHA256_RE.match(expected_fingerprint):
+        raise DecisionError("invalid expected evidence fingerprint")
+    source = _sanitize_optional(
+        getattr(args, "source", None), IDENTIFIER,
+        "single answer source", counters) or DEFAULT_ANSWER_SOURCE
+    if not valid_lifecycle_source(source):
+        raise DecisionError("invalid single answer source")
+    resume_chat_id = _sanitize_optional(
+        getattr(args, "resume_chat_id", None), IDENTIFIER,
+        "single answer resume chat id", counters)
+    resume_provider = _sanitize_optional(
+        getattr(args, "resume_provider", None), IDENTIFIER,
+        "single answer resume provider", counters)
+    answer_sha256 = _sanitize_required(
+        args.answer_sha256, IDENTIFIER, "single answer digest", counters)
+    prompt_sha256 = _sanitize_required(
+        args.prompt_sha256, IDENTIFIER, "single prompt digest", counters)
+
+    con = _connect()
+    try:
+        _tx(con)
+        row = _get(con, args.decision_id)
+        if row["evidence_fingerprint"] != expected_fingerprint:
+            raise DecisionError("single answer evidence fingerprint changed")
+        _verify_single_artifact_proof(
+            row["decision_id"], choice, args.answer_stage_name,
+            answer_sha256, args.prompt_stage_name, prompt_sha256)
+        packet = {
+            "schema": 1,
+            "mode": "single",
+            "decision_id": row["decision_id"],
+            "choice": choice,
+            "evidence_fingerprint": row["evidence_fingerprint"],
+            "resolution_key": row["resolution_key"],
+            "source": source,
+            "resume_chat_id": resume_chat_id or "",
+            "resume_provider": resume_provider or "",
+            "answer_artifact": "answers/%s.json" % row["decision_id"],
+            "prompt_artifact": "prompts/%s.md" % row["decision_id"],
+            "answer_sha256": answer_sha256,
+            "prompt_sha256": prompt_sha256,
+        }
+        packet["batch_key"] = "single-%s" % _sha(_canonical(packet))[:40]
+        pending = _active_answer_pending(con, row)
+        if pending is None:
+            if row["state"] != "open":
+                raise DecisionError("decision is no longer open for this choice")
+            _event(con, row["decision_id"], "answered_pending",
+                   row["evidence_fingerprint"], now,
+                   evidence_type="operator_choice",
+                   evidence_ref=packet["batch_key"], detail=packet)
+            changed = True
+        elif pending.get("legacy_source_upgradeable") is True:
+            if not _legacy_single_pending_matches(con, pending, packet):
+                raise DecisionError(
+                    "legacy pending source upgrade evidence does not match")
+            packet["source_upgrade_from_event_id"] = pending["event_id"]
+            packet["source_upgrade_from_evidence_ref"] = pending["batch_key"]
+            _event(con, row["decision_id"], "answered_pending",
+                   row["evidence_fingerprint"], now,
+                   evidence_type="operator_choice",
+                   evidence_ref=packet["batch_key"], detail=packet)
+            changed = True
+        else:
+            expected = dict(packet)
+            expected["valid"] = True
+            expected["event_id"] = pending.get("event_id")
+            expected["occurred_at"] = pending.get("occurred_at")
+            if any(pending.get(key) != value for key, value in expected.items()):
+                raise DecisionError("single answer conflicts with current pending choice")
+            changed = False
+        con.commit()
+        return {
+            "ok": True, "changed": changed, "replayed": not changed,
+            "decision": _decision_dict(con, _get(con, row["decision_id"])),
+            "egress_counters": counters.snapshot(),
+        }
+    except Exception:
+        con.rollback()
+        raise
+    finally:
+        con.close()
 
 
 def _verify_rollup_artifact_proof(
@@ -1091,25 +2071,51 @@ def _verify_rollup_artifact_proof(
                 "primary_decision_id": plan["primary_decision_id"],
                 "decision_id": decision_id,
                 "choice": plan["choice"],
-                "prompt_path": os.path.join(
-                    home, "answer-batches", plan["batch_key"],
-                    "prompts", prompt_name),
             }
-            if not isinstance(answer, dict) or any(
+            prompt_suffix = os.path.join(
+                "answer-batches", plan["batch_key"],
+                "prompts", prompt_name)
+            expected_prompt_paths = {
+                os.path.join(home, prompt_suffix),
+                os.path.join(os.path.realpath(home), prompt_suffix),
+            }
+            if (not isinstance(answer, dict) or any(
                     answer.get(key) != value
-                    for key, value in answer_expected.items()):
-                raise DecisionError("rollup answer artifact does not match current scope")
+                    for key, value in answer_expected.items()) or
+                    answer.get("prompt_path") not in expected_prompt_paths):
+                raise DecisionError(
+                    "rollup answer artifact does not match current scope")
     finally:
         for fd in (prompts_fd, answers_fd, batch_fd, batches_fd, root_fd):
             if fd >= 0:
                 os.close(fd)
 
 
+def _legacy_rollup_artifact_plan(plan):
+    """Project the current plan onto its verified pre-generation batch."""
+    legacy = plan.get("legacy_rollup_source_upgrade") or {}
+    legacy_plan = dict(plan)
+    legacy_plan["scope_key"] = legacy.get("scope_key")
+    legacy_plan["batch_key"] = legacy.get("batch_key")
+    legacy_plan["targets"] = []
+    for target in plan["targets"]:
+        item = dict(target)
+        item["answer_artifact"] = "answer-batches/%s/answers/%s.json" % (
+            legacy_plan["batch_key"], target["id"])
+        item["prompt_artifact"] = "answer-batches/%s/prompts/%s.md" % (
+            legacy_plan["batch_key"], target["id"])
+        legacy_plan["targets"].append(item)
+    return legacy_plan
+
+
 def answer_rollup(args):
     now = _now()
     counters = EgressCounters()
-    source = _sanitize_optional(getattr(args, "source", None), IDENTIFIER,
-                                "rollup answer source", counters)
+    source = (_sanitize_optional(getattr(args, "source", None), IDENTIFIER,
+                                 "rollup answer source", counters) or
+              DEFAULT_ANSWER_SOURCE)
+    if not valid_lifecycle_source(source):
+        raise DecisionError("invalid rollup answer source")
     resume_chat_id = _sanitize_optional(
         getattr(args, "resume_chat_id", None), IDENTIFIER,
         "rollup answer resume chat id", counters)
@@ -1133,61 +2139,84 @@ def answer_rollup(args):
             con, args.card_id, args.primary_decision_id, args.choice)
         if plan["scope_key"] != expected_scope:
             raise DecisionError("rollup answer scope changed before commit")
+        legacy_rollup_upgrade = (
+            plan.get("legacy_rollup_source_upgradeable") is True)
+        if legacy_rollup_upgrade:
+            primary_pending = next(
+                target["answer_pending"] for target in plan["targets"]
+                if target["id"] == plan["primary_decision_id"])
+            legacy = plan["legacy_rollup_source_upgrade"]
+            if ((resume_chat_id or "") !=
+                    primary_pending.get("resume_chat_id") or
+                    (resume_provider or "") !=
+                    primary_pending.get("resume_provider")):
+                raise DecisionError(
+                    "legacy rollup pending delivery metadata does not match")
+            _verify_rollup_artifact_proof(
+                _legacy_rollup_artifact_plan(plan), legacy["batch_key"],
+                legacy["artifact_manifest_sha256"], "", resume_chat_id,
+                resume_provider)
         _verify_rollup_artifact_proof(
             plan, args.artifact_batch_name,
             args.artifact_manifest_sha256, source, resume_chat_id,
             resume_provider)
         rows = [_get(con, decision_id) for decision_id in plan["target_ids"]]
         pending = [_active_answer_pending(con, row) for row in rows]
+        common = {
+            "schema": 1,
+            "scope_key": plan["scope_key"],
+            "batch_key": plan["batch_key"],
+            "card_id": plan["card_id"],
+            "primary_decision_id": plan["primary_decision_id"],
+            "choice": plan["choice"],
+            "member_ids": plan["member_ids"],
+            "target_ids": plan["target_ids"],
+            "independent_ids": plan["independent_ids"],
+            "already_pending_ids": plan["already_pending_ids"],
+            "source": source,
+            "resume_chat_id": resume_chat_id or "",
+            "resume_provider": resume_provider or "",
+            "artifact_manifest_sha256": args.artifact_manifest_sha256,
+        }
+        target_by_id = {target["id"]: target for target in plan["targets"]}
         if any(item is not None for item in pending):
             if not all(item is not None for item in pending):
                 raise DecisionError("rollup answer has a partial pending target set")
-            expected_common = {
-                "scope_key": plan["scope_key"],
-                "batch_key": plan["batch_key"],
-                "card_id": plan["card_id"],
-                "primary_decision_id": plan["primary_decision_id"],
-                "choice": plan["choice"],
-                "member_ids": plan["member_ids"],
-                "target_ids": plan["target_ids"],
-                "independent_ids": plan["independent_ids"],
-                "already_pending_ids": plan["already_pending_ids"],
-                "source": source or "",
-                "resume_chat_id": resume_chat_id or "",
-                "resume_provider": resume_provider or "",
-                "artifact_manifest_sha256": args.artifact_manifest_sha256,
-            }
-            target_by_id = {target["id"]: target for target in plan["targets"]}
-            for row, item in zip(rows, pending):
-                target = target_by_id[row["decision_id"]]
-                expected = dict(expected_common)
-                expected["answer_artifact"] = target["answer_artifact"]
-                expected["prompt_artifact"] = target["prompt_artifact"]
-                if (item.get("valid") is not True or
-                        any(item.get(key) != value
-                            for key, value in expected.items())):
-                    raise DecisionError(
-                        "rollup answer conflicts with the current pending choice")
-            changed = False
+            if legacy_rollup_upgrade:
+                for row, item in zip(rows, pending):
+                    target = target_by_id[row["decision_id"]]
+                    detail = dict(common)
+                    detail["answer_artifact"] = target["answer_artifact"]
+                    detail["prompt_artifact"] = target["prompt_artifact"]
+                    detail["source_upgrade_from_event_id"] = item["event_id"]
+                    detail["source_upgrade_from_evidence_ref"] = item["batch_key"]
+                    detail["source_upgrade_from_scope_key"] = (
+                        plan["legacy_rollup_source_upgrade"]["scope_key"])
+                    detail[
+                        "source_upgrade_from_artifact_manifest_sha256"] = (
+                            plan["legacy_rollup_source_upgrade"][
+                                "artifact_manifest_sha256"])
+                    _event(con, row["decision_id"], "answered_pending",
+                           row["evidence_fingerprint"], now,
+                           evidence_type="operator_choice",
+                           evidence_ref=plan["batch_key"], detail=detail)
+                changed = True
+            else:
+                expected_common = dict(common)
+                expected_common.pop("schema")
+                for row, item in zip(rows, pending):
+                    target = target_by_id[row["decision_id"]]
+                    expected = dict(expected_common)
+                    expected["answer_artifact"] = target["answer_artifact"]
+                    expected["prompt_artifact"] = target["prompt_artifact"]
+                    if (item.get("valid") is not True or
+                            any(item.get(key) != value
+                                for key, value in expected.items())):
+                        raise DecisionError(
+                            "rollup answer conflicts with the current pending choice")
+                changed = False
         else:
             changed = True
-            common = {
-                "schema": 1,
-                "scope_key": plan["scope_key"],
-                "batch_key": plan["batch_key"],
-                "card_id": plan["card_id"],
-                "primary_decision_id": plan["primary_decision_id"],
-                "choice": plan["choice"],
-                "member_ids": plan["member_ids"],
-                "target_ids": plan["target_ids"],
-                "independent_ids": plan["independent_ids"],
-                "already_pending_ids": plan["already_pending_ids"],
-                "source": source or "",
-                "resume_chat_id": resume_chat_id or "",
-                "resume_provider": resume_provider or "",
-                "artifact_manifest_sha256": args.artifact_manifest_sha256,
-            }
-            target_by_id = {target["id"]: target for target in plan["targets"]}
             for index, row in enumerate(rows):
                 target = target_by_id[row["decision_id"]]
                 detail = dict(common)
@@ -1278,8 +2307,23 @@ def status(_args):
         counts["inferred"] = len(inferred)
         counts["answered_pending"] = sum(
             d.get("answer_pending") is not None for d in pinned)
+        lifecycle_states = (
+            "awaiting_answer",) + DECISION_LIFECYCLE + (
+                "dismissed", "legacy_resolved", "invalid")
+        lifecycle_counts = {state: 0 for state in lifecycle_states}
+        for decision in decisions:
+            lifecycle_state = (decision.get("lifecycle") or {}).get("state")
+            if lifecycle_state not in lifecycle_counts:
+                lifecycle_state = "invalid"
+            lifecycle_counts[lifecycle_state] += 1
         data = {
+            # `counts` is retained for the installed v1 renderers. Its label
+            # prevents consumers from mistaking compatibility queue state for
+            # the exact follow-through lifecycle.
             "counts": counts,
+            "counts_semantics": "compatibility_queue_alias",
+            "compatibility_counts": dict(counts),
+            "lifecycle_counts": lifecycle_counts,
             "pinned": pinned,
             "inferred": inferred,
         }
@@ -1309,6 +2353,42 @@ def _load_feed(name):
     return data if isinstance(data, dict) else {}
 
 
+def _graph_consumption_event_id(row, evidence_type, evidence_ref,
+                                graph_proof, delivery):
+    packet = [
+        "chat-graph-consumption-v1", row["decision_id"],
+        row["evidence_fingerprint"], row["resolution_key"], evidence_type,
+        evidence_ref, graph_proof["resolved_at"], graph_proof["source_id"],
+        graph_proof["kind"], graph_proof["item_key"],
+        delivery.get("transition_id"), delivery.get("occurred_at"),
+    ]
+    return "chat-graph:%s" % _sha(_canonical(packet))[:40]
+
+
+def _graph_consumption_matches(con, row, evidence_type, evidence_ref,
+                               graph_proof):
+    events = con.execute("""SELECT evidence_type,evidence_ref,detail_json
+        FROM decision_events WHERE decision_id=? AND evidence_fingerprint=?
+          AND event_type='consumed'""", (
+            row["decision_id"], row["evidence_fingerprint"],
+        )).fetchall()
+    for event in events:
+        try:
+            detail = json.loads(event["detail_json"] or "null")
+        except (TypeError, ValueError):
+            continue
+        if (isinstance(detail, dict) and
+                event["evidence_type"] == evidence_type and
+                event["evidence_ref"] == evidence_ref and
+                detail.get("resolved_at") == graph_proof["resolved_at"] and
+                detail.get("source_id") == graph_proof["source_id"] and
+                detail.get("kind") == graph_proof["kind"] and
+                detail.get("item_key") == graph_proof["item_key"] and
+                detail.get("source") == GRAPH_LIFECYCLE_SOURCE):
+            return True
+    return False
+
+
 def sync_snapshot(args):
     """Sync structured decisions and reversible inferred follow-ups."""
     chats = _load_feed("chats")
@@ -1317,6 +2397,7 @@ def sync_snapshot(args):
     current_tier2 = {}
     current_sessions = set()
     stored = dropped = resolved = 0
+    consumed = pre_delivery = invalid = already_consumed = unmatched = 0
     for card in chats.get("outcomes") or []:
         if not isinstance(card, dict) or card.get("method") not in ("tier1", "tier2"):
             continue
@@ -1436,32 +2517,104 @@ def sync_snapshot(args):
         if not isinstance(change, dict) or change.get("change_type") != "resolved":
             continue
         evidence_type = evidence_map.get(change.get("resolution_evidence_type"))
-        item_key = str(change.get("item_key") or "")
-        evidence_ref = str(change.get("resolution_evidence_ref") or "")
-        if not evidence_type or not item_key or not evidence_ref:
+        resolved_at = change.get("resolved_at")
+        try:
+            item_key = _sanitize_required(
+                change.get("item_key"), IDENTIFIER,
+                "graph resolution key")
+            evidence_ref = _sanitize_required(
+                change.get("resolution_evidence_ref"), IDENTIFIER,
+                "graph resolution evidence ref")
+            source_id = _sanitize_required(
+                change.get("source_id"), IDENTIFIER,
+                "graph resolution source id")
+            kind = _sanitize_required(
+                change.get("kind"), IDENTIFIER,
+                "graph resolution kind")
+        except DecisionError:
+            invalid += 1
+            dropped += 1
+            continue
+        if (not evidence_type or isinstance(resolved_at, bool) or
+                not isinstance(resolved_at, int) or resolved_at <= 0 or
+                not valid_lifecycle_source(source_id) or
+                kind != "chat_open_end" or
+                not _GRAPH_ITEM_KEY_RE.match(item_key)):
+            invalid += 1
+            dropped += 1
             continue
         con = _connect()
         try:
-            ids = [row[0] for row in con.execute("""SELECT decision_id FROM decisions
-                WHERE resolution_key=? AND state='open'""", (item_key,)).fetchall()]
+            source_key = "outcome:%s:%s" % (source_id, item_key)
+            anchor_ref = "chat-graph:%s:%s" % (source_id, item_key)
+            rows = con.execute("""SELECT * FROM decisions
+                WHERE resolution_key=? AND source_kind='chat'
+                  AND source_key=? AND provenance='chat-graph tier1'
+                  AND anchor_ref=? AND state='open'""", (
+                    item_key, source_key, anchor_ref)).fetchall()
+            candidates = []
+            graph_proof = {
+                "resolved_at": resolved_at,
+                "source_id": source_id,
+                "kind": kind,
+                "item_key": item_key,
+            }
+            for row in rows:
+                lifecycle = _decision_lifecycle(con, row)
+                lifecycle_state = lifecycle.get("state")
+                if lifecycle.get("valid") is not True:
+                    invalid += 1
+                elif lifecycle_state in ("awaiting_answer", "answered_pending"):
+                    pre_delivery += 1
+                elif lifecycle_state == "delivered":
+                    candidates.append((dict(row), lifecycle.get("latest") or {}))
+                elif lifecycle_state in (
+                        "consumed", "running", "live_result_verified"):
+                    if _graph_consumption_matches(
+                            con, row, evidence_type, evidence_ref,
+                            graph_proof):
+                        already_consumed += 1
+                    else:
+                        invalid += 1
+                else:
+                    invalid += 1
         finally:
             con.close()
-        for decision_id in ids:
+        if not rows:
+            unmatched += 1
+        for row, delivery in candidates:
+            event_id = _graph_consumption_event_id(
+                row, evidence_type, evidence_ref, graph_proof, delivery)
             packet = argparse.Namespace(
-                decision_id=decision_id, evidence_type=evidence_type,
+                decision_id=row["decision_id"], evidence_type=evidence_type,
                 evidence_ref=evidence_ref, resolution_key=item_key,
+                event_id=event_id, source=GRAPH_LIFECYCLE_SOURCE,
+                resolved_at=resolved_at, source_id=source_id,
+                kind=kind, item_key=item_key,
+                expected_fingerprint=row["evidence_fingerprint"],
             )
             try:
                 if resolve(packet).get("changed"):
-                    resolved += 1
+                    consumed += 1
+                else:
+                    already_consumed += 1
             except DecisionError:
                 dropped += 1
+                invalid += 1
     result = status(args)
     result["data"]["sync"] = {
-        "source": "chat-graph tier1 and tier2 outcomes",
+        "source": GRAPH_LIFECYCLE_SOURCE,
+        "provenance": "chat-graph tier1 and tier2 outcomes",
         "seen": len(seen),
         "stored": stored,
         "resolved": resolved,
+        "resolved_semantics": "compatibility_queue_alias",
+        "resolved_compatibility": resolved,
+        "consumed": consumed,
+        "pre_delivery": pre_delivery,
+        "invalid": invalid,
+        "already_consumed": already_consumed,
+        "unmatched": unmatched,
         "dropped": dropped,
         "structured_omission_resolves": False,
         "inferred_exact_supersession_resolves": True,
@@ -1957,10 +3110,25 @@ def _parser():
     p.add_argument("--evidence-type", required=True)
     p.add_argument("--evidence-ref", required=True)
     p.add_argument("--resolution-key")
-    p.add_argument("--source",
+    p.add_argument("--event-id",
+                   help="stable producer event id; required for pending consumption")
+    p.add_argument("--expected-fingerprint",
+                   help="current sha256; required for pending consumption")
+    p.add_argument("--source", required=True,
                    help="who triggered this state change (e.g. telegram); "
                         "recorded in the decision_events detail, never in "
                         "resolution_evidence_ref (idempotent-replay key)")
+
+    p = sub.add_parser("transition")
+    p.add_argument("decision_id")
+    p.add_argument("--to", dest="to_state", required=True)
+    p.add_argument("--expected-fingerprint", required=True)
+    p.add_argument("--resolution-key", required=True)
+    p.add_argument("--event-id", required=True)
+    p.add_argument("--evidence-type", required=True)
+    p.add_argument("--evidence-ref", required=True)
+    p.add_argument("--outcome", required=True)
+    p.add_argument("--source", required=True)
 
     p = sub.add_parser("history")
     p.add_argument("decision_id")
@@ -1984,6 +3152,18 @@ def _parser():
     p.add_argument("--expected-scope-key", required=True)
     p.add_argument("--artifact-batch-name", required=True)
     p.add_argument("--artifact-manifest-sha256", required=True)
+    p.add_argument("--source")
+    p.add_argument("--resume-chat-id")
+    p.add_argument("--resume-provider")
+
+    p = sub.add_parser("answer-single")
+    p.add_argument("decision_id")
+    p.add_argument("choice", type=int)
+    p.add_argument("--expected-fingerprint", required=True)
+    p.add_argument("--answer-stage-name", required=True)
+    p.add_argument("--answer-sha256", required=True)
+    p.add_argument("--prompt-stage-name", required=True)
+    p.add_argument("--prompt-sha256", required=True)
     p.add_argument("--source")
     p.add_argument("--resume-chat-id")
     p.add_argument("--resume-provider")
@@ -2028,12 +3208,14 @@ def main(argv=None):
         handlers = {
             "ingest": ingest, "sync": ingest,
             "dismiss": dismiss, "resolve": resolve,
+            "transition": transition,
             "history": history, "list": list_decisions, "status": status,
             "sync-snapshot": sync_snapshot, "alert": alert,
             "alert-backfill": alert_backfill,
             "rollup": rollup_cards, "lanes": lanes,
             "plan-rollup-answer": plan_rollup_answer,
             "answer-rollup": answer_rollup,
+            "answer-single": answer_single,
             "admission-backfill": admission_backfill,
         }
         result = handlers[args.command](args)

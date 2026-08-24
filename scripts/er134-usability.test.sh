@@ -329,13 +329,15 @@ PY
     if python3 - "$tmp/history-tg.json" <<'PY'
 import json, sys
 h = json.load(open(sys.argv[1]))
-events = [e for e in h["events"] if e["event_type"] == "resolved"]
+events = [e for e in h["events"] if e["event_type"] == "answered_pending"]
 assert len(events) == 1, events
 assert (events[0].get("detail") or {}).get("source") == "telegram", events[0]
-assert h["decision"]["resolution"]["evidence_ref"] == "mc-answer:1", h["decision"]["resolution"]
+assert (events[0].get("detail") or {}).get("resume_chat_id") == "555", events[0]
+assert h["decision"]["state"] == "open", h["decision"]
+assert h["decision"]["lifecycle"]["state"] == "answered_pending", h["decision"]
 PY
-    then pass "resolved event records source=telegram, replay key untouched"
-    else fail "resolved event does not record source=telegram cleanly"; fi
+    then pass "pending event records exact Telegram source and owner target"
+    else fail "pending event does not record Telegram target cleanly"; fi
   else
     fail "decide answer with --source/--resume-chat-id/--resume-provider"
     head -40 "$tmp/answer-tg.err" || true

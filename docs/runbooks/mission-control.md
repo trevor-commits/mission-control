@@ -59,7 +59,25 @@ It combines usage, git, chats, and automation feeds from the ER-087 scripts into
 - **Corner panel:** `dashboard panel` installs `~/.mission-control/panel.html`, stages `~/.mission-control/Mission Control Panel.app` (LSUIElement), launches the menu-bar app (`MC`), and idempotently installs `com.gillettes.mc-panel` KeepAlive+RunAtLoad so MC returns after login/reboot. First launch may compile `scripts/mc-panel.swift` with `swiftc`.
 - **Menu-bar percent:** the lowest live signed-in quota. A signed-out Claude row cannot blank Codex, Cursor, or GLM.
 - **Live usage:** the 60-second `ai-headroom` feed is the scoreboard. The 30-minute HTML ledger points here. Open `#usage` or the menu-bar `MC` item instead of a Chrome tab.
-- **Answer a choice:** `dashboard decide answer <decision-id> <n>` writes a Goal prompt under `~/.mission-control/prompts/` and resolves the decision. Menu-bar option clicks run `dashboard decide answer` directly via the `mcDecide` bridge; Home browser option buttons still copy that command.
+- **Answer a choice:** `dashboard decide answer <decision-id> <n>` writes digest-bound private answer and Goal-prompt artifacts, then records `answered_pending`. It does not resolve or close the decision. Menu-bar option clicks run `dashboard decide answer` through the `mcDecide` bridge; Home browser buttons copy the same command.
+
+## Decision follow-through lifecycle
+
+Mission Control owns the deterministic lifecycle `answered_pending -> delivered -> consumed -> running -> live_result_verified -> closed`. History or bot memory is not transition proof.
+
+- `scripts/decision-alert transition <decision-id> --to delivered --expected-fingerprint <sha256> --resolution-key <exact-key> --event-id <stable-event-id> --evidence-type provider_delivery_receipt --evidence-ref <provider-receipt> --outcome delivered --source <stable-producer>`
+- Consumption uses the existing graph verifier: `scripts/decision-alert resolve <decision-id> --evidence-type answering_user_turn --evidence-ref <graph-receipt> --resolution-key <exact-key> --expected-fingerprint <sha256> --event-id <stable-event-id> --source <stable-producer>`. It records `consumed`; it does not resolve.
+- `running` requires `execution_start_receipt` plus outcome `started`.
+- `live_result_verified` requires `live_result_receipt` plus outcome `verified`.
+- `closed` requires `closure_receipt` plus outcome `closed`; only this transition changes the compatibility queue state to `resolved`.
+- Every lifecycle event has a stable nonempty source. Public transition and resolve commands require `--source`; answer writers default to `mission-control`; the graph watcher uses `chat-graph`.
+- A replay of a pre-source rollup may append source-bound successor events only after exact current-card, generation, event, target-set, historical manifest, and artifact-byte verification. It writes a distinct current generation-bound batch. The source-less event rows and old batch stay immutable. Every later lifecycle reduction and replay revalidates that historical manifest and its answer and prompt bytes; any predecessor or artifact mismatch leaves the lifecycle invalid.
+- Graph consumption binds the current fingerprint, current delivery time, exact resolution key, receipt reference, graph `resolved_at`, and graph `source_id`. A receipt older than the current delivery or already used by another fingerprint fails closed.
+- `sync-snapshot` derives a deterministic `chat-graph:<sha>` event ID and advances only a current `delivered` decision. Its `data.sync` counters separate `consumed`, `already_consumed`, `pre_delivery`, `invalid`, and `unmatched`; legacy `resolved` is labeled `compatibility_queue_alias` and mirrored as `resolved_compatibility`. Omission is never consumption proof.
+- Every non-consumption transition also requires the current fingerprint, exact resolution key, stable event id, and evidence reference. Exact replay is a no-op only when its event follows the current `answered_pending` event. An event from an older activation generation fails closed even if the fingerprint later returns. Skipped states, cross-generation or reused event ids, failed delivery, rejection, timeout, and unverified completion fail closed.
+- Rollup scope identity includes each member's immutable evidence-activation event. A v1-to-v2-to-v1 return records the same choice in a new batch. The historical v1 batch remains intact, and replay within one unchanged activation remains idempotent.
+- `status` exposes `lifecycle_counts` separately from labeled `compatibility_counts`; `counts` remains a `compatibility_queue_alias` for installed v1 renderers.
+- Home and the menu-bar panel render each state separately and keep every pre-closure row read-only. No lifecycle command sends a notification, starts work, or creates a scheduler.
 
 ## Decision-queue admission, rollup, and severity bypass (Phase 0 item 0.3)
 

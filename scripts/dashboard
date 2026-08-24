@@ -1478,7 +1478,7 @@ usage: dashboard <command>
   decide dismiss <decision-id> [--source <src>]
                                     dismiss one queued decision; execute no action
   decide answer <decision-id> <n> [--source <src>] [--resume-chat-id <id>] [--resume-provider <p>]
-                                    record Trevor choice n, write Goal prompt, resolve decision
+                                    record Trevor choice n and write a non-terminal pending Goal prompt
   decide answer-rollup <card-id> <primary-decision-id> <n> [--source <src>] [--resume-chat-id <id>] [--resume-provider <p>]
                                     record one recoverable pending answer for strictly equivalent members
   decide alert-backfill [--max N]  send remaining eligible alerts (default 10, ceiling 25)

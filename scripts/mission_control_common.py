@@ -39,6 +39,14 @@ FIELD_CLASSES = frozenset((
     NARRATIVE, ACTION, IDENTIFIER, ERROR, MODEL_INPUT, NOTIFICATION,
 ))
 
+LIFECYCLE_SOURCE_RE = re.compile(
+    r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$")
+
+
+def valid_lifecycle_source(value):
+    """Return whether a producer identity fits the durable receipt contract."""
+    return isinstance(value, str) and bool(LIFECYCLE_SOURCE_RE.fullmatch(value))
+
 REQUIRED_INSTALL_RUNTIMES = (
     "dashboard", "chat-graph", "morning-brief", "morning-brief-deadman",
     "decision-alert", "mission_control_common.py", "queue_admission.py",

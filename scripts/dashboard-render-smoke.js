@@ -119,6 +119,7 @@ if (feeds.chats && feeds.chats.data && feeds.chats.data.counts) {
 // answered_pending is durable receipt state, not a second request for input.
 // Put more pending members than the bounded Home limit ahead of actionable
 // fixture rows. The renderer must still surface the later actionable decision.
+const lifecycleStates = ['answered_pending', 'delivered', 'running'];
 for (let i = 3; i >= 1; i--) {
   feeds.decisions.data.pinned.unshift({
     id: 'decision:' + String(i).repeat(24),
@@ -127,7 +128,8 @@ for (let i = 3; i >= 1; i--) {
     options: ['PENDING-UNIQUE-A', 'PENDING-UNIQUE-B'],
     trust: 'structured',
     provenance: 'chat-graph tier1',
-    answer_pending: { choice: 2, batch_key: 'b'.repeat(64) }
+    answer_pending: { choice: 2, batch_key: 'b'.repeat(64) },
+    lifecycle: { state: lifecycleStates[i - 1], valid: true }
   });
 }
 // Defect (b) JS-guard coverage: a daily brief older than 2x its cadence but still
@@ -314,7 +316,9 @@ for (const tab of TABS) {
       console.error('FAIL: #home expanded depth is missing the pinned transactional decision queue');
       fails++; continue;
     }
-    if (txt.indexOf('Awaiting owner consumption · choice 2 recorded') === -1 ||
+    if (txt.indexOf('Answer recorded · awaiting delivery · choice 2') === -1 ||
+        txt.indexOf('Delivered · awaiting consumption · choice 2') === -1 ||
+        txt.indexOf('Running · awaiting live-result verification · choice 2') === -1 ||
         txt.indexOf('PENDING-UNIQUE-A') !== -1 ||
         txt.indexOf('PENDING-UNIQUE-B') !== -1) {
       console.error('FAIL: #home answered-pending decision is not rendered read-only');
