@@ -66,6 +66,14 @@ Each current-fingerprint decision MUST advance deterministically through `answer
 - **WHEN** a producer omits `source` or persisted lifecycle detail loses it
 - **THEN** the command rejects the write or the reducer reports lifecycle state `invalid`
 
+#### Scenario: A pre-source rollup receipt is replayed
+- **WHEN** an exact current rollup has the source-less event rows and source-less manifest produced by the former public writer
+- **THEN** replay verifies every current member, generation, event binding, historical batch field, manifest digest, and private artifact byte before writing a distinct generation-bound batch and appending source-bound successor events
+- **AND** the historical event JSON and published batch remain unchanged
+- **AND** later lifecycle reduction and exact replay revalidate the historical manifest, answer bytes, and prompt bytes
+- **AND WHEN** the claimed predecessor, target set, batch, manifest, or artifact proof differs
+- **THEN** the upgrade fails closed without weakening source validation or advancing lifecycle state
+
 #### Scenario: A producer skips a state
 - **WHEN** a new event attempts `running`, `live_result_verified`, or `closed` without its exact predecessor
 - **THEN** the command fails without advancing the lifecycle

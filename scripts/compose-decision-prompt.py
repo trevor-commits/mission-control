@@ -967,6 +967,9 @@ def answer_rollup_transaction(
             (target for target in plan.get("targets") or []
              if target.get("id") == primary_decision_id), None)
         pending = ((primary_target or {}).get("answer_pending") or {})
+        legacy_rollup_upgrade = (
+            pending.get("legacy_rollup_source_upgradeable") is True and
+            plan.get("legacy_rollup_source_upgradeable") is True)
         if pending.get("valid") is True:
             receipt_exists = True
             effective_source = str(pending.get("source") or "")
@@ -977,6 +980,11 @@ def answer_rollup_transaction(
             if not re.fullmatch(r"[0-9a-f]{64}", pending_manifest_sha256):
                 raise RuntimeError(
                     "decide answer-rollup: pending receipt lacks an exact manifest digest")
+        elif legacy_rollup_upgrade:
+            effective_source = source
+            effective_resume_chat = str(pending.get("resume_chat_id") or "")
+            effective_resume_provider = str(pending.get("resume_provider") or "")
+            pending_manifest_sha256 = ""
         else:
             effective_source = source
             effective_resume_chat = resume_chat_id
@@ -997,6 +1005,27 @@ def answer_rollup_transaction(
             "resume_chat_id": effective_resume_chat,
             "resume_provider": effective_resume_provider,
         }
+        if legacy_rollup_upgrade:
+            legacy = plan.get("legacy_rollup_source_upgrade") or {}
+            legacy_expected = dict(expected)
+            legacy_expected["batch_key"] = legacy.get("batch_key")
+            legacy_expected["scope_key"] = legacy.get("scope_key")
+            legacy_expected["source"] = ""
+            legacy_manifest_sha256 = str(
+                legacy.get("artifact_manifest_sha256") or "")
+            if (not re.fullmatch(
+                    r"rollup-[0-9a-f]{40}",
+                    str(legacy_expected["batch_key"] or "")) or
+                    not re.fullmatch(
+                        r"scope:[0-9a-f]{40}",
+                        str(legacy_expected["scope_key"] or "")) or
+                    not re.fullmatch(
+                        r"[0-9a-f]{64}", legacy_manifest_sha256)):
+                raise RuntimeError(
+                    "decide answer-rollup: invalid legacy rollup proof")
+            _verify_rollup_batch(
+                batches_fd, legacy_expected["batch_key"], legacy_expected,
+                legacy_manifest_sha256)
         try:
             final_exists = _batch_destination_exists(
                 batches_fd, plan["batch_key"])
@@ -1017,7 +1046,7 @@ def answer_rollup_transaction(
                 os.close(conflict_fd)
             final_exists = False
         if final_exists:
-            if pending.get("valid") is not True:
+            if not receipt_exists:
                 raise RuntimeError(
                     "decide answer-rollup: published batch has no pending receipt")
             artifact_fd = _open_existing_private_dir(

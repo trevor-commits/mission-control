@@ -227,6 +227,105 @@ class RollupAnswerTests(unittest.TestCase):
         for suffix in ("-wal", "-shm"):
             Path(str(path) + suffix).unlink(missing_ok=True)
 
+    def _rewrite_rollup_as_parent_source_less(
+            self, result: dict) -> dict:
+        """Reproduce the public origin/main rollup receipt written pre-source."""
+        current_batch = Path(result["batch_path"])
+        plan = self._alert(
+            "plan-rollup-answer", result["card_id"],
+            result["primary_decision_id"], str(result["choice"]))
+        fingerprints = {
+            decision_id: self._history(decision_id)["decision"][
+                "evidence_fingerprint"]
+            for decision_id in plan["member_ids"]
+        }
+        legacy_scope_packet = {
+            "schema": 1,
+            "card_id": result["card_id"],
+            "primary_decision_id": result["primary_decision_id"],
+            "members": [[decision_id, fingerprints[decision_id]]
+                        for decision_id in plan["member_ids"]],
+            "target_ids": result["target_ids"],
+            "independent_ids": result["independent_ids"],
+            "already_pending_ids": result["already_pending_ids"],
+        }
+        scope_json = json.dumps(
+            legacy_scope_packet, ensure_ascii=True, sort_keys=True,
+            separators=(",", ":"))
+        legacy_scope_key = "scope:%s" % hashlib.sha256(
+            scope_json.encode()).hexdigest()[:40]
+        batch_json = json.dumps(
+            ["rollup-answer-v1", legacy_scope_key, result["choice"]],
+            ensure_ascii=True, sort_keys=True, separators=(",", ":"))
+        legacy_batch_key = "rollup-%s" % hashlib.sha256(
+            batch_json.encode()).hexdigest()[:40]
+        self.assertNotEqual(legacy_batch_key, result["batch_key"])
+
+        manifest_path = current_batch / "manifest.json"
+        manifest = json.loads(manifest_path.read_text())
+        artifacts = manifest["artifacts"]
+        for decision_id in result["target_ids"]:
+            answer_path = current_batch / "answers" / (decision_id + ".json")
+            answer = json.loads(answer_path.read_text())
+            answer["batch_key"] = legacy_batch_key
+            answer["prompt_path"] = answer["prompt_path"].replace(
+                result["batch_key"], legacy_batch_key)
+            answer_bytes = (json.dumps(answer, sort_keys=True) + "\n").encode()
+            answer_path.write_bytes(answer_bytes)
+            artifacts[decision_id]["answer_sha256"] = hashlib.sha256(
+                answer_bytes).hexdigest()
+        manifest["batch_key"] = legacy_batch_key
+        manifest["scope_key"] = legacy_scope_key
+        manifest["source"] = ""
+        legacy_manifest = (json.dumps(manifest, sort_keys=True) + "\n").encode()
+        manifest_path.write_bytes(legacy_manifest)
+        manifest_sha256 = hashlib.sha256(legacy_manifest).hexdigest()
+        legacy_batch = current_batch.parent / legacy_batch_key
+        current_batch.rename(legacy_batch)
+
+        db = self.home / "decisions" / "decisions.db"
+        con = sqlite3.connect(db)
+        rows = con.execute("""SELECT event_id,decision_id,evidence_ref,detail_json
+            FROM decision_events WHERE event_type='answered_pending'
+              AND decision_id IN (%s) ORDER BY event_id""" %
+            ",".join("?" for _ in result["target_ids"]),
+            result["target_ids"]).fetchall()
+        self.assertEqual(len(rows), len(result["target_ids"]))
+        originals = {}
+        event_ids = {}
+        for event_id, decision_id, evidence_ref, raw_detail in rows:
+            detail = json.loads(raw_detail)
+            detail["scope_key"] = legacy_scope_key
+            detail["batch_key"] = legacy_batch_key
+            detail["source"] = ""
+            detail["artifact_manifest_sha256"] = manifest_sha256
+            detail["answer_artifact"] = detail["answer_artifact"].replace(
+                result["batch_key"], legacy_batch_key)
+            detail["prompt_artifact"] = detail["prompt_artifact"].replace(
+                result["batch_key"], legacy_batch_key)
+            legacy_detail = json.dumps(
+                detail, ensure_ascii=True, sort_keys=True,
+                separators=(",", ":"))
+            con.execute(
+                "UPDATE decision_events SET evidence_ref=?,detail_json=? "
+                "WHERE event_id=?",
+                (legacy_batch_key, legacy_detail, event_id))
+            originals[decision_id] = legacy_detail
+            event_ids[decision_id] = event_id
+            self.assertEqual(evidence_ref, result["batch_key"])
+        con.commit()
+        con.close()
+        return {
+            "batch": legacy_batch,
+            "batch_key": legacy_batch_key,
+            "scope_key": legacy_scope_key,
+            "current_batch": current_batch,
+            "manifest": legacy_manifest,
+            "manifest_sha256": manifest_sha256,
+            "event_details": originals,
+            "event_ids": event_ids,
+        }
+
     def _seed_brief_inputs(self) -> None:
         data_dir = self.home / "data"
         for name, cadence in (("automation", 300), ("git", 900), ("chats", 1800)):
@@ -754,6 +853,156 @@ class RollupAnswerTests(unittest.TestCase):
             (legacy_event_id,)).fetchone()[0]
         con.close()
         self.assertEqual(preserved, original_detail)
+
+    def test_parent_commit_rollup_source_upgrades_without_rewriting_evidence(
+            self) -> None:
+        fixture = self._three_member_card()
+        card_id = fixture["card"]["card_id"]
+        ids = fixture["ids"]
+        first = self._dashboard(
+            "decide", "answer-rollup", card_id, ids["primary"], "1")
+        legacy = self._rewrite_rollup_as_parent_source_less(first)
+
+        before = self._history(ids["primary"])["decision"]
+        self.assertFalse(before["answer_pending"]["valid"])
+        self.assertTrue(
+            before["answer_pending"]["legacy_rollup_source_upgradeable"])
+        self.assertEqual(before["lifecycle"]["state"], "invalid")
+        upgraded = self._dashboard(
+            "decide", "answer-rollup", card_id, ids["primary"], "1")
+        self.assertTrue(upgraded["changed"])
+        self.assertFalse(upgraded["replayed"])
+        self.assertFalse(Path(upgraded["batch_path"]).is_symlink())
+        self.assertEqual(Path(upgraded["batch_path"]), legacy["current_batch"])
+        self.assertNotEqual(Path(upgraded["batch_path"]), legacy["batch"])
+        self.assertEqual(
+            (legacy["batch"] / "manifest.json").read_bytes(),
+            legacy["manifest"])
+        self.assertEqual(
+            json.loads((Path(upgraded["batch_path"]) /
+                        "manifest.json").read_text())["source"],
+            "mission-control")
+
+        db = self.home / "decisions" / "decisions.db"
+        con = sqlite3.connect(db)
+        for decision_id in first["target_ids"]:
+            events = con.execute("""SELECT event_id,evidence_ref,detail_json
+                FROM decision_events WHERE decision_id=?
+                  AND event_type='answered_pending' ORDER BY event_id""",
+                (decision_id,)).fetchall()
+            self.assertEqual(len(events), 2)
+            self.assertEqual(events[0][0], legacy["event_ids"][decision_id])
+            self.assertEqual(events[0][2], legacy["event_details"][decision_id])
+            successor = json.loads(events[1][2])
+            self.assertEqual(successor["source"], "mission-control")
+            self.assertEqual(
+                successor["source_upgrade_from_event_id"], events[0][0])
+            self.assertEqual(
+                successor["source_upgrade_from_evidence_ref"], events[0][1])
+            self.assertEqual(
+                successor["source_upgrade_from_scope_key"],
+                legacy["scope_key"])
+            self.assertEqual(
+                successor["source_upgrade_from_artifact_manifest_sha256"],
+                legacy["manifest_sha256"])
+        con.close()
+        after = self._history(ids["primary"])["decision"]
+        self.assertTrue(after["answer_pending"]["valid"])
+        self.assertTrue(
+            after["answer_pending"]["rollup_source_upgrade_valid"])
+        self.assertEqual(after["lifecycle"]["state"], "answered_pending")
+
+        replay = self._dashboard(
+            "decide", "answer-rollup", card_id, ids["primary"], "1")
+        self.assertTrue(replay["replayed"])
+        self.assertFalse(replay["changed"])
+        self.assertEqual(
+            (legacy["batch"] / "manifest.json").read_bytes(),
+            legacy["manifest"])
+        for decision_id in first["target_ids"]:
+            self.assertEqual(len(self._pending_events(decision_id)), 2)
+
+    def test_rollup_source_upgrade_lineage_tamper_fails_closed(self) -> None:
+        fixture = self._three_member_card()
+        card_id = fixture["card"]["card_id"]
+        ids = fixture["ids"]
+        first = self._dashboard(
+            "decide", "answer-rollup", card_id, ids["primary"], "1")
+        legacy = self._rewrite_rollup_as_parent_source_less(first)
+        self._dashboard(
+            "decide", "answer-rollup", card_id, ids["primary"], "1")
+
+        db = self.home / "decisions" / "decisions.db"
+        con = sqlite3.connect(db)
+        old_id = legacy["event_ids"][ids["primary"]]
+        original = con.execute(
+            "SELECT detail_json FROM decision_events WHERE event_id=?",
+            (old_id,)).fetchone()[0]
+        tampered = json.loads(original)
+        tampered["choice"] = 2
+        con.execute(
+            "UPDATE decision_events SET detail_json=? WHERE event_id=?",
+            (json.dumps(tampered, sort_keys=True, separators=(",", ":")),
+             old_id))
+        con.commit()
+        con.close()
+
+        current = self._history(ids["primary"])["decision"]
+        self.assertFalse(current["answer_pending"]["valid"])
+        self.assertFalse(
+            current["answer_pending"]["rollup_source_upgrade_valid"])
+        self.assertEqual(current["lifecycle"]["state"], "invalid")
+        failed = self._dashboard(
+            "decide", "answer-rollup", card_id, ids["primary"], "1",
+            ok=False)
+        self.assertIn(
+            "current answered-pending marker is invalid", failed["stderr"])
+
+    def _assert_rollup_source_upgrade_artifact_tamper_fails_closed(
+            self, artifact: str) -> None:
+        fixture = self._three_member_card()
+        card_id = fixture["card"]["card_id"]
+        ids = fixture["ids"]
+        first = self._dashboard(
+            "decide", "answer-rollup", card_id, ids["primary"], "1")
+        legacy = self._rewrite_rollup_as_parent_source_less(first)
+        self._dashboard(
+            "decide", "answer-rollup", card_id, ids["primary"], "1")
+
+        if artifact == "manifest":
+            path = legacy["batch"] / "manifest.json"
+        elif artifact == "answer":
+            path = legacy["batch"] / "answers" / (ids["primary"] + ".json")
+        elif artifact == "prompt":
+            path = legacy["batch"] / "prompts" / (ids["primary"] + ".md")
+        else:
+            self.fail("unknown legacy artifact kind")
+        path.write_bytes(path.read_bytes() + b"post-upgrade-tamper\n")
+
+        current = self._history(ids["primary"])["decision"]
+        self.assertFalse(current["answer_pending"]["valid"])
+        self.assertFalse(
+            current["answer_pending"]["rollup_source_upgrade_valid"])
+        self.assertEqual(current["lifecycle"]["state"], "invalid")
+        failed = self._dashboard(
+            "decide", "answer-rollup", card_id, ids["primary"], "1",
+            ok=False)
+        self.assertIn(
+            "current answered-pending marker is invalid", failed["stderr"])
+        for decision_id in first["target_ids"]:
+            self.assertEqual(len(self._pending_events(decision_id)), 2)
+
+    def test_rollup_source_upgrade_manifest_tamper_fails_closed(self) -> None:
+        self._assert_rollup_source_upgrade_artifact_tamper_fails_closed(
+            "manifest")
+
+    def test_rollup_source_upgrade_answer_tamper_fails_closed(self) -> None:
+        self._assert_rollup_source_upgrade_artifact_tamper_fails_closed(
+            "answer")
+
+    def test_rollup_source_upgrade_prompt_tamper_fails_closed(self) -> None:
+        self._assert_rollup_source_upgrade_artifact_tamper_fails_closed(
+            "prompt")
 
     def test_lifecycle_source_accepts_64_and_rejects_65_before_staging(
             self) -> None:

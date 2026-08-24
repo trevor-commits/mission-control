@@ -88,6 +88,7 @@ LIFECYCLE_REQUESTED_ACTION = {
 _ID_RE = re.compile(r"^decision:[0-9a-f]{24}$")
 _CARD_ID_RE = re.compile(r"^card:[0-9a-f]{16}$")
 _SCOPE_KEY_RE = re.compile(r"^scope:[0-9a-f]{40}$")
+_ROLLUP_BATCH_RE = re.compile(r"^rollup-[0-9a-f]{40}$")
 _ARTIFACT_BATCH_RE = re.compile(
     r"^(?:rollup-[0-9a-f]{40}|\.rollup-stage\.[0-9a-f]{24})$")
 _SINGLE_STAGE_RE = re.compile(
@@ -548,6 +549,100 @@ def _persisted_receipt_ref_is_valid(value):
             value == value.strip())
 
 
+def _rollup_source_upgrade_lineage_valid(con, event, detail):
+    """Prove a source-bound rollup receipt is an append-only legacy upgrade."""
+    if (not _ROLLUP_BATCH_RE.match(str(detail.get("batch_key") or "")) or
+            detail.get("schema") != 1 or detail.get("mode") is not None or
+            not valid_lifecycle_source(detail.get("source"))):
+        return False
+    prior_event_id = detail.get("source_upgrade_from_event_id")
+    prior_evidence_ref = detail.get("source_upgrade_from_evidence_ref")
+    prior_scope_key = detail.get("source_upgrade_from_scope_key")
+    prior_manifest_sha256 = detail.get(
+        "source_upgrade_from_artifact_manifest_sha256")
+    if (isinstance(prior_event_id, bool) or
+            not isinstance(prior_event_id, int) or
+            prior_event_id <= 0 or prior_event_id >= event["event_id"] or
+            not _ROLLUP_BATCH_RE.match(str(prior_evidence_ref or "")) or
+            not _SCOPE_KEY_RE.match(str(prior_scope_key or "")) or
+            not _SHA256_RE.match(str(prior_manifest_sha256 or ""))):
+        return False
+    prior = con.execute("""SELECT evidence_type,evidence_ref,detail_json
+        FROM decision_events WHERE event_id=? AND event_type='answered_pending'
+          AND decision_id=? AND evidence_fingerprint=?""", (
+            prior_event_id, event["decision_id"],
+            event["evidence_fingerprint"])).fetchone()
+    if (prior is None or prior["evidence_type"] != "operator_choice" or
+            prior["evidence_ref"] != prior_evidence_ref):
+        return False
+    try:
+        prior_detail = json.loads(prior["detail_json"] or "null")
+    except (TypeError, ValueError):
+        return False
+    base_keys = {
+        "schema", "scope_key", "batch_key", "card_id",
+        "primary_decision_id", "choice", "member_ids", "target_ids",
+        "independent_ids", "already_pending_ids", "source",
+        "resume_chat_id", "resume_provider", "artifact_manifest_sha256",
+        "answer_artifact", "prompt_artifact",
+    }
+    upgrade_keys = {
+        "source_upgrade_from_event_id",
+        "source_upgrade_from_evidence_ref",
+        "source_upgrade_from_scope_key",
+        "source_upgrade_from_artifact_manifest_sha256",
+    }
+    if (not isinstance(prior_detail, dict) or
+            set(prior_detail) != base_keys or
+            set(detail) != base_keys | upgrade_keys or
+            prior_detail.get("schema") != 1 or
+            prior_detail.get("source") != "" or
+            prior_detail.get("batch_key") != prior_evidence_ref or
+            prior_detail.get("scope_key") != prior_scope_key or
+            prior_detail.get("artifact_manifest_sha256") !=
+            prior_manifest_sha256 or
+            detail.get("batch_key") == prior_evidence_ref or
+            detail.get("scope_key") == prior_scope_key):
+        return False
+    unchanged = (
+        "card_id", "primary_decision_id", "choice", "member_ids",
+        "target_ids", "independent_ids", "already_pending_ids",
+        "resume_chat_id", "resume_provider",
+    )
+    if any(prior_detail.get(key) != detail.get(key) for key in unchanged):
+        return False
+    decision_id = event["decision_id"]
+    paths_valid = (
+        prior_detail.get("answer_artifact") ==
+        "answer-batches/%s/answers/%s.json" % (
+            prior_evidence_ref, decision_id) and
+        prior_detail.get("prompt_artifact") ==
+        "answer-batches/%s/prompts/%s.md" % (
+            prior_evidence_ref, decision_id) and
+        detail.get("answer_artifact") ==
+        "answer-batches/%s/answers/%s.json" % (
+            detail.get("batch_key"), decision_id) and
+        detail.get("prompt_artifact") ==
+        "answer-batches/%s/prompts/%s.md" % (
+            detail.get("batch_key"), decision_id))
+    if not paths_valid:
+        return False
+    legacy_plan = {
+        key: prior_detail.get(key) for key in (
+            "batch_key", "scope_key", "card_id", "primary_decision_id",
+            "choice", "member_ids", "target_ids", "independent_ids",
+            "already_pending_ids")
+    }
+    try:
+        _verify_rollup_artifact_proof(
+            legacy_plan, prior_evidence_ref, prior_manifest_sha256, "",
+            prior_detail.get("resume_chat_id"),
+            prior_detail.get("resume_provider"))
+    except (DecisionError, KeyError, OSError, TypeError, ValueError):
+        return False
+    return True
+
+
 def _answer_pending_marker(con, row):
     """Return the latest current-fingerprint answered-pending event marker."""
     if row is None:
@@ -555,8 +650,8 @@ def _answer_pending_marker(con, row):
     activation_event_id = _current_evidence_activation_event_id(con, row)
     if activation_event_id is None:
         return None
-    event = con.execute("""SELECT event_id,occurred_at,evidence_type,
-            evidence_ref,detail_json
+    event = con.execute("""SELECT event_id,decision_id,evidence_fingerprint,
+            occurred_at,evidence_type,evidence_ref,detail_json
         FROM decision_events
         WHERE decision_id=? AND event_type='answered_pending'
           AND evidence_fingerprint=? AND event_id>?
@@ -578,13 +673,34 @@ def _answer_pending_marker(con, row):
             event["evidence_type"] == "operator_choice" and
             _persisted_receipt_ref_is_valid(event["evidence_ref"]) and
             event["evidence_ref"] == detail.get("batch_key"))
+        rollup_upgrade_claimed = (
+            _ROLLUP_BATCH_RE.match(str(detail.get("batch_key") or "")) and
+            ("source_upgrade_from_event_id" in detail or
+             "source_upgrade_from_evidence_ref" in detail or
+             "source_upgrade_from_scope_key" in detail or
+             "source_upgrade_from_artifact_manifest_sha256" in detail))
+        rollup_upgrade_valid = (
+            _rollup_source_upgrade_lineage_valid(con, event, detail)
+            if rollup_upgrade_claimed else False)
         detail["valid"] = (
-            binding_valid and valid_lifecycle_source(detail.get("source")))
+            binding_valid and valid_lifecycle_source(detail.get("source")) and
+            (not rollup_upgrade_claimed or rollup_upgrade_valid))
         detail["legacy_source_upgradeable"] = (
             binding_valid and
             detail.get("source") == "" and
             detail.get("schema") == 1 and
             detail.get("mode") == "single")
+        detail["legacy_rollup_source_upgradeable"] = (
+            binding_valid and detail.get("source") == "" and
+            detail.get("schema") == 1 and detail.get("mode") is None and
+            bool(_ROLLUP_BATCH_RE.match(str(detail.get("batch_key") or ""))) and
+            bool(_SCOPE_KEY_RE.match(str(detail.get("scope_key") or ""))) and
+            bool(_CARD_ID_RE.match(str(detail.get("card_id") or ""))) and
+            bool(_ID_RE.match(str(
+                detail.get("primary_decision_id") or ""))) and
+            bool(_SHA256_RE.match(str(
+                detail.get("artifact_manifest_sha256") or ""))))
+        detail["rollup_source_upgrade_valid"] = rollup_upgrade_valid
     detail["event_id"] = event["event_id"]
     detail["occurred_at"] = event["occurred_at"]
     return detail
@@ -630,6 +746,106 @@ def _legacy_single_pending_matches(con, pending, packet):
         raise DecisionError(
             "legacy pending source upgrade event binding does not match")
     return True
+
+
+_PENDING_DERIVED_KEYS = {
+    "event_id", "occurred_at", "valid", "legacy_source_upgradeable",
+    "legacy_rollup_source_upgradeable", "rollup_source_upgrade_valid",
+}
+
+
+def _legacy_rollup_pending_set_matches(con, plan, by_id):
+    """Prove every target is the exact pre-source rollup receipt and batch."""
+    primary = next(
+        (target for target in plan["targets"]
+         if target["id"] == plan["primary_decision_id"]), None)
+    pending = (primary or {}).get("answer_pending") or {}
+    resume_chat_id = pending.get("resume_chat_id")
+    resume_provider = pending.get("resume_provider")
+    manifest_sha256 = pending.get("artifact_manifest_sha256")
+    if (not isinstance(resume_chat_id, str) or
+            not isinstance(resume_provider, str) or
+            not _SHA256_RE.match(str(manifest_sha256 or ""))):
+        raise DecisionError("legacy rollup pending metadata is invalid")
+    legacy_scope_packet = {
+        "schema": 1,
+        "card_id": plan["card_id"],
+        "primary_decision_id": plan["primary_decision_id"],
+        "members": [[decision_id, by_id[decision_id]["evidence_fingerprint"]]
+                    for decision_id in plan["member_ids"]],
+        "target_ids": plan["target_ids"],
+        "independent_ids": plan["independent_ids"],
+        "already_pending_ids": plan["already_pending_ids"],
+    }
+    legacy_scope_key = "scope:%s" % _sha(
+        _canonical(legacy_scope_packet))[:40]
+    legacy_batch_key = "rollup-%s" % _sha(_canonical(
+        ["rollup-answer-v1", legacy_scope_key, plan["choice"]]))[:40]
+    if (legacy_scope_key == plan["scope_key"] or
+            legacy_batch_key == plan["batch_key"]):
+        raise DecisionError("legacy rollup identity is not historical")
+    common = {
+        "schema": 1,
+        "scope_key": legacy_scope_key,
+        "batch_key": legacy_batch_key,
+        "card_id": plan["card_id"],
+        "primary_decision_id": plan["primary_decision_id"],
+        "choice": plan["choice"],
+        "member_ids": plan["member_ids"],
+        "target_ids": plan["target_ids"],
+        "independent_ids": plan["independent_ids"],
+        "already_pending_ids": plan["already_pending_ids"],
+        "source": "",
+        "resume_chat_id": resume_chat_id,
+        "resume_provider": resume_provider,
+        "artifact_manifest_sha256": manifest_sha256,
+    }
+    seen_event_ids = set()
+    for target in plan["targets"]:
+        item = target.get("answer_pending") or {}
+        expected = dict(common)
+        expected["answer_artifact"] = (
+            "answer-batches/%s/answers/%s.json" % (
+                legacy_batch_key, target["id"]))
+        expected["prompt_artifact"] = (
+            "answer-batches/%s/prompts/%s.md" % (
+                legacy_batch_key, target["id"]))
+        persisted = {
+            key: value for key, value in item.items()
+            if key not in _PENDING_DERIVED_KEYS
+        }
+        event_id = item.get("event_id")
+        if (item.get("valid") is not False or
+                item.get("legacy_rollup_source_upgradeable") is not True or
+                persisted != expected or
+                isinstance(event_id, bool) or not isinstance(event_id, int) or
+                event_id in seen_event_ids):
+            raise DecisionError("legacy rollup pending evidence does not match")
+        seen_event_ids.add(event_id)
+        event = con.execute("""SELECT evidence_type,evidence_ref,detail_json
+            FROM decision_events WHERE event_id=?
+              AND event_type='answered_pending' AND decision_id=?
+              AND evidence_fingerprint=?""", (
+                event_id, target["id"],
+                target["evidence_fingerprint"])).fetchone()
+        if (event is None or event["evidence_type"] != "operator_choice" or
+                event["evidence_ref"] != legacy_batch_key):
+            raise DecisionError(
+                "legacy rollup pending event binding does not match")
+        try:
+            stored = json.loads(event["detail_json"] or "null")
+        except (TypeError, ValueError):
+            stored = None
+        if stored != expected:
+            raise DecisionError(
+                "legacy rollup pending event detail does not match")
+    return {
+        "scope_key": legacy_scope_key,
+        "batch_key": legacy_batch_key,
+        "artifact_manifest_sha256": manifest_sha256,
+        "resume_chat_id": resume_chat_id,
+        "resume_provider": resume_provider,
+    }
 
 
 def _lifecycle_event_rows(con, decision_id, fingerprint, after_event_id):
@@ -1479,7 +1695,10 @@ def _rollup_answer_plan(con, card_id, primary_decision_id, choice):
         members, primary_decision_id)
     primary = by_id[primary_decision_id]
     primary_pending = primary.get("answer_pending")
+    legacy_rollup_upgrade = False
     if primary_pending is not None:
+        legacy_rollup_upgrade = (
+            primary_pending.get("legacy_rollup_source_upgradeable") is True)
         prior_targets = primary_pending.get("target_ids")
         prior_independent = primary_pending.get("independent_ids")
         prior_already_pending = primary_pending.get("already_pending_ids")
@@ -1488,7 +1707,8 @@ def _rollup_answer_plan(con, card_id, primary_decision_id, choice):
             all(isinstance(items, list) for items in prior_lists) and
             all(isinstance(item, str)
                 for items in prior_lists for item in items))
-        if (primary_pending.get("valid") is not True or
+        if ((primary_pending.get("valid") is not True and
+             not legacy_rollup_upgrade) or
                 not prior_lists_valid or
                 primary_pending.get("member_ids") != member_ids or
                 primary_decision_id not in (prior_targets or []) or
@@ -1564,7 +1784,7 @@ def _rollup_answer_plan(con, card_id, primary_decision_id, choice):
             "prompt_artifact": "answer-batches/%s/prompts/%s.md" % (
                 batch_key, decision_id),
         })
-    return {
+    plan = {
         "ok": True,
         "card_id": card_id,
         "primary_decision_id": primary_decision_id,
@@ -1577,6 +1797,11 @@ def _rollup_answer_plan(con, card_id, primary_decision_id, choice):
         "already_pending_ids": already_pending_ids,
         "targets": targets,
     }
+    if legacy_rollup_upgrade:
+        plan["legacy_rollup_source_upgrade"] = (
+            _legacy_rollup_pending_set_matches(con, plan, by_id))
+        plan["legacy_rollup_source_upgradeable"] = True
+    return plan
 
 
 def _readonly_rollup_answer_plan(card_id, primary_decision_id, choice):
@@ -1846,18 +2071,41 @@ def _verify_rollup_artifact_proof(
                 "primary_decision_id": plan["primary_decision_id"],
                 "decision_id": decision_id,
                 "choice": plan["choice"],
-                "prompt_path": os.path.join(
-                    home, "answer-batches", plan["batch_key"],
-                    "prompts", prompt_name),
             }
-            if not isinstance(answer, dict) or any(
+            prompt_suffix = os.path.join(
+                "answer-batches", plan["batch_key"],
+                "prompts", prompt_name)
+            expected_prompt_paths = {
+                os.path.join(home, prompt_suffix),
+                os.path.join(os.path.realpath(home), prompt_suffix),
+            }
+            if (not isinstance(answer, dict) or any(
                     answer.get(key) != value
-                    for key, value in answer_expected.items()):
-                raise DecisionError("rollup answer artifact does not match current scope")
+                    for key, value in answer_expected.items()) or
+                    answer.get("prompt_path") not in expected_prompt_paths):
+                raise DecisionError(
+                    "rollup answer artifact does not match current scope")
     finally:
         for fd in (prompts_fd, answers_fd, batch_fd, batches_fd, root_fd):
             if fd >= 0:
                 os.close(fd)
+
+
+def _legacy_rollup_artifact_plan(plan):
+    """Project the current plan onto its verified pre-generation batch."""
+    legacy = plan.get("legacy_rollup_source_upgrade") or {}
+    legacy_plan = dict(plan)
+    legacy_plan["scope_key"] = legacy.get("scope_key")
+    legacy_plan["batch_key"] = legacy.get("batch_key")
+    legacy_plan["targets"] = []
+    for target in plan["targets"]:
+        item = dict(target)
+        item["answer_artifact"] = "answer-batches/%s/answers/%s.json" % (
+            legacy_plan["batch_key"], target["id"])
+        item["prompt_artifact"] = "answer-batches/%s/prompts/%s.md" % (
+            legacy_plan["batch_key"], target["id"])
+        legacy_plan["targets"].append(item)
+    return legacy_plan
 
 
 def answer_rollup(args):
@@ -1891,61 +2139,84 @@ def answer_rollup(args):
             con, args.card_id, args.primary_decision_id, args.choice)
         if plan["scope_key"] != expected_scope:
             raise DecisionError("rollup answer scope changed before commit")
+        legacy_rollup_upgrade = (
+            plan.get("legacy_rollup_source_upgradeable") is True)
+        if legacy_rollup_upgrade:
+            primary_pending = next(
+                target["answer_pending"] for target in plan["targets"]
+                if target["id"] == plan["primary_decision_id"])
+            legacy = plan["legacy_rollup_source_upgrade"]
+            if ((resume_chat_id or "") !=
+                    primary_pending.get("resume_chat_id") or
+                    (resume_provider or "") !=
+                    primary_pending.get("resume_provider")):
+                raise DecisionError(
+                    "legacy rollup pending delivery metadata does not match")
+            _verify_rollup_artifact_proof(
+                _legacy_rollup_artifact_plan(plan), legacy["batch_key"],
+                legacy["artifact_manifest_sha256"], "", resume_chat_id,
+                resume_provider)
         _verify_rollup_artifact_proof(
             plan, args.artifact_batch_name,
             args.artifact_manifest_sha256, source, resume_chat_id,
             resume_provider)
         rows = [_get(con, decision_id) for decision_id in plan["target_ids"]]
         pending = [_active_answer_pending(con, row) for row in rows]
+        common = {
+            "schema": 1,
+            "scope_key": plan["scope_key"],
+            "batch_key": plan["batch_key"],
+            "card_id": plan["card_id"],
+            "primary_decision_id": plan["primary_decision_id"],
+            "choice": plan["choice"],
+            "member_ids": plan["member_ids"],
+            "target_ids": plan["target_ids"],
+            "independent_ids": plan["independent_ids"],
+            "already_pending_ids": plan["already_pending_ids"],
+            "source": source,
+            "resume_chat_id": resume_chat_id or "",
+            "resume_provider": resume_provider or "",
+            "artifact_manifest_sha256": args.artifact_manifest_sha256,
+        }
+        target_by_id = {target["id"]: target for target in plan["targets"]}
         if any(item is not None for item in pending):
             if not all(item is not None for item in pending):
                 raise DecisionError("rollup answer has a partial pending target set")
-            expected_common = {
-                "scope_key": plan["scope_key"],
-                "batch_key": plan["batch_key"],
-                "card_id": plan["card_id"],
-                "primary_decision_id": plan["primary_decision_id"],
-                "choice": plan["choice"],
-                "member_ids": plan["member_ids"],
-                "target_ids": plan["target_ids"],
-                "independent_ids": plan["independent_ids"],
-                "already_pending_ids": plan["already_pending_ids"],
-                "source": source,
-                "resume_chat_id": resume_chat_id or "",
-                "resume_provider": resume_provider or "",
-                "artifact_manifest_sha256": args.artifact_manifest_sha256,
-            }
-            target_by_id = {target["id"]: target for target in plan["targets"]}
-            for row, item in zip(rows, pending):
-                target = target_by_id[row["decision_id"]]
-                expected = dict(expected_common)
-                expected["answer_artifact"] = target["answer_artifact"]
-                expected["prompt_artifact"] = target["prompt_artifact"]
-                if (item.get("valid") is not True or
-                        any(item.get(key) != value
-                            for key, value in expected.items())):
-                    raise DecisionError(
-                        "rollup answer conflicts with the current pending choice")
-            changed = False
+            if legacy_rollup_upgrade:
+                for row, item in zip(rows, pending):
+                    target = target_by_id[row["decision_id"]]
+                    detail = dict(common)
+                    detail["answer_artifact"] = target["answer_artifact"]
+                    detail["prompt_artifact"] = target["prompt_artifact"]
+                    detail["source_upgrade_from_event_id"] = item["event_id"]
+                    detail["source_upgrade_from_evidence_ref"] = item["batch_key"]
+                    detail["source_upgrade_from_scope_key"] = (
+                        plan["legacy_rollup_source_upgrade"]["scope_key"])
+                    detail[
+                        "source_upgrade_from_artifact_manifest_sha256"] = (
+                            plan["legacy_rollup_source_upgrade"][
+                                "artifact_manifest_sha256"])
+                    _event(con, row["decision_id"], "answered_pending",
+                           row["evidence_fingerprint"], now,
+                           evidence_type="operator_choice",
+                           evidence_ref=plan["batch_key"], detail=detail)
+                changed = True
+            else:
+                expected_common = dict(common)
+                expected_common.pop("schema")
+                for row, item in zip(rows, pending):
+                    target = target_by_id[row["decision_id"]]
+                    expected = dict(expected_common)
+                    expected["answer_artifact"] = target["answer_artifact"]
+                    expected["prompt_artifact"] = target["prompt_artifact"]
+                    if (item.get("valid") is not True or
+                            any(item.get(key) != value
+                                for key, value in expected.items())):
+                        raise DecisionError(
+                            "rollup answer conflicts with the current pending choice")
+                changed = False
         else:
             changed = True
-            common = {
-                "schema": 1,
-                "scope_key": plan["scope_key"],
-                "batch_key": plan["batch_key"],
-                "card_id": plan["card_id"],
-                "primary_decision_id": plan["primary_decision_id"],
-                "choice": plan["choice"],
-                "member_ids": plan["member_ids"],
-                "target_ids": plan["target_ids"],
-                "independent_ids": plan["independent_ids"],
-                "already_pending_ids": plan["already_pending_ids"],
-                "source": source,
-                "resume_chat_id": resume_chat_id or "",
-                "resume_provider": resume_provider or "",
-                "artifact_manifest_sha256": args.artifact_manifest_sha256,
-            }
-            target_by_id = {target["id"]: target for target in plan["targets"]}
             for index, row in enumerate(rows):
                 target = target_by_id[row["decision_id"]]
                 detail = dict(common)
