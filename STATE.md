@@ -42,6 +42,8 @@ Trevor approved the following seven points through `thread_goal_updated` at `202
 
 The 2026-08-23 bot-portfolio implementation extends point 5 without rewriting its historical approval: graph-verified owner evidence now records `consumed`, not terminal resolution. The exact deterministic lifecycle is `answered_pending -> delivered -> consumed -> running -> live_result_verified -> closed`; only an evidence-bearing `closed` transition changes the compatibility queue state to `resolved`. Consumption proof is current-fingerprint and current-delivery bound, graph watcher events carry deterministic identity plus `resolved_at` and `source_id`, every lifecycle event has a stable source, and status separates exact lifecycle counts from labeled compatibility counts.
 
+Transition replay is bound to the current answer generation. Rollup batch identity includes each member's immutable evidence-activation event. Together, these rules prevent a returning fingerprint from adopting an older generation's receipt.
+
 ## Current implementation
 
 - `scripts/decision-alert` derives pending and follow-through state from immutable current-fingerprint events. It exact-binds every transition to decision, resolution key, stable producer event, evidence, outcome, source, and predecessor; skipped states and cross-target replay fail closed. Single and rollup answers both begin non-terminally, and only `closed` sets the compatibility queue state to `resolved`.

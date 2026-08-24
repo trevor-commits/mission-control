@@ -1028,21 +1028,30 @@ def dismiss(args):
         con.close()
 
 
-def _existing_lifecycle_transition(con, transition_id):
+def _existing_lifecycle_transition(con, transition_id, after_event_id):
+    """Return one replay only when it belongs to the current answer generation."""
     placeholders = ",".join("?" for _ in DECISION_LIFECYCLE[1:])
     rows = con.execute("""SELECT event_id,decision_id,event_type,
         evidence_fingerprint,evidence_type,evidence_ref,detail_json
         FROM decision_events WHERE event_type IN (%s)
         ORDER BY event_id""" % placeholders,
         list(DECISION_LIFECYCLE[1:])).fetchall()
+    matches = []
     for event in rows:
         try:
             detail = json.loads(event["detail_json"] or "null")
         except (TypeError, ValueError):
             continue
         if isinstance(detail, dict) and detail.get("transition_id") == transition_id:
-            return event, detail
-    return None, None
+            matches.append((event, detail))
+    if not matches:
+        return None, None
+    current = [match for match in matches
+               if match[0]["event_id"] > after_event_id]
+    if len(matches) != 1 or len(current) != 1:
+        raise DecisionError(
+            "lifecycle event id belongs to another evidence generation")
+    return current[0]
 
 
 def _record_lifecycle_transition(
@@ -1070,7 +1079,14 @@ def _record_lifecycle_transition(
     if graph_proof is not None:
         event_detail.update(graph_proof)
 
-    existing, detail = _existing_lifecycle_transition(con, transition_id)
+    lifecycle = _decision_lifecycle(con, row)
+    if lifecycle.get("valid") is not True:
+        raise DecisionError("decision lifecycle is invalid")
+    pending = _answer_pending_marker(con, row)
+    if pending is None or not isinstance(pending.get("event_id"), int):
+        raise DecisionError("decision lifecycle has no current answer generation")
+    existing, detail = _existing_lifecycle_transition(
+        con, transition_id, pending["event_id"])
     if existing is not None:
         exact = (
             existing["decision_id"] == row["decision_id"] and
@@ -1083,9 +1099,6 @@ def _record_lifecycle_transition(
             raise DecisionError("lifecycle event id was replayed for another target")
         return False
 
-    lifecycle = _decision_lifecycle(con, row)
-    if lifecycle.get("valid") is not True:
-        raise DecisionError("decision lifecycle is invalid")
     if lifecycle.get("state") != expected_previous:
         raise DecisionError("illegal lifecycle transition")
     if isinstance(expected_evidence, tuple):
@@ -1237,7 +1250,7 @@ def resolve(args):
                 raise DecisionError(
                     "answered-pending consumption requires a stable event id")
             existing, existing_detail = _existing_lifecycle_transition(
-                con, transition_id)
+                con, transition_id, pending["event_id"])
             if existing is None:
                 graph_proof = _verified_graph_consumption(
                     row, evidence_type, evidence_ref)
@@ -1433,6 +1446,8 @@ def _open_rollup_rows(con):
     for row in rows:
         d = dict(row)
         d.update(queue_admission.classify_row(d.get("text")))
+        d["evidence_activation_event_id"] = (
+            _current_evidence_activation_event_id(con, row))
         d["answer_pending"] = _active_answer_pending(con, row)
         enriched.append(d)
     return enriched
@@ -1509,12 +1524,25 @@ def _rollup_answer_plan(con, card_id, primary_decision_id, choice):
         if options and choice > len(options):
             raise DecisionError("rollup answer choice is out of range")
 
+    member_generations = []
+    for decision_id in member_ids:
+        activation_event_id = by_id[decision_id].get(
+            "evidence_activation_event_id")
+        if (isinstance(activation_event_id, bool) or
+                not isinstance(activation_event_id, int) or
+                activation_event_id <= 0):
+            raise DecisionError(
+                "rollup member lacks a current evidence generation")
+        member_generations.append([
+            decision_id,
+            by_id[decision_id]["evidence_fingerprint"],
+            activation_event_id,
+        ])
     scope_packet = {
         "schema": 1,
         "card_id": card_id,
         "primary_decision_id": primary_decision_id,
-        "members": [[decision_id, by_id[decision_id]["evidence_fingerprint"]]
-                    for decision_id in member_ids],
+        "members": member_generations,
         "target_ids": target_ids,
         "independent_ids": independent_ids,
         "already_pending_ids": already_pending_ids,

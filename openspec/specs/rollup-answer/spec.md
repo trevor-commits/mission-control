@@ -76,6 +76,11 @@ Each current-fingerprint decision MUST advance deterministically through `answer
 - **AND WHEN** that event id is reused for another target or packet
 - **THEN** the command fails closed
 
+#### Scenario: A prior fingerprint returns in a new evidence generation
+- **WHEN** evidence changes from v1 to v2, later returns to v1, and the operator records a new answer
+- **THEN** an old v1 transition event id is not an idempotent replay for the new answer generation
+- **AND** the old event fails closed while a fresh exact transition can advance the decision
+
 #### Scenario: Live result is not verified
 - **WHEN** execution reports timeout, failure, or an unverified completion claim
 - **THEN** the decision remains open and cannot close
@@ -137,6 +142,11 @@ Exact current scope plus choice MUST be idempotent; a conflicting choice or part
 #### Scenario: Evidence changes
 - **WHEN** an answered-pending member is re-ingested with a materially different evidence fingerprint
 - **THEN** the prior pending event remains in history but is no longer active and a new answer may be recorded
+
+#### Scenario: A prior rollup fingerprint returns
+- **WHEN** a rollup member changes from v1 to v2, later returns to v1, and receives the same choice again
+- **THEN** the new activation event produces a distinct generation-bound batch and pending receipt
+- **AND** the historical batch remains preserved while exact replay within the new generation stays idempotent
 
 ### Requirement: Public decision-feed coherence without egress
 The public dashboard answer and rollup-answer commands MUST run the strict decisions collector with automatic alerts disabled, MUST reconcile the persisted Morning Brief and strict public brief feed before reporting full success, and MUST surface a committed-but-refresh-failed result without sending to any provider or changing delivery cursors.

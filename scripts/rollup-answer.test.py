@@ -1190,6 +1190,88 @@ class RollupAnswerTests(unittest.TestCase):
             ["observed", "answered_pending", "delivered",
              "evidence_changed", "evidence_changed"])
 
+        self._answer_single(decision_id)
+        current = self._history(decision_id)["decision"]
+        stale_replay = self._alert(
+            "transition", decision_id, "--to", "delivered",
+            "--expected-fingerprint", current["evidence_fingerprint"],
+            "--resolution-key", current["resolution_key"],
+            "--event-id", "delivery:returning-v1",
+            "--evidence-type", "provider_delivery_receipt",
+            "--evidence-ref", "provider:returning-v1",
+            "--outcome", "delivered", "--source", "test-suite",
+            ok=False)
+        self.assertIn("evidence generation", stale_replay["stderr"])
+        self.assertEqual(
+            self._history(decision_id)["decision"]["lifecycle"]["state"],
+            "answered_pending")
+
+        delivered = self._deliver(
+            decision_id, "delivery:returning-v1-current",
+            "provider:returning-v1-current")
+        self.assertEqual(delivered["decision"]["lifecycle"]["state"],
+                         "delivered")
+
+    def test_returning_fingerprint_rollup_gets_a_new_generation_batch(self) -> None:
+        first = self._ingest(
+            "returning-rollup-owner", "one", evidence="evidence-v1")
+        decision_id = first["decision"]["id"]
+        fingerprint_v1 = first["decision"]["evidence_fingerprint"]
+        first_card = next(
+            card for card in self._alert("rollup")["cards"]
+            if any(member["decision_id"] == decision_id
+                   for member in card["members"]))
+        first_answer = self._dashboard(
+            "decide", "answer-rollup", first_card["card_id"],
+            decision_id, "1")
+        first_batch = Path(first_answer["batch_path"])
+        self.assertTrue(first_batch.is_dir())
+
+        self.env["DECISION_ALERT_NOW_EPOCH"] = "1784368801"
+        second = self._ingest(
+            "returning-rollup-owner", "one", evidence="evidence-v2")
+        self.assertNotEqual(
+            second["decision"]["evidence_fingerprint"], fingerprint_v1)
+        self.env["DECISION_ALERT_NOW_EPOCH"] = "1784368802"
+        returned = self._ingest(
+            "returning-rollup-owner", "one", evidence="evidence-v1")
+        self.assertEqual(
+            returned["decision"]["evidence_fingerprint"], fingerprint_v1)
+
+        returned_card = next(
+            card for card in self._alert("rollup")["cards"]
+            if any(member["decision_id"] == decision_id
+                   for member in card["members"]))
+        self.assertEqual(returned_card["card_id"], first_card["card_id"])
+        current_answer = self._dashboard(
+            "decide", "answer-rollup", returned_card["card_id"],
+            decision_id, "1")
+        self.assertTrue(current_answer["changed"])
+        self.assertFalse(current_answer["replayed"])
+        self.assertNotEqual(current_answer["batch_key"],
+                            first_answer["batch_key"])
+        self.assertTrue(Path(current_answer["batch_path"]).is_dir())
+        self.assertTrue(first_batch.is_dir())
+
+        history = self._history(decision_id)
+        self.assertEqual(
+            history["decision"]["lifecycle"]["state"], "answered_pending")
+        pending_events = [
+            event for event in history["events"]
+            if event["event_type"] == "answered_pending"
+        ]
+        self.assertEqual(
+            [event["evidence_ref"] for event in pending_events],
+            [first_answer["batch_key"], current_answer["batch_key"]])
+        self.assertEqual(
+            history["decision"]["answer_pending"]["batch_key"],
+            current_answer["batch_key"])
+        replay = self._dashboard(
+            "decide", "answer-rollup", returned_card["card_id"],
+            decision_id, "1")
+        self.assertTrue(replay["replayed"])
+        self.assertEqual(replay["batch_key"], current_answer["batch_key"])
+
     def test_partial_current_pending_set_fails_closed(self) -> None:
         fixture = self._three_member_card()
         ids = fixture["ids"]
