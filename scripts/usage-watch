@@ -43,7 +43,8 @@ import sys
 import time
 
 HOME = os.path.expanduser("~")
-MC_HOME = os.environ.get("MISSION_CONTROL_HOME") or os.path.join(HOME, ".mission-control")
+MC_HOME = os.path.expanduser(os.environ.get("MISSION_CONTROL_HOME") or
+                             os.path.join(HOME, ".mission-control"))
 HISTORY = os.environ.get("USAGE_WATCH_HISTORY") or os.path.join(
     HOME, ".usage-snapshot", "headroom-history.jsonl")
 HEADROOM = os.path.join(MC_HOME, "data", "headroom.json")

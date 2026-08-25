@@ -55,6 +55,9 @@ if pause and not os.path.exists(pause+".used"):
     deadline=time.time()+10
     while not os.path.exists(pause+".release") and time.time()<deadline:
         time.sleep(0.01)
+sleep_for=os.environ.get("MORNING_BRIEF_SENDER_SLEEP")
+if sleep_for:
+    time.sleep(float(sleep_for))
 stamp=capture+".failed"
 if not os.environ.get("MORNING_BRIEF_SENDER_DISABLE_FAIL") and n==2 and not os.path.exists(stamp):
     open(stamp,"w").write("1")
@@ -185,8 +188,8 @@ assert len(calls)-before==receipt["total_chunks"],(len(calls)-before,receipt["to
 PY
 then pass "concurrent senders emit one external send per chunk"
 else fail "concurrent senders emit one external send per chunk"; fi
-if [ ! -d "$MISSION_CONTROL_HOME/morning-brief/delivery.lock" ]; then pass "delivery lock is released"
-else fail "delivery lock was left behind"; fi
+if [ ! -e "$MISSION_CONTROL_HOME/morning-brief/delivery.lock.json" ]; then pass "delivery lease metadata is released"
+else fail "delivery lease metadata was left behind"; fi
 
 # Standalone compose shares the same state lock. If it arrives while send is
 # paused, it must wait and then preserve the completed brief/receipt identity.
@@ -227,6 +230,94 @@ print("diagnostic sender calls",len(json.load(open(sys.argv[2]))))
 PY
   fail "compose and send left incoherent brief state"
 fi
+
+# Delivery locking must be process-owned, not mtime-owned. A durable stale lease
+# from a dead/reused PID is reclaimable; an actually live advisory-lock owner is
+# never stolen just because its metadata gets old.
+if PYTHONPATH="$ROOT/scripts" python3 - "$BRIEF" <<'PY'
+import importlib.machinery, json, os, subprocess, sys, time
+brief = sys.argv[1]
+mod = importlib.machinery.SourceFileLoader("morning_brief_lease", brief).load_module()
+os.makedirs(mod._brief_home(), exist_ok=True)
+
+# A forged legacy lease is not an owner. The new holder must acquire despite it.
+lease = mod._lease_path()
+with open(lease, "w") as h:
+    json.dump({"owner_pid": os.getpid(), "owner_start": "reused-pid", "renewed_at": 1}, h)
+held = mod._acquire_delivery_lock(timeout_s=0.2)
+assert held, "stale/reused lease was not reclaimed"
+meta = mod._load_json(lease)
+assert meta and meta.get("owner_pid") == os.getpid() and meta.get("owner_start") != "reused-pid", meta
+assert mod._renew_delivery_lock(), "current owner could not renew"
+mod._release_delivery_lock()
+assert not os.path.exists(lease), "owner lease metadata was not released"
+
+# A second OS process holds the advisory lock. It MUST not be stolen even if its
+# lease renewal age is intentionally ancient; once it exits, normal acquisition works.
+ready = os.path.join(mod._brief_home(), "holder-ready")
+holder = r'''
+import importlib.machinery, os, sys, time
+m=importlib.machinery.SourceFileLoader("holder",sys.argv[1]).load_module()
+assert m._acquire_delivery_lock(timeout_s=.2)
+open(sys.argv[2],"w").write("ready")
+time.sleep(.6)
+m._release_delivery_lock()
+'''
+p = subprocess.Popen([sys.executable, "-c", holder, brief, ready], env=os.environ.copy())
+deadline = time.time() + 3
+while not os.path.exists(ready) and time.time() < deadline:
+    time.sleep(.01)
+assert os.path.exists(ready), "holder did not acquire"
+assert mod._acquire_delivery_lock(timeout_s=0.1) is None, "live lease was stolen"
+p.wait(timeout=3)
+assert p.returncode == 0, p.returncode
+assert mod._acquire_delivery_lock(timeout_s=0.2), "released OS lock stayed unavailable"
+mod._release_delivery_lock()
+PY
+then pass "delivery lease rejects stale metadata but never steals a live owner"
+else fail "delivery lease ownership safety failed"; fi
+
+# A sender timeout is intrinsically ambiguous: Telegram/mobile-connect could have
+# accepted the chunk after this process lost its response. Normal --send must not
+# retry it; --reconcile may replay the exact stable batch/part key, which the
+# transport converts to delivered or deduplicated without a duplicate message.
+rm -f "$MISSION_CONTROL_HOME/morning-brief/latest.json" "$MISSION_CONTROL_HOME/morning-brief/latest.md" \
+      "$MISSION_CONTROL_HOME/morning-brief/delivery-cursor.json"
+BEFORE_UNCERTAIN="$(python3 -c 'import json,sys; print(len(json.load(open(sys.argv[1]))))' "$SEND_CAPTURE")"
+export MORNING_BRIEF_SENDER_DISABLE_FAIL=1 MORNING_BRIEF_SENDER_SLEEP=1.2 MORNING_BRIEF_SEND_TIMEOUT_S=1
+MORNING_BRIEF_NOW_EPOCH=1783933200 "$BRIEF" --send >/dev/null 2>&1; UNCERTAIN_RC=$?
+unset MORNING_BRIEF_SENDER_SLEEP MORNING_BRIEF_SEND_TIMEOUT_S
+UNCERTAIN_ID="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["brief_id"])' "$MISSION_CONTROL_HOME/morning-brief/latest.json")"
+UNCERTAIN_RECEIPT="$MISSION_CONTROL_HOME/morning-brief/delivery/$UNCERTAIN_ID.json"
+AFTER_UNCERTAIN="$(python3 -c 'import json,sys; print(len(json.load(open(sys.argv[1]))))' "$SEND_CAPTURE")"
+MORNING_BRIEF_NOW_EPOCH=1783933200 "$BRIEF" --send >/dev/null 2>&1; HELD_RC=$?
+AFTER_HELD="$(python3 -c 'import json,sys; print(len(json.load(open(sys.argv[1]))))' "$SEND_CAPTURE")"
+MORNING_BRIEF_NOW_EPOCH=1783933200 "$BRIEF" --send --reconcile >/dev/null 2>&1; RECONCILE_RC=$?
+if python3 - "$UNCERTAIN_RECEIPT" "$BEFORE_UNCERTAIN" "$AFTER_UNCERTAIN" "$AFTER_HELD" "$SEND_CAPTURE" "$UNCERTAIN_RC" "$HELD_RC" "$RECONCILE_RC" <<'PY'
+import json,sys
+r=json.load(open(sys.argv[1])); before,after,held=map(int,sys.argv[2:5]); calls=json.load(open(sys.argv[5]))
+assert int(sys.argv[6]) != 0, sys.argv[6]
+assert int(sys.argv[7]) == 75, sys.argv[7]
+assert int(sys.argv[8]) == 0, sys.argv[8]
+assert r["state"] == "delivered", r
+assert r["chunks"][0]["idempotency_key"]
+assert after == before + 1, (before,after)
+assert held == after, (held,after)  # ordinary --send performed no blind retry
+assert len(calls) == after + r["total_chunks"], (len(calls),after,r["total_chunks"])
+PY
+then pass "uncertain sends require explicit duplicate-safe reconciliation"
+else fail "uncertain send was retried or reconciliation was not idempotent"; fi
+unset MORNING_BRIEF_SENDER_DISABLE_FAIL
+
+# A damaged durable receipt must fail closed before any transport call; replacing
+# it would manufacture fresh keys after an unknown prior delivery.
+printf '{not-json' > "$UNCERTAIN_RECEIPT"
+BEFORE_CORRUPT="$(python3 -c 'import json,sys; print(len(json.load(open(sys.argv[1]))))' "$SEND_CAPTURE")"
+MORNING_BRIEF_NOW_EPOCH=1783933200 "$BRIEF" --send >/dev/null 2>&1; CORRUPT_RC=$?
+AFTER_CORRUPT="$(python3 -c 'import json,sys; print(len(json.load(open(sys.argv[1]))))' "$SEND_CAPTURE")"
+if [ "$CORRUPT_RC" -ne 0 ] && [ "$BEFORE_CORRUPT" = "$AFTER_CORRUPT" ]; then
+  pass "malformed delivery receipt fails closed without a resend"
+else fail "malformed receipt was overwritten or sent"; fi
 
 printf '%s\n' "----"
 if [ "$FAIL" -eq 0 ]; then echo "ALL PASS"; exit 0; fi

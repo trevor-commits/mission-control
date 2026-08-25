@@ -34,8 +34,16 @@ import subprocess
 import sys
 import time
 
+# Shared feed vocabulary (feed_health) ships as a sibling runtime in BOTH the
+# repo scripts/ layout and the installed bin/ layout. Repair decisions MUST use
+# the same freshness rules as consumers, or a feed the panel calls stale reads
+# healthy here and never gets repaired.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from mission_control_common import feed_health, next_local_midnight  # noqa: E402
+
 HOME = os.path.expanduser("~")
-MC_HOME = os.environ.get("MISSION_CONTROL_HOME") or os.path.join(HOME, ".mission-control")
+MC_HOME = os.path.expanduser(os.environ.get("MISSION_CONTROL_HOME") or
+                             os.path.join(HOME, ".mission-control"))
 DATA = os.path.join(MC_HOME, "data")
 STATE_DIR = os.path.join(MC_HOME, "self-repair")
 HEARTBEAT = os.path.join(STATE_DIR, "heartbeat.json")
@@ -123,29 +131,48 @@ def plan_jobs(automation, attempts):
 
 
 def plan_feeds(now, data_dir=DATA, cadence=None, dashboard_bin=DASHBOARD_BIN):
-    """Feeds whose collector has fallen well behind its own cadence."""
+    """Feeds a consumer would distrust right now.
+
+    Uses the shared feed_health verdict (the same rules the dashboard and panel
+    apply) instead of a private age approximation. Anything that is missing,
+    malformed, error, skew, or stale is a repair candidate; only genuinely
+    fresh/aging feeds are left alone. Collectors run --strict so a repair that
+    produced an ok:false or partial envelope counts as failed, not repaired.
+    """
     out = []
-    for feed, secs in sorted((cadence or CADENCE).items()):
-        env = load_json(os.path.join(data_dir, "%s.json" % feed))
-        argv = [dashboard_bin, "collect", feed, "--force"]
+    cadences = dict(cadence or CADENCE)
+    for feed, secs in sorted(cadences.items()):
+        path = os.path.join(data_dir, "%s.json" % feed)
+        argv = [dashboard_bin, "collect", feed, "--force", "--strict"]
         undo = "none needed - re-running a collector is idempotent"
-        if env is None:
-            out.append({"kind": "feed", "id": feed, "what": "%s feed is missing" % feed,
-                        "op": "exec", "argv": argv, "undo": undo})
+        try:
+            with open(path, "r", errors="replace") as handle:
+                env = json.load(handle)
+        except (OSError, ValueError):
+            env = None
+        if not isinstance(env, dict):
+            env = None
+        verdict = feed_health(env, secs, int(now), stale_multiple=STALE_MULTIPLE)
+        if verdict["state"] == "fresh":
             continue
-        # A daily product stamping valid_until is fresh for its whole window even
-        # when it is hours old; feed_health() treats it that way and so must this.
-        if env.get("valid_until") is not None:
+        if verdict["state"] == "aging" and env is not None and env.get("ok") is True:
+            # Within cadence and healthy: an in-flight collection is never
+            # fought with a second run.
             continue
-        epoch = env.get("generated_epoch")
-        if not isinstance(epoch, (int, float)) or isinstance(epoch, bool):
-            continue
-        age = now - epoch
-        if age <= secs * STALE_MULTIPLE:
-            continue
+        what_map = {
+            "missing": "%s feed is missing",
+            "error": "%s feed envelope is malformed or reports failure",
+            "skew": "%s feed timestamp is in the future",
+            "stale": "%%s feed is stale (cadence %ds)" % secs,
+        }
+        template = what_map.get(verdict["state"])
+        if template is None:
+            # Unknown state: treat as stale so it still gets a bounded retry
+            # rather than sitting unrepaired forever.
+            template = "%s feed is untrusted"
         out.append({
             "kind": "feed", "id": feed,
-            "what": "%s feed is %dm stale (cadence %ds)" % (feed, age // 60, secs),
+            "what": template % feed,
             "op": "exec", "argv": argv, "undo": undo,
         })
     return out
@@ -175,6 +202,34 @@ def perform(item, timeout_s=120):
     if done.returncode == 0:
         return True, ""
     return False, (done.stderr or b"").decode("utf-8", "replace").strip()[:200]
+
+
+def verify_repair(item, data_dir=DATA):
+    """Confirm a repair actually produced a trustworthy feed.
+
+    Exit 0 from `collect --strict` is strong evidence, but the envelope on disk
+    is the contract consumers read. Re-read it: a repair that still leaves a
+    missing/malformed/stale feed is a failure, and its retry counter must
+    advance instead of resetting.
+    """
+    if item.get("kind") != "feed":
+        return True, ""
+    feed = item.get("id")
+    secs = CADENCE.get(feed)
+    if not isinstance(secs, int) or secs <= 0:
+        return False, "unknown cadence for repaired feed"
+    path = os.path.join(data_dir, "%s.json" % feed)
+    try:
+        with open(path, "r", errors="replace") as handle:
+            env = json.load(handle)
+    except (OSError, ValueError):
+        env = None
+    if not isinstance(env, dict):
+        env = None
+    verdict = feed_health(env, secs, int(time.time()), stale_multiple=STALE_MULTIPLE)
+    if verdict["state"] in ("fresh", "aging"):
+        return True, ""
+    return False, "post-repair verdict %s" % verdict["state"]
 
 
 def main(argv=None):
@@ -207,9 +262,19 @@ def main(argv=None):
             append_report(REPORT, dict(item, applied=False, ok=None, t=now))
             continue
         ok, err = perform(item)
+        if ok:
+            # A collector that exits 0 but leaves a bad envelope is not a
+            # repair. Verify the on-disk contract before counting success.
+            ok, err2 = verify_repair(item)
+            if not ok:
+                err = err2 or "repair did not produce a trusted feed"
         append_report(REPORT, dict(item, applied=True, ok=ok, error=err, t=now))
-        (done if ok else failed).append(item)
-        attempts[item["id"]] = 0 if ok else attempts.get(item["id"], 0) + 1
+        if ok:
+            (done).append(item)
+            attempts[item["id"]] = 0
+        else:
+            failed.append(dict(item, _error=err))
+            attempts[item["id"]] = attempts.get(item["id"], 0) + 1
 
     write_json(HEARTBEAT, {
         "last_run_epoch": now, "dry_run": not args.apply,
@@ -223,18 +288,25 @@ def main(argv=None):
                           "fixable": fixable, "reports": reports,
                           "repaired": done, "failed": failed},
                          sort_keys=True, indent=2, default=str))
-        return 0
+        # Dry-run planning is informational; an applied run that could not
+        # complete every repair must say so in its exit code.
+        return 1 if (args.apply and failed) else 0
 
     verb = "Would fix" if not args.apply else "Fixed"
     if not fixable and not reports:
         print("self-repair: nothing to do")
-    for item in fixable:
-        mark = "" if not args.apply else (" ok" if item in done else " FAILED")
-        print("%s: %s%s" % (verb, item["what"], mark))
+    for item in done:
+        print("%s: %s ok" % (verb, item["what"]))
         print("      %s" % describe(item))
+    for item in failed:
+        print("Fixed: %s FAILED" % item["what"])
+        print("      %s" % describe(item))
+        print("      failure: %s" % item.get("_error", "unknown"))
     for item in reports:
         print("Needs you: %s - %s" % (item["what"], item["why_report"]))
-    return 0
+    # A dry run with planned repairs is still success (nothing was attempted).
+    # An applied run with failures is NOT: the scheduler must see it.
+    return 1 if (args.apply and failed) else 0
 
 
 def self_test():
@@ -276,25 +348,69 @@ def self_test():
               env(name="com.x.job", label="J", state="red", loaded=True), {}) if p.get("op")))
 
     import tempfile
-    now = int(time.time())
+    local = time.localtime()
+    now = int(time.mktime((local.tm_year, local.tm_mon, local.tm_mday,
+                           12, 0, 0, 0, 0, -1)))
     with tempfile.TemporaryDirectory() as tmp:
-        def feed(name, age, extra=None):
-            body = {"generated_epoch": now - age}
-            body.update(extra or {})
+        def feed(name, body):
             with open(os.path.join(tmp, "%s.json" % name), "w") as handle:
                 json.dump(body, handle)
 
-        feed("attention", 60)
-        feed("decisions", 10000)
+        def envelope(age, ok=True, **kw):
+            body = {"schema": 1, "feed": "x", "ok": ok,
+                    "generated_epoch": now - age, "cadence_s": 300,
+                    "data": {}}
+            body.update(kw)
+            return body
+
+        feed("attention", envelope(60))
+        feed("decisions", envelope(10000))
         # A daily product stamping valid_until is fresh for its whole window.
-        feed("brief", 30000, {"valid_until": now + 3600})
-        cadence = {"attention": 300, "decisions": 300, "brief": 300}
+        feed("brief", envelope(30000, cadence_s=CADENCE["brief"],
+                               valid_until=next_local_midnight(now - 30000)))
+        # Malformed numerics and future timestamps are repair candidates now.
+        feed("usage", {"schema": 1, "ok": True, "cadence_s": 1800,
+                       "generated_epoch": "not-a-number", "data": {}})
+        feed("git", envelope(-5000, cadence_s=900))
+        # ok:false with fresh timestamp: strict-repair candidate.
+        feed("automation", envelope(30, ok=False))
+        cadence = {"attention": 300, "decisions": 300, "brief": 300,
+                   "usage": 1800, "git": 900, "automation": 300}
         got = set(p["id"] for p in plan_feeds(now, tmp, cadence, "/bin/true"))
         check("a badly stale feed is re-collected", "decisions" in got)
         check("a fresh feed is left alone", "attention" not in got)
-        check("a daily product with valid_until is not treated as stale", "brief" not in got)
+        check("a daily product with valid_until is not treated as stale",
+              "brief" not in got)
+        check("a malformed generated_epoch is a repair candidate",
+              "usage" in got)
+        check("a future timestamp is a repair candidate", "git" in got)
+        check("an ok:false envelope is a repair candidate even when fresh",
+              "automation" in got)
+        check("every feed repair runs --strict",
+              all(p["argv"][-1] == "--strict"
+                  for p in plan_feeds(now, tmp, cadence, "/bin/true")))
 
-    print("%d passed; %d failed" % (10 - len(failures), len(failures)))
+    # verify_repair: the on-disk contract decides success, not collector exit.
+    with tempfile.TemporaryDirectory() as tmp:
+        good = {"schema": 1, "feed": "attention", "ok": True,
+                "generated_epoch": int(time.time()), "cadence_s": 300,
+                "data": {}}
+        with open(os.path.join(tmp, "attention.json"), "w") as handle:
+            json.dump(good, handle)
+        ok, err = verify_repair({"kind": "feed", "id": "attention"}, data_dir=tmp)
+        check("a repaired fresh feed verifies", ok and not err)
+        bad = dict(good, generated_epoch=int(time.time()) - 100000)
+        with open(os.path.join(tmp, "attention.json"), "w") as handle:
+            json.dump(bad, handle)
+        ok, err = verify_repair({"kind": "feed", "id": "attention"}, data_dir=tmp)
+        check("a repaired-but-still-stale feed fails verification",
+              not ok and err)
+        ok, err = verify_repair({"kind": "job", "id": "com.x"},
+                                data_dir=tmp)
+        check("non-feed repairs skip envelope verification", ok)
+
+    total = 17
+    print("%d passed; %d failed" % (total - len(failures), len(failures)))
     return 1 if failures else 0
 
 

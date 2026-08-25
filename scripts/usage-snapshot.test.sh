@@ -696,6 +696,38 @@ c32() {
   else no "configured credit labels reached the usage page as raw HTML"; fi
 }
 
+c33() { # hostile cached GLM numerics fail closed (never ok/live)
+  new_env
+  python3 -c 'import json,sys,time; json.dump({"generated_epoch":int(time.time()),"data":{"rows":[
+    {"id":"glm:week","used_pct":"not-a-number","health":"ok","confidence":"live"},
+    {"id":"glm:5h","used_pct":-5,"health":"ok","confidence":"live"},
+    {"id":"glm:month","used_pct":140,"health":"ok","confidence":"live"}]}},open(sys.argv[1],"w"))' "$T/headroom.json"
+  GLM_HEADROOM_FILE="$T/headroom.json" GLM_HEADROOM_MAX_AGE_S=60 \
+  USAGE_SNAPSHOT_DIR="$T/state" USAGE_CREDITS_FILE="$T/missing-credits.json" \
+  CODEX_SESSIONS_DIR="$T/codex" CLAUDE_GLM_BIN="$T/bin/claude-glm" \
+  COPILOT_DB="$T/missing-copilot.db" HERMES_BIN="$T/bin/hermes" \
+    /bin/bash "$USAGE" --no-ccusage >"$T/out" 2>"$T/err"
+  if [ $? -eq 0 ] \
+     && jq -e 'any(.providers[]; .provider=="glm" and .window=="weekly" and .used_pct==null and .confidence=="stale" and (.notes|test("malformed used_pct")))' "$T/out" >/dev/null; then
+    ok "a string used_pct fails closed to null/stale"
+  else no "a string used_pct rode through as live"; fi
+}
+
+c34() { # a valid cached GLM row still reads ok/live after the validation gate
+  new_env
+  python3 -c 'import json,sys,time; json.dump({"generated_epoch":int(time.time()),"data":{"rows":[
+    {"id":"glm:week","used_pct":53,"health":"ok","confidence":"live","resets_epoch":int(time.time())+86400}]}},open(sys.argv[1],"w"))' "$T/headroom.json"
+  GLM_HEADROOM_FILE="$T/headroom.json" GLM_HEADROOM_MAX_AGE_S=60 \
+  USAGE_SNAPSHOT_DIR="$T/state" USAGE_CREDITS_FILE="$T/missing-credits.json" \
+  CODEX_SESSIONS_DIR="$T/codex" CLAUDE_GLM_BIN="$T/bin/claude-glm" \
+  COPILOT_DB="$T/missing-copilot.db" HERMES_BIN="$T/bin/hermes" \
+    /bin/bash "$USAGE" --no-ccusage >"$T/out" 2>"$T/err"
+  if [ $? -eq 0 ] \
+     && jq -e 'any(.providers[]; .provider=="glm" and .window=="weekly" and .used_pct==53 and .health=="ok" and .confidence=="live")' "$T/out" >/dev/null; then
+    ok "a valid cached row still reads ok/live"
+  else no "the validation gate broke a valid cached row"; fi
+}
+
 c1
 c2
 c3
@@ -728,6 +760,8 @@ c29
 c30
 c31
 c32
+c33
+c34
 
 echo "----"
 echo "PASS=$PASS FAIL=$FAIL"

@@ -7,6 +7,7 @@ Normal compose atomically writes latest.md + latest.json; --print is preview;
 --refresh-local reconciles the local view without sending or changing cursors.
 """
 
+import fcntl
 import hashlib
 import json
 import os
@@ -18,8 +19,9 @@ import time
 
 from mission_control_common import (ACTION, IDENTIFIER, NARRATIVE, NOTIFICATION,
                                     DESKTOP_GLANCE_CTA, EgressCounters, feed_health,
-                                    next_local_midnight, sanitize_chunks,
-                                    sanitize_text, safe_text, same_local_day)
+                                    next_local_midnight, process_start_identity,
+                                    sanitize_chunks, sanitize_text, safe_text,
+                                    same_local_day)
 
 SCHEMA = 1
 INPUTS = {
@@ -642,10 +644,33 @@ def _sender_bin():
         "/Users/gillettes/Coding Projects/mobile-connect/mobile-connect.sh"))
 
 
+def _delivery_send_timeout_s():
+    """Bound external delivery waits; test seam stays safely capped."""
+    try:
+        timeout = int(os.environ.get("MORNING_BRIEF_SEND_TIMEOUT_S", "30"))
+    except ValueError:
+        timeout = 30
+    return min(60, max(1, timeout))
+
+
+def _delivery_idempotency_key(brief_id, index, total, content_hash):
+    """Stable receipt key bound to exactly one mobile-connect batch part."""
+    material = "morning-brief/v1\0%s\0%d\0%d\0%s" % (
+        brief_id, int(index), int(total), content_hash)
+    return hashlib.sha256(material.encode("utf-8")).hexdigest()
+
+
 def _send_message(message, brief_id, index, total):
+    """Return (confirmed|failed|uncertain, content-free reason).
+
+    The mobile-connect contract makes `--batch brief_id --part n/total` its
+    duplicate-safe external key: a proven replay returns `deduplicated`. A local
+    timeout or spawn interruption cannot prove whether that key was accepted, so
+    it is deliberately *uncertain*, never an ordinary retry.
+    """
     sender = _sender_bin()
     if not os.path.isfile(sender) or not os.access(sender, os.X_OK):
-        return False
+        return "failed", "sender unavailable"
     try:
         completed = subprocess.run([
             sender, "emit",
@@ -658,12 +683,20 @@ def _send_message(message, brief_id, index, total):
             "--text", message,
         ],
                                    stdout=subprocess.PIPE,
-                                   stderr=subprocess.DEVNULL, timeout=30)
-        return (completed.returncode == 0 and
-                completed.stdout.decode("utf-8", "replace").strip() in
-                ("delivered", "deduplicated"))
-    except (OSError, subprocess.TimeoutExpired):
-        return False
+                                   stderr=subprocess.DEVNULL,
+                                   timeout=_delivery_send_timeout_s())
+    except subprocess.TimeoutExpired:
+        return "uncertain", "sender timeout; delivery may need reconciliation"
+    except OSError:
+        return "uncertain", "sender invocation interrupted; delivery may need reconciliation"
+    status = completed.stdout.decode("utf-8", "replace").strip()
+    if completed.returncode == 0 and status in ("delivered", "deduplicated"):
+        return "confirmed", status
+    if completed.returncode < 0:
+        return "uncertain", "sender interrupted by signal"
+    if completed.returncode == 0:
+        return "failed", "sender returned unconfirmed status"
+    return "failed", "sender exited %d" % completed.returncode
 
 
 def _split_utf8(value, limit):
@@ -737,41 +770,149 @@ def _update_latest_delivery(sidecar, state, confirmed, total):
     _atomic_json(os.path.join(_brief_home(), "latest.json"), sidecar)
 
 
-def _acquire_delivery_lock():
+def _lock_path():
+    # This regular file is deliberately retained. Removing it after unlock can
+    # race a new holder onto a replaced inode, giving two processes separate
+    # locks. The advisory lock, not file existence, is the authority.
+    return os.path.join(_brief_home(), "delivery.lock")
+
+
+def _lease_path():
+    # Human/audit-visible owner metadata. It complements the kernel-held lock;
+    # it is never used as an mtime-only authority to steal work.
+    return os.path.join(_brief_home(), "delivery.lock.json")
+
+
+_DELIVERY_LOCK_FD = None
+_DELIVERY_LOCK_TOKEN = None
+
+
+def _acquire_delivery_lock(timeout_s=60):
+    """Acquire a process-owned delivery lock and publish a renewable lease.
+
+    `flock` is the actual ownership primitive: the kernel drops it when the
+    owner dies, so a stale JSON file cannot be mistaken for a live lock or stolen
+    from a slow-but-alive sender. The lease adds PID + process-start identity for
+    inspection and each delivery phase renews it. An old lease becomes
+    reclaimable only because the OS has already proved its owner gone by
+    releasing the advisory lock.
+    """
+    global _DELIVERY_LOCK_FD, _DELIVERY_LOCK_TOKEN
+    if _DELIVERY_LOCK_FD is not None:
+        return None  # not re-entrant; callers must use their existing lease
+    try:
+        timeout_s = float(timeout_s)
+    except (TypeError, ValueError):
+        timeout_s = 60
+    timeout_s = min(60, max(0, timeout_s))
     os.makedirs(_brief_home(), mode=0o700, exist_ok=True)
-    lock = os.path.join(_brief_home(), "delivery.lock")
-    deadline = time.monotonic() + 60
-    while True:
-        try:
-            os.mkdir(lock, 0o700)
-            return lock
-        except FileExistsError:
+    flags = os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0)
+    fd = None
+    try:
+        fd = os.open(_lock_path(), flags, 0o600)
+        os.fchmod(fd, 0o600)
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise OSError("delivery lock is not a regular file")
+    except OSError:
+        if fd is not None:
             try:
-                if time.time() - os.path.getmtime(lock) > 600:
-                    os.rmdir(lock)
-                    continue
+                os.close(fd)
             except OSError:
                 pass
-            if time.monotonic() >= deadline:
-                return None
-            time.sleep(0.05)
+        return None
+    deadline = time.monotonic() + timeout_s
+    while True:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            break
+        except BlockingIOError:
+            pass
+        except OSError:
+            os.close(fd)
+            return None
+        if time.monotonic() >= deadline:
+            os.close(fd)
+            return None
+        time.sleep(min(0.05, max(0.001, deadline - time.monotonic())))
+    probe_ok, start = process_start_identity(os.getpid())
+    if not probe_ok or not start:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        os.close(fd)
+        return None
+    token = hashlib.sha256(os.urandom(32)).hexdigest()
+    now = int(time.time())
+    try:
+        _atomic_json(_lease_path(), {
+            "schema": 2,
+            "owner_pid": os.getpid(),
+            "owner_start": start,
+            "token": token,
+            "acquired_at": now,
+            "renewed_at": now,
+        })
+    except OSError:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        os.close(fd)
+        return None
+    _DELIVERY_LOCK_FD = fd
+    _DELIVERY_LOCK_TOKEN = token
+    return _lease_path()
 
 
-def deliver():
+def _renew_delivery_lock():
+    """Refresh lease metadata without weakening OS-level ownership."""
+    if _DELIVERY_LOCK_FD is None or not _DELIVERY_LOCK_TOKEN:
+        return False
+    current = _load_json(_lease_path())
+    if (not isinstance(current, dict) or
+            current.get("owner_pid") != os.getpid() or
+            current.get("token") != _DELIVERY_LOCK_TOKEN):
+        return False
+    current["renewed_at"] = int(time.time())
+    try:
+        _atomic_json(_lease_path(), current)
+    except OSError:
+        return False
+    return True
+
+
+def _release_delivery_lock():
+    """Release only this process's metadata, then always release the FD."""
+    global _DELIVERY_LOCK_FD, _DELIVERY_LOCK_TOKEN
+    fd, token = _DELIVERY_LOCK_FD, _DELIVERY_LOCK_TOKEN
+    _DELIVERY_LOCK_FD = None
+    _DELIVERY_LOCK_TOKEN = None
+    if fd is None:
+        return
+    try:
+        current = _load_json(_lease_path())
+        if isinstance(current, dict) and current.get("token") == token:
+            try:
+                os.unlink(_lease_path())
+            except OSError:
+                pass
+    finally:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+        finally:
+            os.close(fd)
+
+
+def deliver(reconcile=False):
     lock = _acquire_delivery_lock()
     if not lock:
         sys.stderr.write("morning-brief: delivery lock busy\n")
         return 75
     try:
-        return _deliver_locked()
+        return _deliver_locked(reconcile=reconcile)
     finally:
-        try:
-            os.rmdir(lock)
-        except OSError:
-            pass
+        _release_delivery_lock()
 
 
-def _deliver_locked():
+def _deliver_locked(reconcile=False):
+    if not _renew_delivery_lock():
+        sys.stderr.write("morning-brief: delivery lease unavailable\n")
+        return 1
     _reset_egress_counters()
     now = _now()
     latest_path = os.path.join(_brief_home(), "latest.json")
@@ -784,7 +925,8 @@ def _deliver_locked():
     except (TypeError, ValueError):
         compose_age, max_compose_age = 10**12, 3600
     retrying = bool(prior_receipt and prior_receipt.get("state") in
-                    ("failed", "partial", "pending"))
+                    ("failed", "partial", "pending", "in_flight",
+                     "needs_reconciliation"))
     if (not sidecar or not _same_local_day(sidecar.get("generated_epoch"), now) or
             (not retrying and prior_receipt is None and
              (compose_age > max_compose_age or not sidecar.get("markdown_sha256")))):
@@ -793,13 +935,20 @@ def _deliver_locked():
             return rc
         sidecar = _load_json(latest_path)
         _reset_egress_counters()
+        if not _renew_delivery_lock():
+            sys.stderr.write("morning-brief: delivery lease unavailable after compose\n")
+            return 1
     if not sidecar or not sidecar.get("brief_id"):
         sys.stderr.write("morning-brief: delivery unavailable\n")
         return 1
     brief_id = sidecar["brief_id"]
     receipt_path = _receipt_path(brief_id)
+    receipt_present = os.path.lexists(receipt_path)
     receipt = _load_json(receipt_path)
-    if receipt and receipt.get("state") == "delivered":
+    if receipt_present and not isinstance(receipt, dict):
+        sys.stderr.write("morning-brief: delivery receipt unreadable or malformed\n")
+        return 1
+    if receipt is not None and receipt.get("state") == "delivered":
         _update_latest_delivery(sidecar, "delivered", receipt.get("confirmed_chunks", 0),
                                 receipt.get("total_chunks", 0))
         print("delivery already complete: %s" % brief_id)
@@ -815,45 +964,141 @@ def _deliver_locked():
         sys.stderr.write("morning-brief: delivery content mismatch\n")
         return 1
     chunk_bytes = _delivery_chunk_limit()
+    if receipt is not None:
+        stored_chunk_bytes = receipt.get("chunk_bytes")
+        if type(stored_chunk_bytes) is not int or not 200 <= stored_chunk_bytes <= 3900:
+            sys.stderr.write("morning-brief: delivery receipt has invalid chunk boundary\n")
+            return 1
+        # Existing receipts bind exact bytes. An environment change must never
+        # silently repartition an in-flight batch and create new external keys.
+        chunk_bytes = stored_chunk_bytes
     chunks = _delivery_chunks(brief_id, markdown, chunk_bytes)
     sidecar.setdefault("egress_counters", {})["delivery"] = _EGRESS_COUNTERS.snapshot()
-    if not chunks:
+    if not chunks or len(chunks) > 64:
         _atomic_json(latest_path, sidecar)
         sys.stderr.write("morning-brief: notification content rejected\n")
         return 1
     expected = [{"index": row["index"], "content_hash": row["content_hash"],
+                 "idempotency_key": _delivery_idempotency_key(
+                     brief_id, row["index"], len(chunks), row["content_hash"]),
                  "state": "pending", "attempts": 0} for row in chunks]
-    if not receipt or receipt.get("total_chunks") != len(chunks) or [
-            row.get("content_hash") for row in receipt.get("chunks", [])] != [
-                row["content_hash"] for row in expected]:
-        receipt = {"schema": 1, "brief_id": brief_id, "state": "pending",
+    expected_hashes = [row["content_hash"] for row in expected]
+    idempotency = {"scheme": "mobile-connect-batch-part/v1", "batch": brief_id}
+    if receipt is not None:
+        saved_chunks = receipt.get("chunks")
+        if (receipt.get("brief_id") != brief_id or
+                receipt.get("markdown_sha256") != actual_hash or
+                receipt.get("total_chunks") != len(chunks) or
+                not isinstance(saved_chunks, list) or
+                [row.get("content_hash") if isinstance(row, dict) else None
+                 for row in saved_chunks] != expected_hashes):
+            # Never reset a mismatched receipt: it might represent chunks that
+            # reached the phone before an upgrade/configuration change.
+            sys.stderr.write("morning-brief: delivery receipt identity mismatch\n")
+            return 1
+        saved_idempotency = receipt.get("idempotency")
+        if saved_idempotency not in (None, idempotency):
+            sys.stderr.write("morning-brief: delivery receipt idempotency mismatch\n")
+            return 1
+        for saved, wanted in zip(saved_chunks, expected):
+            existing_key = saved.get("idempotency_key")
+            if existing_key not in (None, wanted["idempotency_key"]):
+                sys.stderr.write("morning-brief: delivery chunk key mismatch\n")
+                return 1
+            saved["idempotency_key"] = wanted["idempotency_key"]
+        receipt["schema"] = 2
+        receipt["idempotency"] = idempotency
+        receipt["updated_at"] = now
+        _atomic_json(receipt_path, receipt)
+    else:
+        receipt = {"schema": 2, "brief_id": brief_id, "state": "pending",
                    "confirmed_chunks": 0, "total_chunks": len(chunks),
                    "chunks": expected, "markdown_sha256": actual_hash,
-                   "chunk_bytes": chunk_bytes,
+                   "chunk_bytes": chunk_bytes, "idempotency": idempotency,
                    "created_at": now, "updated_at": now}
         _atomic_json(receipt_path, receipt)
 
-    failed = False
     for message, state in zip(chunks, receipt["chunks"]):
-        if state.get("state") == "confirmed":
+        current_state = state.get("state")
+        if current_state == "confirmed":
             continue
+        if current_state in ("sending", "uncertain") and not reconcile:
+            # A crash after the durable pre-send claim, or a timed-out sender,
+            # leaves an unknowable external result. Stop before any blind retry.
+            state["state"] = "uncertain"
+            state.setdefault("last_error", "external delivery outcome unknown")
+            receipt["confirmed_chunks"] = sum(
+                1 for row in receipt["chunks"] if row.get("state") == "confirmed")
+            receipt["state"] = "needs_reconciliation"
+            receipt["updated_at"] = now
+            _atomic_json(receipt_path, receipt)
+            _update_latest_delivery(sidecar, "needs_reconciliation",
+                                    receipt["confirmed_chunks"], receipt["total_chunks"])
+            sys.stderr.write("morning-brief: delivery needs reconciliation; rerun with --send --reconcile\n")
+            return 75
+        if current_state not in ("pending", "failed", "sending", "uncertain"):
+            state["state"] = "uncertain"
+            state["last_error"] = "unrecognized persisted delivery state"
+            receipt["state"] = "needs_reconciliation"
+            receipt["updated_at"] = now
+            _atomic_json(receipt_path, receipt)
+            _update_latest_delivery(sidecar, "needs_reconciliation",
+                                    receipt.get("confirmed_chunks", 0), receipt["total_chunks"])
+            sys.stderr.write("morning-brief: delivery needs reconciliation\n")
+            return 75
+        if not _renew_delivery_lock():
+            sys.stderr.write("morning-brief: delivery lease unavailable before send\n")
+            return 1
         state["attempts"] = int(state.get("attempts") or 0) + 1
         state["last_attempt_at"] = now
-        if _send_message(message["message"], brief_id, message["index"], len(chunks)):
-            state["state"] = "confirmed"
-            state["confirmed_at"] = now
-            state.pop("last_error", None)
-        else:
-            state["state"] = "failed"
-            state["last_error"] = "sender_failed"
-            failed = True
+        if current_state in ("sending", "uncertain"):
+            state["reconciliation_attempts"] = int(state.get("reconciliation_attempts") or 0) + 1
+        # Persist the outbound claim before invoking the transport. If this
+        # process dies in the narrow gap, the successor sees `sending` and takes
+        # the same reconciliation path rather than guessing it is safe to resend.
+        state["state"] = "sending"
         receipt["confirmed_chunks"] = sum(
             1 for row in receipt["chunks"] if row.get("state") == "confirmed")
+        receipt["state"] = "in_flight"
         receipt["updated_at"] = now
-        receipt["state"] = "failed" if failed else "partial"
         _atomic_json(receipt_path, receipt)
-        if failed:
-            break
+        outcome, reason = _send_message(message["message"], brief_id,
+                                        message["index"], len(chunks))
+        if outcome == "confirmed":
+            state["state"] = "confirmed"
+            state["confirmed_at"] = now
+            state["transport_result"] = reason
+            state.pop("last_error", None)
+        elif outcome == "uncertain":
+            state["state"] = "uncertain"
+            state["uncertain_at"] = now
+            state["last_error"] = reason
+            receipt["confirmed_chunks"] = sum(
+                1 for row in receipt["chunks"] if row.get("state") == "confirmed")
+            receipt["state"] = "needs_reconciliation"
+            receipt["updated_at"] = now
+            _atomic_json(receipt_path, receipt)
+            _update_latest_delivery(sidecar, "needs_reconciliation",
+                                    receipt["confirmed_chunks"], receipt["total_chunks"])
+            sys.stderr.write("morning-brief: delivery needs reconciliation; rerun with --send --reconcile\n")
+            return 75
+        else:
+            state["state"] = "failed"
+            state["last_error"] = reason
+            receipt["confirmed_chunks"] = sum(
+                1 for row in receipt["chunks"] if row.get("state") == "confirmed")
+            receipt["state"] = "failed"
+            receipt["updated_at"] = now
+            _atomic_json(receipt_path, receipt)
+            _update_latest_delivery(sidecar, "failed",
+                                    receipt["confirmed_chunks"], receipt["total_chunks"])
+            sys.stderr.write("morning-brief: delivery incomplete\n")
+            return 1
+        receipt["confirmed_chunks"] = sum(
+            1 for row in receipt["chunks"] if row.get("state") == "confirmed")
+        receipt["state"] = "partial"
+        receipt["updated_at"] = now
+        _atomic_json(receipt_path, receipt)
 
     complete = receipt["confirmed_chunks"] == receipt["total_chunks"]
     if complete:
@@ -906,7 +1151,8 @@ def _compose_locked(preview=False):
         delivery_state = ((receipt or {}).get("state") or
                           (existing or {}).get("delivery", {}).get("state"))
         if (existing and _same_local_day(existing.get("generated_epoch"), now) and
-                delivery_state in ("pending", "partial", "failed", "delivered")):
+                delivery_state in ("pending", "partial", "failed", "in_flight",
+                                   "needs_reconciliation", "delivered")):
             if delivery_state == "delivered" and _migrate_valid_until(existing):
                 print("migrated valid_until on %s" % existing_id)
             print("compose deferred while delivery state is %s: %s" %
@@ -982,12 +1228,16 @@ def compose(preview=False):
         sys.stderr.write("morning-brief: state lock busy\n")
         return 75
     try:
-        return _compose_locked(preview=False)
+        if not _renew_delivery_lock():
+            sys.stderr.write("morning-brief: state lease unavailable\n")
+            return 1
+        rc = _compose_locked(preview=False)
+        if rc == 0 and not _renew_delivery_lock():
+            sys.stderr.write("morning-brief: state lease unavailable after compose\n")
+            return 1
+        return rc
     finally:
-        try:
-            os.rmdir(lock)
-        except OSError:
-            pass
+        _release_delivery_lock()
 
 
 def _refresh_local_locked():
@@ -1044,7 +1294,8 @@ def _refresh_local_locked():
         # replacing the bytes that a retry might still need.
         sys.stderr.write("morning-brief: local refresh missing delivery receipt\n")
         return 1
-    if delivery_state in ("pending", "partial", "failed"):
+    if delivery_state in ("pending", "partial", "failed", "in_flight",
+                          "needs_reconciliation"):
         sys.stderr.write(
             "morning-brief: local refresh blocked by delivery state %s\n" %
             delivery_state)
@@ -1054,8 +1305,9 @@ def _refresh_local_locked():
         confirmed = receipt.get("confirmed_chunks")
         total = receipt.get("total_chunks")
         chunks = receipt.get("chunks")
+        schema = receipt.get("schema")
         if (type(confirmed) is not int or type(total) is not int or
-                receipt.get("schema") != 1 or total < 1 or confirmed != total or
+                schema not in (1, 2) or total < 1 or confirmed != total or
                 not isinstance(chunks, list) or len(chunks) != total or
                 any(not isinstance(chunk, dict) or
                     chunk.get("index") != index or
@@ -1065,6 +1317,14 @@ def _refresh_local_locked():
                     for index, chunk in enumerate(chunks, 1))):
             sys.stderr.write("morning-brief: local refresh invalid delivery receipt\n")
             return 1
+        if schema == 2:
+            identity = {"scheme": "mobile-connect-batch-part/v1", "batch": brief_id}
+            if (receipt.get("idempotency") != identity or any(
+                    chunk.get("idempotency_key") != _delivery_idempotency_key(
+                        brief_id, index, total, chunk["content_hash"])
+                    for index, chunk in enumerate(chunks, 1))):
+                sys.stderr.write("morning-brief: local refresh invalid delivery receipt\n")
+                return 1
 
         receipt_sha256 = hashlib.sha256(receipt_bytes).hexdigest()
         receipt_markdown_sha256 = receipt.get("markdown_sha256")
@@ -1186,25 +1446,26 @@ def refresh_local():
         sys.stderr.write("morning-brief: state lock busy\n")
         return 75
     try:
-        return _refresh_local_locked()
+        if not _renew_delivery_lock():
+            sys.stderr.write("morning-brief: state lease unavailable\n")
+            return 1
+        rc = _refresh_local_locked()
+        if rc == 0 and not _renew_delivery_lock():
+            sys.stderr.write("morning-brief: state lease unavailable after refresh\n")
+            return 1
+        return rc
     finally:
-        try:
-            os.rmdir(lock)
-        except OSError:
-            pass
+        _release_delivery_lock()
 
 
 def main(argv):
-    allowed = {"--print", "--send", "--refresh-local"}
+    allowed = {"--print", "--send", "--refresh-local", "--reconcile"}
     unknown = [arg for arg in argv if arg not in allowed]
-    if unknown:
-        sys.stderr.write("usage: morning-brief [--print|--send|--refresh-local]\n")
-        return 2
-    if len(argv) > 1:
-        sys.stderr.write("usage: morning-brief [--print|--send|--refresh-local]\n")
+    if unknown or len(argv) > 2 or ("--reconcile" in argv and "--send" not in argv):
+        sys.stderr.write("usage: morning-brief [--print|--refresh-local|--send [--reconcile]]\n")
         return 2
     if "--send" in argv:
-        return deliver()
+        return deliver(reconcile="--reconcile" in argv)
     if "--refresh-local" in argv:
         return refresh_local()
     return compose(preview="--print" in argv)

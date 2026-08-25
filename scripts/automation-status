@@ -130,8 +130,8 @@ def launchctl_list(binary):
 def _self_check_receipt():
     """Read the self-repair heartbeat, if it has ever run. Never fatal."""
     path = os.path.join(
-        os.environ.get("MISSION_CONTROL_HOME")
-        or os.path.join(os.path.expanduser("~"), ".mission-control"),
+        os.path.expanduser(os.environ.get("MISSION_CONTROL_HOME")
+                           or os.path.join(os.path.expanduser("~"), ".mission-control")),
         "self-repair", "heartbeat.json")
     try:
         with open(path, "r", errors="replace") as handle:

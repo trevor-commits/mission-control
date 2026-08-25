@@ -22,6 +22,17 @@ run() {
   fi
 }
 
+python_floor() {
+  python3 - <<'PY'
+import sys
+floor = (3, 11)
+if sys.version_info < floor:
+    print("Mission Control requires Python %d.%d+; found %d.%d" % (
+        *floor, sys.version_info.major, sys.version_info.minor), file=sys.stderr)
+    raise SystemExit(1)
+PY
+}
+
 source_tree_artifacts() {
   local artifact
   artifact="$(find "$ROOT/scripts" \( -type d -name '__pycache__' -o -type f \( -name '*.pyc' -o -name '*.pyo' \) \) -print -quit)"
@@ -29,6 +40,58 @@ source_tree_artifacts() {
     printf 'unexpected source-tree artifact: %s\n' "$artifact" >&2
     return 1
   fi
+}
+
+python_syntax() {
+  python3 - "$ROOT/scripts" <<'PY'
+from pathlib import Path
+import sys
+root = Path(sys.argv[1])
+errors = []
+for path in sorted(root.iterdir()):
+    if not path.is_file():
+        continue
+    try:
+        text = path.read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        continue
+    first = text.splitlines()[0] if text else ""
+    if path.suffix == ".py" or (first.startswith("#!") and "python" in first):
+        try:
+            compile(text, str(path), "exec")
+        except SyntaxError as exc:
+            errors.append("%s:%s:%s: %s" % (
+                path, exc.lineno, exc.offset, exc.msg))
+if errors:
+    print("\n".join(errors), file=sys.stderr)
+    raise SystemExit(1)
+PY
+}
+
+shell_syntax() {
+  local path first
+  while IFS= read -r -d '' path; do
+    first=""
+    IFS= read -r first < "$path" || true
+    case "$path:$first" in
+      *.sh:*|*:'#!'*bash*) /bin/bash -n "$path" || return 1 ;;
+    esac
+  done < <(find "$ROOT/scripts" -maxdepth 1 -type f -print0)
+}
+
+shellcheck_sources() {
+  local path first
+  command -v shellcheck >/dev/null 2>&1 || {
+    printf 'ShellCheck is required; install shellcheck and retry\n' >&2
+    return 1
+  }
+  while IFS= read -r -d '' path; do
+    first=""
+    IFS= read -r first < "$path" || true
+    case "$path:$first" in
+      *.sh:*|*:'#!'*bash*) shellcheck -S error --external-sources "$path" || return 1 ;;
+    esac
+  done < <(find "$ROOT/scripts" -maxdepth 1 -type f -print0)
 }
 
 self_test() {
@@ -115,12 +178,17 @@ if [ $# -ne 0 ]; then
 fi
 
 cd "$ROOT" || exit 1
+run "Python floor (3.11+)" python_floor
 run "verify aggregator self-test" /bin/bash scripts/verify.sh --self-test
 run "automation status" /bin/bash scripts/automation-status.test.sh
 run "chat graph" /bin/bash scripts/chat-graph.test.sh
 run "dashboard" env REPO_ROOT="$ROOT" /bin/bash scripts/dashboard.test.sh --require-shell
+run "dashboard demo contracts" python3 scripts/dashboard-demo.test.py
+run "state-home expansion" python3 scripts/mission-control-home.test.py
+run "CI verifier prerequisites" python3 scripts/ci-workflow.test.py
 run "decision alert" /bin/bash scripts/decision-alert.test.sh
 run "rollup answer" python3 scripts/rollup-answer.test.py
+run "decision operation bounds" python3 scripts/decision-bounds.test.py
 run "ER-134 usability" /bin/bash scripts/er134-usability.test.sh
 run "loose-end runner" /bin/bash scripts/loose-end-runner.test.sh
 run "shared Mission Control policy" /bin/bash scripts/mission-control-common.test.sh
@@ -131,6 +199,7 @@ run "Morning Brief deadman" /bin/bash scripts/morning-brief-deadman.test.sh
 run "Morning Brief sender" python3 scripts/morning-brief-deadman-sender.test.py
 run "outcome coverage" /bin/bash scripts/outcome-coverage.test.sh
 run "outcome extractor" /bin/bash scripts/outcome-extractor.test.sh
+run "self-repair fail-closed" python3 scripts/self-repair --self-test
 run "usage snapshot" /bin/bash scripts/usage-snapshot.test.sh
 run "usage watch (reset + silence)" python3 scripts/usage-watch --self-test
 run "headroom on-demand refresh" python3 scripts/headroom-refresh --self-test
@@ -142,8 +211,9 @@ run "native panel headroom" python3 scripts/mc-panel-headroom.test.py
 run "native panel core feeds" python3 scripts/mc-panel-summary.test.py
 run "unfinished-work scanner" scripts/scan-unfinished-work --self-test
 run "OpenSpec strict" openspec validate --all --strict
-run "Python syntax" python3 -c 'import pathlib; files=["scripts/chat-graph","scripts/decision-alert","scripts/mission_control_common.py","scripts/outcome_extractor.py","scripts/outcome_sources.py","scripts/compose-decision-prompt.py","scripts/harvest-morning-brief-proof","scripts/usage-watch","scripts/headroom-refresh","scripts/queue_admission.py"]; [compile(pathlib.Path(p).read_text(),p,"exec") for p in files]'
-run "shell syntax" /bin/bash -n scripts/dashboard scripts/*.test.sh scripts/test-temp-root.sh scripts/verify.sh
+run "Python syntax (auto-discovered)" python_syntax
+run "shell syntax (auto-discovered)" shell_syntax
+run "ShellCheck" shellcheck_sources
 run "source tree artifacts" source_tree_artifacts
 
 printf '\n====\nSUITES PASS=%s FAIL=%s\n' "$PASS" "$FAIL"

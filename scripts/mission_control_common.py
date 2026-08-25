@@ -572,13 +572,21 @@ def _sha256_file(path):
     return digest.hexdigest()
 
 
-def write_install_stamp(bin_dir, head_sha, provenance, names, now, assets=None):
+def write_install_stamp(bin_dir, head_sha, provenance, names, now, assets=None,
+                        plists=None, panel=None):
     """Record sha256 of each installed runtime + deployment asset + the HEAD SHA.
 
     `names` are runtimes under bin_dir (stored bare in "files"). `assets` is an
     optional {home_relative_path: absolute_path} map for the non-bin deployment
     set (index.html, vendor/*), stored under "assets" so status + the deadman
     detect drift in the exact code/render surface, not just the five bin files.
+
+    `plists` is an optional {label: {"sha256": rendered-plist-digest,
+    "argv_sha256": canonical ProgramArguments digest}} map attesting the exact
+    rendered LaunchAgents this install deployed. `panel` is an optional panel
+    build record ({"built": bool, plus source/binary/app_binary sha256 fields
+    when built}). Either section promotes the stamp to schema 2; both are
+    digests only — never raw argv text or local paths.
     """
     expected_files = set(REQUIRED_INSTALL_RUNTIMES)
     expected_assets = set(REQUIRED_INSTALL_ASSETS)
@@ -588,6 +596,37 @@ def write_install_stamp(bin_dir, head_sha, provenance, names, now, assets=None):
     if set((assets or {}).keys()) != expected_assets:
         raise ValueError("install stamp asset set must be exactly %s" %
                          sorted(expected_assets))
+
+    def _digest_value(value):
+        if not isinstance(value, str) or len(value) != 64 or \
+                re.fullmatch(r"[0-9a-f]{64}", value) is None:
+            raise ValueError("install stamp attestation digest malformed")
+        return value
+
+    plists_clean = {}
+    if plists:
+        if not isinstance(plists, dict):
+            raise ValueError("install stamp plists section malformed")
+        for label, rec in plists.items():
+            if (not isinstance(label, str) or not isinstance(rec, dict) or
+                    re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", label)
+                    is None):
+                raise ValueError("install stamp plist label malformed")
+            plists_clean[label] = {
+                "sha256": _digest_value(rec.get("sha256")),
+                "argv_sha256": _digest_value(rec.get("argv_sha256")),
+            }
+    panel_clean = None
+    if panel is not None:
+        if not isinstance(panel, dict) or type(panel.get("built")) is not bool:
+            raise ValueError("install stamp panel section malformed")
+        panel_clean = {"built": panel["built"]}
+        if panel["built"]:
+            for key in ("source_sha256", "binary_sha256", "app_binary_sha256"):
+                value = panel.get(key)
+                if value is not None:
+                    panel_clean[key] = _digest_value(value)
+    schema = 2 if (plists_clean or panel_clean is not None) else 1
     files = {}
     for name in REQUIRED_INSTALL_RUNTIMES:
         path = os.path.join(bin_dir, name)
@@ -600,9 +639,13 @@ def write_install_stamp(bin_dir, head_sha, provenance, names, now, assets=None):
         if not os.path.isfile(path):
             raise OSError("required installed asset missing: %s" % rel)
         asset_hashes[rel] = _sha256_file(path)
-    stamp = {"schema": 1, "installed_at": int(now),
+    stamp = {"schema": schema, "installed_at": int(now),
              "head_sha": head_sha or None, "provenance": provenance,
              "files": files, "assets": asset_hashes}
+    if plists_clean:
+        stamp["plists"] = plists_clean
+    if panel_clean is not None:
+        stamp["panel"] = panel_clean
     path = os.path.join(bin_dir, INSTALL_STAMP_NAME)
     tmp = "%s.tmp.%d" % (path, os.getpid())
     try:
@@ -618,6 +661,33 @@ def write_install_stamp(bin_dir, head_sha, provenance, names, now, assets=None):
         except OSError:
             pass
     return stamp
+
+
+def canonical_argv_digest(argv):
+    """Content-free digest over a launchd ProgramArguments list."""
+    return hashlib.sha256(
+        json.dumps([str(item) for item in argv], separators=(",", ":"),
+                   ensure_ascii=True).encode("utf-8")).hexdigest()
+
+
+def launchd_argv_from_print(text):
+    """Parse `launchctl print` output into its program arguments list.
+
+    Returns the argv list, or None when the section is absent/unparseable.
+    Handles the quoted-list shape launchd emits; bounded by input size upstream.
+    """
+    if not isinstance(text, str) or len(text) > 1048576:
+        return None
+    match = re.search(r"program\s+arguments\s*=\s*[\({](.*?)[\)}]\s*;", text, re.S)
+    if match is None:
+        return None
+    body = match.group(1)
+    argv = []
+    for quoted, bare in re.findall(r'"((?:\\.|[^"\\])*)"|([^"\s,][^\s,]*)', body):
+        token = quoted or bare
+        token = token.replace('\\"', '"').replace("\\\\", "\\")
+        argv.append(token)
+    return argv or None
 
 
 def verify_install_stamp(bin_dir):
@@ -656,7 +726,44 @@ def verify_install_stamp(bin_dir):
         provenance == "head" and isinstance(head_sha, str) and
         re.fullmatch(r"(?:[0-9a-f]{40}|[0-9a-f]{64})", head_sha) is not None
     ) or (provenance == "worktree" and head_sha == "worktree")
-    if (type(schema) is not int or schema != 1 or
+    plists = stamp.get("plists")
+    panel = stamp.get("panel")
+
+    def _attestation_wellformed():
+        # Schema 2 carries content-free launchd/panel attestation digests. At
+        # least one section must be present, and any present section must be
+        # exactly shaped; a half-formed section is a malformed stamp.
+        if plists is None and panel is None:
+            return False
+        if plists is not None:
+            if not isinstance(plists, dict):
+                return False
+            for label, rec in plists.items():
+                if (not isinstance(label, str) or not isinstance(rec, dict) or
+                        re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}",
+                                     label) is None):
+                    return False
+                for key in ("sha256", "argv_sha256"):
+                    value = rec.get(key)
+                    if (not isinstance(value, str) or len(value) != 64 or
+                            re.fullmatch(r"[0-9a-f]{64}", value) is None):
+                        return False
+        if panel is not None:
+            if not isinstance(panel, dict) or type(panel.get("built")) is not bool:
+                return False
+            for key in ("source_sha256", "binary_sha256", "app_binary_sha256"):
+                value = panel.get(key)
+                if value is None:
+                    continue
+                if (not isinstance(value, str) or len(value) != 64 or
+                        re.fullmatch(r"[0-9a-f]{64}", value) is None):
+                    return False
+        return True
+
+    schema_valid = (type(schema) is int and schema == 1 and
+                    plists is None and panel is None) or \
+                   (schema == 2 and type(schema) is int and _attestation_wellformed())
+    if (not schema_valid or
             type(installed_at) is not int or installed_at <= 0 or
             not isinstance(files, dict) or
             not isinstance(assets, dict) or not isinstance(head_sha, str) or

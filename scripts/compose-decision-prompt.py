@@ -8,7 +8,9 @@ import hashlib
 import json
 import os
 import re
+import resource
 import secrets
+import signal
 import stat
 import subprocess
 import sys
@@ -20,6 +22,10 @@ from mission_control_common import IDENTIFIER, sanitize_text
 
 
 _ROLLUP_METADATA_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/+@-]{0,255}$")
+
+
+class RetryableBusyError(RuntimeError):
+    """An owned transaction lock stayed busy for the bounded retry window."""
 
 
 def parse_options(text: str) -> list[str]:
@@ -35,6 +41,14 @@ def parse_options(text: str) -> list[str]:
         if len(opts) >= 6:
             break
     return opts
+
+
+def _env_int(name: str, default: int, minimum: int, maximum: int) -> int:
+    try:
+        value = int(os.environ.get(name, str(default)))
+    except ValueError:
+        value = default
+    return min(maximum, max(minimum, value))
 
 
 def write_private_atomic(path: str, text: str) -> None:
@@ -702,15 +716,63 @@ def _test_pause_after_rollup_commit(home_fd: int) -> None:
     raise RuntimeError("decide answer-rollup: postcommit test release timed out")
 
 
+def _bounded_flock(lock_fd: int, label: str, timeout_s: float | None = None) -> None:
+    timeout = (_env_int("DECISION_LOCK_TIMEOUT_S", 5, 1, 30)
+               if timeout_s is None else max(0.0, float(timeout_s)))
+    deadline = time.monotonic() + timeout
+    while True:
+        try:
+            fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return
+        except BlockingIOError:
+            if time.monotonic() >= deadline:
+                raise RetryableBusyError("%s busy; retry" % label)
+            time.sleep(min(0.05, max(0.001, deadline - time.monotonic())))
+
+
 def _run_alert(decision_alert: str, home: str, *args: str) -> dict:
+    timeout = _env_int("DECISION_ALERT_TIMEOUT_S", 15, 1, 60)
+    maximum = _env_int("DECISION_ALERT_MAX_OUTPUT_BYTES", 65536, 1024, 262144)
     env = dict(os.environ)
     env["MISSION_CONTROL_HOME"] = home
-    proc = subprocess.run(
-        [decision_alert, *args], env=env, text=True, capture_output=True)
+
+    def cap_output() -> None:
+        resource.setrlimit(resource.RLIMIT_FSIZE, (maximum + 1, maximum + 1))
+
+    try:
+        with tempfile.TemporaryFile() as out, tempfile.TemporaryFile() as err:
+            proc = subprocess.Popen(
+                [decision_alert, *args], env=env, stdout=out, stderr=err,
+                start_new_session=True, preexec_fn=cap_output)
+            try:
+                proc.wait(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                try:
+                    os.killpg(proc.pid, signal.SIGTERM)
+                    proc.wait(timeout=1)
+                except (OSError, subprocess.TimeoutExpired):
+                    try:
+                        os.killpg(proc.pid, signal.SIGKILL)
+                    except OSError:
+                        pass
+                    proc.wait()
+                raise RuntimeError("decision-alert timed out after %ds" % timeout)
+            out.seek(0); stdout = out.read(maximum + 1)
+            err.seek(0); stderr = err.read(maximum + 1)
+    except OSError as exc:
+        raise RuntimeError("decision-alert could not start: %s" % exc)
+    if len(stdout) > maximum or len(stderr) > maximum or proc.returncode == -signal.SIGXFSZ:
+        raise RuntimeError("decision-alert output exceeded %d-byte limit" % maximum)
     if proc.returncode:
-        message = proc.stderr.strip() or proc.stdout.strip() or "decision-alert failed"
-        raise RuntimeError(message)
-    return json.loads(proc.stdout)
+        message = (stderr or stdout).decode("utf-8", "replace").strip()[:400]
+        raise RuntimeError(message or "decision-alert failed")
+    try:
+        result = json.loads(stdout.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        raise RuntimeError("decision-alert returned invalid JSON")
+    if not isinstance(result, dict):
+        raise RuntimeError("decision-alert returned non-object JSON")
+    return result
 
 
 def answer_transaction(
@@ -748,7 +810,7 @@ def answer_transaction(
         os.fchmod(lock_fd, 0o600)
         if not stat.S_ISREG(os.fstat(lock_fd).st_mode):
             raise RuntimeError("decide answer: lock must be a regular file")
-        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+        _bounded_flock(lock_fd, "decision answer")
         lock_path = os.stat(lock_name, dir_fd=answers_fd, follow_symlinks=False)
         if not _same_inode(os.fstat(lock_fd), lock_path):
             raise RuntimeError("decide answer: lock inode changed")
@@ -910,7 +972,7 @@ def answer_rollup_transaction(
         os.fchmod(lock_fd, 0o600)
         if not stat.S_ISREG(os.fstat(lock_fd).st_mode):
             raise RuntimeError("decide answer-rollup: lock must be a regular file")
-        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+        _bounded_flock(lock_fd, "decision answer-rollup")
         lock_path = os.stat(lock_name, dir_fd=batches_fd, follow_symlinks=False)
         if not _same_inode(os.fstat(lock_fd), lock_path):
             raise RuntimeError("decide answer-rollup: lock inode changed")
@@ -1140,6 +1202,9 @@ def answer_transaction_main(argv: list[str]) -> int:
         compose, decision, prompt_path = answer_transaction(
             args.home, args.decision_alert, args.decision_id, args.choice,
             args.resume_chat_id, args.resume_provider, args.source)
+    except RetryableBusyError as exc:
+        print(str(exc), file=sys.stderr)
+        return 75
     except (OSError, ValueError, RuntimeError, json.JSONDecodeError) as exc:
         print(str(exc), file=sys.stderr)
         return 1
@@ -1166,6 +1231,9 @@ def answer_rollup_transaction_main(argv: list[str]) -> int:
             args.home, args.decision_alert, args.card_id,
             args.primary_decision_id, args.choice, args.resume_chat_id,
             args.resume_provider, args.source)
+    except RetryableBusyError as exc:
+        print(str(exc), file=sys.stderr)
+        return 75
     except (OSError, ValueError, RuntimeError, json.JSONDecodeError) as exc:
         print(str(exc), file=sys.stderr)
         return 1

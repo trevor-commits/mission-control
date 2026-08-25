@@ -515,12 +515,30 @@ glm_weekly_row() {
         | (if $gen_is_number
            then ($gen >= 0 and $gen <= $now and (($now - $gen) <= $maxage))
            else false end) as $fresh
-        | {used_pct: $r.used_pct,
-           health: ($r.health // "unknown"),
-           confidence: (if ($r.confidence == "live") and $fresh then "live" else "stale" end),
-           resets_epoch: (if ($r.resets_epoch|type)=="number" then $r.resets_epoch else null end),
+        # Fail closed on hostile cached values: a used_pct that is not a real
+        # 0-100 number, or a resets_epoch that is not a plausible epoch, must
+        # never ride through as ok/live. Downgrade to unknown/null.
+        | ($r.used_pct) as $raw_used
+        | (($raw_used|type) == "number"
+           and ($raw_used|isnan|not) and ($raw_used|isinfinite|not)
+           and $raw_used >= 0 and $raw_used <= 100) as $used_valid
+        | ($r.resets_epoch) as $raw_reset
+        | (($raw_reset|type) == "number"
+           and ($raw_reset|isnan|not) and ($raw_reset|isinfinite|not)
+           and $raw_reset > 1577836800 and $raw_reset < 4102444800) as $reset_valid
+        | ($r.health // "unknown") as $raw_health
+        | ($raw_health == "ok" or $raw_health == "down"
+           or $raw_health == "near-limit" or $raw_health == "present") as $health_valid
+        | {used_pct: (if $used_valid then $raw_used else null end),
+           health: (if $health_valid then $raw_health else "unknown" end),
+           confidence: (if ($r.confidence == "live") and $fresh
+                           and $used_valid and $health_valid
+                        then "live" else "stale" end),
+           resets_epoch: (if $reset_valid then $raw_reset else null end),
            note: (if $gen_is_number | not then "weekly plan credits via ai-headroom (invalid source timestamp)"
                   elif $gen > $now then "weekly plan credits via ai-headroom (source timestamp is in the future)"
+                  elif ($used_valid | not) then "weekly plan credits via ai-headroom (malformed used_pct in cache; failing closed)"
+                  elif ($health_valid | not) then "weekly plan credits via ai-headroom (unknown health token in cache; failing closed)"
                   else "weekly plan credits via ai-headroom (\($now - $gen)s old)" end)}
       end' "$GLM_HEADROOM_FILE" 2>/dev/null)" || return 0
   [ -n "$parsed" ] || return 0

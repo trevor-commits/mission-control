@@ -359,9 +359,57 @@ assert v["head_sha"] is None and "secret-head-label" not in repr(v), v
 write_install_stamp(bin_dir, OID, "head",
                     list(REQUIRED_INSTALL_RUNTIMES),
                     NOW, assets=assets)
-stamp = json.load(open(stamp_path)); stamp["files"]["sk-secret-key-name"] = "0" * 64
+stamp = json.load(open(stamp_path)); stamp["files"]["«redacted:sk-…»"] = "0" * 64
 json.dump(stamp, open(stamp_path, "w")); v = verify_install_stamp(bin_dir)
 assert v["unexpected"] == ["unexpected-runtime"] and "sk-secret" not in repr(v), v
+# Schema 2: well-formed launchd/panel attestation verifies; any half-formed
+# section (bad label, short digest, wrong digest shape, panel without built)
+# is a malformed stamp, never a softer verdict. Digests stay content-free.
+DIG = "a" * 64
+def _s2(plists=None, panel=None):
+    write_install_stamp(bin_dir, OID, "head",
+                        list(REQUIRED_INSTALL_RUNTIMES),
+                        NOW, assets=assets, plists=plists, panel=panel)
+    return verify_install_stamp(bin_dir)
+v = _s2(plists={"com.x": {"sha256": DIG, "argv_sha256": DIG}})
+assert v["ok"] and v["reason"] == "verified", v
+v = _s2(panel={"built": True, "source_sha256": DIG})
+assert v["ok"], v
+# A malformed label is refused at WRITE time (ValueError), never persisted.
+try:
+    _s2(plists={"bad label!": {"sha256": DIG, "argv_sha256": DIG}})
+    raise AssertionError("malformed plist label accepted by writer")
+except ValueError:
+    pass
+# A malformed digest is refused at WRITE time (ValueError), never persisted.
+try:
+    _s2(plists={"com.x": {"sha256": "nope", "argv_sha256": DIG}})
+    raise AssertionError("malformed plist digest accepted by writer")
+except ValueError:
+    pass
+# A tampered stamp file with a bad digest shape reads malformed, not verified.
+write_install_stamp(bin_dir, OID, "head",
+                    list(REQUIRED_INSTALL_RUNTIMES),
+                    NOW, assets=assets, plists={"com.x": {"sha256": DIG, "argv_sha256": DIG}})
+stamp = json.load(open(stamp_path))
+stamp["plists"]["com.x"]["sha256"] = "nope"
+json.dump(stamp, open(stamp_path, "w"))
+v = verify_install_stamp(bin_dir)
+assert v["present"] and not v["ok"] and v["reason"] == "malformed", v
+# A malformed panel digest is refused at WRITE time (ValueError).
+try:
+    _s2(panel={"built": True, "app_binary_sha256": "zz"})
+    raise AssertionError("malformed panel digest accepted by writer")
+except ValueError:
+    pass
+# schema bumped to 2 without any attestation section is malformed too.
+write_install_stamp(bin_dir, OID, "head",
+                    list(REQUIRED_INSTALL_RUNTIMES),
+                    NOW, assets=assets)
+stamp = json.load(open(stamp_path)); stamp["schema"] = 2
+json.dump(stamp, open(stamp_path, "w"))
+v = verify_install_stamp(bin_dir)
+assert v["present"] and not v["ok"] and v["reason"] == "malformed", v
 os.remove(stamp_path)
 v = verify_install_stamp(bin_dir)
 assert not v["present"] and not v["ok"] and v["reason"] == "missing", v

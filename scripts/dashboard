@@ -209,6 +209,10 @@ fi
 REPO_ROOT_DEFAULT=""
 REPO_ROOT="${REPO_ROOT:-${REPO_ROOT_DEFAULT:-$(dirname "$SCRIPT_DIR")}}"  # pre-set respected (tests point it at a fixture repo)
 MISSION_CONTROL_HOME="${MISSION_CONTROL_HOME:-$HOME/.mission-control}"
+case "$MISSION_CONTROL_HOME" in
+  "~") MISSION_CONTROL_HOME="$HOME" ;;
+  "~/"*) MISSION_CONTROL_HOME="$HOME/${MISSION_CONTROL_HOME:2}" ;;
+esac
 MISSION_CONTROL_PERSISTED_HOME="${MISSION_CONTROL_HOME_CANONICAL:-$MISSION_CONTROL_HOME}"
 MISSION_CONTROL_RUNTIME_DIR="$SCRIPT_DIR"
 export MISSION_CONTROL_HOME MISSION_CONTROL_PERSISTED_HOME REPO_ROOT MISSION_CONTROL_RUNTIME_DIR
@@ -1222,6 +1226,9 @@ def _run_feeder(name, defcmd, envvar, timeout_s):
         try:
             obj = json.loads(p.stdout)
         except Exception as e:
+            if p.returncode:
+                return None, "feeder exit %d without JSON: %s" % (
+                    p.returncode, (p.stderr or "").strip()[:200])
             return None, "feeder output not JSON: %s" % e
         if name == "decisions":
             obj = _demote_stale_decisions(obj)
@@ -1246,6 +1253,9 @@ def _run_feeder(name, defcmd, envvar, timeout_s):
     try:
         obj = json.loads(p.stdout)
     except Exception as e:
+        if p.returncode:
+            return None, "feeder exit %d without JSON: %s" % (
+                p.returncode, (p.stderr or "").strip()[:200])
         return None, "feeder output not JSON: %s" % e
     if name == "decisions":
         obj = _demote_stale_decisions(obj)
@@ -1355,7 +1365,14 @@ def cmd_collect(argv):
         if name == "git":
             git_attempt_status = status
         if status != "ok":
-            failed_feeds.append("%s: collection status %s" % (name, status))
+            detail = ""
+            if status == "error":
+                error_env = _load_error(name)
+                if isinstance(error_env, dict):
+                    message = str(error_env.get("error") or "").strip().replace("\n", " ")[:160]
+                    if message:
+                        detail = ": " + message
+            failed_feeds.append("%s: collection status %s%s" % (name, status, detail))
         failed = failed or status != "ok"
     # Normal explicit collection preserves feed independence. The scheduled
     # `collect --due` entry point additionally reflects persisted degradation
@@ -1564,9 +1581,10 @@ def cmd_demo(argv):
                         "window.MC.feedErrors||{};delete window.MC.feedErrors.%s;" % name)
             _atomic_write(os.path.join(data_dir, name + ".error.js"), no_error)
             built.append(name)
-    shell = os.path.join(REPO, "dashboard", "index.html")
-    if os.path.isfile(shell):
-        shutil.copy(shell, os.path.join(dest, "index.html"))
+    for filename in ("index.html", "panel.html", "jobs.json"):
+        source = os.path.join(REPO, "dashboard", filename)
+        if os.path.isfile(source):
+            shutil.copy2(source, os.path.join(dest, filename))
     vendor = os.path.join(REPO, "dashboard", "vendor", "cytoscape.min.js")
     if os.path.isfile(vendor):
         vendor_dir = os.path.join(dest, "vendor")
@@ -1736,8 +1754,13 @@ def digest(path):
     return h.hexdigest()
 try:
     data=json.load(open(stamp))
+    app_bin=os.path.join(os.path.dirname(os.path.dirname(binary)),
+                         "Mission Control Panel.app/Contents/MacOS/mc-panel")
+    app_ok=True
+    if os.path.isfile(app_bin):
+        app_ok = not os.path.islink(app_bin) and data.get("app_binary_sha256")==digest(app_bin)
     ok=(not os.path.islink(source) and not os.path.islink(binary) and
-        os.path.isfile(source) and os.path.isfile(binary) and
+        os.path.isfile(source) and os.path.isfile(binary) and app_ok and
         data.get("schema")==1 and data.get("source_sha256")==digest(source) and
         data.get("binary_sha256")==digest(binary))
 except (OSError,ValueError,TypeError):
@@ -1758,6 +1781,10 @@ def digest(path):
     return h.hexdigest()
 payload={"schema":1,"source_sha256":digest(source),"binary_sha256":digest(binary),
          "built_at":int(time.time())}
+app_bin=os.path.join(os.path.dirname(os.path.dirname(binary)),
+                     "Mission Control Panel.app/Contents/MacOS/mc-panel")
+if os.path.isfile(app_bin):
+    payload["app_binary_sha256"]=digest(app_bin)
 fd,tmp=tempfile.mkstemp(prefix=".mc-panel-build.",dir=os.path.dirname(stamp))
 try:
     os.fchmod(fd,0o600)
@@ -2039,6 +2066,7 @@ w(os.path.join(data, "headroom.error.js"),
 PYEOF
   fi
   local install_failed=0
+  local attest_plists=""
   local stamp_path="$MISSION_CONTROL_HOME/bin/install-stamp.json"
   # Runtimes copied verbatim into bin/ by the loop below. scripts/dashboard is
   # NOT in this set: it installs separately above with its REPO_ROOT baked in.
@@ -2206,29 +2234,106 @@ PYEOF
     return 1
   fi
   _write_install_stamp() {
-    # The stamp attests the canonical installed runtime and render/panel sets.
-    # LaunchAgents have a separate checked deployment/reload gate below.
+    # The stamp attests the canonical installed runtime and render/panel sets,
+    # plus (when launchd was touched) the rendered plists and their loaded argv
+    # digests. LaunchAgents have a separate checked deployment/reload gate above.
     MC_BIN="$MISSION_CONTROL_HOME/bin" MC_HOME="$MISSION_CONTROL_HOME" \
     MC_HEAD_SHA="$head_sha" MC_PROVENANCE="$provenance" \
+    MC_ATTEST_PLISTS="$attest_plists" \
+    MC_COMMON_DIR="$MISSION_CONTROL_RUNTIME_DIR" \
       python3 - "$MISSION_CONTROL_HOME/bin" <<'PYEOF'
 import os, sys, time
-sys.path.insert(0, sys.argv[1])
+# Import the shared stamp writer from the RUNNING runtime, not the bin copy:
+# the bin copy comes from the captured HEAD and may predate new stamp fields,
+# which would make this install fail (or lie) on its own upgrade path.
+sys.path.insert(0, os.environ["MC_COMMON_DIR"])
 from mission_control_common import (REQUIRED_INSTALL_ASSETS,
     REQUIRED_INSTALL_RUNTIMES, write_install_stamp)
 names = list(REQUIRED_INSTALL_RUNTIMES)
 home = os.environ["MC_HOME"]
 assets = {name: os.path.join(home, name) for name in REQUIRED_INSTALL_ASSETS}
+plists = {}
+for line in (os.environ.get("MC_ATTEST_PLISTS") or "").splitlines():
+    if not line:
+        continue
+    try:
+        label, plist_sha, argv_sha = line.split("|", 2)
+    except ValueError:
+        raise SystemExit("install: malformed plist attestation record")
+    plists[label] = {"sha256": plist_sha, "argv_sha256": argv_sha}
 write_install_stamp(os.environ["MC_BIN"], os.environ.get("MC_HEAD_SHA") or None,
                     os.environ.get("MC_PROVENANCE") or "unknown", names,
-                    int(time.time()), assets=assets)
-print("stamped install -> %s/install-stamp.json (%s, %d assets)" % (
-    os.environ["MC_BIN"], os.environ.get("MC_PROVENANCE"), len(assets)))
+                    int(time.time()), assets=assets,
+                    plists=plists or None)
+print("stamped install -> %s/install-stamp.json (%s, %d assets, %d plists attested)" % (
+    os.environ["MC_BIN"], os.environ.get("MC_PROVENANCE"), len(assets),
+    len(plists)))
+PYEOF
+  }
+  _record_last_known_good() {
+    # Snapshot the just-verified install as the rollback target. The snapshot is
+    # a plain copy tree under releases/ keyed by HEAD + timestamp; rollback is a
+    # separate operator action that re-copies it over bin/ + root assets, so no
+    # symlinks ever enter bin/ and launchd ProgramArguments stay real files.
+    MC_HOME="$MISSION_CONTROL_HOME" MC_BIN="$MISSION_CONTROL_HOME/bin" \
+    MC_HEAD_SHA="$head_sha" MC_COMMON_DIR="$MISSION_CONTROL_RUNTIME_DIR" \
+      python3 - <<'PYEOF'
+import json, os, shutil, subprocess, time
+home = os.environ["MC_HOME"]
+bin_dir = os.path.join(home, "bin")
+common_dir = os.environ["MC_COMMON_DIR"]
+sys_path = common_dir
+import sys as _sys
+_sys.path.insert(0, sys_path)
+from mission_control_common import verify_install_stamp
+verdict = verify_install_stamp(bin_dir)
+if not verdict.get("ok"):
+    raise SystemExit("install: skipping LKG snapshot — surface is not verified green")
+head = os.environ.get("MC_HEAD_SHA") or "worktree"
+releases = os.path.join(home, "releases")
+os.makedirs(releases, exist_ok=True)
+os.chmod(releases, 0o700)
+release_id = "%s-%d" % (head[:12], int(time.time()))
+dest = os.path.join(releases, release_id)
+tmp = dest + ".tmp"
+shutil.rmtree(tmp, ignore_errors=True)
+os.makedirs(tmp, mode=0o700)
+shutil.copytree(bin_dir, os.path.join(tmp, "bin"))
+for rel in ("index.html", "vendor", "launchd", "panel.html"):
+    source = os.path.join(home, rel)
+    if os.path.islink(source):
+        raise SystemExit("install: refusing symlinked asset in LKG snapshot: %s" % rel)
+    if os.path.isdir(source):
+        shutil.copytree(source, os.path.join(tmp, rel))
+    elif os.path.isfile(source):
+        shutil.copy2(source, os.path.join(tmp, rel))
+with open(os.path.join(tmp, "snapshot.json"), "w") as handle:
+    json.dump({"schema": 1, "release_id": release_id, "head_sha": head,
+               "created_at": int(time.time())}, handle, sort_keys=True)
+    handle.write("\n")
+os.replace(tmp, dest)
+pointer = os.path.join(home, "last-known-good.json.tmp")
+with open(pointer, "w") as handle:
+    json.dump({"schema": 1, "release_id": release_id, "head_sha": head,
+               "created_at": int(time.time()), "path": dest}, handle,
+              sort_keys=True)
+    handle.write("\n")
+os.replace(pointer, os.path.join(home, "last-known-good.json"))
+# Keep only the three newest snapshots; pruning never touches the current LKG.
+entries = sorted(e for e in os.listdir(releases) if not e.startswith("."))
+for name in entries[:-3]:
+    if name != release_id:
+        shutil.rmtree(os.path.join(releases, name), ignore_errors=True)
+print("install: last-known-good snapshot -> %s" % release_id)
 PYEOF
   }
   if [ "${DASHBOARD_INSTALL_NO_LAUNCHD:-0}" = "1" ]; then
     if ! _write_install_stamp; then
       echo "install: stamp write failed — refusing success (rc=1)" >&2
       return 1
+    fi
+    if ! _record_last_known_good; then
+      echo "install: WARNING last-known-good snapshot unavailable (rollback degraded)" >&2
     fi
     echo "skip: launchd installation disabled by DASHBOARD_INSTALL_NO_LAUNCHD"
     return 0
@@ -2253,6 +2358,7 @@ PYEOF
   fi
   local plist dest label source_tmp rendered changed loaded was_loaded domain
   domain="gui/$(id -u)"
+  local attest_plists=""
   for plist in $selected_plists; do
     label="${plist%.plist}"
     dest="$HOME/Library/LaunchAgents/$plist"
@@ -2300,6 +2406,13 @@ PYEOF
     if launchctl print "$domain/$label" >/dev/null 2>&1; then
       loaded=1; was_loaded=1
     fi
+    # Content equality must not hide mode drift: repair/reject mode enforces the
+    # install contract's private 0600 on every selected plist, unchanged or not.
+    # (First install has no dest yet; the write below lands with 600 directly.)
+    if [ -e "$dest" ] && ! chmod 600 "$dest"; then
+      echo "install: could not secure LaunchAgent: $dest" >&2
+      rm -f "$source_tmp" "$rendered"; return 1
+    fi
     if [ "$changed" = 1 ] && [ "$loaded" = 1 ]; then
       if ! launchctl bootout "$domain/$label" >/dev/null 2>&1; then
         echo "install: could not unload changed LaunchAgent: $label" >&2
@@ -2312,14 +2425,11 @@ PYEOF
         [ "$was_loaded" = 1 ] && launchctl bootstrap "$domain" "$dest" >/dev/null 2>&1 || true
         rm -f "$source_tmp" "$rendered"; return 1
       fi
+      if ! chmod 600 "$dest"; then
+        echo "install: could not secure LaunchAgent: $dest" >&2
+        rm -f "$source_tmp" "$rendered"; return 1
+      fi
       echo "installed plist -> $dest"
-    fi
-    # Content equality does not prove deployment integrity: repair/reject mode
-    # drift on every selected plist, including unchanged bytes and retries after
-    # an earlier chmod failure.
-    if ! chmod 600 "$dest"; then
-      echo "install: could not secure LaunchAgent: $dest" >&2
-      rm -f "$source_tmp" "$rendered"; return 1
     fi
     if [ "$loaded" = 0 ]; then
       if ! launchctl bootstrap "$domain" "$dest" >/dev/null 2>&1; then
@@ -2330,12 +2440,133 @@ PYEOF
     else
       echo "already current and bootstrapped: $label"
     fi
+    # Attest what launchd actually loaded AFTER the (re)load: the rendered plist
+    # digest plus a content-free digest of the live ProgramArguments from
+    # `launchctl print`. A service still running old arguments reads UNATTESTED,
+    # never green.
+    local loaded_argv_digest="" plist_sha argv_sha
+    if launchctl print "$domain/$label" > "$rendered.print" 2>/dev/null; then
+      loaded_argv_digest="$(MC_PRINT_FILE="$rendered.print" \
+        MISSION_CONTROL_RUNTIME_DIR="$MISSION_CONTROL_RUNTIME_DIR" python3 -c '
+import os, sys
+sys.path.insert(0, os.environ["MISSION_CONTROL_RUNTIME_DIR"])
+from mission_control_common import canonical_argv_digest, launchd_argv_from_print
+argv = launchd_argv_from_print(open(os.environ["MC_PRINT_FILE"], errors="replace").read())
+if argv is None:
+    raise SystemExit(1)
+print(canonical_argv_digest(argv))
+')" || loaded_argv_digest=""
+    fi
+    rm -f "$rendered.print"
+    if [ -z "$loaded_argv_digest" ]; then
+      echo "install: could not attest loaded arguments for $label (UNATTESTED)" >&2
+      rm -f "$source_tmp" "$rendered"; return 1
+    fi
+    plist_sha="$(/usr/bin/shasum -a 256 "$rendered" | /usr/bin/awk '{print $1}')"
+    argv_sha="$loaded_argv_digest"
+    attest_plists="$attest_plists$label|$plist_sha|$argv_sha
+"
     rm -f "$source_tmp" "$rendered"
   done
   if ! _write_install_stamp; then
     echo "install: stamp write failed — refusing success (rc=1)" >&2
     return 1
   fi
+  # The surface is now verified green: record it as the rollback target for the
+  # NEXT upgrade. A snapshot failure is a warning, not an install failure — the
+  # running install is already complete and attested; only its rollback safety
+  # is degraded, and that must be visible but not silently break installs.
+  if ! _record_last_known_good; then
+    echo "install: WARNING last-known-good snapshot unavailable (rollback degraded)" >&2
+  fi
+}
+
+do_rollback() {
+  # Restore the last-known-good release over the live surface. Runs under the
+  # same installer lock as install; refuses any symlinked snapshot component;
+  # re-stamps from the RESTORED bytes so status verifies against what now runs.
+  if [ $# -gt 0 ]; then usage; exit 2; fi
+  local install_lock="$MISSION_CONTROL_HOME/.install.lock"
+  if ! mkdir "$install_lock" 2>/dev/null; then
+    if [ -d "$MISSION_CONTROL_HOME" ]; then
+      echo "rollback: another install is active (or a prior crash left $install_lock); verify no installer is running before removing it" >&2
+    else
+      echo "rollback: Mission Control home does not exist: $MISSION_CONTROL_HOME" >&2
+    fi
+    return 75
+  fi
+  DASHBOARD_INSTALL_LOCK_HELD="$install_lock"
+  trap 'if [ -n "${DASHBOARD_INSTALL_LOCK_HELD:-}" ]; then rm -f "$DASHBOARD_INSTALL_LOCK_HELD/owner" 2>/dev/null || true; rmdir "$DASHBOARD_INSTALL_LOCK_HELD" 2>/dev/null || true; DASHBOARD_INSTALL_LOCK_HELD=""; fi' EXIT
+  MC_HOME="$MISSION_CONTROL_HOME" MC_BIN="$MISSION_CONTROL_HOME/bin" \
+  MC_COMMON_DIR="$MISSION_CONTROL_RUNTIME_DIR" REPO_ROOT_ARG="$REPO_ROOT" \
+    python3 - <<'PYEOF'
+import json, os, shutil, sys, time
+sys.path.insert(0, os.environ["MC_COMMON_DIR"])
+from mission_control_common import (REQUIRED_INSTALL_ASSETS,
+    REQUIRED_INSTALL_RUNTIMES, write_install_stamp, verify_install_stamp)
+home = os.environ["MC_HOME"]
+bin_dir = os.path.join(home, "bin")
+pointer_path = os.path.join(home, "last-known-good.json")
+try:
+    with open(pointer_path) as handle:
+        pointer = json.load(handle)
+except (OSError, ValueError) as exc:
+    raise SystemExit("rollback: no usable last-known-good pointer: %s" % exc)
+release_id = pointer.get("release_id")
+path = pointer.get("path")
+if not isinstance(release_id, str) or not isinstance(path, str) or \
+        os.path.basename(os.path.normpath(path)) != release_id:
+    raise SystemExit("rollback: last-known-good pointer malformed")
+snapshot = os.path.realpath(path)
+releases_root = os.path.realpath(os.path.join(home, "releases"))
+if not snapshot.startswith(releases_root + os.sep):
+    raise SystemExit("rollback: snapshot escapes releases/: %s" % snapshot)
+for rel in ("bin", "index.html", "vendor", "launchd", "panel.html"):
+    candidate = os.path.join(snapshot, rel)
+    if os.path.islink(candidate):
+        raise SystemExit("rollback: snapshot component is a symlink: %s" % rel)
+    if not os.path.lexists(candidate):
+        raise SystemExit("rollback: snapshot missing component: %s" % rel)
+with open(os.path.join(snapshot, "snapshot.json")) as handle:
+    manifest = json.load(handle)
+head_sha = manifest.get("head_sha")
+provenance = "worktree" if head_sha == "worktree" else "head"
+# Restore bin/ file-by-file atomically (never delete-then-copy the live dir).
+restored_bin = os.path.join(snapshot, "bin")
+for name in REQUIRED_INSTALL_RUNTIMES:
+    source = os.path.join(restored_bin, name)
+    dest = os.path.join(bin_dir, name)
+    if os.path.islink(source) or not os.path.isfile(source):
+        raise SystemExit("rollback: snapshot runtime unusable: %s" % name)
+    tmp = dest + ".rb.tmp"
+    shutil.copy2(source, tmp)
+    mode = os.stat(source).st_mode & 0o777
+    os.chmod(tmp, mode)
+    os.replace(tmp, dest)
+for rel in ("index.html", "panel.html"):
+    tmp = os.path.join(home, rel + ".rb.tmp")
+    shutil.copy2(os.path.join(snapshot, rel), tmp)
+    os.chmod(tmp, 0o600)
+    os.replace(tmp, os.path.join(home, rel))
+for rel in ("vendor", "launchd"):
+    live = os.path.join(home, rel)
+    backup = os.path.join(home, "." + rel + ".rb.bak")
+    shutil.rmtree(backup, ignore_errors=True)
+    if os.path.lexists(live):
+        os.replace(live, backup)
+    os.replace(os.path.join(snapshot, rel), live)
+    shutil.rmtree(backup, ignore_errors=True)
+stamp = write_install_stamp(
+    bin_dir, head_sha if provenance == "head" else None, provenance,
+    list(REQUIRED_INSTALL_RUNTIMES), int(time.time()),
+    assets={rel: os.path.join(home, rel) for rel in REQUIRED_INSTALL_ASSETS})
+verdict = verify_install_stamp(bin_dir)
+if not verdict.get("ok"):
+    raise SystemExit("rollback: restored surface does not verify: %s" %
+                     verdict.get("reason"))
+print("rollback: restored %s (head %.12s); surface verified" %
+      (release_id, head_sha))
+PYEOF
 }
 
 do_demo() {
@@ -2532,6 +2763,7 @@ case "$cmd" in
     ;;
   open)     do_open "$@" ;;
   install)  do_install "$@" ;;
+  rollback) do_rollback "$@" ;;
   demo)     do_demo "$@" ;;
   ""|-h|--help|help) usage ;;
   *) usage; exit 2 ;;

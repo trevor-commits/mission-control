@@ -16,6 +16,7 @@ is a hash-pinned copy under gi-runtime/usage-routing/<rev>/ that moves on every
 re-pin; hardcoding it would silently refresh a stale binary, or nothing at all.
 """
 
+import fcntl
 import json
 import os
 import plistlib
@@ -25,9 +26,14 @@ import time
 
 HOME = os.path.expanduser("~")
 PLIST = os.path.join(HOME, "Library", "LaunchAgents", "com.gillettes.ai-headroom.plist")
-STAMP = os.path.join(HOME, ".mission-control", "self-repair", "headroom-refresh.stamp")
+STATE_DIR = os.path.join(HOME, ".mission-control", "self-repair")
+STAMP = os.path.join(STATE_DIR, "headroom-refresh.stamp")
+LOCK = os.path.join(STATE_DIR, "headroom-refresh.lock")
 # Two opens in quick succession must not mean two polls.
 MIN_INTERVAL_S = 20
+# A failed collector must not suppress retry forever, but also must not be
+# retried in a tight loop by every panel open: bounded failure backoff.
+FAILURE_BACKOFF_S = 120
 TIMEOUT_S = 25
 
 
@@ -48,42 +54,85 @@ def collector_argv(plist_path=PLIST):
     return argv
 
 
-def due(now, stamp_path=STAMP, min_interval_s=MIN_INTERVAL_S):
+def _read_state(stamp_path):
     try:
         with open(stamp_path, "r") as handle:
-            last = float(json.load(handle).get("last_epoch") or 0)
-    except (OSError, ValueError, TypeError, AttributeError):
+            state = json.load(handle)
+        return state if isinstance(state, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def due(now, stamp_path=STAMP, min_interval_s=MIN_INTERVAL_S,
+        failure_backoff_s=FAILURE_BACKOFF_S):
+    """True when a refresh may run.
+
+    Only a provably fresh SUCCESS stamp debounces. A malformed, non-finite, or
+    future stamp fails OPEN (refresh proceeds). A recent FAILURE allows retry
+    after the short backoff instead of waiting the full success interval.
+    """
+    state = _read_state(stamp_path)
+    if not state:
         return True
-    return (now - last) >= min_interval_s
+    last = state.get("last_epoch")
+    if isinstance(last, bool) or not isinstance(last, (int, float)):
+        return True
+    if last != last or last in (float("inf"), float("-inf")):
+        return True  # NaN / infinity: fail open.
+    if last > now:
+        return True  # Clock-skewed future stamp: never trust it to debounce.
+    age = now - last
+    if state.get("outcome") == "success":
+        return age >= min_interval_s
+    # Failure (or unknown outcome from an old runtime): bounded backoff.
+    return age >= failure_backoff_s
 
 
-def stamp(now, stamp_path=STAMP):
+def stamp(now, stamp_path=STAMP, outcome="success"):
     os.makedirs(os.path.dirname(stamp_path), mode=0o700, exist_ok=True)
-    tmp = stamp_path + ".tmp"
+    tmp = stamp_path + ".tmp.%d" % os.getpid()
     with open(tmp, "w") as handle:
-        json.dump({"last_epoch": int(now)}, handle)
+        json.dump({"last_epoch": int(now), "outcome": outcome}, handle)
     os.replace(tmp, stamp_path)
 
 
 def refresh(now=None, force=False):
     now = time.time() if now is None else now
-    if not force and not due(now):
-        return "debounced", 0
-    argv = collector_argv()
-    if argv is None:
-        return "collector not installed", 0
-    # --no-notify: the notification sender is a separate job with its own health.
-    # A refresh must never be able to fail because of it.
+    os.makedirs(os.path.dirname(LOCK), mode=0o700, exist_ok=True)
+    lock_fd = os.open(LOCK, os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0), 0o600)
     try:
-        done = subprocess.run(argv + ["--force", "--no-notify"],
-                              stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
-                              timeout=TIMEOUT_S, check=False)
-    except (OSError, subprocess.SubprocessError) as exc:
-        return "failed: %s" % str(exc)[:120], 1
-    stamp(now)
-    if done.returncode != 0:
-        return "collector exit %d" % done.returncode, done.returncode
-    return "refreshed", 0
+        try:
+            fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            # Another refresh owns the read-check-run window. Treat it as the
+            # debounce it exists to provide.
+            return "in-flight elsewhere", 0
+        if not force and not due(now):
+            return "debounced", 0
+        argv = collector_argv()
+        if argv is None:
+            return "collector not installed", 0
+        # --no-notify: the notification sender is a separate job with its own health.
+        # A refresh must never be able to fail because of it.
+        try:
+            done = subprocess.run(argv + ["--force", "--no-notify"],
+                                  stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+                                  timeout=TIMEOUT_S, check=False)
+        except (OSError, subprocess.SubprocessError) as exc:
+            stamp(now, outcome="failed")
+            return "failed: %s" % str(exc)[:120], 1
+        if done.returncode != 0:
+            # A failed poll is NOT a refreshed screen: stamp the failure so the
+            # next open retries after the backoff instead of being suppressed.
+            stamp(now, outcome="failed")
+            return "collector exit %d" % done.returncode, done.returncode
+        stamp(now, outcome="success")
+        return "refreshed", 0
+    finally:
+        try:
+            fcntl.flock(lock_fd, fcntl.LOCK_UN)
+        finally:
+            os.close(lock_fd)
 
 
 def self_test():
@@ -107,6 +156,35 @@ def self_test():
         open(bad, "w").write("{not json")
         check("a corrupt stamp fails open, not closed", due(now, bad))
 
+        # Hostile / drifted stamp values must never suppress refresh.
+        for name, value in (("nan", float("nan")), ("inf", float("inf"))):
+            path = os.path.join(tmp, "stamp-%s.json" % name)
+            with open(path, "w") as handle:
+                json.dump({"last_epoch": value, "outcome": "success"}, handle)
+            check("a %s stamp fails open" % name, due(now, path))
+        future = os.path.join(tmp, "stamp-future.json")
+        with open(future, "w") as handle:
+            json.dump({"last_epoch": now + 10_000, "outcome": "success"}, handle)
+        check("a future stamp fails open", due(now, future))
+
+        failed_recent = os.path.join(tmp, "stamp-failed.json")
+        with open(failed_recent, "w") as handle:
+            json.dump({"last_epoch": now - 30, "outcome": "failed"}, handle)
+        check("a recent failure retries after backoff, not the full window",
+              due(now + FAILURE_BACKOFF_S, failed_recent)
+              and not due(now + 5, failed_recent))
+
+        legacy = os.path.join(tmp, "stamp-legacy.json")
+        with open(legacy, "w") as handle:
+            json.dump({"last_epoch": now - 5}, handle)
+        check("an outcome-less legacy stamp uses failure semantics",
+              due(now + FAILURE_BACKOFF_S, legacy)
+              and not due(now + 5, legacy))
+
+        success_old_shape = os.path.join(tmp, "stamp-success.json")
+        stamp(now - 1, success_old_shape)
+        check("a fresh success stamp debounces", not due(now, success_old_shape))
+
         # The collector path comes from the plist, never a constant.
         p = os.path.join(tmp, "a.plist")
         with open(p, "wb") as h:
@@ -123,7 +201,7 @@ def self_test():
         check("an empty argv is refused", collector_argv(p) is None)
         check("a missing plist is refused", collector_argv(os.path.join(tmp, "nope.plist")) is None)
 
-    print("%d passed; %d failed" % (8 - len(failures), len(failures)))
+    print("%d passed; %d failed" % (15 - len(failures), len(failures)))
     return 1 if failures else 0
 
 

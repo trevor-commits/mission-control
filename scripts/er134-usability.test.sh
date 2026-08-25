@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Hermetic tests for ER-134 decide answer + compose-decision-prompt + panel install.
 set -euo pipefail
+export PYTHONDONTWRITEBYTECODE=1
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 COMPOSE="$ROOT/scripts/compose-decision-prompt.py"
 PASS=0; FAIL=0
@@ -261,6 +262,42 @@ elif [ "$(cat "$victim_plist")" = plist-victim ] && [ -L "$APP_PLIST" ]; then
   pass "panel rejects symlinked Info.plist without target mutation"
 else
   fail "panel plist symlink target changed"
+fi
+rm -rf "$APP"
+# App-bundle tamper truthfulness: a build stamp that ignores the deployed app
+# binary would let a modified copy run while the panel still reads attested.
+DASHBOARD_NO_OPEN=1 "$ROOT/scripts/dashboard" panel >/dev/null 2>&1 || true
+python3 - "$APP_BIN" <<'PY'
+import sys
+with open(sys.argv[1], "ab") as handle:
+    handle.write(b"\x00tampered")
+PY
+valid_probe="$ROOT/scripts/dashboard"
+if python3 - "$MISSION_CONTROL_HOME/bin/mc-panel.swift" \
+    "$MISSION_CONTROL_HOME/bin/mc-panel" \
+    "$MISSION_CONTROL_HOME/bin/mc-panel-build.json" <<'PY'
+import hashlib, json, os, sys
+source, binary, stamp = sys.argv[1:]
+def digest(path):
+    h = hashlib.sha256()
+    with open(path, "rb") as handle:
+        for chunk in iter(lambda: handle.read(131072), b""):
+            h.update(chunk)
+    return h.hexdigest()
+try:
+    data = json.load(open(stamp))
+    app_bin = os.path.join(os.path.dirname(os.path.dirname(binary)),
+                           "Mission Control Panel.app/Contents/MacOS/mc-panel")
+    ok = (os.path.isfile(app_bin) and not os.path.islink(app_bin) and
+          data.get("app_binary_sha256") == digest(app_bin))
+except (OSError, ValueError, TypeError):
+    ok = False
+raise SystemExit(0 if ok else 1)
+PY
+then
+  fail "tampered app bundle binary still matched the build stamp"
+else
+  pass "tampered app bundle binary fails the app-binary attestation"
 fi
 rm -rf "$APP"
 outside_app="$tmp/outside-panel-app"; mkdir -p "$outside_app"; printf 'directory-victim\n' > "$outside_app/sentinel"
