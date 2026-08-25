@@ -405,7 +405,11 @@ body {
   background: var(--mc-surface-1); border: 1px solid var(--mc-border);
   border-radius: var(--mc-r-3); box-shadow: var(--mc-shadow); overflow: hidden;
 }
-.mc-action-verb { color: var(--mc-amber); font-size: var(--mc-fs-1); font-weight: 600; white-space: nowrap; }
+.mc-action-verb { color: var(--mc-fg-muted); font-size: var(--mc-fs-1); font-weight: 600; white-space: nowrap; }
+.mc-table-scroll { max-width: 100%; overflow-x: auto; overscroll-behavior-inline: contain; }
+.mc-git-lifecycle-table { min-width: 0; }
+.mc-git-mobile-table tr { cursor: default; }
+.mc-git-mobile-table tr:hover td { background: transparent; }
 .mc-collapse {
   cursor: pointer; color: var(--mc-fg-muted); font-size: var(--mc-fs-2);
   display: block; width: 100%; padding: var(--mc-sp-3) 0; user-select: none;
@@ -531,9 +535,32 @@ html[data-theme="dark"] .mc-heat-l4 { background: #35b98a; }
 .mc-legend-line { width: 20px; height: 0; border-top: 3px solid var(--mc-fg-dim); flex: none; border-radius: 2px; }
 .mc-map-wrap { display: grid; grid-template-columns: 1fr 300px; gap: var(--mc-sp-3); }
 @media (max-width: 860px) { .mc-map-wrap { grid-template-columns: 1fr; } }
+@media (max-width: 1024px) {
+  .mc-git-lifecycle-table {
+    border: 0; padding: 0; background: transparent; box-shadow: none;
+    overflow: visible;
+  }
+  .mc-git-lifecycle-table tr:first-child { display: none; }
+  .mc-git-lifecycle-table tr:not(:first-child) {
+    display: block; margin-bottom: var(--mc-sp-3); padding: var(--mc-sp-2) var(--mc-sp-3);
+    background: var(--mc-surface-1); border: 1px solid var(--mc-border);
+    border-radius: var(--mc-r-3); box-shadow: var(--mc-shadow);
+  }
+  .mc-git-lifecycle-table td {
+    display: grid; grid-template-columns: minmax(80px, 0.38fr) minmax(0, 1fr);
+    gap: var(--mc-sp-2); padding: 7px 0; border-bottom: 1px solid var(--mc-border);
+    max-width: none !important; white-space: normal; overflow: visible;
+    overflow-wrap: anywhere; text-overflow: clip;
+  }
+  .mc-git-lifecycle-table td:last-child { border-bottom: 0; }
+  .mc-git-lifecycle-table td::before {
+    content: attr(data-label); color: var(--mc-fg-dim); font-size: 10.5px;
+    font-weight: 650; letter-spacing: .05em; text-transform: uppercase;
+  }
+}
 @media (max-width: 600px) {
   .mc-copy { min-width: 44px; min-height: 44px; }
-  .mc-git-mobile-table {
+  .mc-git-mobile-table:not(.mc-git-lifecycle-table) {
     border: 0; padding: 0; background: transparent; box-shadow: none;
     overflow: visible;
   }
@@ -1630,6 +1657,9 @@ html[data-theme="dark"] .mc-heat-l4 { background: #35b98a; }
     if (question.length > 160) question = question.slice(0, 157) + "…";
     return { question: question || "Decision needs your answer", options: opts.slice(0, 3), suggested: suggested };
   }
+  function decisionDisplayText(text) {
+    return parseDecisionOptions(text || "").question;
+  }
 
   function healthLine() {
     var ga = guard("automation");
@@ -1797,7 +1827,7 @@ html[data-theme="dark"] .mc-heat-l4 { background: #35b98a; }
     // answered-pending receipts while preserving order within both groups.
     var shown = pinned.filter(function (decision) {
       return !isAnswerPending(decision);
-    }).concat(pinned.filter(isAnswerPending)).slice(0, limit);
+    }).concat(pinned.filter(isAnswerPending)).slice(0, limit == null ? pinned.length : limit);
     shown.forEach(function (decision, idx) {
       var id = decision.id || "";
       var parsed = (Array.isArray(decision.options) && decision.question) ? {
@@ -1861,7 +1891,7 @@ html[data-theme="dark"] .mc-heat-l4 { background: #35b98a; }
         var row2 = h("div", { class: "mc-row" }, glyphSpan(pending ? "amber" : "red"),
           h("div", { class: "mc-row-body" },
             h("div", { class: "mc-row-problem" },
-              pending ? parsed.question : (decision.text || "Decision needs review")),
+              parsed.question || decisionDisplayText(decision.text)),
             h("div", { class: "mc-row-meta" }, pending ? answerPendingText(decision) :
               ("Confirmed · " +
                (decision.provenance || decision.source_kind || "structured source")))));
@@ -1896,7 +1926,9 @@ html[data-theme="dark"] .mc-heat-l4 { background: #35b98a; }
     section.appendChild(h("div", { class: "mc-section-head" },
       h("h2", { text: "Needs you" }), ageSpan(g.epoch)));
     top.slice(0, limit).forEach(function (item, idx) {
-      var title = item.title || item.question || "Needs attention";
+      var title = item.kind === "decision" && (item.title || item.question) ?
+        decisionDisplayText(item.title || item.question) :
+        (item.title || item.question || "Needs attention");
       var row = h("div", { class: "mc-glance-item" });
       row.appendChild(h("div", { class: "mc-glance-q" },
         (idx + 1) + ". " + title));
@@ -1980,7 +2012,8 @@ html[data-theme="dark"] .mc-heat-l4 { background: #35b98a; }
         h("td", null, item.kind || "?"),
         h("td", null, String(item.severity || "?")),
         h("td", { class: "mc-ellipsis", title: item.title || "", style: "max-width:260px" },
-          item.title || "—"),
+          item.kind === "decision" ? decisionDisplayText(item.title || item.question || "") :
+            (item.title || "—")),
         h("td", { class: "mc-ellipsis",
           title: (item.why || "") + " · " + (item.source || "") + " · " + age,
           style: "max-width:280px" },
@@ -1991,9 +2024,39 @@ html[data-theme="dark"] .mc-heat-l4 { background: #35b98a; }
     p.body.appendChild(table);
   }
 
+  function renderDecisions(main) {
+    var g = guard("decisions");
+    var p = panel(g, "Decisions: structured queue and follow-through");
+    main.appendChild(p.wrap);
+    if (!p.body) return;
+    appendPanelProvenance(p.body, "decisions", g);
+    var data = g.data || {};
+    var counts = data.counts || {};
+    p.body.appendChild(h("div", { class: "mc-filters" },
+      h("span", { class: "mc-chip" }, (counts.structured_open || counts.open || 0) + " awaiting answer"),
+      h("span", { class: "mc-chip" }, (counts.inferred || 0) + " inferred")));
+    var count = renderPinnedDecisions(p.body, 25, { glance: false });
+    if (!count) {
+      p.body.appendChild(h("div", { class: "mc-allgreen" },
+        glyphSpan("green"), " No structured decisions are waiting."));
+    }
+    var inferred = Array.isArray(data.inferred) ? data.inferred : [];
+    if (inferred.length) {
+      p.body.appendChild(h("div", { class: "mc-section-head" }, h("h2", { text: "Inferred follow-ups" })));
+      inferred.slice(0, 10).forEach(function (item) {
+        p.body.appendChild(h("div", { class: "mc-card-secondary" },
+          decisionDisplayText(item.text) || item.text || "Inferred follow-up"));
+      });
+    }
+  }
+
   function renderHome(main) {
     var home = combinedHomeState();
     var glance = h("div", { class: "mc-glance" });
+    if (UNKNOWN_TAB) {
+      glance.appendChild(h("div", { class: "mc-banner mc-banner-amber" },
+        "Unknown view #" + UNKNOWN_TAB + ". Showing Home — pick a tab above or use #decisions for the decision queue."));
+    }
     var decisionGuard = guard("decisions");
     var homePinned = decisionGuard.ok && decisionGuard.data &&
       Array.isArray(decisionGuard.data.pinned) ? decisionGuard.data.pinned : [];
@@ -2016,7 +2079,7 @@ html[data-theme="dark"] .mc-heat-l4 { background: #35b98a; }
         h("div", { class: "mc-hero-stat-lbl" }, "Needs you")),
       h("div", { class: "mc-hero-stat" },
         h("div", { class: "mc-hero-stat-num " + (hero.red ? "mc-state-red" : hero.yellow ? "mc-state-amber" : hero.total ? "mc-state-green" : "") },
-          hero.total ? hero.healthy + "/" + hero.total : "–"),
+          hero.total ? ((hero.red ? hero.red : hero.yellow ? hero.yellow : hero.healthy) + "/" + hero.total) : "–"),
         h("div", { class: "mc-hero-stat-lbl" }, hero.red ? "jobs red" : hero.yellow ? "jobs warning" : "Jobs healthy")),
       h("div", { class: "mc-hero-stat" },
         h("div", { class: "mc-hero-stat-num" }, hero.ageShort),
@@ -2579,7 +2642,12 @@ html[data-theme="dark"] .mc-heat-l4 { background: #35b98a; }
             "curve-style": "bezier", "target-arrow-color": "data(col)",
             "target-arrow-shape": "triangle", "arrow-scale": 0.7,
             "line-style": function (e) { return (EDGE_INFO[e.data("type")] || [0, false])[1] ? "dashed" : "solid"; } } },
-        { selector: "node:selected", style: { "border-width": 4, "border-color": "#7c8cff", "label": "data(label)" } },
+        { selector: "node:selected", style: {
+            "border-width": 4, "border-color": "#7c8cff", "label": "data(label)",
+            "color": "#c9cdd6", "font-size": 9,
+            "text-margin-y": 4, "text-valign": "bottom", "text-halign": "center",
+            "text-max-width": 110, "text-wrap": "ellipsis",
+            "min-zoomed-font-size": 7 } },
         { selector: ".mc-dim", style: { "opacity": 0.12 } }
       ],
       layout: FOCUS_CHAT
@@ -2714,6 +2782,12 @@ html[data-theme="dark"] .mc-heat-l4 { background: #35b98a; }
       node && titleLabel(node.title, node.id), node && node.id], query);
   }
 
+  function chatHasUnfinishedWork(n, openCountByNode) {
+    if ((n.open_ends || []).length) return true;
+    var count = openCountByNode[n.key];
+    return typeof count === "number" && count > 0;
+  }
+
   function renderChats(main) {
     var g = guard("chats");
     var p = panel(g, "Chats and unfinished work");
@@ -2727,8 +2801,14 @@ html[data-theme="dark"] .mc-heat-l4 { background: #35b98a; }
     // (live fix 2026-07-03: mismatch made every badge/cluster silently vanish)
     nodes.forEach(function (n) { n.key = nodeKey(n); });
     var openItems = looseEnds(data);
+    var chatKeys = {};
+    nodes.forEach(function (n) { chatKeys[n.key] = true; });
     var openCountByNode = {};
-    openItems.forEach(function (o) { if (o.source_node) openCountByNode[o.source_node] = (openCountByNode[o.source_node] || 0) + 1; });
+    openItems.forEach(function (o) {
+      if (o.source_node && chatKeys[o.source_node]) {
+        openCountByNode[o.source_node] = (openCountByNode[o.source_node] || 0) + 1;
+      }
+    });
 
     // filters: repo dropdown, has-open-ends toggle, provider chips
     var repos = uniq(nodes.map(function (n) { return n.repo; }).filter(Boolean)).sort();
@@ -2760,15 +2840,17 @@ html[data-theme="dark"] .mc-heat-l4 { background: #35b98a; }
     if (FOCUS_OPEN_END) p.body.appendChild(h("button", { class: "mc-chip mc-chip-btn mc-chip-on", type: "button",
       onclick: function () { FOCUS_OPEN_END = null; persistChatState(); rerender(); } }, "showing one open item — show all"));
 
-    renderOpenWork(p.body, openItems, nodes, edges);
-
     var visible = nodes.filter(function (n) {
       if (chatFilter.repo && n.repo !== chatFilter.repo) return false;
-      if (chatFilter.openOnly && !openCountByNode[n.key] && !(n.open_ends || []).length) return false;
+      if (chatFilter.openOnly && !chatHasUnfinishedWork(n, openCountByNode)) return false;
       if (chatFilter.providers[providerGroup(n.provider)]) return false; // toggled off
       if (!chatNodeMatches(n, chatQuery)) return false;
       return true;
     });
+    var visibleOpenNodes = {};
+    visible.forEach(function (n) { visibleOpenNodes[n.key] = true; });
+
+    renderOpenWork(p.body, openItems, nodes, edges, chatFilter.openOnly ? visibleOpenNodes : null);
 
     if (data.counts && data.counts.new_today)
       p.body.appendChild(h("div", { class: "mc-card-foot" }, h("span", { class: "mc-pulse" }, data.counts.new_today + " conversations found today")));
@@ -2781,7 +2863,9 @@ html[data-theme="dark"] .mc-heat-l4 { background: #35b98a; }
     p.body.appendChild(h("output", { id: "mc-chat-search-status", class: "mc-card-foot", role: "status", "aria-live": "polite" },
       normalizedQuery(chatQuery)
         ? searchCountText(visible.length, nodes.length, 100, "chats")
-        : "Showing " + Math.min(100, visible.length) + " of " + visible.length + " chats after filters"));
+        : (chatFilter.openOnly
+          ? "Showing " + Math.min(ROW_CAP, visible.length) + " of " + nodes.length + " chats with unfinished work"
+          : "Showing " + Math.min(ROW_CAP, visible.length) + " of " + visible.length + " chats after filters")));
     var list = h("div", { class: "mc-list" });
     var byId = {}; nodes.forEach(function (n) { byId[n.key] = n; });
     visible.slice(0, ROW_CAP).forEach(function (n) { list.appendChild(chatRow(n, edges, byId)); });
@@ -2791,10 +2875,11 @@ html[data-theme="dark"] .mc-heat-l4 { background: #35b98a; }
     p.body.appendChild(list);
   }
 
-  function renderOpenWork(parent, openItems, nodes, edges) {
+  function renderOpenWork(parent, openItems, nodes, edges, visibleChatKeys) {
     var byKey = {}; (nodes || []).forEach(function (n) { byKey[n.key || nodeKey(n)] = n; });
     var items = (openItems || []).filter(function (o) {
       var n = byKey[o.source_node || ""];
+      if (visibleChatKeys && !visibleChatKeys[o.source_node || ""]) return false;
       if (chatFilter.repo && (o.repo || (n && n.repo) || "") !== chatFilter.repo) return false;
       if (n && chatFilter.providers[providerGroup(n.provider)]) return false;
       if (!openItemMatches(o, n, chatQuery)) return false;
@@ -2923,10 +3008,10 @@ html[data-theme="dark"] .mc-heat-l4 { background: #35b98a; }
     if (lifecycle.length) {
       p.body.appendChild(h("div", { class: "mc-section-head" }, h("h2", { text: "Branch lifecycle" })));
       p.body.appendChild(h("div", { class: "mc-card-foot" }, "Purpose, source chat, merge condition, and delete/retain condition come only from repo todo.md ledger entries."));
-      var lt = h("table", { class: "mc-table mc-git-mobile-table" });
+      var lt = h("table", { class: "mc-table mc-git-mobile-table mc-git-lifecycle-table" });
       lt.appendChild(h("tr", null, h("th", null, "Project"), h("th", null, "Kind"), h("th", null, "Branch/worktree"), h("th", null, "Metadata"), h("th", null, "Purpose"), h("th", null, "Owner/source"), h("th", null, "Merge"), h("th", null, "Close condition")));
       lifecycle.forEach(function (repoRows) { repoRows.rows.forEach(function (row) { var tone = metadataTone(row.status); lt.appendChild(h("tr", null, h("td", { class: "mc-ellipsis", title: repoRows.repo, style: "max-width:170px", "data-label": "Project" }, repoRows.repo), h("td", { "data-label": "Kind" }, row.kind), h("td", { class: "mc-ellipsis", title: row.name, style: "max-width:180px", "data-label": "Branch/worktree" }, row.name), h("td", { class: STATE_CLASS[tone] || "", "data-label": "Metadata" }, glyphSpan(tone), " ", metadataLabel(row.status)), h("td", { class: "mc-ellipsis", title: row.purpose || "", style: "max-width:220px", "data-label": "Purpose" }, row.purpose || "not recorded"), h("td", { class: "mc-ellipsis", title: row.owner || "", style: "max-width:180px", "data-label": "Owner/source" }, row.owner || "not recorded"), h("td", { class: "mc-ellipsis", title: row.merge || "", style: "max-width:180px", "data-label": "Merge" }, row.merge || "not recorded"), h("td", { class: "mc-ellipsis", title: row.close || "", style: "max-width:220px", "data-label": "Close condition" }, row.close || row.action || "not recorded"))); }); });
-      p.body.appendChild(lt);
+      p.body.appendChild(h("div", { class: "mc-table-scroll" }, lt));
     }
     if (clean.length) {
       var cleanDisclosureKey = "git-clean-projects";
@@ -3333,8 +3418,9 @@ html[data-theme="dark"] .mc-heat-l4 { background: #35b98a; }
   // ===========================================================================
   //  ROUTER + lifecycle
   // ===========================================================================
-  var TABS = [["home", "Home"], ["brief", "Brief"], ["map", "Map"], ["chats", "Chats"], ["git", "Git"], ["usage", "Usage"], ["automation", "Automation"], ["attention", "Attention"]];
+  var TABS = [["home", "Home"], ["brief", "Brief"], ["map", "Map"], ["chats", "Chats"], ["git", "Git"], ["usage", "Usage"], ["automation", "Automation"], ["decisions", "Decisions"], ["attention", "Attention"]];
   var LAST_ANNOUNCED_TAB = null;
+  var UNKNOWN_TAB = null;
   // pure render functions, spec shape render.<tab>(feed, el) reading window.MC.feeds.*
   var render = {
     home:       function (feed, el) { renderHome(el); },
@@ -3344,13 +3430,19 @@ html[data-theme="dark"] .mc-heat-l4 { background: #35b98a; }
     git:        function (feed, el) { renderGit(el); },
     usage:      function (feed, el) { renderUsage(el); },
     automation: function (feed, el) { renderAutomation(el); },
+    decisions:  function (feed, el) { renderDecisions(el); },
     attention:  function (feed, el) { renderAttention(el); }
   };
   var RENDER = render;
 
   function currentTab() {
-    var h0 = (location.hash || "").replace(/^#/, "");
-    return RENDER[h0] ? h0 : "home";
+    var h0 = (location.hash || "").replace(/^#/, "").toLowerCase();
+    if (RENDER[h0]) {
+      UNKNOWN_TAB = null;
+      return h0;
+    }
+    UNKNOWN_TAB = h0 || null;
+    return "home";
   }
   function captureScrollContext() {
     var x = typeof window.scrollX === "number" ? window.scrollX : 0;
