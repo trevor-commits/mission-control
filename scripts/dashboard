@@ -2294,6 +2294,10 @@ releases = os.path.join(home, "releases")
 os.makedirs(releases, exist_ok=True)
 os.chmod(releases, 0o700)
 release_id = "%s-%d" % (head[:12], int(time.time()))
+while os.path.lexists(os.path.join(releases, release_id)):
+    # Same head re-snapshotted within one second (rapid retriggers): bump the
+    # suffix instead of colliding. The pointer always names the newest.
+    release_id = "%s-%d" % (head[:12], int(time.time()) + 1)
 dest = os.path.join(releases, release_id)
 tmp = dest + ".tmp"
 shutil.rmtree(tmp, ignore_errors=True)
@@ -2319,8 +2323,13 @@ with open(pointer, "w") as handle:
               sort_keys=True)
     handle.write("\n")
 os.replace(pointer, os.path.join(home, "last-known-good.json"))
-# Keep only the three newest snapshots; pruning never touches the current LKG.
-entries = sorted(e for e in os.listdir(releases) if not e.startswith("."))
+# Keep only the three NEWEST snapshots; pruning never touches the current LKG.
+# Sort by creation time, not name: release ids lead with the head hash, so
+# lexicographic order is not chronological and would keep the wrong releases.
+entries = sorted(
+    (e for e in os.listdir(releases)
+     if not e.startswith(".") and not e.endswith(".tmp")),
+    key=lambda e: os.path.getctime(os.path.join(releases, e)))
 for name in entries[:-3]:
     if name != release_id:
         shutil.rmtree(os.path.join(releases, name), ignore_errors=True)
