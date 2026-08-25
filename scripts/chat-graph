@@ -2192,8 +2192,15 @@ def _tier2_export_providers():
             if _truthy(os.environ.get(
                 "MORNING_BRIEF_LLM_%s" % provider.upper(), "1"))}
 
-def _outcome_export(con, cutoff):
-    """Return current observed cards plus bounded observation-change events."""
+def _outcome_export(con, cutoff, notes):
+    """Return current observed cards plus bounded observation-change events.
+
+    Capacity guard (audit 2026-08-24): the observations join grows without
+    bound while every consumer renders only current cards. The export caps
+    projection work per session and globally; counts stay truthful because
+    `counts.outcome_cards` reports what was PROJECTED, and a truncation note
+    is appended when the cap bites.
+    """
     tier2_providers = _tier2_export_providers()
     grouped = {}
     rows = con.execute("""SELECT o.observation_id,o.session_id,o.tail_hash,
@@ -2262,6 +2269,16 @@ def _outcome_export(con, cutoff):
                 latest_card["repo"] = meta["repo"] or ""
             latest.append(latest_card)
     updates.sort(key=lambda item: (item.get("updated_at") or 0, item["id"]))
+    # Projection cap: newest cards win; overflow becomes a truthful count note.
+    if len(latest) > OUTCOME_CARD_CAP:
+        latest.sort(key=lambda c: (c.get("updated_at") or 0,
+                                   str(c.get("session_id") or "")))
+        dropped = latest[:-OUTCOME_CARD_CAP]
+        kept = latest[-OUTCOME_CARD_CAP:]
+        notes.append("outcome_cards truncated to %d of %d (oldest dropped); "
+                     "raise CHAT_GRAPH_OUTCOME_CARD_CAP or run `chat-graph prune`"
+                     % (OUTCOME_CARD_CAP, len(latest)))
+        latest = kept
     return latest, updates[-500:]
 
 def _build_export(con, ingest_skipped=False):
@@ -2269,6 +2286,7 @@ def _build_export(con, ingest_skipped=False):
     last_full = _last_full_ingest_epoch()
     metadata_status = _get_meta(con, "metadata_enrichment_status", "unknown")
     stale_providers = set(_STALE_PROVIDERS)
+    notes = []  # capacity/truncation notes; merged with repo annotations below
     if metadata_status == "degraded":
         stale_providers.add("chat-source")
     session_identity = {
@@ -2359,7 +2377,7 @@ def _build_export(con, ingest_skipped=False):
             "resolution_evidence_type": o["resolution_evidence_type"],
             "resolution_evidence_ref": o["resolution_evidence_ref"],
         })
-    outcomes, outcome_updates = _outcome_export(con, cutoff)
+    outcomes, outcome_updates = _outcome_export(con, cutoff, notes)
     outcome_egress = {}
     for card in outcomes:
         for key, value in (card.get("egress_counters") or {}).items():
@@ -2389,7 +2407,8 @@ def _build_export(con, ingest_skipped=False):
     for r in con.execute("SELECT code, session_id FROM session_topics"):
         tmap.setdefault(r["code"], []).append(r["session_id"])
     topics = [{"code": c, "sessions": sorted(m)} for c, m in sorted(tmap.items()) if len(m) >= 2]
-    repo_annotations, notes = _repo_annotations()
+    repo_annotations, repo_notes = _repo_annotations()
+    notes = notes + list(repo_notes or [])
     scanned = int(_get_meta(con, "scan_files_scanned", 0) or 0)
     yld = int(_get_meta(con, "scan_files_yield", 0) or 0)
     lt = time.localtime(now)
@@ -2862,6 +2881,15 @@ def cmd_doctor(args):
         con = connect()
         qc = con.execute("PRAGMA quick_check").fetchone()[0]
         check(qc == "ok", "db quick_check: %s" % qc)
+        # Capacity budget (audit 2026-08-24): graph.db grew to ~100 MB in seven
+        # weeks. Doctor reports size against the retention ceiling so growth is
+        # visible before it hurts; exceeding the band is advisory, not a
+        # failure — `chat-graph prune` rolls up superseded outcome history.
+        db_bytes = os.path.getsize(db_path()) if os.path.exists(db_path()) else 0
+        db_mb = db_bytes / 1e6
+        warn(db_mb < PRUNE_WARN_MB,
+             "db size: %.1f MB (warn >%d MB; `chat-graph prune` rolls up old outcomes)"
+             % (db_mb, PRUNE_WARN_MB))
         con.close()
     except Exception as e:
         check(False, "db open: %s" % e)
@@ -2888,6 +2916,78 @@ def cmd_doctor(args):
     else:
         warn(errs == 0, "scan-error count: %d (transient; run reindex to clear the log)" % errs)
     return 1 if problems else 0
+
+# Retention (audit 2026-08-24): session_outcomes is the unbounded table — every
+# ingest appends rows forever while consumers read only current cards. Prune
+# deletes superseded outcome lanes older than the keep window and VACUUMs so
+# space returns to the OS. The surviving current card of every lane is kept.
+PRUNE_KEEP_DAYS = 45          # keep outcomes newer than this regardless of state
+PRUNE_WARN_MB = 80            # doctor warns above this size
+PRUNE_MAX_MB = 200            # hard ceiling enforced by prune --if-needed
+
+# Export projection cap (audit 2026-08-24): chats.js grew to ~16 MB because the
+# export projected every observed card. Consumers render bounded subsets; the
+# projection itself must be bounded too. Newest cards win.
+def _outcome_card_cap():
+    try:
+        value = int(os.environ.get("CHAT_GRAPH_OUTCOME_CARD_CAP", "2000"))
+    except ValueError:
+        return 2000
+    return max(100, min(50000, value))
+
+
+OUTCOME_CARD_CAP = _outcome_card_cap()
+
+
+def cmd_prune(args):
+    dry_run = "--dry-run" in args
+    if_needed = "--if-needed" in args
+    con = connect()
+    try:
+        db_bytes = os.path.getsize(db_path())
+        if if_needed and db_bytes < PRUNE_MAX_MB * 1e6:
+            print("prune: db %.1f MB under %d MB ceiling; nothing to do"
+                  % (db_bytes / 1e6, PRUNE_MAX_MB))
+            return 0
+        cutoff = int(time.time()) - PRUNE_KEEP_DAYS * 86400
+        # A lane is dead history when its session has moved on: the session owns
+        # a strictly newer lane (any tail/method/variant with a later stamp).
+        # Those old payload rows are what bloats graph.db; the newest lane of
+        # each session and anything inside the keep window always survive.
+        doomed_sql = """
+            FROM session_outcomes AS s
+            WHERE s.updated_at < ? AND EXISTS (
+                SELECT 1 FROM session_outcomes AS newer
+                WHERE newer.session_id = s.session_id
+                  AND newer.id != s.id
+                  AND COALESCE(newer.updated_at, 0) > COALESCE(s.updated_at, 0))
+        """
+        doomed = con.execute("SELECT COUNT(*) " + doomed_sql,
+                             (cutoff,)).fetchone()[0]
+        total = con.execute("SELECT COUNT(*) FROM session_outcomes").fetchone()[0]
+        if dry_run:
+            print("prune: would remove %d of %d outcome rows (cutoff %ds)"
+                  % (doomed, total, cutoff))
+            return 0
+        con.execute("DELETE FROM session_outcomes WHERE rowid IN (SELECT s.rowid "
+                    + doomed_sql + ")", (cutoff,))
+        removed = con.execute("SELECT changes()").fetchone()[0]
+        # Roll-up: one durable counter in meta keeps the historical volume honest
+        # without keeping payload rows. Referential history survives as counts.
+        con.execute("""INSERT INTO meta(key, value)
+                       VALUES('pruned_outcome_rows', '0')
+                       ON CONFLICT(key) DO NOTHING""")
+        con.execute("""UPDATE meta SET value = CAST(CAST(value AS INTEGER) + ? AS TEXT)
+                       WHERE key='pruned_outcome_rows'""", (removed,))
+        con.commit()
+        con.execute("VACUUM")
+        after = os.path.getsize(db_path())
+        print("prune: removed %d rows (kept %d); db %.1f MB -> %.1f MB"
+              % (removed, total - removed, db_bytes / 1e6, after / 1e6))
+        return 0
+    finally:
+        con.close()
+
 
 def cmd_rebuild(args):
     # fresh schema + collectors + replay journal in recorded order.
@@ -2928,7 +3028,8 @@ USAGE = ("usage: chat-graph {ingest|extract-outcomes|export|validate-export|link
          "                   [--apply-calibration PATH] [--set-enabled 0|1] [--json]\n"
          "  export --json [--out PATH] [--catchup-limit N]   validate-export <file>\n"
          "  link A B --type T [--note ..]   unlink A B [--type T]   resolve <id> <text-hash>\n"
-         "  show <id>   stats   doctor   rebuild   --self-test")
+         "  show <id>   stats   doctor   rebuild   --self-test\n"
+         "  prune [--dry-run] [--if-needed]   roll up superseded outcome history")
 
 def main(argv):
     if not argv:
@@ -2940,6 +3041,7 @@ def main(argv):
         "link": cmd_link, "unlink": cmd_unlink,
         "resolve": cmd_resolve, "show": cmd_show, "stats": cmd_stats,
         "doctor": cmd_doctor, "rebuild": cmd_rebuild,
+        "prune": cmd_prune,
         "--self-test": cmd_self_test, "self-test": cmd_self_test,
     }
     fn = table.get(cmd)

@@ -562,7 +562,10 @@ function contrast(a, b) {
     await operatorUxAudit(browser, operatorState);
     for (const [mode, root] of Object.entries(states)) {
       for (const mobile of [false, true]) {
-        const page = await browser.newPage({ viewport: mobile ? { width: 390, height: 844 } : { width: 1440, height: 1000 } });
+        // Narrow-viewport coverage: 320px is the smallest supported phone
+        // class. Every tab must render without document overflow there too.
+        for (const width of mobile ? [390, 320] : [1440]) {
+        const page = await browser.newPage({ viewport: { width, height: 844 } });
         const failures = [];
         page.on('pageerror', e => failures.push(`pageerror:${e.message}`));
         page.on('console', m => { if (m.type() === 'error') failures.push(`console:${m.text()}`); });
@@ -645,6 +648,7 @@ function contrast(a, b) {
         }
         assert(failures.length === 0, `${mode}: browser failures: ${failures.join(' | ')}`);
         await page.close();
+        }
       }
     }
     const attentionPage = await browser.newPage({ viewport: { width: 1440, height: 1000 } });

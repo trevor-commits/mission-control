@@ -46,5 +46,8 @@ jobs:
           PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
         run: npm install --no-save --no-package-lock --ignore-scripts playwright@1.62.0
 
+      - name: Verify vendored cytoscape matches the lockfile hash
+        run: /usr/bin/shasum -a 256 -c dashboard/vendor/cytoscape.min.js.sha256
+
       - name: Run the authoritative verifier
         run: /bin/bash scripts/verify.sh

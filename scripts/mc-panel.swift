@@ -11,6 +11,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
   var popover: NSPopover!
   var webView: WKWebView!
   var timer: Timer?
+  var heartbeatTimer: Timer?
   var hoverTimer: Timer?
   // AI Headroom: pinned always-on-top corner card + 15 s live data injection.
   var pinPanel: NSPanel?
@@ -70,6 +71,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
 
     reload()
     updateStatusTitle()
+    // Heartbeat: the jobs registry treats mc-panel-debug.log as this job's run
+    // evidence with expected_freshness_s = 3600. Without a periodic touch, a
+    // long-lived healthy panel looks dead to automation-status after an hour.
+    heartbeatTimer = Timer.scheduledTimer(withTimeInterval: 900, repeats: true) { [weak self] _ in
+      self?.plog(String(format: "heartbeat alive=%.0fs", Date().timeIntervalSince1970))
+    }
     timer = Timer.scheduledTimer(withTimeInterval: 45, repeats: true) { [weak self] _ in
       self?.reload()
       self?.updateStatusTitle()

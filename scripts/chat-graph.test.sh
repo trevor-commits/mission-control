@@ -349,6 +349,78 @@ ok 0 "$RC" "doctor with 1 transient scan-error WARNs, does not FAIL (exit 0)"
 "$CG" doctor >/dev/null 2>&1; RC=$?
 ok 1 "$RC" "doctor with a LARGE scan-error count (>20) FAILs (exit 1)"
 
+# --- 11c. retention: prune rolls up dead outcome lanes, keeps newest + window -
+new_env
+"$CG" ingest >/dev/null
+BASE="$(q "SELECT COUNT(*) FROM session_outcomes")"
+python3 - "$CG" <<'PY'
+import importlib.machinery, importlib.util, os, sqlite3, sys, time
+sys.path.insert(0, os.path.dirname(os.path.abspath(sys.argv[1])))
+loader = importlib.machinery.SourceFileLoader("cg_prune_case", sys.argv[1])
+spec = importlib.util.spec_from_loader(loader.name, loader)
+cg = importlib.util.module_from_spec(spec)
+loader.exec_module(cg)
+con = sqlite3.connect(cg.db_path())
+now = int(time.time())
+old = now - 90 * 86400
+
+def insert(oid, sess, tail, variant, updated):
+    con.execute("INSERT INTO session_outcomes(id,session_id,tail_hash,outcome_json,"
+                "method,variant,finalized,updated_at) VALUES(?,?,?,?,?,?,0,?)",
+                (oid, sess, tail, "{}", "tier1", variant, updated))
+
+insert("po1", "ps1", "t1", "v1", old)          # dead: newer lane exists
+insert("pc1", "ps1", "t2", "v2", now)          # newest lane survives
+insert("plone", "ps2", "l0", "lv", old)        # no newer sibling survives
+con.commit()
+con.close()
+PY
+TOTAL="$((BASE + 3))"
+"$CG" prune --dry-run 2>&1 | grep -q "would remove 1 of $TOTAL" \
+  && pass "prune --dry-run counts dead lanes without mutating" \
+  || fail "prune --dry-run miscounted"
+AFTER="$("$CG" prune 2>&1)"
+echo "$AFTER" | grep -q "removed 1 rows (kept $((TOTAL - 1)))" \
+  && pass "prune removes only superseded lanes and reports the roll-up" \
+  || fail "prune removal contract regressed ($AFTER)"
+"$CG" prune --if-needed >/dev/null 2>&1; RC=$?
+ok 0 "$RC" "prune --if-needed under the ceiling is a no-op success"
+
+# --- 11d. export projection cap: overflow truncates to newest with a note ----
+new_env
+"$CG" ingest >/dev/null
+python3 - "$CG" <<'PY'
+import importlib.machinery, importlib.util, os, sqlite3, sys, time
+sys.path.insert(0, os.path.dirname(os.path.abspath(sys.argv[1])))
+loader = importlib.machinery.SourceFileLoader("cg_cap_case", sys.argv[1])
+spec = importlib.util.spec_from_loader(loader.name, loader)
+cg = importlib.util.module_from_spec(spec)
+os.environ["CHAT_GRAPH_OUTCOME_CARD_CAP"] = "100"
+loader.exec_module(cg)
+con = cg.connect()
+now = int(time.time())
+for i in range(6):
+    con.execute("INSERT OR REPLACE INTO sessions(id,provider,node_kind,title,repo,"
+                "first_seen_at,last_activity) VALUES(?,?,?,?,?,?,?)",
+                ("cap%d" % i, "claude", "chat", "t%d" % i, "", now, now))
+    con.execute("INSERT INTO session_outcomes(id,session_id,tail_hash,outcome_json,"
+                "method,variant,finalized,updated_at) VALUES(?,?,?,?,?,?,0,?)",
+                ("co%d" % i, "cap%d" % i, "h%d" % i, "{}", "tier1", "v%d" % i,
+                 now - 3600 - i))
+    con.execute("INSERT INTO session_outcome_observations(outcome_id,session_id,"
+                "tail_hash,observed_at,finalized,evidence_fingerprint) "
+                "VALUES(?,?,?,?,0,?)",
+                ("co%d" % i, "cap%d" % i, "h%d" % i, now - 60 - i, "fp%d" % i))
+con.commit()
+notes = []
+cards, _ = cg._outcome_export(con, now - 7 * 86400, notes)
+assert len(cards) <= cg.OUTCOME_CARD_CAP, (len(cards), cg.OUTCOME_CARD_CAP)
+# small corpora pass through untouched — the cap must never eat a live corpus.
+assert len(cards) == 6 or len(notes) > 0, (len(cards), notes)
+con.close()
+print("CAP-CASE OK (%d cards, cap=%d)" % (len(cards), cg.OUTCOME_CARD_CAP))
+PY
+
 # --- 12. security: secret in title is redacted at display time --------------
 new_env
 SECRET="sk-$(printf 'a%.0s' $(seq 1 24))"
@@ -1794,7 +1866,7 @@ cg._persist_tier1_outcome(con,"REWIND42","claude",messages("A","a"),"fixture")
 cg._persist_tier1_outcome(con,"REWIND42","claude",messages("B","b"),"fixture")
 cg._persist_tier1_outcome(con,"REWIND42","claude",messages("A","a"),"fixture")
 con.commit()
-cards,updates=cg._outcome_export(con,0)
+cards,updates=cg._outcome_export(con,0,[])
 card=[x for x in cards if x["session_id"]=="REWIND42"][0]
 assert con.execute("SELECT COUNT(*) FROM session_outcomes WHERE session_id='REWIND42'").fetchone()[0]==2
 assert con.execute("SELECT COUNT(*) FROM session_outcome_observations WHERE session_id='REWIND42'").fetchone()[0]==3

@@ -432,8 +432,9 @@ body {
   font-family: var(--mc-mono); font-size: var(--mc-fs-1);
   background: var(--mc-surface-2); border: 1px solid var(--mc-border);
   border-radius: var(--mc-r-1); padding: 2px 4px 2px var(--mc-sp-2);
-  color: var(--mc-fg-muted); max-width: 320px;
+  color: var(--mc-fg-muted); max-width: 100%; min-width: 0;
 }
+.mc-cmd code, .mc-cmd > code { overflow-wrap: anywhere; min-width: 0; }
 .mc-copy {
   cursor: pointer; color: var(--mc-accent); border: none; background: none;
   font-size: var(--mc-fs-1); padding: 4px 6px; font-weight: 600;

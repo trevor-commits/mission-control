@@ -60,6 +60,24 @@ STALE_MULTIPLE = 6
 # After this many consecutive failed repairs the job stops being "safe to retry"
 # and becomes a report. Retrying forever is how a fix turns into noise.
 MAX_ATTEMPTS = 3
+# Report retention (audit 2026-08-24): report.jsonl is append-only and unbounded.
+# Keep the newest REPORT_KEEP_LINES lines; the file is a rolling ops log, not an
+# archive. Trimming happens after each append so growth is O(keep).
+REPORT_KEEP_LINES = 2000
+
+
+def trim_report(path, keep=REPORT_KEEP_LINES):
+    try:
+        with open(path, "rb") as handle:
+            lines = handle.readlines()
+        if len(lines) <= keep:
+            return
+        tmp = path + ".trim"
+        with open(tmp, "wb") as handle:
+            handle.writelines(lines[-keep:])
+        os.replace(tmp, path)
+    except OSError:
+        pass  # a trim failure must never fail the repair pass
 
 
 def load_json(path):
@@ -87,6 +105,7 @@ def append_report(path, record):
     os.makedirs(os.path.dirname(path), mode=0o700, exist_ok=True)
     with open(path, "a") as handle:
         handle.write(json.dumps(record, sort_keys=True, default=str) + "\n")
+    trim_report(path)
     try:
         os.chmod(path, 0o600)
     except OSError:
@@ -409,7 +428,19 @@ def self_test():
                                 data_dir=tmp)
         check("non-feed repairs skip envelope verification", ok)
 
-    total = 17
+    # Report retention: the rolling ops log never grows past its keep window.
+    with tempfile.TemporaryDirectory() as tmp:
+        report = os.path.join(tmp, "report.jsonl")
+        for i in range(REPORT_KEEP_LINES + 50):
+            append_report(report, {"i": i})
+        with open(report) as handle:
+            kept_lines = sum(1 for _ in handle)
+        check("report.jsonl is trimmed to the keep window",
+              kept_lines == REPORT_KEEP_LINES)
+        first = json.loads(open(report).readline())
+        check("trim keeps the NEWEST records", first["i"] == 50)
+
+    total = 19
     print("%d passed; %d failed" % (total - len(failures), len(failures)))
     return 1 if failures else 0
 

@@ -210,6 +210,8 @@ run "panel browser" node scripts/panel-browser.test.js
 run "native panel headroom" python3 scripts/mc-panel-headroom.test.py
 run "native panel core feeds" python3 scripts/mc-panel-summary.test.py
 run "unfinished-work scanner" scripts/scan-unfinished-work --self-test
+run "jobs registry schema" python3 scripts/jobs-registry.test.py
+run "vendor hash lock" /usr/bin/shasum -a 256 -c dashboard/vendor/cytoscape.min.js.sha256
 run "OpenSpec strict" openspec validate --all --strict
 run "Python syntax (auto-discovered)" python_syntax
 run "shell syntax (auto-discovered)" shell_syntax

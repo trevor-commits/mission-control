@@ -291,11 +291,13 @@
           "role": "run"
         }
       ],
-      "expected_freshness_s": 604800,
+      "expected_freshness_s": 3600,
       "kind": "keepalive",
       "label": "Menu Bar Panel",
       "name": "com.gillettes.mc-panel",
-      "schedule": "keepalive, throttle 5s"
+      "schedule": "keepalive, throttle 5s",
+      "identity": "com.gillettes.mc-panel",
+      "identity_source": "launchd template label"
     },
     {
       "activation_required": true,

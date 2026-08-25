@@ -36,6 +36,7 @@ State is one small JSON with a high-water mark, the last-known reset
 predictions, and the attention ids this tool owns and must clean up.
 """
 
+import fcntl
 import json
 import os
 import subprocess
@@ -229,7 +230,7 @@ def read_state(path):
 
 
 def write_state(path, value):
-    """Atomic + 0700 dir, matching the repo's state-handling guardrail."""
+    """Atomic + fsynced + 0700 dir, matching the repo's state-handling guardrail."""
     os.makedirs(os.path.dirname(path), mode=0o700, exist_ok=True)
     try:
         os.chmod(os.path.dirname(path), 0o700)
@@ -238,7 +239,33 @@ def write_state(path, value):
     tmp = path + ".tmp"
     with open(tmp, "w") as handle:
         json.dump(value, handle, sort_keys=True)
+        handle.flush()
+        os.fsync(handle.fileno())
     os.replace(tmp, path)
+
+
+def update_state(path, mutate):
+    """Read-modify-write the whole state file under an exclusive lock.
+
+    The attention add/resolve cycle is not instantaneous: two overlapping runs
+    (schedule + manual) would otherwise read the same baseline, both apply their
+    own emitted-map changes, and the second write silently discards the first's.
+    The lock is advisory and kernel-released, so a crash cannot wedge it.
+    """
+    os.makedirs(os.path.dirname(path), mode=0o700, exist_ok=True)
+    fd = os.open(path + ".lock", os.O_CREAT | os.O_RDWR, 0o600)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        state = read_state(path)
+        result = mutate(state)
+        write_state(path, state)
+        return result
+    finally:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+        except OSError:
+            pass
+        os.close(fd)
 
 
 def human_age(seconds):
@@ -386,15 +413,36 @@ def run(argv):
             print("%s - %s" % (title, why))
 
     if do_emit:
-        added, resolved = sync_attention(now, silence, early, state)
+        def _emit_locked(state):
+            added, resolved = sync_attention(now, silence, early, state)
+            # The high-water mark advances transactionally with the attention
+            # sync: a reset is only "seen" once its row is durably booked, so a
+            # crash between add and watermark re-reports rather than silently
+            # swallowing the event.
+            if resets:
+                candidate = max(e["t"] for e in resets)
+                last_seen = state.get("last_reset_t")
+                last_seen = int(last_seen) if isinstance(last_seen, (int, float)) else 0
+                if candidate > last_seen:
+                    state["last_reset_t"] = candidate
+            return added, resolved
+
+        added, resolved = update_state(STATE, _emit_locked)
         if added or resolved:
             print("usage-watch: attention +%d / resolved %d"
                   % (len(added), len(resolved)), file=sys.stderr)
 
-    if resets:
-        state["last_reset_t"] = max(e["t"] for e in resets)
-    state["predictions"] = current_predictions(data) or predictions
-    write_state(STATE, state)
+    def _finalize(state):
+        if resets:
+            candidate = max(e["t"] for e in resets)
+            last_seen = state.get("last_reset_t")
+            last_seen = int(last_seen) if isinstance(last_seen, (int, float)) else 0
+            if candidate > last_seen:
+                state["last_reset_t"] = candidate
+        current = current_predictions(data)
+        state["predictions"] = current or state.get("predictions") or {}
+
+    update_state(STATE, _finalize)
     return 0
 
 
@@ -512,6 +560,38 @@ def self_test():
                                      runner=lambda argv: (1, ""))
     check("a failed resolve is retried next cycle, not orphaned",
           resolved == [] and "silence:claude" in state["emitted"])
+
+    # Concurrent runs serialize: each update_state sees the previous write.
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmp:
+        path = os.path.join(tmp, "state.json")
+
+        def bump_a(state):
+            merged = state.get("emitted") or {}
+            merged["a"] = {"id": "att:a", "t": 1}
+            state["emitted"] = merged
+            return "a"
+
+        def bump_b(state):
+            merged = state.get("emitted") or {}
+            merged["b"] = {"id": "att:b", "t": 2}
+            state["emitted"] = merged
+            return "b"
+
+        update_state(path, bump_a)
+        update_state(path, bump_b)
+        final = read_state(path)
+        check("locked read-modify-write keeps both writers' changes",
+              final.get("emitted", {}).get("a") and final.get("emitted", {}).get("b"))
+
+        def watermark(state):
+            state["last_reset_t"] = max(
+                int(state.get("last_reset_t") or 0), 555)
+            return None
+
+        update_state(path, watermark)
+        check("watermark never regresses under lock",
+              read_state(path).get("last_reset_t") == 555)
 
     print("%d passed; %d failed" % (ran[0] - len(failures), len(failures)))
     return 1 if failures else 0
