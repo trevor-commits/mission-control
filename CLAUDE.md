@@ -2,6 +2,8 @@
 
 @AGENTS.md
 
+Read `AGENTS.md` first before planning, audit, or state moves.
+
 `AGENTS.md` is the canonical repo entry surface for Claude and Codex in this repository. this file only imports it and keeps the Claude-specific gates below.
 
 ## Repo Principles
