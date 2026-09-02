@@ -216,6 +216,7 @@ def cmd_prompt(a):
 Runner: <Claude Code | Codex | Cursor | Hermes>
 Model: claude-opus-5
 Effort: high
+Delegation defaults: <Used - <agent IDs/purposes> | Not used - <specific reason>>
 Repo: {a.repo or '<absolute path>'}
 Branch: <branch to work on>
 Context:
@@ -275,7 +276,7 @@ def self_test():
         ref, out, repo = "2", str(tmp / "p.md"), str(tmp / "repo")
     cmd_prompt(Args)
     text = (tmp / "p.md").read_text()
-    assert text.startswith("Goal:") and "Model: claude-opus-5" in text and f"Prompt file: `{tmp / 'p.md'}`" in text
+    assert text.startswith("Goal:") and "Model: claude-opus-5" in text and "\nDelegation defaults: " in text and f"Prompt file: `{tmp / 'p.md'}`" in text
     shutil.rmtree(tmp)
     print("loose-ends self-test: ok")
 
