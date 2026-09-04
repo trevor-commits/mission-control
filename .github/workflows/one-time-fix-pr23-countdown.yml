@@ -26,28 +26,10 @@ jobs:
           set -euo pipefail
           python3 <<'PY'
           from pathlib import Path
-
           path = Path('scripts/dashboard-render-smoke.js')
           text = path.read_text()
-          old = """  feeds.headroom.data.rows.forEach(row => {
-    if (!row || row.health !== 'ok' || row.confidence !== 'live') return;
-    const age = Number.isFinite(row.age_s) && row.age_s >= 0 ? row.age_s : 0;
-    row.fetched_epoch = NOW_S - age;
-  });
-"""
-          new = """  feeds.headroom.data.rows.forEach((row, index) => {
-    if (!row) return;
-    if (Number.isFinite(row.resets_epoch)) {
-      const baseOffset = row.window_class === 'month' ? 10 * 86400
-        : row.window_class === 'week' ? 2 * 86400
-        : 2 * 3600;
-      row.resets_epoch = NOW_S + baseOffset + index * 60;
-    }
-    if (row.health !== 'ok' || row.confidence !== 'live') return;
-    const age = Number.isFinite(row.age_s) && row.age_s >= 0 ? row.age_s : 0;
-    row.fetched_epoch = NOW_S - age;
-  });
-"""
+          old = "  feeds.headroom.data.rows.forEach(row => {\n    if (!row || row.health !== 'ok' || row.confidence !== 'live') return;\n    const age = Number.isFinite(row.age_s) && row.age_s >= 0 ? row.age_s : 0;\n    row.fetched_epoch = NOW_S - age;\n  });\n"
+          new = "  feeds.headroom.data.rows.forEach((row, index) => {\n    if (!row) return;\n    if (Number.isFinite(row.resets_epoch)) {\n      const baseOffset = row.window_class === 'month' ? 10 * 86400\n        : row.window_class === 'week' ? 2 * 86400\n        : 2 * 3600;\n      row.resets_epoch = NOW_S + baseOffset + index * 60;\n    }\n    if (row.health !== 'ok' || row.confidence !== 'live') return;\n    const age = Number.isFinite(row.age_s) && row.age_s >= 0 ? row.age_s : 0;\n    row.fetched_epoch = NOW_S - age;\n  });\n"
           if text.count(old) != 1:
               raise SystemExit('countdown fixture anchor was not found exactly once')
           path.write_text(text.replace(old, new, 1))
