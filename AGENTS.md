@@ -24,8 +24,9 @@ Read this file before any action. It explains the repo's logic, tells the agent 
 
 ## Task Routing
 - Implementation or bugfix: read `/Users/gillettes/Coding Projects/mission-control/PROJECT_INTENT.md`, `/Users/gillettes/Coding Projects/mission-control/AGENTS.project.md`, and the relevant source files; load the principle docs before commit or state changes.
-- Audit or review: read `/Users/gillettes/Coding Projects/mission-control/PROJECT_INTENT.md`, `/Users/gillettes/Coding Projects/mission-control/AGENTS.project.md`, `/Users/gillettes/Coding Projects/mission-control/todo.md`, and the principle docs before drawing conclusions.
-- Planning or next-steps work: read `/Users/gillettes/Coding Projects/mission-control/PROJECT_INTENT.md`, `/Users/gillettes/Coding Projects/mission-control/AGENTS.project.md`, and `/Users/gillettes/Coding Projects/mission-control/todo.md`.
+- Audit or review: read `/Users/gillettes/Coding Projects/mission-control/PROJECT_INTENT.md`, `/Users/gillettes/Coding Projects/mission-control/AGENTS.project.md`, the `## Active Next Steps` section of `/Users/gillettes/Coding Projects/mission-control/todo.md` (the rest of that file is append-only history. read a log section only when the audit needs it), and the principle docs before drawing conclusions.
+- Planning or next-steps work: read `/Users/gillettes/Coding Projects/mission-control/PROJECT_INTENT.md`, `/Users/gillettes/Coding Projects/mission-control/AGENTS.project.md`, and the `## Active Next Steps` section of `/Users/gillettes/Coding Projects/mission-control/todo.md`.
+- Unfinished work, loose ends, or "pick up where we left off": run the `loose-ends` skill (`skills/loose-ends/SKILL.md`, helper `scripts/loose-ends`). do not reconstruct stranded work by reading logs.
 - Governance or repo-structure work: read this file, `/Users/gillettes/Coding Projects/mission-control/AGENTS.project.md`, and any touched global scripts/policies before editing.
 - Claude/Codex handoff: read `/Users/gillettes/Coding Projects/mission-control/CLAUDE.md` and name the expected durable records explicitly.
 
@@ -47,6 +48,9 @@ Read this file before any action. It explains the repo's logic, tells the agent 
 - `/Users/gillettes/Coding Projects/mission-control/docs/MISSION_CONTROL_PLAN.md`.
 - `/Users/gillettes/Coding Projects/mission-control/notes/DIRECTION-2026-07-04.md`.
 - `/Users/gillettes/Coding Projects/mission-control/records/`.
+- `/Users/gillettes/Coding Projects/mission-control/STATE.md` (generated snapshot. trust `git log` over it when they disagree).
+- `/Users/gillettes/Coding Projects/mission-control/docs/IMPROVEMENTS.md`.
+- `/Users/gillettes/Coding Projects/mission-control/skills/loose-ends/SKILL.md` and `scripts/loose-end-runner` for open-work handling.
 - Add stack-specific runbooks, API specs, deployment docs, and troubleshooting docs here as they become canonical.
 
 ## Non-Negotiables
