@@ -146,8 +146,15 @@ if (feeds.headroom && feeds.headroom.data && Array.isArray(feeds.headroom.data.r
   // silently age into the honest snapshot-fallback path.
   feeds.headroom.generated_epoch = NOW_S;
   feeds.headroom.generated_at = new Date(NOW_S * 1000).toISOString();
-  feeds.headroom.data.rows.forEach(row => {
-    if (!row || row.health !== 'ok' || row.confidence !== 'live') return;
+  feeds.headroom.data.rows.forEach((row, index) => {
+    if (!row) return;
+    if (Number.isFinite(row.resets_epoch)) {
+      const baseOffset = row.window_class === 'month' ? 10 * 86400
+        : row.window_class === 'week' ? 2 * 86400
+        : 2 * 3600;
+      row.resets_epoch = NOW_S + baseOffset + index * 60;
+    }
+    if (row.health !== 'ok' || row.confidence !== 'live') return;
     const age = Number.isFinite(row.age_s) && row.age_s >= 0 ? row.age_s : 0;
     row.fetched_epoch = NOW_S - age;
   });
