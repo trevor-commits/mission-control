@@ -146,8 +146,15 @@ if (feeds.headroom && feeds.headroom.data && Array.isArray(feeds.headroom.data.r
   // silently age into the honest snapshot-fallback path.
   feeds.headroom.generated_epoch = NOW_S;
   feeds.headroom.generated_at = new Date(NOW_S * 1000).toISOString();
-  feeds.headroom.data.rows.forEach(row => {
-    if (!row || row.health !== 'ok' || row.confidence !== 'live') return;
+  feeds.headroom.data.rows.forEach((row, index) => {
+    if (!row) return;
+    if (Number.isFinite(row.resets_epoch)) {
+      const baseOffset = row.window_class === 'month' ? 10 * 86400
+        : row.window_class === 'week' ? 2 * 86400
+        : 2 * 3600;
+      row.resets_epoch = NOW_S + baseOffset + index * 60;
+    }
+    if (row.health !== 'ok' || row.confidence !== 'live') return;
     const age = Number.isFinite(row.age_s) && row.age_s >= 0 ? row.age_s : 0;
     row.fetched_epoch = NOW_S - age;
   });
@@ -220,7 +227,7 @@ const markers = {
 // --- run the IIFE once per tab ---------------------------------------------
 // The map tab uses Cytoscape in the browser. A tiny stub is enough to prove the
 // real graph path builds elements and wires handlers without loading the vendor.
-const TABS = ['home', 'brief', 'map', 'chats', 'git', 'usage', 'automation', 'attention'];
+const TABS = ['home', 'brief', 'map', 'chats', 'git', 'usage', 'automation', 'decisions', 'attention'];
 let fails = 0;
 for (const tab of TABS) {
   resetDom();
@@ -419,6 +426,13 @@ for (const tab of TABS) {
     console.error('FAIL: #brief is missing ordered sections or visible trust labels');
     fails++; continue;
   }
+  if (tab === 'decisions' &&
+      (txt.indexOf('Decisions waiting for you') === -1 ||
+       txt.indexOf('Choose the rollout window') === -1 ||
+       txt.indexOf('**DECISION NEEDED:**') !== -1)) {
+    console.error('FAIL: #decisions is missing the structured queue or still dumps raw markdown');
+    fails++; continue;
+  }
   // Defect (b): a within-validity brief must not be flagged stale despite a very
   // old compose epoch (the guard honors valid_until, not the poll cadence).
   if (tab === 'brief' && txt.indexOf('Data is older than expected') !== -1) {
@@ -427,6 +441,112 @@ for (const tab of TABS) {
   }
   console.log('PASS: #' + tab + ' renders (' + txt.length + ' chars' + (marker ? ', contains "' + marker.slice(0, 30) + '"' : '') + ')');
 }
+
+(function homeHeroAndMarkdown() {
+  resetDom();
+  locationShim.hash = '#home';
+  const testFeeds = JSON.parse(JSON.stringify(feeds));
+  const healthJob = (testFeeds.automation.data.jobs || []).find(function (j) {
+    return String(j.label || '').indexOf('morning-health') >= 0;
+  });
+  if (healthJob) healthJob.state = 'red';
+  const localStorage = storageShim();
+  const sessionStorage = storageShim();
+  sessionStorage.setItem('mc-home-expanded', '1');
+  const sandbox = {
+    window: { MC: { feeds: testFeeds }, addEventListener() {}, removeEventListener() {}, localStorage, sessionStorage },
+    document: documentShim, location: locationShim, localStorage, sessionStorage,
+    navigator: { clipboard: { writeText() { return Promise.resolve(); } } },
+    setInterval() { return 0; }, clearInterval() {}, setTimeout(fn) { if (typeof fn === 'function') fn(); return 0; }, clearTimeout() {},
+    Math: Math, Date: Date, JSON: JSON, console: { log() {}, warn() {}, error() {} },
+    Array: Array, Object: Object, String: String, Number: Number, isFinite: isFinite, parseInt: parseInt, parseFloat: parseFloat,
+    cytoscape() { return { on() {}, destroy() {}, $() { return { select() { return this; } }; } }; },
+  };
+  sandbox.window.window = sandbox.window;
+  sandbox.globalThis = sandbox;
+  try {
+    vm.runInNewContext(scriptBody, sandbox, { timeout: 5000 });
+  } catch (e) {
+    console.error('FAIL: home hero/markdown check THREW: ' + (e && e.message));
+    fails++; return;
+  }
+  const txt = (byId['mc-main'] && byId['mc-main'].textContent) || '';
+  if (!/1 red job needs repair/.test(txt) || !/1\/12/.test(txt)) {
+    console.error('FAIL: home hero headline and jobs-red stat disagree (' + txt.slice(0, 180) + ')');
+    fails++;
+  } else if (txt.indexOf('**DECISION NEEDED:**') !== -1 || txt.indexOf('`Ship today`') !== -1) {
+    console.error('FAIL: home expanded decisions still dump raw markdown');
+    fails++;
+  } else {
+    console.log('PASS: home hero job counts agree and decision copy is plain text');
+  }
+})();
+
+(function chatsOpenOnlyFilter() {
+  resetDom();
+  locationShim.hash = '#chats';
+  const localStorage = storageShim();
+  const sessionStorage = storageShim();
+  sessionStorage.setItem('mc-operator-state-v1', JSON.stringify({ chats: { openOnly: true } }));
+  const sandbox = {
+    window: { MC: { feeds: JSON.parse(JSON.stringify(feeds)) }, addEventListener() {}, removeEventListener() {}, localStorage, sessionStorage },
+    document: documentShim, location: locationShim, localStorage, sessionStorage,
+    navigator: { clipboard: { writeText() { return Promise.resolve(); } } },
+    setInterval() { return 0; }, clearInterval() {}, setTimeout(fn) { if (typeof fn === 'function') fn(); return 0; }, clearTimeout() {},
+    Math: Math, Date: Date, JSON: JSON, console: { log() {}, warn() {}, error() {} },
+    Array: Array, Object: Object, String: String, Number: Number, isFinite: isFinite, parseInt: parseInt, parseFloat: parseFloat,
+    cytoscape() { return { on() {}, destroy() {}, $() { return { select() { return this; } }; } }; },
+  };
+  sandbox.window.window = sandbox.window;
+  sandbox.globalThis = sandbox;
+  try {
+    vm.runInNewContext(scriptBody, sandbox, { timeout: 5000 });
+  } catch (e) {
+    console.error('FAIL: chats open-only filter check THREW: ' + (e && e.message));
+    fails++; return;
+  }
+  const txt = (byId['mc-main'] && byId['mc-main'].textContent) || '';
+  const status = txt.match(/Showing \d+ of \d+ chats/);
+  if (!status || status[0] !== 'Showing 1 of 9 chats') {
+    console.error('FAIL: chats unfinished-only filter did not reduce recent chats (' + (status && status[0]) + ')');
+    fails++;
+  } else {
+    console.log('PASS: chats unfinished-only filter reduces recent chats');
+  }
+})();
+
+(function hashRouting() {
+  function runHash(hash, expect) {
+    resetDom();
+    locationShim.hash = hash;
+    const localStorage = storageShim();
+    const sessionStorage = storageShim();
+    const sandbox = {
+      window: { MC: { feeds: JSON.parse(JSON.stringify(feeds)) }, addEventListener() {}, removeEventListener() {}, localStorage, sessionStorage },
+      document: documentShim, location: locationShim, localStorage, sessionStorage,
+      navigator: { clipboard: { writeText() { return Promise.resolve(); } } },
+      setInterval() { return 0; }, clearInterval() {}, setTimeout(fn) { if (typeof fn === 'function') fn(); return 0; }, clearTimeout() {},
+      Math: Math, Date: Date, JSON: JSON, console: { log() {}, warn() {}, error() {} },
+      Array: Array, Object: Object, String: String, Number: Number, isFinite: isFinite, parseInt: parseInt, parseFloat: parseFloat,
+      cytoscape() { return { on() {}, destroy() {}, $() { return { select() { return this; } }; } }; },
+    };
+    sandbox.window.window = sandbox.window;
+    sandbox.globalThis = sandbox;
+    attachThemeShims(sandbox, hash === '#home');
+    vm.runInNewContext(scriptBody, sandbox, { timeout: 5000 });
+    const txt = (byId['mc-main'] && byId['mc-main'].textContent) || '';
+    if (!expect.test(txt)) {
+      console.error('FAIL: hash ' + hash + ' routing mismatch (' + txt.slice(0, 160) + ')');
+      fails++;
+      return false;
+    }
+    return true;
+  }
+  if (runHash('#decisions', /Decisions waiting for you/) &&
+      runHash('#not-a-view', /Unknown view #not-a-view/)) {
+    console.log('PASS: #decisions and unknown hash routes are explicit');
+  }
+})();
 // Defect (b) NEGATIVE case: an absurd far-future valid_until (year 2001 compose +
 // year 2100 validity) is malformed and must NOT suppress staleness — the guard
 // only honors validity within 2 days of the compose epoch, so this brief MUST
