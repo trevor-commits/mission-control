@@ -1,0 +1,61 @@
+name: One-time repair for PR 23 countdown smoke
+
+on:
+  push:
+    branches:
+      - cursor/dashboard-qa-bugs-e445
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: cursor/dashboard-qa-bugs-e445
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Make countdown fixtures relative to the test run
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 <<'PY'
+          from pathlib import Path
+
+          path = Path('scripts/dashboard-render-smoke.js')
+          text = path.read_text()
+          old = """  feeds.headroom.data.rows.forEach(row => {
+    if (!row || row.health !== 'ok' || row.confidence !== 'live') return;
+    const age = Number.isFinite(row.age_s) && row.age_s >= 0 ? row.age_s : 0;
+    row.fetched_epoch = NOW_S - age;
+  });
+"""
+          new = """  feeds.headroom.data.rows.forEach((row, index) => {
+    if (!row) return;
+    if (Number.isFinite(row.resets_epoch)) {
+      const baseOffset = row.window_class === 'month' ? 10 * 86400
+        : row.window_class === 'week' ? 2 * 86400
+        : 2 * 3600;
+      row.resets_epoch = NOW_S + baseOffset + index * 60;
+    }
+    if (row.health !== 'ok' || row.confidence !== 'live') return;
+    const age = Number.isFinite(row.age_s) && row.age_s >= 0 ? row.age_s : 0;
+    row.fetched_epoch = NOW_S - age;
+  });
+"""
+          if text.count(old) != 1:
+              raise SystemExit('countdown fixture anchor was not found exactly once')
+          path.write_text(text.replace(old, new, 1))
+          PY
+          node scripts/dashboard-render-smoke.js
+          rm .github/workflows/one-time-fix-pr23-countdown.yml
+          git add scripts/dashboard-render-smoke.js .github/workflows/one-time-fix-pr23-countdown.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'test: keep usage countdown fixtures time-relative'
+          git push origin HEAD:cursor/dashboard-qa-bugs-e445
