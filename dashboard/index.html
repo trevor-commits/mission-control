@@ -406,8 +406,10 @@ body {
   border-radius: var(--mc-r-3); box-shadow: var(--mc-shadow); overflow: hidden;
 }
 .mc-action-verb { color: var(--mc-fg-muted); font-size: var(--mc-fs-1); font-weight: 600; white-space: nowrap; }
-.mc-table-scroll { max-width: 100%; overflow-x: auto; overscroll-behavior-inline: contain; }
-.mc-git-lifecycle-table { min-width: 0; }
+.mc-table-scroll { max-width: 100%; overflow-x: auto; overscroll-behavior-inline: contain; -webkit-overflow-scrolling: touch; }
+.mc-table-scroll > .mc-git-lifecycle-table {
+  display: table; width: max-content; min-width: 100%; max-width: none;
+}
 .mc-git-mobile-table tr { cursor: default; }
 .mc-git-mobile-table tr:hover td { background: transparent; }
 .mc-collapse {
@@ -2609,6 +2611,15 @@ html[data-theme="dark"] .mc-heat-l4 { background: #35b98a; }
     return { keys: keep, matchKeys: matchingKeys, searchStatus: searchStatus, note: note };
   }
 
+  function mapLabelFontSize(n) {
+    var z = n.cy().zoom();
+    return z > 0 ? 9 / z : 9;
+  }
+  function mapLabelMaxWidth(n) {
+    var z = n.cy().zoom();
+    return z > 0 ? 110 / z : 110;
+  }
+
   function buildCy(container, scoped, byKey, side, edges, data) {
     var els = [];
     edges = edges || [];
@@ -2644,10 +2655,9 @@ html[data-theme="dark"] .mc-heat-l4 { background: #35b98a; }
             "line-style": function (e) { return (EDGE_INFO[e.data("type")] || [0, false])[1] ? "dashed" : "solid"; } } },
         { selector: "node:selected", style: {
             "border-width": 4, "border-color": "#7c8cff", "label": "data(label)",
-            "color": "#c9cdd6", "font-size": 9,
+            "color": "#c9cdd6", "font-size": mapLabelFontSize,
             "text-margin-y": 4, "text-valign": "bottom", "text-halign": "center",
-            "text-max-width": 110, "text-wrap": "ellipsis",
-            "min-zoomed-font-size": 7 } },
+            "text-max-width": mapLabelMaxWidth, "text-wrap": "ellipsis" } },
         { selector: ".mc-dim", style: { "opacity": 0.12 } }
       ],
       layout: FOCUS_CHAT

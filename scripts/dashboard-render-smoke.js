@@ -1059,6 +1059,59 @@ function renderHomeWithChatsCounts(overrides) {
   }
 })();
 
+(function mapAndGitRegressionContracts() {
+  if (html.indexOf('function mapLabelFontSize(n)') === -1 ||
+      html.indexOf('9 / z') === -1 ||
+      html.indexOf('"font-size": mapLabelFontSize') === -1) {
+    console.error('FAIL: map selected-node labels do not compensate for cytoscape zoom');
+    fails++;
+  } else {
+    console.log('PASS: map selected-node labels keep screen-space size across zoom');
+  }
+  const lifecycleScroll = html.match(/\.mc-table-scroll\s*>\s*\.mc-git-lifecycle-table\s*\{([^}]*)\}/);
+  if (!lifecycleScroll || !/display:\s*table/.test(lifecycleScroll[1]) ||
+      !/width:\s*max-content/.test(lifecycleScroll[1])) {
+    console.error('FAIL: branch lifecycle table is not width-max-content inside a horizontal scroll wrapper');
+    fails++;
+  } else if (html.indexOf('class: "mc-table-scroll" }, lt)') === -1) {
+    console.error('FAIL: branch lifecycle table is not wrapped in mc-table-scroll');
+    fails++;
+  } else {
+    console.log('PASS: branch lifecycle table scroll wrapper contract is present');
+  }
+  resetDom();
+  locationShim.hash = '#git';
+  const sandbox = {
+    window: { MC: { feeds: JSON.parse(JSON.stringify(feeds)) }, addEventListener() {}, removeEventListener() {} },
+    document: documentShim, location: locationShim,
+    setInterval() { return 0; }, clearInterval() {}, setTimeout(fn) { if (typeof fn === 'function') fn(); return 0; }, clearTimeout() {},
+    Math: Math, Date: Date, JSON: JSON, console: { log() {}, warn() {}, error() {} },
+    Array: Array, Object: Object, String: String, Number: Number, isFinite: isFinite, parseInt: parseInt, parseFloat: parseFloat,
+    cytoscape() { return { on() {}, destroy() {}, $() { return { select() { return this; } }; } }; },
+  };
+  sandbox.window.window = sandbox.window;
+  sandbox.globalThis = sandbox;
+  try {
+    vm.runInNewContext(scriptBody, sandbox, { timeout: 5000 });
+  } catch (e) {
+    console.error('FAIL: git lifecycle DOM contract check THREW: ' + (e && e.message));
+    fails++; return;
+  }
+  const scrollWraps = elementsWithClass(byId['mc-main'], 'mc-table-scroll');
+  const lifecycleTables = elementsWithClass(byId['mc-main'], 'mc-git-lifecycle-table');
+  const wrapped = scrollWraps.some(function (wrap) {
+    return (wrap.children || []).some(function (child) {
+      return lifecycleTables.indexOf(child) !== -1;
+    });
+  });
+  if (!wrapped) {
+    console.error('FAIL: rendered git lifecycle table is not nested inside mc-table-scroll');
+    fails++;
+  } else {
+    console.log('PASS: rendered git lifecycle table is nested inside mc-table-scroll');
+  }
+})();
+
 if (fails) { console.error('render-smoke: ' + fails + ' tab(s) FAILED'); process.exit(1); }
 console.log('render-smoke: all ' + TABS.length + ' tabs render over fixtures');
 process.exit(0);

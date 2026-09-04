@@ -572,6 +572,26 @@ function contrast(a, b) {
           assert(metrics.active && metrics.active.left >= 0 && metrics.active.right <= metrics.viewport,
             `${mode}/${tab}: active navigation tab is outside the viewport`);
           if (tab === 'map') assert(metrics.canvases > 0, `${mode}/${tab}: Cytoscape canvas missing`);
+          if (tab === 'map' && !mobile) {
+            const mapLabel = await page.evaluate(() => {
+              const container = document.querySelector('.mc-graph');
+              const cy = container && container._cyreg && container._cyreg.cy;
+              if (!cy) return { error: 'missing cytoscape' };
+              let target = cy.nodes()[0];
+              cy.nodes().forEach((n) => {
+                const label = String(n.data('label') || '');
+                if (label.toLowerCase().indexOf('hermes') >= 0) target = n;
+              });
+              target.select();
+              const zoom = cy.zoom();
+              const modelFont = parseFloat(target.style('font-size'));
+              const renderedFont = modelFont * zoom;
+              return { zoom, modelFont, renderedFont, label: target.data('label') };
+            });
+            assert(!mapLabel.error, `${mode}/desktop/map: ${mapLabel.error}`);
+            assert(mapLabel.renderedFont > 0 && mapLabel.renderedFont <= 12,
+              `${mode}/desktop/map: selected label renders at ${mapLabel.renderedFont}px (zoom ${mapLabel.zoom})`);
+          }
           if (tab === 'git' && mobile) {
             const gitCards = await page.evaluate(() => Array.from(
               document.querySelectorAll('.mc-git-mobile-table')).map(table => ({
@@ -585,6 +605,28 @@ function contrast(a, b) {
               `${mode}/mobile/git: expected all Git detail tables (found ${gitCards.length})`);
             assert(gitCards.every(table => table.scroll <= table.client && table.rows > 0 && table.labeled),
               `${mode}/mobile/git: critical fields require horizontal scrolling or lack labels`);
+          }
+          if (tab === 'git' && !mobile) {
+            const lifecycle = await page.evaluate(() => {
+              const wrap = document.querySelector('.mc-table-scroll');
+              const table = document.querySelector('.mc-git-lifecycle-table');
+              if (!wrap || !table) return { error: 'missing lifecycle table wrapper' };
+              const merge = Array.from(table.querySelectorAll('td[data-label="Merge"]'))
+                .map((cell) => cell.textContent.trim());
+              return {
+                wrapClient: wrap.clientWidth,
+                wrapScroll: wrap.scrollWidth,
+                tableDisplay: getComputedStyle(table).display,
+                merge,
+              };
+            });
+            assert(!lifecycle.error, `${mode}/desktop/git: ${lifecycle.error}`);
+            assert(lifecycle.tableDisplay === 'table',
+              `${mode}/desktop/git: lifecycle table display is ${lifecycle.tableDisplay}`);
+            assert(lifecycle.wrapScroll > lifecycle.wrapClient,
+              `${mode}/desktop/git: lifecycle table should scroll (${lifecycle.wrapScroll} > ${lifecycle.wrapClient})`);
+            assert(lifecycle.merge.some((text) => text === 'merge to main'),
+              `${mode}/desktop/git: merge condition text missing from lifecycle table`);
           }
           if (ARTIFACTS && ((mobile && ['home','git'].includes(tab)) || (!mobile && ['home','map'].includes(tab)))) {
             await page.screenshot({ path: path.join(ARTIFACTS, `${mode}-${mobile?'mobile':'desktop'}-${tab}.png`), fullPage: true });
