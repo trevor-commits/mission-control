@@ -2966,7 +2966,69 @@ PY
   : > "$OWNED_GROUP_REGISTRY"
 }
 
+c56() { # one bounded full-ingest recovery belongs to the existing collector
+  local area
+  area="$(mktemp -d)"
+  if python3 - "$DASH" "$REPO" "$area" <<'PY'
+import json, os, pathlib, shlex, subprocess, sys, time
+dash, repo, area = map(pathlib.Path, sys.argv[1:])
+for mode in ('fresh', 'stale', 'fail', 'skip'):
+    case = area / mode
+    graph, state, roots, code = (case / n for n in ('graph', 'state', 'roots', 'code'))
+    for p in (graph, state, roots, code / 'scripts'):
+        p.mkdir(parents=True)
+    marker = graph / 'last-ingest'
+    marker.touch()
+    if mode != 'fresh':
+        os.utime(marker, (time.time() - 29 * 3600,) * 2)
+    calls = case / 'calls'
+    wrapper = code / 'scripts/chat-graph'
+    wrapper.write_text('#!/bin/bash\nprintf "%s\\n" "$1" >> ' + shlex.quote(str(calls)) + '\n' +
+        ('if [[ "$1" == ingest ]]; then exit 2; fi\n' if mode == 'fail' else '') +
+        ('if [[ "$1" == ingest ]]; then exit 0; fi\n' if mode == 'skip' else '') +
+        'exec ' + shlex.quote(str(repo / 'scripts/chat-graph')) + ' "$@"\n')
+    wrapper.chmod(0o755)
+    scan = case / 'scan'
+    scan.write_text('#!/bin/sh\nprintf \'%s\\n\' \'{"generated":"now","repos":[],"findings_total":0}\'\n')
+    scan.chmod(0o755)
+    (roots / 'register.md').touch()
+    env = dict(os.environ, REPO_ROOT=str(code), MISSION_CONTROL_HOME=str(state),
+               CHAT_GRAPH_HOME=str(graph), CHAT_GRAPH_SCAN_CMD=str(scan),
+               CHAT_GRAPH_SESSION_INDEX=str(roots / 'index.jsonl'),
+               CHAT_GRAPH_CHAT_SOURCE='/usr/bin/false', CHAT_GRAPH_CODING_ROOT=str(roots),
+               CHAT_GRAPH_REPO_ROOTS=str(roots), CHAT_GRAPH_REGISTER=str(roots / 'register.md'),
+               CHAT_GRAPH_NIGHTLY_REPORT_GLOB=str(roots / 'reports/*.md'),
+               CHAT_GRAPH_HERMES_STATE_DB=str(roots / 'hermes.db'))
+    for provider in ('CLAUDE', 'CODEX', 'CURSOR', 'HERMES', 'COPILOT'):
+        env['CHAT_GRAPH_' + provider + '_ROOT'] = str(roots / provider.lower())
+    env.pop('DASHBOARD_CMD_CHATS', None)
+    seed = subprocess.run([str(repo / 'scripts/chat-graph'), 'ingest'], env=env,
+                          capture_output=True, text=True, timeout=30)
+    assert seed.returncode == 0, seed.stderr
+    if mode != 'fresh':
+        os.utime(marker, (time.time() - 29 * 3600,) * 2)
+    result = subprocess.run(['/bin/bash', str(dash), 'collect', '--force', 'chats'],
+                            env=env, capture_output=True, text=True, timeout=40, pass_fds=(9,))
+    assert calls.exists(), (result.returncode, result.stdout, result.stderr)
+    observed = calls.read_text().splitlines()
+    if mode in ('fresh', 'stale'):
+        expected = ['export'] if mode == 'fresh' else ['export', 'ingest', 'export']
+        assert observed == expected, (mode, observed, result.stdout, result.stderr)
+        feed = json.loads((state / 'data/chats.json').read_text())
+        assert feed['ok'] and feed['data']['counts']['full_ingest_state'] == 'fresh', feed
+    else:
+        assert observed == (['export', 'ingest'] if mode == 'fail' else ['export', 'ingest', 'export']), observed
+        error = json.loads((state / 'data/chats.error.json').read_text())
+        assert not error['ok'], error
+    print('PASS full ingest recovery:', mode)
+PY
+  then ok "full ingest: fresh is cheap; stale recovers; failure and lock skip remain errors"
+  else no "full ingest recovery contract"; fi
+}
+
 case "${DASHBOARD_TEST_CASE:-}" in
+full-ingest-recovery)
+  c56 ;;
 fixture-reaper)
   c39a ;;
 answered-pending-attention)
@@ -2979,7 +3041,7 @@ invalid-group-receipt-cleanup)
   c55 ;;
 *)
   c0; c1; c2; c3; c4; c4b; c5; c6; c7; c8; c8a; c8b; c9; c10; c11; c12; c13; c14; c14a; c15; c16; c17; c18; c19; c20; c21; c22; c23; c24; c25; c26; c27; c28; c29; c30; c31; c32; c33; c34; c35; c36; c37; c38; c39; c39a; c40; c41; c42; c42a; c43; c44; c45; c46; c47; c48; c49; c50; c51
-  c52; c53; c54; c55 ;;
+  c52; c53; c54; c55; c56 ;;
 esac
 shell_contract
 LIVE_DATA_AFTER="$(live_data_fingerprint)"
