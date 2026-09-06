@@ -2970,7 +2970,7 @@ c56() { # one bounded full-ingest recovery belongs to the existing collector
   local area
   area="$(mktemp -d)"
   if python3 - "$DASH" "$REPO" "$area" <<'PY'
-import json, os, pathlib, shlex, subprocess, sys, time
+import json, os, pathlib, shlex, sqlite3, subprocess, sys, time
 dash, repo, area = map(pathlib.Path, sys.argv[1:])
 for mode in ('fresh', 'stale', 'fail', 'skip'):
     case = area / mode
@@ -2991,6 +2991,10 @@ for mode in ('fresh', 'stale', 'fail', 'skip'):
     scan = case / 'scan'
     scan.write_text('#!/bin/sh\nprintf \'%s\\n\' \'{"generated":"now","repos":[],"findings_total":0}\'\n')
     scan.chmod(0o755)
+    metadata_calls = case / 'metadata-calls'
+    metadata = case / 'metadata'
+    metadata.write_text('#!/bin/sh\nprintf called >> ' + shlex.quote(str(metadata_calls)) + '\nexit 1\n')
+    metadata.chmod(0o755)
     (roots / 'register.md').touch()
     env = dict(os.environ, REPO_ROOT=str(code), MISSION_CONTROL_HOME=str(state),
                CHAT_GRAPH_HOME=str(graph), CHAT_GRAPH_SCAN_CMD=str(scan),
@@ -3005,12 +3009,18 @@ for mode in ('fresh', 'stale', 'fail', 'skip'):
     seed = subprocess.run([str(repo / 'scripts/chat-graph'), 'ingest'], env=env,
                           capture_output=True, text=True, timeout=30)
     assert seed.returncode == 0, seed.stderr
+    with sqlite3.connect(graph / 'graph.db') as con:
+        con.execute('INSERT INTO sessions(id, provider, title, repo, first_seen_at) VALUES(?, ?, ?, ?, ?)',
+                    ('01a00000-0000-7000-8000-000000000001', 'codex', '', '', int(time.time())))
+    con.close()
+    env['CHAT_GRAPH_CHAT_SOURCE'] = str(metadata)
     if mode != 'fresh':
         os.utime(marker, (time.time() - 29 * 3600,) * 2)
     result = subprocess.run(['/bin/bash', str(dash), 'collect', '--force', 'chats'],
                             env=env, capture_output=True, text=True, timeout=40, pass_fds=(9,))
     assert calls.exists(), (result.returncode, result.stdout, result.stderr)
     observed = calls.read_text().splitlines()
+    assert not metadata_calls.exists(), 'collector recovery traversed external metadata'
     if mode in ('fresh', 'stale'):
         expected = ['export'] if mode == 'fresh' else ['export', 'ingest', 'export']
         assert observed == expected, (mode, observed, result.stdout, result.stderr)

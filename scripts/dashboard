@@ -966,7 +966,7 @@ def _run_builtin_chats(timeout_s):
         if nested_ingest_state(graph) != "fresh":
             # The optional model-backed nightly review may be intentionally off.
             # Reuse this collector for one bounded, local full-pass recovery.
-            for args in (["ingest"], ["export", "--json", "--catchup-limit", "1500"]):
+            for args in (["ingest", "--collector", "scan"], ["export", "--json", "--catchup-limit", "1500"]):
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     return None, "full ingest recovery exceeded the feeder budget"
