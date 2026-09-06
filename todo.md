@@ -38,7 +38,7 @@ Mirror every configured Linear issue here with the repo-side home that explains 
   - `origin source`
   - `last synced`
 - If this repo is intentionally `repo-only` or no configured Linear workspace exists yet, keep an explicit note here instead of leaving the section absent.
-- Current mode: repo-only. No Mission Control Linear team/prefix has been verified; Trevor has been asked whether to set one up. Do not invent issue IDs.
+- Current mode: repo-only. No Mission Control Linear team/prefix is verified. No integration setup is required for repository-only work. Do not invent issue IDs.
 
 ## Completed
 If it's not here, it isn't remembered.
@@ -103,7 +103,9 @@ Preserve a durable completion trail for verified work instead of deleting it fro
 - Diagnosis inputs: exact original Claude task, prior Codex audits, live instruction files, and loader behavior.
 - Implementation inputs: three reviewed replacements; the shared structural checker and compatible repair callers are coordinated in the global reset.
 - Fix: lean AGENTS, compatibility-only overlay, and exact native `@AGENTS.md` import.
-- Self-audit: commit `0b82117` passed the normal pre-push gate, all 27 suites, without a bypass. GitHub verify and security checks also passed. Review found valid ledger-routing and provider-role omissions, now corrected in AGENTS, CONTINUITY, and COHERENCE. Fresh provider loading and natural collector behavior remain unverified; no collector/runtime change was made.
+- Verified checkpoint: `45d28cbfebd19d6891706a9e54b0d3c1ca15b149` passed all 27 normal pre-push suites in 384 seconds without a bypass. Its [GitHub Verify run](https://github.com/trevor-commits/mission-control/actions/runs/34001548600) and security check passed.
+- Review disposition: corrected live-ledger routing and fixed-provider duties. Retired the remaining blanket paperwork and Linear-coverage gates in the dependent documents. Retained actual dependency information and useful handoff evidence.
+- Self-audit boundary: the checkpoint above predates this final documentation correction. Later commits need their own normal checks, available in [PR 27](https://github.com/trevor-commits/mission-control/pull/27/checks). Fresh provider loading and natural collector behavior remain unverified. No collector/runtime change was made.
 - by: Codex GPT-6 Astra, task `01a06ff8-6204-7c62-b158-5b8e10db1460`; triggered by: Trevor's renewed full reset request; led to: shared entry review; linear: `self-contained: lean agent entries`.
 
 ### 2026-09-01 — loose-ends skill and one-contract routing
