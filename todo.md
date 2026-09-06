@@ -2,7 +2,7 @@
 
 ## Active Next Steps
 
-- Actionable work and resume pilot: share the existing loose-ends filtering behavior with Home/Chats, retain searchable candidates, expose exact source/reopen actions, and remove invented model/branch instructions from resume prompts. Acceptance: mixed-candidate and stale-source checks, rendered browser proof, and a committed local installation with rollback. Fresh-agent recovery remains a separate observation. Owner: Codex `01a07221-0541-7970-90e3-f59af1b6862e`; record: `records/2026-09-06-actionable-work.md`; linear: `self-contained: actionable-work`.
+- Actionable work and resume pilot: dashboard/helper slice installed locally from `7efbe22`; 92 shell checks and 348 browser assertions pass, and the actual feed fits desktop/mobile. Next: publish the source/shared skill and perform one fresh-worker recovery trial from the saved checkpoint after explicit ownership handoff. Healthy natural collector refresh remains unproven; existing feed errors persist. Owner: Codex `01a07221-0541-7970-90e3-f59af1b6862e`; record: `records/2026-09-06-actionable-work.md`; linear: `self-contained: actionable-work`.
 - Lean shared-entry reset: [PR 27](https://github.com/trevor-commits/mission-control/pull/27) publishes the entries and dependent continuity/coherence changes. Finish review and landing, then check fresh loading separately. Runtime, collectors, credentials, and other work are unchanged. Owner: Codex `01a06ff8-6204-7c62-b158-5b8e10db1460`; linear: `self-contained: lean agent entries`.
 If it's not here, it isn't remembered.
 Capture the current goal plus the concrete dependency-ordered steps that are still open.
@@ -1175,6 +1175,16 @@ Keep materially new suggestions here so they survive beyond the current chat.
 - 2026-07-05 | recommendation: do not adopt the GitHub Copilot enterprise-observability stack (OpenTelemetry Collector, Prometheus, Grafana, OpenObserve, Superset, Metabase, Airbyte, Meltano, dbt-core, Great Expectations, TensorZero, Helicone, OpenLIT, traceAI, TraceRoot, Pull Request Analytics Action); treat `records/2026-07-04-dashboard-coding-tracker-search-audit.md` as the real same-niche repo map; if a chart is ever justified, prefer vendorable zero-dependency `leeoniya/uPlot` over Chart.js/ECharts/CDN — but not for V1. | why: Copilot recommended from the repo description alone (it said so); every headline pick runs as a background service, framework, or separate warehouse and collides with the explicit non-goals of offline single-file, single-user, no-server. Full evaluation in Feedback Decision Log 2026-07-05. | by: Claude Code (Opus 4.8) session `a9724039-6595-4205-a25b-bf361020250a`. | linear: self-contained until Linear is configured.
 
 ## Active Branch Ledger
+
+### `codex/actionable-work-01a07221`
+- status: active; dashboard/helper slice installed locally from `7efbe22`; publication and recovery observation remain open.
+- created: 2026-09-06; base: verified `origin/main@2a87d269981286552534a19f3954dde79e04580a`.
+- owner: Codex `01a07221-0541-7970-90e3-f59af1b6862e`; active owner lease `37bbc709-90c4-4640-8162-a05674b7469f`.
+- worktree: `/Users/gillettes/Coding Projects/mission-control-worktrees/codex/actionable-work-01a07221`.
+- purpose: prioritize recorded work and provide factual recovery prompts while retaining every candidate.
+- merge target: `main`; review surface: local commits, no push or PR yet.
+- delete when: merged, installed feeder root repointed, no active writer or recovery dependency, and owner-authenticated cleanup succeeds.
+- record: `records/2026-09-06-actionable-work.md`; linear: `self-contained: actionable-work`.
 
 ### Lean shared-entry reset (2026-09-05)
 - branch: `codex/lean-agent-setup-01a06ff8`; created from freshly fetched `origin/main@e5f1dcc` in the clean source checkout.
