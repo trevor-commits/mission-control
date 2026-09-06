@@ -43,17 +43,17 @@ Before ending a bounded task, ask:
 ## Self-audit Honesty
 - Self-audit is method-not-claim: say how a check was performed, not just that it passed.
 - Every Self-audit includes an explicit `did not verify X because Y` line when anything remains unverified.
-- Claude Code spot-checks at least one attestation claim when an audit surface exists.
+- Reviewers check consequential claims against source evidence.
 
 ## Motive
 This is legacy protection, not bureaucracy. Hollow attestations are harder to unwind than an honestly reported gap.
 
 ## Applies To
-| Role | Minimum Continuity requirement |
+| Work | Continuity evidence |
 |---|---|
-| Codex | full six-field Work Record with honest Self-audit |
-| Claude Code | audit-variant Work Record or audit log entry with named audit method plus at least one spot-check |
-| Cowork | durable planning/state-move notes plus confirmation that required Work Record exists before moving state |
+| Implementation | Change, checks, limitations, and recovery in the existing work record |
+| Review | Method, evidence, findings, and unresolved claims |
+| Handoff or state move | Current owner, result, and exact remaining obligation |
 
 ## Where The Rules Live
 - `/Users/gillettes/Coding Projects/mission-control/AGENTS.md`

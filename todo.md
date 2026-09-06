@@ -2,7 +2,7 @@
 
 ## Active Next Steps
 
-- Lean shared-entry reset: verify and publish the three instruction files on `codex/lean-agent-setup-01a06ff8`, then check fresh loading separately. Runtime, collectors, credentials, and other open work are unchanged. Owner: Codex `01a06ff8-6204-7c62-b158-5b8e10db1460`; linear: `self-contained: lean agent entries`.
+- Lean shared-entry reset: [PR 27](https://github.com/trevor-commits/mission-control/pull/27) publishes the entries and dependent continuity/coherence changes. Finish review and landing, then check fresh loading separately. Runtime, collectors, credentials, and other work are unchanged. Owner: Codex `01a06ff8-6204-7c62-b158-5b8e10db1460`; linear: `self-contained: lean agent entries`.
 If it's not here, it isn't remembered.
 Capture the current goal plus the concrete dependency-ordered steps that are still open.
 - Keep this section short, current, and ordered by impact/dependency.
@@ -103,7 +103,7 @@ Preserve a durable completion trail for verified work instead of deleting it fro
 - Diagnosis inputs: exact original Claude task, prior Codex audits, live instruction files, and loader behavior.
 - Implementation inputs: three reviewed replacements; the shared structural checker and compatible repair callers are coordinated in the global reset.
 - Fix: lean AGENTS, compatibility-only overlay, and exact native `@AGENTS.md` import.
-- Self-audit: shared-entry structure and `git diff --check` pass. Publication and fresh provider loading remain open. Natural collector behavior was not rechecked; no collector/runtime change was made.
+- Self-audit: commit `0b82117` passed the normal pre-push gate, all 27 suites, without a bypass. GitHub verify and security checks also passed. Review found valid ledger-routing and provider-role omissions, now corrected in AGENTS, CONTINUITY, and COHERENCE. Fresh provider loading and natural collector behavior remain unverified; no collector/runtime change was made.
 - by: Codex GPT-6 Astra, task `01a06ff8-6204-7c62-b158-5b8e10db1460`; triggered by: Trevor's renewed full reset request; led to: shared entry review; linear: `self-contained: lean agent entries`.
 
 ### 2026-09-01 — loose-ends skill and one-contract routing

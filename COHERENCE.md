@@ -37,9 +37,9 @@ This map is append-only. Add a row whenever a new durable cross-reference is int
 A repo that drifts stops being a source of truth. Every unresolved contradiction forces later chats to guess.
 
 ## Applies To
-- Codex runs the Ripple Check before commit.
-- Claude Code verifies Ripple Check attestations during audit.
-- Cowork confirms Ripple Check completion before state moves.
+- The task owner checks affected dependencies before commit or a state move.
+- A reviewer verifies consequential claims independently when review is warranted.
+- These duties follow the task, not the provider.
 
 ## Where The Rules Live
 - `/Users/gillettes/Coding Projects/mission-control/AGENTS.md`
