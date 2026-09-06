@@ -1,25 +1,15 @@
 # COHERENCE
 
-## Principle
-When anything changes, everything it affects must change with it in the same commit. The repo is a linked system; drift kills its authority.
+## Scope
 
-## The Ripple Check
-1. Identify every live section or rule touched by the change.
-2. Consult the Dependency Map for local docs that reference that surface.
-3. Read each dependent doc and confirm it still agrees.
-4. Update any drifted companion docs in the same commit.
-5. Name the Ripple Check work in Self-audit or audit notes with method used.
+Check the actual consumers affected by a change, including relevant tests and documentation. Repair contradictions in the same scoped change. This is not a requirement to read every companion document or produce a separate attestation for every task.
 
 ## Dependency Map
-This map is append-only. Add a row whenever a new durable cross-reference is introduced.
+
+Use this map as a navigation aid. Update useful entries when their dependencies change. It is not append-only or a mandatory startup reading list.
 
 | Changed surface | Dependent surface | Why the dependency exists |
 |---|---|---|
-| `CONTINUITY.md` | `/Users/gillettes/Coding Projects/mission-control/AGENTS.md` | AGENTS enforces Work Record and Self-audit expectations |
-| `COHERENCE.md` | `/Users/gillettes/Coding Projects/mission-control/AGENTS.md` | AGENTS enforces Ripple Check and same-commit doc updates |
-| `/Users/gillettes/Coding Projects/mission-control/LINEAR.md` | `/Users/gillettes/Coding Projects/mission-control/AGENTS.md` | AGENTS gates state moves and closeout on Linear-coverage |
-| `/Users/gillettes/Coding Projects/mission-control/CLAUDE.md` | `CONTINUITY.md`, `COHERENCE.md`, `/Users/gillettes/Coding Projects/mission-control/LINEAR.md` | Claude should load the same principle docs before planning or audit |
-| `/Users/gillettes/Coding Projects/mission-control/todo.md` log shapes | `CONTINUITY.md`, `/Users/gillettes/Coding Projects/mission-control/LINEAR.md` | durable records and issue coverage must stay aligned with local principle docs |
 | `PROJECT_INTENT.md` and local source-of-truth docs | `/Users/gillettes/Coding Projects/mission-control/AGENTS.md`, `/Users/gillettes/Coding Projects/mission-control/CLAUDE.md` | task routing and authority statements depend on the docs map remaining accurate |
 | optional repo-local companions such as `README.md`, `GUIDE.md`, `PROMPTS.md`, `RULES.md`, `STRUCTURE.md` | local principle docs | companion docs should point to the same principle surfaces rather than drifting separately |
 | `scripts/mc-panel.swift` / `dashboard/panel.html` / `dashboard/index.html` lowest-quota glance | `~/.mission-control/data/headroom.json` `summary.lowest_quota` plus live signed-in quota rows | glance percent is the lowest ok+live+fresh remaining; signed-out Claude cannot blank Codex, Cursor, or GLM |
@@ -28,22 +18,8 @@ This map is append-only. Add a row whenever a new durable cross-reference is int
 | `skills/loose-ends/SKILL.md` / `scripts/loose-ends` | `/Users/gillettes/Coding Projects/mission-control/AGENTS.md` unfinished-work route, `README.md` tool table, `scripts/verify.sh` (`loose-ends.test.sh`), `scripts/mission_control_common.py` `REQUIRED_INSTALL_RUNTIMES`, `scripts/dashboard` install list, the four tool skill symlinks under `~/.agents/skills/loose-ends` | the loop is one skill and one helper. the route, the install set, and the symlinks must name the same files |
 | `STATE.md` | `/Users/gillettes/Coding Projects/mission-control/AGENTS.md` Companion Docs, `git log` | STATE.md is a generated snapshot indexed from AGENTS.md. it drifts from git and must be regenerated or read with `git log` |
 
-## Staleness And Orphans
-- Staleness is caught first at commit time through the Ripple Check, then during broader audits.
-- Every live doc should be indexed from a navigation surface or referenced by another live doc.
-- When an orphan is discovered, index it or retire it in the same change instead of leaving it adrift.
+## Maintenance
 
-## Motive
-A repo that drifts stops being a source of truth. Every unresolved contradiction forces later chats to guess.
+Keep real dependency information useful and current. Historical map entries do not restore retired startup instructions, per-task paperwork, or fixed provider duties.
 
-## Applies To
-- Codex runs the Ripple Check before commit.
-- Claude Code verifies Ripple Check attestations during audit.
-- Cowork confirms Ripple Check completion before state moves.
-
-## Where The Rules Live
-- `/Users/gillettes/Coding Projects/mission-control/AGENTS.md`
-- `/Users/gillettes/Coding Projects/mission-control/CLAUDE.md`
-- `/Users/gillettes/Coding Projects/mission-control/LINEAR.md`
-- `/Users/gillettes/Coding Projects/mission-control/todo.md`
-- any repo-local `GUIDE.md`, `PROMPTS.md`, or `RULES.md` that points to these surfaces
+`AGENTS.md` remains the entry point. `CONTINUITY.md` provides optional handoff guidance. `LINEAR.md` records the repository-only tracking mode.

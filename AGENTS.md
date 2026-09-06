@@ -1,60 +1,13 @@
-# AGENTS.md (Mission Control)
+# Mission Control
 
-## Purpose
-This is the canonical AI-first entry surface for `/Users/gillettes/Coding Projects/mission-control`.
-Read this file before any action. It explains the repo's logic, tells the agent what is authoritative, and routes to the smallest set of companion docs needed for the task.
+<!-- agent-entry: shared-v1 -->
 
-## Start Here
-- Read this file before any action.
-- Apply `/Users/gillettes/.codex/AGENTS.md` as the global baseline, then use this file as the repo-specific contract.
-- After this file, load only the downstream docs required for the task:
-  - `/Users/gillettes/Coding Projects/mission-control/PROJECT_INTENT.md`.
-  - `/Users/gillettes/Coding Projects/mission-control/AGENTS.project.md` when the task needs the deeper repo-local execution overlay.
-  - `/Users/gillettes/Coding Projects/mission-control/CONTINUITY.md`, `/Users/gillettes/Coding Projects/mission-control/COHERENCE.md`, and `/Users/gillettes/Coding Projects/mission-control/LINEAR.md` for bounded work, audits, handoff, or state moves.
-  - `/Users/gillettes/Coding Projects/mission-control/todo.md` for operational state, branch history, audit records, and test evidence.
-  - `/Users/gillettes/Coding Projects/mission-control/CLAUDE.md` when the actor is Claude or the task involves Claude/Codex handoff.
+Use `/Users/gillettes/.codex/AGENTS.md` as Trevor's shared contract if it is not already in context. This repository owns Mission Control source and the existing loose-ends workflow; `/Users/gillettes/.mission-control` is installed runtime state, not a substitute source checkout.
 
-## Core Logic
-- `AGENTS.md` is the mandatory first-read repo contract.
-- This root file stays thin and non-duplicative; detailed mandatory markers live
-  in `AGENTS.project.md`.
-- `AGENTS.project.md` is a deeper execution overlay, not the first-read contract.
-- `todo.md` is operational state, not chat memory.
-- `CONTINUITY.md`, `COHERENCE.md`, and `LINEAR.md` govern durable records, ripple checks, and actionable follow-up routing.
+- `PROJECT_INTENT.md`, `notes/DIRECTION-2026-07-04.md`, and `docs/MISSION_CONTROL_PLAN.md` explain project direction. Read the portion relevant to the current decision.
+- `todo.md` under `## Active Next Steps` is the work queue. Its branch, issue, and testing ledgers also hold current state; read them when relevant. `STATE.md` is generated, so verify Git when it disagrees.
+- For unfinished work, use `skills/loose-ends/SKILL.md` and its existing helpers. Do not create a second backlog, scheduler, or orchestration system.
+- Use the applicable source tests and installation procedure. A source change, manual collector run, and successful natural collector cycle are different evidence.
+- Preserve unrelated work and exact branch ownership. Before handoff or a state move, update the relevant continuity record with checks, rollback, and remaining obligations once.
 
-## Task Routing
-- Implementation or bugfix: read `/Users/gillettes/Coding Projects/mission-control/PROJECT_INTENT.md`, `/Users/gillettes/Coding Projects/mission-control/AGENTS.project.md`, and the relevant source files; load the principle docs before commit or state changes.
-- Audit or review: read `/Users/gillettes/Coding Projects/mission-control/PROJECT_INTENT.md`, `/Users/gillettes/Coding Projects/mission-control/AGENTS.project.md`, the `## Active Next Steps` section of `/Users/gillettes/Coding Projects/mission-control/todo.md` (the rest of that file is append-only history. read a log section only when the audit needs it), and the principle docs before drawing conclusions.
-- Planning or next-steps work: read `/Users/gillettes/Coding Projects/mission-control/PROJECT_INTENT.md`, `/Users/gillettes/Coding Projects/mission-control/AGENTS.project.md`, and the `## Active Next Steps` section of `/Users/gillettes/Coding Projects/mission-control/todo.md`.
-- Unfinished work, loose ends, or "pick up where we left off": run the `loose-ends` skill (`skills/loose-ends/SKILL.md`, helper `scripts/loose-ends`). do not reconstruct stranded work by reading logs.
-- Governance or repo-structure work: read this file, `/Users/gillettes/Coding Projects/mission-control/AGENTS.project.md`, and any touched global scripts/policies before editing.
-- Claude/Codex handoff: read `/Users/gillettes/Coding Projects/mission-control/CLAUDE.md` and name the expected durable records explicitly.
-
-## Situation Routing
-- Ambiguity or conflicting instructions: ask the smallest focused question only after targeted repo inspection.
-- Repo-wide or authoritative-process changes: update the touched contract plus every dependent companion doc in the same change.
-- Changes under `/Users/gillettes/.codex`: run `/Users/gillettes/.codex/scripts/validate-global-policy-stack.sh` after editing.
-- High-risk or state-moving work: apply Continuity, Coherence, and Linear-Core gates before closeout.
-- Missing context that could materially change the answer: treat context ingestion as prerequisite work.
-
-## Companion Docs
-- `/Users/gillettes/Coding Projects/mission-control/CONTINUITY.md`.
-- `/Users/gillettes/Coding Projects/mission-control/COHERENCE.md`.
-- `/Users/gillettes/Coding Projects/mission-control/LINEAR.md`.
-- `/Users/gillettes/Coding Projects/mission-control/CLAUDE.md`.
-- `/Users/gillettes/Coding Projects/mission-control/README.md` when present.
-- `/Users/gillettes/Coding Projects/mission-control/PROJECT_INTENT.md`.
-- `/Users/gillettes/Coding Projects/mission-control/todo.md`.
-- `/Users/gillettes/Coding Projects/mission-control/docs/MISSION_CONTROL_PLAN.md`.
-- `/Users/gillettes/Coding Projects/mission-control/notes/DIRECTION-2026-07-04.md`.
-- `/Users/gillettes/Coding Projects/mission-control/records/`.
-- `/Users/gillettes/Coding Projects/mission-control/STATE.md` (generated snapshot. trust `git log` over it when they disagree).
-- `/Users/gillettes/Coding Projects/mission-control/docs/IMPROVEMENTS.md`.
-- `/Users/gillettes/Coding Projects/mission-control/skills/loose-ends/SKILL.md` and `scripts/loose-end-runner` for open-work handling.
-- Add stack-specific runbooks, API specs, deployment docs, and troubleshooting docs here as they become canonical.
-
-## Non-Negotiables
-- Do not treat `AGENTS.project.md` or `CLAUDE.md` as alternate first-read specs.
-- Do not duplicate the full repo contract inside `CLAUDE.md`.
-- Route outward to companion docs instead of bloating this file.
-- When the entry contract changes, update the dependent docs, validators, and verification checks in the same change.
+No provider has a permanent implementor, reviewer, or gatekeeper role. Choose task ownership from the actual request and tool capability; Trevor owns consequential choices.
