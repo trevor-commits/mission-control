@@ -230,12 +230,13 @@ DATA = os.path.join(HOME, "data")
 sys.path.insert(0, RUNTIME_DIR)
 try:
     from mission_control_common import (ERROR, EgressCounters, feed_health,
-                                        sanitize_text, verify_install_stamp)
+                                        nested_ingest_state, sanitize_text, verify_install_stamp)
 except ImportError:
     ERROR = "error"
     EgressCounters = None
     sanitize_text = None
     feed_health = None
+    nested_ingest_state = None
     verify_install_stamp = None
 
 _SHELL_FORBIDDEN = re.compile(r'[;|&`$<>]')
@@ -264,6 +265,7 @@ FEEDS = [
     # --catchup-limit bounds the stale-cursor catch-up scan (default 1500 files) so
     # export ALWAYS reaches its atomic rename inside the 150s budget even on a cold
     # ~/.chat-graph; successive ticker fires extend coverage via file cursors.
+    # A missing/stale full pass is recovered within that same feeder budget.
     # On timeout the feed keeps last-good + a stale banner, so the tab never blanks.
     # Late by design so its slow scan never delays the independent tabs.
     ("chats",      1800, "", "DASHBOARD_CMD_CHATS", 150),
@@ -937,6 +939,7 @@ def _run_builtin_attention(_timeout_s):
 
 
 def _run_builtin_chats(timeout_s):
+    deadline = time.monotonic() + timeout_s
     cg = os.path.join(REPO, "scripts", "chat-graph")
     child_env = dict(os.environ)
     token = os.urandom(16).hex()
@@ -957,7 +960,26 @@ def _run_builtin_chats(timeout_s):
     graph_path = os.path.join(graph_home, "export", "graph.json")
     try:
         with open(graph_path) as f:
-            return json.load(f), None
+            graph = json.load(f)
+        if nested_ingest_state is None:
+            return None, "cannot verify full ingest freshness"
+        if nested_ingest_state(graph) != "fresh":
+            # The optional model-backed nightly review may be intentionally off.
+            # Reuse this collector for one bounded, local full-pass recovery.
+            for args in (["ingest", "--collector", "scan"], ["export", "--json", "--catchup-limit", "1500"]):
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return None, "full ingest recovery exceeded the feeder budget"
+                p, run_error = _run_argv(
+                    [cg] + args, remaining, env=child_env,
+                    timeout_cleanup=_chat_graph_timeout_cleanup(graph_home, token))
+                if run_error or p.returncode != 0:
+                    return None, run_error or "chat-graph full ingest recovery failed: exit %d" % p.returncode
+            with open(graph_path) as f:
+                graph = json.load(f)
+            if nested_ingest_state(graph) != "fresh":
+                return None, "full ingest remains stale or unverified after recovery"
+        return graph, None
     except Exception as e:
         return None, "cannot read graph export: %s" % e
 

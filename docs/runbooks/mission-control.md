@@ -28,6 +28,7 @@ It combines usage, git, chats, and automation feeds from the ER-087 scripts into
 - Dot states are: green (on time), amber (aging), red (errored/stale).
 - “Stale” feeds must show **desaturated visuals + a stale banner** so old data is visibly downgraded.
 - A frozen green dot is treated as a defect; report that as a bug and force a rebuild/recollect.
+- The existing chats collector performs one local full ingest when its exported full-pass evidence is missing or stale. Ingest and re-export share the existing 150-second feeder budget. A failure retains the last good feed with an error; a lock skip cannot be treated as a completed full pass. This does not reactivate the optional nightly model review or add a schedule.
 
 ## `--serve` fallback (file:// script blocking)
 - Default open uses the local shell path and `file://` file loading.
