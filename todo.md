@@ -1,6 +1,8 @@
 # TODO
 
 ## Active Next Steps
+
+- Lean shared-entry reset: verify and publish the three instruction files on `codex/lean-agent-setup-01a06ff8`, then check fresh loading separately. Runtime, collectors, credentials, and other open work are unchanged. Owner: Codex `01a06ff8-6204-7c62-b158-5b8e10db1460`; linear: `self-contained: lean agent entries`.
 If it's not here, it isn't remembered.
 Capture the current goal plus the concrete dependency-ordered steps that are still open.
 - Keep this section short, current, and ordered by impact/dependency.
@@ -94,6 +96,15 @@ Preserve a durable completion trail for verified work instead of deleting it fro
 - 2026-07-04 | ER-087 follow-up audit gaps — governance scaffold, product intent, tab wording, stale-ingest honesty, and Map smoke coverage landed in this change; full record below.
 
 ## Work Record Log
+
+### 2026-09-05 — Lean shared-entry reset
+- Problem: provider-specific roles and generic overlay rules duplicated the shared setup.
+- Reasoning: keep project facts and existing tools; let the model choose a proportionate method.
+- Diagnosis inputs: exact original Claude task, prior Codex audits, live instruction files, and loader behavior.
+- Implementation inputs: three reviewed replacements; the shared structural checker and compatible repair callers are coordinated in the global reset.
+- Fix: lean AGENTS, compatibility-only overlay, and exact native `@AGENTS.md` import.
+- Self-audit: shared-entry structure and `git diff --check` pass. Publication and fresh provider loading remain open. Natural collector behavior was not rechecked; no collector/runtime change was made.
+- by: Codex GPT-6 Astra, task `01a06ff8-6204-7c62-b158-5b8e10db1460`; triggered by: Trevor's renewed full reset request; led to: shared entry review; linear: `self-contained: lean agent entries`.
 
 ### 2026-09-01 — loose-ends skill and one-contract routing
 - Problem: an agent asked "what is unfinished" had to read a 458 KB `todo.md` (the live queue is 1% of it) plus a 16,504-row open-work ledger that is 97% two noise kinds, and no doc routed it to `loose-end-runner`, the attention lane, or `chat-graph resolve`. The P14 loose-ends loop existed only as a queued robot.
@@ -1161,6 +1172,15 @@ Keep materially new suggestions here so they survive beyond the current chat.
 - 2026-07-05 | recommendation: do not adopt the GitHub Copilot enterprise-observability stack (OpenTelemetry Collector, Prometheus, Grafana, OpenObserve, Superset, Metabase, Airbyte, Meltano, dbt-core, Great Expectations, TensorZero, Helicone, OpenLIT, traceAI, TraceRoot, Pull Request Analytics Action); treat `records/2026-07-04-dashboard-coding-tracker-search-audit.md` as the real same-niche repo map; if a chart is ever justified, prefer vendorable zero-dependency `leeoniya/uPlot` over Chart.js/ECharts/CDN — but not for V1. | why: Copilot recommended from the repo description alone (it said so); every headline pick runs as a background service, framework, or separate warehouse and collides with the explicit non-goals of offline single-file, single-user, no-server. Full evaluation in Feedback Decision Log 2026-07-05. | by: Claude Code (Opus 4.8) session `a9724039-6595-4205-a25b-bf361020250a`. | linear: self-contained until Linear is configured.
 
 ## Active Branch Ledger
+
+### Lean shared-entry reset (2026-09-05)
+- branch: `codex/lean-agent-setup-01a06ff8`; created from freshly fetched `origin/main@e5f1dcc` in the clean source checkout.
+- owner: Codex `01a06ff8-6204-7c62-b158-5b8e10db1460`; no new worktree or owner lease.
+- purpose: replace duplicated setup prose with project facts, a shared-core pointer, and native Claude import.
+- merge target: `main`; review: normal PR after focused checks; delete when landed and no longer needed.
+- prior checkout branch: `claude/one-contract-loose-ends`, preserved unchanged. Its three instruction files matched current `origin/main` before editing.
+- recovery: exact pre-change copies under `/Users/gillettes/.codex/state/setup-reset/01a06ff8/before/`; check for newer writes before restoring owned files.
+- record: GI `records/audits/2026-09-05-setup-reset/README.md`; linear: `self-contained: lean agent entries`.
 ### `ops/interactive-work-continuity-20260820`
 - status: landed — source commit `c46d8b4ac5a7c10fe4723e20c9ef3ee8e3577242` is the exact `origin/main` tip; local cleanup follows this records-only closeout.
 - created: 2026-08-20
