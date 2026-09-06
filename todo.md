@@ -2,6 +2,7 @@
 
 ## Active Next Steps
 
+- Actionable work and resume pilot: share the existing loose-ends filtering behavior with Home/Chats, retain searchable candidates, expose exact source/reopen actions, and remove invented model/branch instructions from resume prompts. Acceptance: mixed-candidate and stale-source checks, rendered browser proof, and a committed local installation with rollback. Fresh-agent recovery remains a separate observation. Owner: Codex `01a07221-0541-7970-90e3-f59af1b6862e`; record: `records/2026-09-06-actionable-work.md`; linear: `self-contained: actionable-work`.
 - Lean shared-entry reset: [PR 27](https://github.com/trevor-commits/mission-control/pull/27) publishes the entries and dependent continuity/coherence changes. Finish review and landing, then check fresh loading separately. Runtime, collectors, credentials, and other work are unchanged. Owner: Codex `01a06ff8-6204-7c62-b158-5b8e10db1460`; linear: `self-contained: lean agent entries`.
 If it's not here, it isn't remembered.
 Capture the current goal plus the concrete dependency-ordered steps that are still open.

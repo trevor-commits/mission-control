@@ -422,6 +422,8 @@ body {
 
 /* --- flat rows / clusters (chats) --- */
 .mc-list { display: flex; flex-direction: column; gap: var(--mc-sp-2); }
+.mc-list .mc-row { flex-wrap: wrap; }
+.mc-list .mc-row-body { flex-basis: 220px; }
 .mc-chatrow {
   display: flex; align-items: center; gap: var(--mc-sp-2); flex-wrap: wrap;
   background: var(--mc-surface-1); border: 1px solid var(--mc-border);
@@ -1037,6 +1039,18 @@ html[data-theme="dark"] .mc-heat-l4 { background: #35b98a; }
   function looseSeverityState(s) {
     return { red: "red", amber: "amber", yellow: "amber", grey: "grey", green: "green" }[String(s || "").toLowerCase()] || "amber";
   }
+  function isOtherCandidate(item) {
+    // Same default as scripts/loose-ends. The browser test compares both consumers.
+    return item.kind === "register_unverified" || item.kind === "chat_open_end";
+  }
+  function compareOpenWork(a, b) {
+    var rank = { red: 0, amber: 1, grey: 2, green: 3 };
+    var severity = rank[looseSeverityState(a.severity)] - rank[looseSeverityState(b.severity)];
+    return severity || (+b.age_days || 0) - (+a.age_days || 0);
+  }
+  function defaultOpenWork(items) {
+    return items.filter(function (item) { return !isOtherCandidate(item); }).sort(compareOpenWork);
+  }
   function looseEnds(data) {
     data = data || {};
     var nodes = data.nodes || [], byKey = {};
@@ -1209,7 +1223,7 @@ html[data-theme="dark"] .mc-heat-l4 { background: #35b98a; }
     // chats: sessions carrying open work
     var gc = guard("chats");
     if (gc.ok && gc.data) {
-      looseEnds(gc.data).slice(0, 3).forEach(function (o) {
+      defaultOpenWork(looseEnds(gc.data)).slice(0, 3).forEach(function (o) {
           out.push({ state: looseSeverityState(o.severity), seen: o.first_seen_at || "", tab: "chats",
                      focus: o.source_node || "", openId: o.id || "",
                      problem: titleLabel(o.title, "") + " — " + looseKindLabel(o.kind),
@@ -1545,7 +1559,7 @@ html[data-theme="dark"] .mc-heat-l4 { background: #35b98a; }
     var s = {};
     var gc = guard("chats");
     if (gc.ok && gc.data && Array.isArray(gc.data.nodes)) {
-      var owe = looseEnds(gc.data).length;
+      var owe = defaultOpenWork(looseEnds(gc.data)).length;
       var cnt = gc.data.counts || {};
       var ingestState = fullIngestState(cnt);
       var staleIngest = ingestState === "stale";
@@ -2772,7 +2786,8 @@ html[data-theme="dark"] .mc-heat-l4 { background: #35b98a; }
   //  CHATS TAB
   // ===========================================================================
   var savedChatState = OPERATOR_STATE.chats && typeof OPERATOR_STATE.chats === "object" ? OPERATOR_STATE.chats : {};
-  var chatFilter = { repo: String(savedChatState.repo || ""), openOnly: savedChatState.openOnly === true, providers: {} };
+  var chatFilter = { repo: String(savedChatState.repo || ""), openOnly: savedChatState.openOnly === true,
+    otherCandidates: savedChatState.otherCandidates === true, providers: {} };
   if (savedChatState.providers && typeof savedChatState.providers === "object") {
     Object.keys(savedChatState.providers).forEach(function (key) { chatFilter.providers[key] = savedChatState.providers[key] === true; });
   }
@@ -2781,7 +2796,8 @@ html[data-theme="dark"] .mc-heat-l4 { background: #35b98a; }
 
   function persistChatState() {
     setOperatorState("chats", { repo: chatFilter.repo || "", openOnly: chatFilter.openOnly === true,
-      providers: chatFilter.providers, query: chatQuery || "", focusOpen: FOCUS_OPEN_END || null });
+      providers: chatFilter.providers, otherCandidates: chatFilter.otherCandidates === true,
+      query: chatQuery || "", focusOpen: FOCUS_OPEN_END || null });
   }
   function chatNodeMatches(n, query) {
     var openText = (n.open_ends || []).map(function (item) { return (item && item.text) || ""; });
@@ -2793,9 +2809,12 @@ html[data-theme="dark"] .mc-heat-l4 { background: #35b98a; }
   }
 
   function chatHasUnfinishedWork(n, openCountByNode) {
-    if ((n.open_ends || []).length) return true;
     var count = openCountByNode[n.key];
     return typeof count === "number" && count > 0;
+  }
+  function showOpenItem(item) {
+    return chatFilter.otherCandidates || !!normalizedQuery(chatQuery) ||
+      item.id === FOCUS_OPEN_END || !isOtherCandidate(item);
   }
 
   function renderChats(main) {
@@ -2815,7 +2834,7 @@ html[data-theme="dark"] .mc-heat-l4 { background: #35b98a; }
     nodes.forEach(function (n) { chatKeys[n.key] = true; });
     var openCountByNode = {};
     openItems.forEach(function (o) {
-      if (o.source_node && chatKeys[o.source_node]) {
+      if (showOpenItem(o) && o.source_node && chatKeys[o.source_node]) {
         openCountByNode[o.source_node] = (openCountByNode[o.source_node] || 0) + 1;
       }
     });
@@ -2887,29 +2906,34 @@ html[data-theme="dark"] .mc-heat-l4 { background: #35b98a; }
 
   function renderOpenWork(parent, openItems, nodes, edges, visibleChatKeys) {
     var byKey = {}; (nodes || []).forEach(function (n) { byKey[n.key || nodeKey(n)] = n; });
-    var items = (openItems || []).filter(function (o) {
+    var matching = (openItems || []).filter(function (o) {
       var n = byKey[o.source_node || ""];
       if (visibleChatKeys && !visibleChatKeys[o.source_node || ""]) return false;
       if (chatFilter.repo && (o.repo || (n && n.repo) || "") !== chatFilter.repo) return false;
       if (n && chatFilter.providers[providerGroup(n.provider)]) return false;
       if (!openItemMatches(o, n, chatQuery)) return false;
       return true;
-    }).sort(function (a, b) {
+    });
+    var items = matching.filter(showOpenItem).sort(function (a, b) {
       if (FOCUS_OPEN_END && a.id === FOCUS_OPEN_END) return -1;
       if (FOCUS_OPEN_END && b.id === FOCUS_OPEN_END) return 1;
-      var sr = { red: 0, amber: 1, grey: 2, green: 3 };
-      var as = sr[looseSeverityState(a.severity)], bs = sr[looseSeverityState(b.severity)];
-      if (as !== bs) return as - bs;
-      return (+b.age_days || 0) - (+a.age_days || 0);
+      return compareOpenWork(a, b);
     });
     parent.appendChild(h("div", { class: "mc-section-head" }, h("h2", { text: "Open work" })));
-    parent.appendChild(h("div", { class: "mc-card-foot" }, "One list of unfinished items from chats, repo todo files, nightly notes, Git state, and the request register."));
+    parent.appendChild(h("div", { class: "mc-card-foot" }, "Start with a recorded task, handoff, tracked request, or Git decision. Check its source before continuing."));
+    parent.appendChild(h("button", { class: "mc-chip mc-chip-btn" + (chatFilter.otherCandidates ? " mc-chip-on" : ""),
+      type: "button", "aria-pressed": chatFilter.otherCandidates ? "true" : "false",
+      onclick: function () { chatFilter.otherCandidates = !chatFilter.otherCandidates; persistChatState(); rerender(); }
+    }, "Include other candidates"));
+    var hidden = matching.length - items.length;
     parent.appendChild(h("output", { id: "mc-open-search-status", class: "mc-card-foot", role: "status", "aria-live": "polite" },
       normalizedQuery(chatQuery)
         ? searchCountText(items.length, (openItems || []).length, 50, "open work items")
-        : "Showing " + Math.min(50, items.length) + " of " + items.length + " open work items after filters"));
+        : "Showing " + Math.min(50, items.length) + " of " + items.length + " open work items after filters" +
+          (hidden ? ". " + hidden + " other candidates hidden. Search includes them." : "")));
     var list = h("div", { class: "mc-list" });
-    if (!items.length) list.appendChild(h("div", { class: "mc-card-foot" }, "No open work found in the chat graph."));
+    if (!items.length) list.appendChild(h("div", { class: "mc-card-foot" },
+      hidden ? "No recorded work matches this view. Other candidates are available above." : "No open work matches these filters."));
     items.slice(0, 50).forEach(function (item) { list.appendChild(openWorkRow(item, byKey, edges)); });
     if (items.length > 50) list.appendChild(h("div", { class: "mc-card-foot" }, "showing highest priority 50 of " + items.length + " open items"));
     parent.appendChild(list);
@@ -2928,7 +2952,9 @@ html[data-theme="dark"] .mc-heat-l4 { background: #35b98a; }
     if (item.source_node && n) row.appendChild(h("button", { class: "mc-chip mc-chip-btn", type: "button", onclick: function () {
       setMapFocus(item.source_node); location.hash = "#map"; rerender();
     } }, "Show chat"));
-    if (item.resolve_cmd) row.appendChild(copyable(item.resolve_cmd, "Hide until refresh"));
+    if (n && n.resume_cmd) row.appendChild(copyable(n.resume_cmd, "Copy reopen command"));
+    if (n && n.view_cmd) row.appendChild(copyable(n.view_cmd, "Copy source command"));
+    if (item.resolve_cmd) row.appendChild(copyable(item.resolve_cmd, "Copy resolve command"));
     return row;
   }
 

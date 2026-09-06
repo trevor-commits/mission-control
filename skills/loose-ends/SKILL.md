@@ -5,7 +5,7 @@ description: Pick up unfinished work without restated context. Use when Trevor s
 
 # Loose ends
 
-One skill, four tools: Claude Code `/loose-ends`, Codex `$loose-ends`, Cursor `/loose-ends`, Hermes `hermes -z "use the loose-ends skill: pick up the top unfinished item in $PWD"`. The helper is `~/.mission-control/bin/loose-ends` once `scripts/dashboard install` has run from a main that contains it. until then use `/Users/gillettes/Coding Projects/mission-control/scripts/loose-ends`. It makes no model calls. you do the judgment.
+One skill, four tools: Claude Code `/loose-ends`, Codex `$loose-ends`, Cursor `/loose-ends`, Hermes `hermes -z "use the loose-ends skill: pick up the top unfinished item in $PWD"`. The helper is `~/.mission-control/bin/loose-ends` from the existing Mission Control installation. If it is unavailable, inspect the installation health before running a development copy. It makes no model calls. you do the judgment.
 
 ## Steps
 
@@ -13,14 +13,14 @@ One skill, four tools: Claude Code `/loose-ends`, Codex `$loose-ends`, Cursor `/
 2. **Pick one.** The item Trevor named, else row 1. `loose-ends show <n>` gives the text, source chat, reopen and read commands, and the resolve command.
 3. **Decide: close or prompt.** Close it now only if it is bounded, reversible, inside this repo, and verifiable in this session (the contract's autonomous-fix rule). Anything destructive, cross-repo, credential-bearing, or decision-shaped gets a prompt instead. Say which path and why in one sentence.
 4. **Close path.** Do the work → run the verification → write the durable record (`todo.md` line moved under `## Completed` with date and evidence, or the item's own record) → `loose-ends resolve <n>` → closeout card.
-5. **Prompt path.** `loose-ends --repo "$PWD" prompt <n>` writes a skeleton under `~/.mission-control/prompts/`. Fill every field with facts gathered in this session (files read, commands run, what is already true). Never write "see chat". Run `~/.codex/scripts/prompt-handoff-lint --response` on your reply. the visible block stays under 4,000 characters with the `Prompt file:` pointer. Print the invoke line for the runner you chose.
+5. **Prompt path.** `loose-ends --repo "$PWD" prompt <n>` writes a recovery prompt under `~/.mission-control/prompts/`. It preserves the receiving task's selected model and reasoning. It includes the source identity, freshness, available read/reopen commands, and current repository snapshot. The receiving agent verifies the original request, ownership, next step, and acceptance evidence before editing. Unknown fields require source inspection, not invented facts. Do not replay old tool calls or repeat an external effect without checking whether it succeeded. When handing off a visible prompt, keep it under 4,000 characters and link its complete file.
 6. **One item per invocation.** End by naming what the next row would be.
 
 ## Boundaries
 
 - Never edit human documents from the helper. `resolve` only runs the item's own `chat-graph resolve` or `dashboard attention resolve` command.
 - Never merge, force-push, delete branches, or restart services to close an item.
-- If the feeds are stale (`generated_at` older than a day in `~/.mission-control/data/chats.json`), say so and run `~/.mission-control/bin/dashboard collect` first.
+- Read the freshness recorded by `show` or `prompt`. A freshly exported feed can still contain an old full transcript scan. Verify the current source before acting. Use the existing collector when a refresh is needed and authorized.
 
 ## Invoke lines
 

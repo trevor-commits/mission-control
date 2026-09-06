@@ -356,8 +356,10 @@ for (const tab of TABS) {
     console.error('FAIL: #map recent chat journal is missing the connection action');
     fails++; continue;
   }
-  if (tab === 'chats' && (txt.indexOf('Open work') === -1 || txt.indexOf('Hide until refresh') === -1 || txt.indexOf('Reopen this chat') === -1 || txt.indexOf('Read transcript') === -1)) {
-    console.error('FAIL: #chats is missing the Open work list, temporary-hide action, or plain chat action labels');
+  if (tab === 'chats' && (txt.indexOf('Open work') === -1 || txt.indexOf('Include other candidates') === -1 ||
+      txt.indexOf('Copy resolve command') === -1 || txt.indexOf('Hide until refresh') !== -1 ||
+      txt.indexOf('Reopen this chat') === -1 || txt.indexOf('Read transcript') === -1)) {
+    console.error('FAIL: #chats is missing retained-candidate access or honest source/action labels');
     fails++; continue;
   }
   if (tab === 'git' &&
