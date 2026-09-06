@@ -365,6 +365,7 @@ body {
 
 /* --- filters bar --- */
 .mc-filters { display: flex; gap: var(--mc-sp-2); flex-wrap: wrap; align-items: center; margin: var(--mc-sp-3) 0; }
+.mc-filters select { max-width: 100%; }
 .mc-chip {
   display: inline-flex; align-items: center; gap: var(--mc-sp-1);
   background: var(--mc-surface-2); border: 1px solid var(--mc-border);
@@ -434,7 +435,7 @@ body {
 .mc-chatrow:hover { border-color: var(--mc-border-2); }
 .mc-chatrow-title { font-weight: 600; font-size: var(--mc-fs-3); max-width: 360px; letter-spacing: -0.005em; }
 .mc-provider { font-size: var(--mc-fs-1); color: var(--mc-fg-muted); }
-.mc-repo { font-size: var(--mc-fs-1); color: var(--mc-fg-dim); }
+.mc-repo { font-size: var(--mc-fs-1); color: var(--mc-fg-dim); overflow-wrap: anywhere; }
 .mc-cmd {
   display: inline-flex; align-items: center; gap: var(--mc-sp-1);
   font-family: var(--mc-mono); font-size: var(--mc-fs-1);

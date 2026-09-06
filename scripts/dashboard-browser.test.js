@@ -525,7 +525,7 @@ function contrast(a, b) {
 
 async function actionableWorkAudit(browser, root) {
   const envelope = syntheticLargeChats();
-  envelope.data.nodes = [{ id: 'pilot', provider: 'codex', repo: 'pilot-repo',
+  envelope.data.nodes = [{ id: 'pilot', provider: 'codex', repo: 'pilot-repo-' + 'longname'.repeat(20),
     title: 'Pilot source', open_ends: [], resume_cmd: 'codex resume pilot',
     view_cmd: 'chat-source full pilot' }];
   envelope.data.edges = [];
