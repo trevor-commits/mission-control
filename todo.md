@@ -2,7 +2,7 @@
 
 ## Active Next Steps
 
-- Actionable work and resume pilot: dashboard/helper slice installed locally from `7efbe22`; 92 shell checks and 348 browser assertions pass, and the actual feed fits desktop/mobile. Next: publish the source/shared skill and perform one fresh-worker recovery trial from the saved checkpoint after explicit ownership handoff. Healthy natural collector refresh remains unproven; existing feed errors persist. Owner: Codex `01a07221-0541-7970-90e3-f59af1b6862e`; record: `records/2026-09-06-actionable-work.md`; linear: `self-contained: actionable-work`.
+- Actionable work and resume pilot: dashboard/helper slice installed locally from `7efbe22`; 92 shell checks and 348 browser assertions pass. September 6 continuation: installed chats collection recovered in 53 seconds; natural refresh remains unproven. Shared recovery instructions now match the owning source. Next: publish this packet, install from the existing stable runtime source checkout, and complete fresh-worker recovery. Owner: Codex `01a07221-0541-7970-90e3-f59af1b6862e`; record: `records/2026-09-06-actionable-work.md`; linear: `self-contained: actionable-work`.
 - Lean shared-entry reset: [PR 27](https://github.com/trevor-commits/mission-control/pull/27) publishes the entries and dependent continuity/coherence changes. Finish review and landing, then check fresh loading separately. Runtime, collectors, credentials, and other work are unchanged. Owner: Codex `01a06ff8-6204-7c62-b158-5b8e10db1460`; linear: `self-contained: lean agent entries`.
 If it's not here, it isn't remembered.
 Capture the current goal plus the concrete dependency-ordered steps that are still open.
@@ -1186,7 +1186,7 @@ Keep materially new suggestions here so they survive beyond the current chat.
 - delete when: merged, installed feeder root repointed, no active writer or recovery dependency, and owner-authenticated cleanup succeeds.
 - record: `records/2026-09-06-actionable-work.md`; linear: `self-contained: actionable-work`.
 
-### Lean shared-entry reset (2026-09-05)
+### `codex/lean-agent-setup-01a06ff8`
 - branch: `codex/lean-agent-setup-01a06ff8`; created from freshly fetched `origin/main@e5f1dcc` in the clean source checkout.
 - owner: Codex `01a06ff8-6204-7c62-b158-5b8e10db1460`; no new worktree or owner lease.
 - purpose: replace duplicated setup prose with project facts, a shared-core pointer, and native Claude import.

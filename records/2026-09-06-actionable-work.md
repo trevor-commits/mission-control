@@ -52,7 +52,19 @@ Use this checkpoint for one fresh-worker recovery trial after source publication
 
 Healthy natural collector refresh is not proven. The live status still reports a red automation job, chats backoff/unknown full ingest, and decision-feed errors. The chats error at `22:01:47Z` predates this installation; the collector runtimes are unchanged. This slice must not be described as restoring overall Mission Control or system health.
 
-The shared installed skill is an existing untracked file in the separate Codex checkout. Its helper route is correct; its old skeleton/freshness prose remains there. This task changes the owning Mission Control skill source and preserves the newer installed-helper routing paragraph, without overwriting the foreign untracked copy. Shared skill publication and fresh-agent recovery remain explicit follow-up work. Publication is not authorized by this record.
+At the initial delivery, the shared installed skill was an existing untracked file in the separate Codex checkout. Its helper route was correct; its old skeleton/freshness prose remained there. The initial slice preserved that copy. Trevor subsequently requested continued implementation after the roadmap named source/shared-skill publication as the next delivery step; the continuation below records that work. This record itself grants no authority.
+
+## September 6 continuation
+
+Trevor requested continued implementation after the strategy/delta refresh. The source worktree remained clean at `7f92aea047c47634e0599ecc538cace7511f1086`, with the existing owner lease. Remote main remained `2a87d269981286552534a19f3954dde79e04580a`; no existing PR matched this branch.
+
+The current chats error was `feeder timed out after 150s`, attempted at `2026-09-06T23:43:17Z`, with three consecutive failures and a two-hour retry window. Diagnostic runs used private SQLite backups. The current data exported successfully there; one asynchronous Python 3.9 profiler crashed, while simpler read-only export timing completed. No live database repair, timeout increase, interpreter change, or speculative collector patch followed.
+
+The unchanged installed collector then ran normally with `collect --force chats`: **52.916 seconds, exit 0**. Its new feed at `2026-09-07T00:03:37Z` reports `full_ingest_state=fresh`, `ingest_skipped=false`, and no stale providers. The error sidecar was removed. This is a manual recovery, not proof of the historical timeout's cause or a healthy scheduled cycle. Private timings and receipts are under `/Users/gillettes/.codex/state/actionable-work-01a07221/collector-diagnosis`.
+
+The shared skill was backed up before changing only its prompt/freshness paragraphs. Its existing helper route and all provider symlinks were preserved. The backup is `/Users/gillettes/.codex/state/actionable-work-01a07221/shared-skill-before-20260906.md`, SHA-256 `90bb73bb2415cb1aa27740e63ad858b4554ab1dacd6fac55215ad4f65e6ab09b`. `README.md` now describes the recovery prompt, and the runbook points to actual feed-error receipts instead of a nonexistent collection log.
+
+The existing runtime source checkout at `/Users/gillettes/.mission-control/source` is clean and detached at the published collector repair. Reuse it after publication instead of retaining this task worktree as the permanent feeder root. The cross-repository branch check also exposed an unquoted adjacent ledger heading that caused this task's entry to absorb another owner's fields; only that heading's formatting was corrected. Other historical branch-ledger issues remain outside this change.
 
 Rollback: 15 prior installed code, asset, and stamp files were copied with their SHA-256 and modes to `/Users/gillettes/.codex/state/actionable-work-01a07221/runtime-before`. Restore only those exact files after checking for newer changes. Preserve all feeds, source records, and other work. Retain this worktree while the installed dashboard names it as its feeder root; merge/repoint before owner-authenticated cleanup.
 
