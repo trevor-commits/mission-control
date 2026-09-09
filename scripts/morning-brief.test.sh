@@ -1,6 +1,7 @@
 #!/bin/bash
 # Deterministic Morning Brief acceptance suite. Synthetic fixtures only.
 set -u
+export PYTHONDONTWRITEBYTECODE=1
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 BRIEF="$ROOT/scripts/morning-brief"
@@ -322,9 +323,9 @@ PY
 then pass "_sanitize_line clip cannot rescue a row the egress policy drops"
 else fail "_sanitize_line clip cannot rescue a row the egress policy drops"; fi
 
-# P1 comprehension + P2 source regression: the default NEEDS YOU cap is top-3
+# P1 comprehension + P2 source regression: the explicit NEEDS YOU cap is top-2
 # with a '+K more: dashboard' collapse line, and every rendered line shows its
-# source. Four structured decisions and no NEEDS_YOU_MAX override.
+# source. Four structured decisions exercise the configuration, not just its default.
 CAPTEST="$TMP/cap"; mkdir -p "$CAPTEST/state/data"
 python3 - "$CAPTEST/state/data" <<'PY'
 import json, os, sys
@@ -343,18 +344,19 @@ write("decisions", {"pinned":[
    "trust":"structured","provenance":"chat-graph tier1"} for i in range(1,5)],
   "inferred":[]}, 300)
 PY
-if MISSION_CONTROL_HOME="$CAPTEST/state" MORNING_BRIEF_NOW_EPOCH=1783674000 "$BRIEF" >/dev/null 2>&1 && \
+if MISSION_CONTROL_HOME="$CAPTEST/state" MORNING_BRIEF_NOW_EPOCH=1783674000 \
+   MORNING_BRIEF_NEEDS_YOU_MAX=2 "$BRIEF" >/dev/null 2>&1 && \
    python3 - "$CAPTEST/state/morning-brief/latest.json" "$CAPTEST/state/morning-brief/latest.md" <<'PY'
 import json, sys
 d=json.load(open(sys.argv[1])); md=open(sys.argv[2]).read()
 needs=next(s for s in d["sections"] if s["title"]=="NEEDS YOU")
-assert len(needs["lines"]) == 3, needs["lines"]        # default top-N significance = 3
-assert needs["collapsed_count"] == 1, needs
-assert "+1 more: dashboard" in md, md
+assert len(needs["lines"]) == 2, needs["lines"]        # configured top-N significance = 2
+assert needs["collapsed_count"] == 2, needs
+assert "+2 more: dashboard" in md, md
 assert "_(chat-graph tier1)_" in md, "per-line source must render in markdown"
 PY
-then pass "NEEDS YOU default cap is top-3 with '+K more: dashboard' collapse and per-line source"
-else fail "NEEDS YOU default cap is top-3 with '+K more: dashboard' collapse and per-line source"; fi
+then pass "NEEDS YOU configured cap is top-2 with '+K more: dashboard' collapse and per-line source"
+else fail "NEEDS YOU configured cap is top-2 with '+K more: dashboard' collapse and per-line source"; fi
 
 # P2 dedup regression: identical text with different source stays distinct; only
 # an exact-provenance duplicate is dropped.

@@ -203,11 +203,29 @@ def main() -> int:
         )
         run_case("automation unknown job state fails closed", feeds, "0|0|automation|")
 
+        # Registry drift is routine on this Mac (57 untracked launchd jobs vs 17
+        # tracked) and must NOT blank job health -- failing closed here once hid a
+        # live red job behind "Status incomplete". The list is shape-checked only.
         feeds = valid_feeds(now)
         feeds["automation"] = envelope(
             "automation", now, {"jobs": [], "unregistered": ["com.gillettes.unknown"]},
         )
-        run_case("unregistered automation fails closed", feeds, "0|0|automation|")
+        run_case("registry drift does not blank job health", feeds, "0|0||")
+
+        # ...and a red job still reports through that same drift.
+        feeds = valid_feeds(now)
+        feeds["automation"] = envelope(
+            "automation", now,
+            {"jobs": [{"state": "red"}], "unregistered": ["com.gillettes.unknown"]},
+        )
+        run_case("red job survives registry drift", feeds, "0|1||")
+
+        # A malformed unregistered value is still a broken feed, not drift.
+        feeds = valid_feeds(now)
+        feeds["automation"] = envelope(
+            "automation", now, {"jobs": [], "unregistered": "not-a-list"},
+        )
+        run_case("malformed unregistered fails closed", feeds, "0|0|automation|")
 
         feeds = valid_feeds(now)
         feeds["automation"] = envelope(

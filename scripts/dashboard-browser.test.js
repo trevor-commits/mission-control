@@ -130,6 +130,18 @@ async function operatorUxAudit(browser, root) {
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
   page.setDefaultTimeout(5000);
   try {
+    await block('a capped open-work list says so instead of implying completeness', async () => {
+      await page.goto(`${pathToFileURL(path.join(root, 'index.html')).href}#chats`, { waitUntil: 'load' });
+      await page.waitForTimeout(120);
+      const note = await page.evaluate(() => {
+        const el = document.querySelector('.mc-cap-note');
+        return el ? el.textContent : null;
+      });
+      check(!!note, 'capped loose_ends rendered no "showing N of M" note');
+      check(!!note && /500/.test(note) && /16,387/.test(note),
+        `cap note missing its counts: ${note}`);
+    });
+
     await block('navigation semantics', async () => {
       await page.goto(url('chats'), { waitUntil: 'load' });
       const semantics = await page.evaluate(() => {
@@ -532,7 +544,11 @@ function contrast(a, b) {
   const staleBriefState = homePendingState(tmp, 'home-stale-brief');
   staleBriefHomeState(staleBriefState);
   const operatorState = installedState(path.join(tmp, 'operator-audit'));
-  writeStateFeed(operatorState, 'chats', syntheticLargeChats());
+  const cappedChats = syntheticLargeChats();
+  // The transport caps loose_ends and records what it dropped; the page must say
+  // so rather than presenting a truncated list as the whole list.
+  cappedChats.data.browser_capped = { loose_ends: { shown: 500, total: 16387 } };
+  writeStateFeed(operatorState, 'chats', cappedChats);
   const operatorGit = JSON.parse(fs.readFileSync(path.join(FIXTURES, 'git.json'), 'utf8'));
   operatorGit.data.repos.push({ repo:'Synthetic clean repo', branch:'main', remote:'synced', dirty:false,
     ahead:0, behind:0, branches:[], decision_rows:[], branch_facts:[], worktrees:[] });
@@ -546,7 +562,10 @@ function contrast(a, b) {
     await operatorUxAudit(browser, operatorState);
     for (const [mode, root] of Object.entries(states)) {
       for (const mobile of [false, true]) {
-        const page = await browser.newPage({ viewport: mobile ? { width: 390, height: 844 } : { width: 1440, height: 1000 } });
+        // Narrow-viewport coverage: 320px is the smallest supported phone
+        // class. Every tab must render without document overflow there too.
+        for (const width of mobile ? [390, 320] : [1440]) {
+        const page = await browser.newPage({ viewport: { width, height: 844 } });
         const failures = [];
         page.on('pageerror', e => failures.push(`pageerror:${e.message}`));
         page.on('console', m => { if (m.type() === 'error') failures.push(`console:${m.text()}`); });
@@ -671,6 +690,7 @@ function contrast(a, b) {
         }
         assert(failures.length === 0, `${mode}: browser failures: ${failures.join(' | ')}`);
         await page.close();
+        }
       }
     }
     const attentionPage = await browser.newPage({ viewport: { width: 1440, height: 1000 } });

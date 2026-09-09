@@ -497,6 +497,43 @@ if [ "$R1" -eq 0 ] && [ "$R2" -eq 0 ] && [ "$CRC" -eq 0 ]; then
   pass "history: concurrent writers preserve valid deduplicated atomic state"
 else fail "history: concurrent writers failed (r1=$R1 r2=$R2 parse=$CRC)"; fi
 
+# --- keepalive exit semantics --------------------------------------------
+# A keepalive job's last_exit belongs to the incarnation launchd already
+# replaced (-15 on logout, -9 on a kill). Calling a live, producing keepalive
+# red forever trains the operator to ignore red -- but a live pid that has
+# produced nothing is the exact silent failure that SHOULD be red.
+KA="$WORK/keepalive"; mkdir -p "$KA"
+KA_FRESH="$KA/fresh-marker"; : > "$KA_FRESH"
+KA_STALE="$KA/stale-marker"; : > "$KA_STALE"
+touch -t 202001010000 "$KA_STALE"
+cat > "$KA/registry.json" <<JSON
+{ "jobs": [
+  { "label": "Live Keepalive", "name": "com.gillettes.ka-live", "kind": "keepalive",
+    "schedule": "keepalive", "expected_freshness_s": 3600,
+    "evidence": [ { "role": "run", "path": "$KA_FRESH" } ] },
+  { "label": "Zombie Keepalive", "name": "com.gillettes.ka-zombie", "kind": "keepalive",
+    "schedule": "keepalive", "expected_freshness_s": 3600,
+    "evidence": [ { "role": "run", "path": "$KA_STALE" } ] }
+] }
+JSON
+KA_STUB="$KA/launchctl.sh"
+cat > "$KA_STUB" <<'SH'
+#!/usr/bin/env bash
+printf 'PID\tStatus\tLabel\n'
+printf -- '111\t-15\tcom.gillettes.ka-live\n'
+printf -- '222\t-9\tcom.gillettes.ka-zombie\n'
+SH
+chmod +x "$KA_STUB"
+KA_OUT="$KA/out.json"
+AUTOMATION_STATUS_LAUNCHCTL="$KA_STUB" MISSION_CONTROL_HOME="$KA" python3 "$SC" --json \
+  --registry "$KA/registry.json" > "$KA_OUT" 2>/dev/null
+if [ "$(getfield "$KA_OUT" com.gillettes.ka-live state)" = green ] \
+   && [ "$(getfield "$KA_OUT" com.gillettes.ka-zombie state)" = red ]; then
+  pass "keepalive: a prior abnormal exit is not a fault, but a silent one is"
+else
+  fail "keepalive exit semantics regressed (live=$(getfield "$KA_OUT" com.gillettes.ka-live state) zombie=$(getfield "$KA_OUT" com.gillettes.ka-zombie state))"
+fi
+
 # --- summary --------------------------------------------------------------
 echo "-----"
 if [ "$FAILS" -eq 0 ]; then echo "ALL PASS"; exit 0; else echo "$FAILS FAIL(S)"; exit 1; fi

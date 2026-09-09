@@ -1,6 +1,6 @@
 # Mission Control
 
-One local, offline dashboard for how your AI coding work is going — chats and how they connect, git health across all repos, model usage/credits, and background-job health — in one page you open with a double-click.
+Mission Control is one local, offline dashboard for your AI coding work. It shows chat links, repo health, model usage, and background-job health in a page you open with a double-click.
 
 ## Use it
 
@@ -15,10 +15,10 @@ The page lives at `~/.mission-control/index.html` (installed copy), refreshes it
 
 | Tool | Job |
 |---|---|
-| `scripts/dashboard` | The CLI: `open`, `collect`, `refresh`, `status`, `install`, `demo`. Builds the Automation, Usage, Git, Chats, Decisions, and Brief feeds and serves the page. Failed feeds keep last-good data and use bounded per-feed retry backoff; sibling feeds continue and `--force` bypasses the retry window. Synthetic clocks/test seams/feeder overrides fail before writes unless `MISSION_CONTROL_HOME` resolves outside the canonical default state tree. |
-| `scripts/chat-graph` | Records how AI chats connect (audits, spawned workers, signals, shared issues) into `~/.chat-graph/graph.db`; `link`/`unlink`/`show`/`export`/`doctor`/`rebuild`. Missing session metadata is enriched through one bounded `chat-source metadata --jsonl` batch, with partial/failed enrichment exported as degraded health rather than blocking the graph. |
+| `scripts/dashboard` | The CLI: `open`, `collect`, `refresh`, `status`, `install`, and `demo`. It builds dashboard feeds and serves the page. Failed feeds retain last-good data and use bounded retry backoff. Sibling feeds continue. `--force` skips the retry window. Test-only clocks, seams, and feeder overrides fail before writes unless `MISSION_CONTROL_HOME` is outside the canonical state tree. |
+| `scripts/chat-graph` | Records how AI chats connect in `~/.chat-graph/graph.db`. Commands include `link`, `unlink`, `show`, `export`, `doctor`, and `rebuild`. Missing metadata uses one bounded `chat-source metadata --jsonl` batch. Partial or failed enrichment is reported as degraded health without blocking the graph. |
 | `scripts/automation-status` | Reads the background-job registry (`dashboard/jobs.json`) + the scheduler and reports each job green/amber/red. |
-| `scripts/usage-snapshot`, `scripts/scan-unfinished-work` | Vendored data sources for the usage + git tabs. Upstream copies live in the `global-implementations` repo; keep these in sync when the upstream changes. |
+| `scripts/usage-snapshot`, `scripts/scan-unfinished-work` | Vendored data sources for the usage + git tabs. Upstream copies live in the `global-implementations` repo. Reconcile local hardening with upstream before copying, then keep these copies in sync when upstream changes. |
 | `scripts/loose-ends` | Pick up unfinished work: ranks the open-work ledger, attention board, `todo.md` Active Next Steps, and git state. `show`, `resolve`, and `prompt` (Goal-format resume skeleton). Paired with the `loose-ends` skill in `skills/`. |
 | `scripts/loose-end-runner` | Dry-run proposals for stale-branch pushes. never merges, force-pushes, deletes, or edits human docs. |
 | `scripts/dashboard attention` | The attention lane: `add`, `resolve`, `list` on `~/.mission-control/attention/queue.jsonl`. |
@@ -50,4 +50,4 @@ State dirs (`~/.chat-graph`, `~/.mission-control`) are created `chmod 700`, neve
 
 ## History
 
-Extracted from `global-implementations` on 2026-07-04 (built there as ER-087; full build history, work records, and the enforcement register stay in that repo). Design + rationale: `docs/MISSION_CONTROL_PLAN.md`.
+Extracted from `global-implementations` on 2026-07-04. It was built there as ER-087. Full build history, work records, and the enforcement register remain there. Design and rationale: `docs/MISSION_CONTROL_PLAN.md`.

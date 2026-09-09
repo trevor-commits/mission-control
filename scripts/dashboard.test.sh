@@ -478,6 +478,10 @@ w("chats.json", {"schema": 1, "feed": "chats",
                  "data": {"nodes": [{"id": "x:1",
                           "title": "Tre'vor \U0001F600 </script> chat"}],
                           "edges": [], "topics": [],
+                          # outcomes is browser-omitted: present here so the .js
+                          # transport projection is actually exercised by case 2.
+                          "outcomes": [{"card_id": "c1"}, {"card_id": "c2"}],
+                          "outcome_updates": [{"card_id": "c1"}],
                           "counts": {"last_full_ingest_age_s": 0,
                                      "full_ingest_state": "fresh",
                                      "full_ingest_stale": False}}})
@@ -727,6 +731,11 @@ c2() {
   if python3 - "$H/data" <<'PYEOF'
 import json, os, sys
 d = sys.argv[1]
+# The .js transport is the .json canonical MINUS payload the page never reads.
+# Whatever is omitted must be COUNTED in browser_omitted, never dropped quietly:
+# a page silently showing less than everything is the defect we are removing.
+OMIT = {"chats": ("outcomes", "outcome_updates", "outcome_extraction_health",
+                  "outcome_egress_counters")}
 for f in ("usage", "git", "chats", "automation", "decisions", "attention", "brief"):
     jc = open(os.path.join(d, f + ".json")).read()
     js = open(os.path.join(d, f + ".js")).read()
@@ -734,8 +743,21 @@ for f in ("usage", "git", "chats", "automation", "decisions", "attention", "brie
     payload = js[js.index(marker) + len(marker):]
     assert payload.endswith(";"), f
     payload = payload[:-1]
-    assert payload == jc, ("byte mismatch", f)          # strip wrapper, byte-equal
-    assert json.loads(payload) == json.loads(jc), f     # and deep-equal
+    canon, wire = json.loads(jc), json.loads(payload)
+    present = [k for k in OMIT.get(f, ()) if isinstance(canon.get("data"), dict)
+               and canon["data"].get(k) is not None]
+    if not present:
+        assert payload == jc, ("byte mismatch", f)      # strip wrapper, byte-equal
+        assert wire == canon, f                         # and deep-equal
+        continue
+    dropped = wire["data"].pop("browser_omitted", None)
+    assert dropped is not None, ("omission not reported", f)
+    assert sorted(dropped) == sorted(present), (dropped, present)
+    for k in present:
+        assert k not in wire["data"], ("omitted key still on the wire", f, k)
+        assert dropped[k] == len(canon["data"][k]), ("miscounted", f, k)
+        canon["data"].pop(k)
+    assert wire == canon, ("transport differs beyond the omitted keys", f)
 # hostile title survives roundtrip; .js is pure ASCII (emoji escaped by ensure_ascii)
 raw = open(os.path.join(d, "chats.js"), "rb").read()
 assert all(b < 128 for b in raw), "non-ascii bytes in .js"
@@ -1209,16 +1231,17 @@ c13() { # FIX 6: the data/ dir must be 0700, not world-readable
 
 c14() { # isolated install wires composer/deadman/common + all three plists
   local h mch physical_mch sbin; h="$(mktemp -d)"; mch="$h/state"; sbin="$(mktemp -d)"
-  cat > "$sbin/launchctl" <<'EOF'
+  printf 'x program arguments = { "/dashboard" "collect" };\n' > "$h/print-fixture"
+  cat > "$sbin/launchctl" <<EOF
 #!/bin/sh
-case "$1" in
-  print) case "$2" in *morning-brief-deadman) exit 0;; *) exit 1;; esac ;;
-  bootstrap) basename "$3" >> "$LAUNCH_CAPTURE"; exit 0 ;;
+case "\$1" in
+  print) case "\$2" in *morning-brief-deadman) [ -f "\$LAUNCH_STATE" ] || exit 1; cat "$h/print-fixture"; exit 0;; *) [ -f "\$LAUNCH_STATE" ] && cat "$h/print-fixture"; exit 0;; esac ;;
+  bootstrap) basename "\$3" >> "\$LAUNCH_CAPTURE"; : > "\$LAUNCH_STATE"; exit 0 ;;
 esac
 exit 0
 EOF
   chmod +x "$sbin/launchctl"
-  HOME="$h" PATH="$sbin:$PATH" REPO_ROOT="$REPO" MISSION_CONTROL_HOME="$mch" LAUNCH_CAPTURE="$h/bootstrapped" \
+  HOME="$h" PATH="$sbin:$PATH" REPO_ROOT="$REPO" MISSION_CONTROL_HOME="$mch" LAUNCH_CAPTURE="$h/bootstrapped" LAUNCH_STATE="$h/loaded" MC_PRINT_FIXTURE="$h/print-fixture" \
     DASHBOARD_INSTALL_ACTIVATE_GATED=1 \
     bash "$DASH" install >/dev/null 2>&1
   physical_mch="$(cd "$mch" && pwd -P)"
@@ -1244,17 +1267,19 @@ EOF
 
 c14a() { # default install must not write/bootstrap activation-gated jobs
   local h mch sbin p miss=0; h="$(mktemp -d)"; mch="$h/state"; sbin="$(mktemp -d)"
-  cat > "$sbin/launchctl" <<'EOF'
+  printf 'x program arguments = { "/dashboard" "collect" };\n' > "$h/print-fixture"
+  cat > "$sbin/launchctl" <<EOF
 #!/bin/sh
-case "$1" in
-  print) exit 1 ;;
-  bootstrap) basename "$3" >> "$LAUNCH_CAPTURE"; exit 0 ;;
+case "\$1" in
+  print) [ -f "\$LAUNCH_STATE" ] && cat "$h/print-fixture"; exit 0 ;;
+  bootstrap) basename "\$3" >> "\$LAUNCH_CAPTURE"; : > "\$LAUNCH_STATE"; exit 0 ;;
 esac
 exit 0
 EOF
   chmod +x "$sbin/launchctl"
   HOME="$h" PATH="$sbin:$PATH" REPO_ROOT="$REPO" MISSION_CONTROL_HOME="$mch" \
-    LAUNCH_CAPTURE="$h/bootstrapped" bash "$DASH" install >/dev/null 2>&1
+    LAUNCH_CAPTURE="$h/bootstrapped" LAUNCH_STATE="$h/loaded" MC_PRINT_FIXTURE="$h/print-fixture" \
+    bash "$DASH" install >/dev/null 2>&1
   [ -f "$h/Library/LaunchAgents/com.gillettes.mission-control.plist" ] || miss=1
   for p in com.gillettes.outcome-extractor.plist com.gillettes.morning-brief.plist \
            com.gillettes.morning-brief-deadman.plist; do
@@ -1455,7 +1480,7 @@ c21() { # install stamps provenance from committed HEAD; verify detects runtime 
   command -v git >/dev/null 2>&1 || { ok "install-stamp: git absent — provenance test skipped"; return; }
   local gr mch head; gr="$(mktemp -d)/repo"; mkdir -p "$gr/scripts" "$gr/dashboard/vendor"
   local n
-  for n in dashboard chat-graph mission_control_common.py queue_admission.py morning-brief morning-brief-deadman decision-alert compose-decision-prompt.py mc-panel.swift loose-ends; do
+  for n in dashboard chat-graph mission_control_common.py queue_admission.py morning-brief morning-brief-deadman decision-alert compose-decision-prompt.py mc-panel.swift loose-ends self-repair usage-watch headroom-refresh; do
     cp "$REPO/scripts/$n" "$gr/scripts/$n"
   done
   # Deployment assets are part of the shipped surface: install must stamp them from
@@ -1623,7 +1648,7 @@ c24() { # ER-109 round 6: installer honesty + safety. Each pathological input mu
   command -v git >/dev/null 2>&1 || { ok "install-safety: git absent — skipped"; return; }
   _mkrepo() { # -> committed repo path with all runtimes + index.html + vendor at HEAD
     local gr; gr="$(mktemp -d)/repo"; mkdir -p "$gr/scripts" "$gr/dashboard/vendor"; local n
-    for n in dashboard chat-graph mission_control_common.py queue_admission.py morning-brief morning-brief-deadman decision-alert compose-decision-prompt.py mc-panel.swift loose-ends; do
+    for n in dashboard chat-graph mission_control_common.py queue_admission.py morning-brief morning-brief-deadman decision-alert compose-decision-prompt.py mc-panel.swift loose-ends self-repair usage-watch headroom-refresh; do
       cp "$REPO/scripts/$n" "$gr/scripts/$n"
     done
     printf '<html>shell HEAD</html>\n' > "$gr/dashboard/index.html"
@@ -1761,7 +1786,7 @@ c27() { # committed plist source + checked atomic launchd reload/failure behavio
   local gr h mch sbin capture loaded rc out sentinel h2 mch2 h3 mch3 h4 mch4 failbin real_chmod mode fails=0
   gr="$(mktemp -d)/repo"; mkdir -p "$gr/scripts" "$gr/dashboard/vendor" "$gr/launchd"
   local n
-  for n in dashboard chat-graph mission_control_common.py queue_admission.py morning-brief morning-brief-deadman decision-alert compose-decision-prompt.py mc-panel.swift loose-ends; do
+  for n in dashboard chat-graph mission_control_common.py queue_admission.py morning-brief morning-brief-deadman decision-alert compose-decision-prompt.py mc-panel.swift loose-ends self-repair usage-watch headroom-refresh; do
     cp "$REPO/scripts/$n" "$gr/scripts/$n"
   done
   cp "$REPO/dashboard/index.html" "$gr/dashboard/index.html"
@@ -1779,12 +1804,16 @@ PY
 #!/bin/sh
 echo "$1" >> "$LAUNCH_CAPTURE"
 case "$1" in
-  print) [ -f "$LAUNCH_STATE" ] ;;
+  print) [ -f "$LAUNCH_STATE" ] && cat "$MC_PRINT_FIXTURE" ;;
   bootout) [ "${FAIL_BOOTOUT:-0}" != 1 ] || exit 1; rm -f "$LAUNCH_STATE" ;;
   bootstrap) [ "${FAIL_BOOTSTRAP:-0}" != 1 ] || exit 1; : > "$LAUNCH_STATE" ;;
 esac
 EOF
   chmod +x "$sbin/launchctl"
+  printf 'com.gillettes.mission-control\tprogram arguments = {\n\t\t"%s"\n\t\t"collect"\n\t\t"--due"\n\t};\n' \
+    "$mch/bin/dashboard" > "$h/print-fixture" 2>/dev/null || \
+    printf 'com.gillettes.mission-control program arguments = { "/dashboard" "collect" };' > "$h/print-fixture"
+  export MC_PRINT_FIXTURE="$h/print-fixture"
   HOME="$h" PATH="$sbin:$PATH" LAUNCH_CAPTURE="$capture" LAUNCH_STATE="$loaded" \
     REPO_ROOT="$gr" MISSION_CONTROL_HOME="$mch" bash "$gr/scripts/dashboard" install >/dev/null 2>&1 || fails=1
   # Commit v2, then dirty the worktree with a third marker. Install must deploy v2.
@@ -1803,7 +1832,9 @@ PY
   out="$h/Library/LaunchAgents/com.gillettes.mission-control.plist"
   grep -q 'VERSION_TWO' "$out" || fails=1
   ! grep -q 'DIRTY_THREE' "$out" || fails=1
-  [ "$(tr '\n' ' ' < "$capture")" = "print bootout bootstrap " ] || fails=1
+  # changed bytes: pre-check print, bootout, bootstrap, then the post-load
+  # argv attestation print.
+  [ "$(tr '\n' ' ' < "$capture")" = "print bootout bootstrap print " ] || fails=1
   # Content equality must not hide mode drift. Reinstall repairs an unchanged
   # selected plist back to the install contract's private 0600 mode.
   python3 - "$out" <<'PY'
@@ -1813,7 +1844,9 @@ PY
   : > "$capture"
   HOME="$h" PATH="$sbin:$PATH" LAUNCH_CAPTURE="$capture" LAUNCH_STATE="$loaded" \
     REPO_ROOT="$gr" MISSION_CONTROL_HOME="$mch" bash "$gr/scripts/dashboard" install >/dev/null 2>&1 || fails=1
-  [ "$(tr '\n' ' ' < "$capture")" = "print " ] || fails=1
+  # unchanged bytes + already loaded: one pre-check print, then the post-load
+  # argv attestation print.
+  [ "$(tr '\n' ' ' < "$capture")" = "print print " ] || fails=1
   [ "$(python3 - "$out" <<'PY'
 import os, stat, sys
 print(oct(stat.S_IMODE(os.stat(sys.argv[1]).st_mode))[2:])
@@ -2037,6 +2070,79 @@ EOF
     ok "install-lock: concurrent commit cannot interleave files and stamp"
   else
     no "install-lock: concurrent installers were not isolated (A=$arc B=$brc sha=$final_sha)"
+  fi
+}
+
+c33b() { # a verified install records an LKG snapshot; rollback restores it byte-exactly and re-stamps
+  local gr mch rc fails=0 sha_a sha_b lkg release_count
+  gr="$(_mkrepo)"; mch="$(mktemp -d)"
+  REPO_ROOT="$gr" MISSION_CONTROL_HOME="$mch" DASHBOARD_INSTALL_NO_LAUNCHD=1 \
+    bash "$gr/scripts/dashboard" install >/dev/null 2>&1 || fails=1
+  [ -f "$mch/last-known-good.json" ] || fails=1
+  [ -d "$mch/releases" ] || fails=1
+  sha_a="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["release_id"])' "$mch/last-known-good.json" 2>/dev/null)"
+  [ -n "$sha_a" ] || fails=1
+  # Snapshot must contain the full restorable surface, with no symlinks.
+  for p in bin index.html vendor launchd panel.html snapshot.json; do
+    [ -e "$mch/releases/$sha_a/$p" ] || fails=1
+  done
+  find "$mch/releases/$sha_a" -type l | grep -q . && fails=1
+  # Upgrade to v2, then tamper the live surface like a bad deploy.
+  printf '\n<!-- V2 -->\n' >> "$gr/dashboard/index.html"
+  ( cd "$gr" && git add dashboard/index.html && \
+    git -c user.email=t@t -c user.name=t commit -qm v2 ) >/dev/null 2>&1 || fails=1
+  REPO_ROOT="$gr" MISSION_CONTROL_HOME="$mch" DASHBOARD_INSTALL_NO_LAUNCHD=1 \
+    bash "$gr/scripts/dashboard" install >/dev/null 2>&1 || fails=1
+  grep -q 'V2' "$mch/index.html" || fails=1
+  sha_v2="$(git -C "$gr" rev-parse HEAD)"
+  lkg_id="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["release_id"])' "$mch/last-known-good.json" 2>/dev/null)"
+  # The v2 install recorded its own verified state as the new rollback target.
+  python3 -c 'import json,sys; assert json.load(open(sys.argv[1]))["head_sha"] == sys.argv[2]' \
+    "$mch/last-known-good.json" "$sha_v2" || fails=1
+  printf 'TAMPERED\n' > "$mch/bin/chat-graph"
+  printf '<html>tampered shell</html>\n' > "$mch/index.html"
+  # Rollback restores the last verified bytes over the tamper, re-stamps
+  # truthfully from the restored release, and verifies green.
+  MISSION_CONTROL_HOME="$mch" bash "$gr/scripts/dashboard" rollback >/dev/null 2>&1; rc=$?
+  [ "$rc" -eq 0 ] || fails=1
+  grep -q 'V2' "$mch/index.html" || fails=1
+  cmp -s "$mch/releases/$lkg_id/bin/chat-graph" "$mch/bin/chat-graph" || fails=1
+  cmp -s "$mch/releases/$lkg_id/index.html" "$mch/index.html" || fails=1
+  PYTHONPATH="$REPO/scripts" python3 -c \
+    'import sys; from mission_control_common import verify_install_stamp; assert verify_install_stamp(sys.argv[1])["ok"]' \
+    "$mch/bin" || fails=1
+  sha_b="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["head_sha"])' "$mch/bin/install-stamp.json" 2>/dev/null)"
+  [ "$sha_b" = "$sha_v2" ] || fails=1
+  # A second rollback must be refused once its pointer is gone/corrupt.
+  mv "$mch/last-known-good.json" "$mch/lkg.bak"
+  MISSION_CONTROL_HOME="$mch" bash "$gr/scripts/dashboard" rollback >/dev/null 2>&1 && fails=1
+  mv "$mch/lkg.bak" "$mch/last-known-good.json"
+  if [ "$fails" = 0 ]; then
+    ok "rollback: verified install snapshots LKG; rollback restores bytes + truthful re-stamp; corrupt pointer refuses"
+  else
+    no "rollback: LKG contract regressed (a=$sha_a b=$sha_b rc=$rc)"
+  fi
+}
+
+c33c() { # pruning keeps at most three releases and never drops the current LKG
+  local gr mch i id fails=0 count
+  gr="$(_mkrepo)"; mch="$(mktemp -d)"
+  for i in 1 2 3 4 5; do
+    printf '\n<!-- R%s -->\n' "$i" >> "$gr/dashboard/index.html"
+    ( cd "$gr" && git add dashboard/index.html && \
+      git -c user.email=t@t -c user.name=t commit -qm "r$i" ) >/dev/null 2>&1
+    REPO_ROOT="$gr" MISSION_CONTROL_HOME="$mch" DASHBOARD_INSTALL_NO_LAUNCHD=1 \
+      bash "$gr/scripts/dashboard" install >/dev/null 2>&1 || fails=1
+    sleep 0.05
+  done
+  count="$(find "$mch/releases" -maxdepth 1 -mindepth 1 -type d | wc -l | tr -d ' ')"
+  [ "$count" -le 3 ] || fails=1
+  id="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["release_id"])' "$mch/last-known-good.json" 2>/dev/null)"
+  [ -d "$mch/releases/$id" ] || fails=1
+  if [ "$fails" = 0 ]; then
+    ok "rollback: release pruning caps history at three and keeps the current LKG"
+  else
+    no "rollback: release pruning regressed (count=$count id=$id)"
   fi
 }
 
@@ -3051,7 +3157,7 @@ invalid-group-receipt-cleanup)
   c55 ;;
 *)
   c0; c1; c2; c3; c4; c4b; c5; c6; c7; c8; c8a; c8b; c9; c10; c11; c12; c13; c14; c14a; c15; c16; c17; c18; c19; c20; c21; c22; c23; c24; c25; c26; c27; c28; c29; c30; c31; c32; c33; c34; c35; c36; c37; c38; c39; c39a; c40; c41; c42; c42a; c43; c44; c45; c46; c47; c48; c49; c50; c51
-  c52; c53; c54; c55; c56 ;;
+  c52; c53; c54; c55; c56; c33b; c33c ;;
 esac
 shell_contract
 LIVE_DATA_AFTER="$(live_data_fingerprint)"

@@ -268,6 +268,43 @@ if [ "$DR1" -ne 0 ] && [ "$DR2" -ne 0 ] && [ "$(python3 -c 'import json,sys; pri
   pass "concurrent deadman checks emit one throttled alert"
 else fail "concurrent deadman checks emit one throttled alert"; fi
 
+# Age is not ownership. A stale metadata record must not block a new OS-held
+# lock, and a live holder must never be taken over just because its human-visible
+# lease becomes old.
+if PYTHONPATH="$ROOT/scripts" python3 - "$DEADMAN" <<'PY'
+import importlib.machinery, json, os, subprocess, sys, tempfile, time
+path=sys.argv[1]
+root=tempfile.mkdtemp(prefix="deadman-lease-")
+os.environ["MISSION_CONTROL_HOME"]=root
+m=importlib.machinery.SourceFileLoader("deadman_lease",path).load_module()
+os.makedirs(m._home(),exist_ok=True)
+lease=m._lease_path()
+with open(lease,"w") as h: json.dump({"owner_pid":os.getpid(),"owner_start":"reused-pid","renewed_at":1},h)
+assert m._acquire_lock(timeout_s=.2), "stale lease blocked acquisition"
+assert m._renew_lock(), "current owner did not renew"
+m._release_lock()
+assert not os.path.exists(lease), "lease metadata remained"
+ready=os.path.join(m._home(),"holder-ready")
+child=r'''
+import importlib.machinery,os,sys,time
+m=importlib.machinery.SourceFileLoader("deadman_holder",sys.argv[1]).load_module()
+assert m._acquire_lock(timeout_s=.2)
+open(sys.argv[2],"w").write("ready")
+time.sleep(.6)
+m._release_lock()
+'''
+p=subprocess.Popen([sys.executable,"-c",child,path,ready],env=os.environ.copy())
+deadline=time.time()+3
+while not os.path.exists(ready) and time.time()<deadline: time.sleep(.01)
+assert os.path.exists(ready), "holder not ready"
+assert m._acquire_lock(timeout_s=.1) is None, "live holder was stolen"
+p.wait(timeout=3); assert p.returncode==0
+assert m._acquire_lock(timeout_s=.2), "released lock unavailable"
+m._release_lock()
+PY
+then pass "deadman lease never uses stale age as ownership"
+else fail "deadman lease ownership safety failed"; fi
+
 for tmpl in "$ROOT/launchd/com.gillettes.morning-brief.plist.template" \
             "$ROOT/launchd/com.gillettes.morning-brief-deadman.plist.template" \
             "$ROOT/launchd/com.gillettes.outcome-extractor.plist.template"; do

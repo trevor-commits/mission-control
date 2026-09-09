@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.gillettes.mission-control-repair</string>
+  <key>ProgramArguments</key>
+  <array><string>__MCHOME__/bin/self-repair</string><string>--apply</string></array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>HOME</key><string>__HOME__</string>
+    <key>PATH</key><string>/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin</string>
+    <key>MISSION_CONTROL_HOME</key><string>__MCHOME__</string>
+    <key>PYTHONPATH</key><string>__MCHOME__/bin</string>
+  </dict>
+  <!-- 04:10: after the nightly bundle (02:30), before outcome-extractor (04:40)
+       and the morning brief (05:00), so the brief reads a repaired system. -->
+  <key>StartCalendarInterval</key>
+  <dict><key>Hour</key><integer>4</integer><key>Minute</key><integer>10</integer></dict>
+  <key>StandardOutPath</key><string>__MCHOME__/logs/mission-control-repair.out.log</string>
+  <key>StandardErrorPath</key><string>__MCHOME__/logs/mission-control-repair.err.log</string>
+</dict>
+</plist>
