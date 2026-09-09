@@ -1279,7 +1279,7 @@ Keep materially new suggestions here so they survive beyond the current chat.
 ## Active Branch Ledger
 
 ### `codex/actionable-work-01a07221`
-- status: active; dashboard/helper slice installed locally from `7efbe22`; publication and recovery observation remain open.
+- status: merged to `main` 2026-09-09 as `67450da` (Trevor authorized the merge); full `scripts/verify.sh` 40/40 on the merged tree; pushed to `origin/main`. Branch ref + worktree stay until the row's runtime cleanup conditions (installed feeder root repointed, no active writer or recovery dependency, owner-authenticated cleanup) are met by the owning Codex chat; remaining observation items stay in Active Next Steps.
 - created: 2026-09-06; base: verified `origin/main@2a87d269981286552534a19f3954dde79e04580a`.
 - owner: Codex `01a07221-0541-7970-90e3-f59af1b6862e`; active owner lease `37bbc709-90c4-4640-8162-a05674b7469f`.
 - worktree: `/Users/gillettes/Coding Projects/mission-control-worktrees/codex/actionable-work-01a07221`.
@@ -1297,7 +1297,7 @@ Keep materially new suggestions here so they survive beyond the current chat.
 - recovery: exact pre-change copies under `/Users/gillettes/.codex/state/setup-reset/01a06ff8/before/`; check for newer writes before restoring owned files.
 - record: GI `records/audits/2026-09-05-setup-reset/README.md`; linear: `self-contained: lean agent entries`.
 ### `claude/silence-is-a-state`
-- status: active. Silence-as-a-state usage surfaces, detector scheduling, panel density, and this audit round.
+- status: merged to `main` 2026-09-09 as `3db10a3` (Trevor's consolidation); contained in pushed `origin/main` `67450da`; delete-when satisfied — local ref reaped via lane-reap quarantine the same day.
 - created: 2026-08-19 (branch work began); ledger entry added 2026-08-21 by the audit round.
 - base: `origin/main` at `ebc12f9`; merged forward to `origin/main` `099654c` on 2026-08-21 during the audit round.
 - source chat: Claude desktop session (Fable 5) `470e8496-967a-4b30-8be5-90c30154042d` plus the 2026-08-21 ox-alpha audit chat.
@@ -1308,7 +1308,7 @@ Keep materially new suggestions here so they survive beyond the current chat.
 - delete when: merged to main
 - linear: self-contained; repo-only
 ### `ops/interactive-work-continuity-20260820`
-- status: landed — source commit `c46d8b4ac5a7c10fe4723e20c9ef3ee8e3577242` is the exact `origin/main` tip; local cleanup follows this records-only closeout.
+- status: landed — source commit `c46d8b4ac5a7c10fe4723e20c9ef3ee8e3577242` is contained in pushed `origin/main` `67450da`; local ref reaped via lane-reap quarantine 2026-09-09 (delete-when satisfied).
 - created: 2026-08-20
 - base: `origin/main` at `ebc12f929c278b2e078e658e382ef87a5a248c93`
 - responsible/source chat: Hermes ops Desktop session, Trevor request to remove work-stopping limits and audit settings.
@@ -1321,7 +1321,7 @@ Keep materially new suggestions here so they survive beyond the current chat.
 - cleanup trigger: this records-only closeout is contained by `origin/main`.
 
 ### `cursor/usage-reset-countdowns`
-- status: active. Uniform reset countdown on every Usage tab and compact-panel window.
+- status: merged to `main` 2026-09-09 as `f82136e` (Trevor's `-s ours` containment — branch tree already in main via earlier squash); contained in pushed `origin/main` `67450da`; delete-when satisfied — local ref reaped via lane-reap quarantine the same day.
 - created: 2026-08-18
 - base: `origin/main`
 - source chat: Cursor `46ba944f-41f8-41c8-8d6b-c0b76bce90bb`
