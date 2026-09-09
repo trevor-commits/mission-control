@@ -535,6 +535,78 @@ function contrast(a, b) {
   return (Math.max(x, y) + .05) / (Math.min(x, y) + .05);
 }
 
+async function actionableWorkAudit(browser, root) {
+  const envelope = syntheticLargeChats();
+  envelope.data.nodes = [{ id: 'pilot', provider: 'codex', repo: 'pilot-repo-' + 'longname'.repeat(20),
+    title: 'Pilot source', open_ends: [], resume_cmd: 'codex resume pilot',
+    view_cmd: 'chat-source full pilot' }];
+  envelope.data.edges = [];
+  const candidate = (id, kind, title) => ({ id, kind, title, source_node: 'codex:pilot',
+    repo: 'pilot-repo', text: title, action_hint: 'Check the source for ' + title,
+    age_days: 90, severity: 'red', resolve_cmd: 'chat-graph resolve pilot ' + id });
+  envelope.data.loose_ends = Array.from({ length: 60 }, (_, i) =>
+    candidate('candidate-' + i, i % 2 ? 'chat_open_end' : 'register_unverified', 'Unconfirmed candidate ' + i));
+  for (const [kind, title] of [['todo_open', 'Ship the pilot'], ['register_open', 'Accepted deadline'],
+    ['closeout_handoff', 'Resume the handoff'], ['manual_followup', 'Explicit follow-up']]) {
+    envelope.data.loose_ends.push({ ...candidate(kind, kind, title), age_days: 1, severity: 'amber' });
+  }
+  writeStateFeed(root, 'chats', envelope);
+  const cliItems = JSON.parse(execFileSync('python3', [path.join(ROOT, 'scripts/loose-ends'), '--json', '--limit', '100'], {
+    env: { ...process.env, MISSION_CONTROL_HOME: root }, encoding: 'utf8',
+  })).filter(item => item.source === 'ledger');
+  assert(cliItems.length === 4, 'CLI must retain explicit work and unfamiliar kinds while excluding weak candidates');
+  const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+  const url = tab => `${pathToFileURL(path.join(root, 'index.html')).href}#${tab}`;
+  try {
+    await page.goto(url('chats'), { waitUntil: 'load' });
+    const rows = page.locator('#mc-main .mc-list').first().locator('.mc-row');
+    assert(await rows.count() === cliItems.length, 'Dashboard default must agree with the existing CLI filter');
+    assert((await rows.allInnerTexts()).every(text => !text.includes('Unconfirmed candidate')),
+      'Weak candidates must not displace accepted work in the default list');
+    assert((await rows.allInnerTexts()).some(text => text.includes('Accepted deadline')),
+      'An accepted tracked request must remain visible');
+    const toggle = page.getByRole('button', { name: 'Include other candidates', exact: true });
+    assert(await toggle.getAttribute('aria-pressed') === 'false', 'Candidate toggle defaults off');
+    assert((await page.locator('#mc-open-search-status').innerText()).includes('60 other candidates'),
+      'Default view must disclose the retained candidate count');
+    await page.evaluate(() => { window.MC_CLIPBOARD_WRITE = text => { window.copiedCommand = text; }; });
+    await rows.first().getByRole('button', { name: 'Copy reopen command', exact: true }).click();
+    await page.waitForFunction(() => window.copiedCommand === 'codex resume pilot');
+    assert(await page.evaluate(() => window.copiedCommand) === 'codex resume pilot', 'Work row copies its exact source reopen command');
+    await toggle.click();
+    assert(await rows.count() === 50, 'Including candidates restores the bounded full list');
+    await page.reload({ waitUntil: 'load' });
+    assert(await toggle.getAttribute('aria-pressed') === 'true', 'Candidate choice survives a refresh');
+    await toggle.click();
+    const search = page.getByLabel('Search chats and open work');
+    await search.fill('Unconfirmed candidate 59');
+    await waitForText(page, '#mc-open-search-status', '1 match');
+    assert(await rows.count() === 1 && (await rows.first().innerText()).includes('Unconfirmed candidate 59'),
+      'Search reaches retained candidates beyond the default display cap');
+    await search.fill('');
+    const focused = await browser.newPage();
+    try {
+      await focused.addInitScript(() => sessionStorage.setItem('mc-operator-state-v1', JSON.stringify({
+        chats: { focusOpen: 'candidate-59' },
+      })));
+      await focused.goto(url('chats'), { waitUntil: 'load' });
+      assert((await focused.locator('#mc-main .mc-list').first().locator('.mc-row').first().innerText()).includes('Unconfirmed candidate 59'),
+        'Exact item focus must reveal a hidden candidate in a fresh page');
+    } finally { await focused.close(); }
+    await page.evaluate(() => { sessionStorage.removeItem('mc-operator-state-v1'); sessionStorage.setItem('mc-home-expanded', '1'); });
+    await page.goto(url('home'), { waitUntil: 'load' });
+    assert(!(await page.locator('#mc-main').innerText()).includes('Unconfirmed candidate'), 'Home must not promote weak candidates to urgent work');
+    await page.goto(url('chats'), { waitUntil: 'load' });
+    await page.setViewportSize({ width: 390, height: 844 });
+    assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), 'New controls must fit a narrow screen');
+    if (ARTIFACTS) {
+      await page.screenshot({ path: path.join(ARTIFACTS, 'actionable-work-mobile.png'), fullPage: true });
+      await page.setViewportSize({ width: 1440, height: 1000 });
+      await page.screenshot({ path: path.join(ARTIFACTS, 'actionable-work-desktop.png'), fullPage: true });
+    }
+  } finally { await page.close(); }
+}
+
 (async () => {
   const { chromium } = loadPlaywright();
   assert(fs.existsSync(CHROME), `Chrome executable missing: ${CHROME}`);
@@ -559,6 +631,7 @@ function contrast(a, b) {
   if (ARTIFACTS) fs.mkdirSync(ARTIFACTS, { recursive: true });
   const browser = await chromium.launch({ executablePath: CHROME, headless: true });
   try {
+    await actionableWorkAudit(browser, installedState(path.join(tmp, 'actionable-work')));
     await operatorUxAudit(browser, operatorState);
     for (const [mode, root] of Object.entries(states)) {
       for (const mobile of [false, true]) {

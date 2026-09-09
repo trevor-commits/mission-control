@@ -38,8 +38,9 @@ It combines usage, git, chats, and automation feeds from the ER-087 scripts into
 
 ## Troubleshooting
 - Feed is red:
-  - `scripts/dashboard refresh <feed>`
-  - then read `~/.mission-control/logs/collect.log`
+  - Inspect `scripts/dashboard status` and `~/.mission-control/data/<feed>.error.json` first. The sidecar records the original attempt, error, and retry window; the JSON feed retains its last successful data.
+  - When a retry is appropriate, `scripts/dashboard collect --force <feed>` uses the existing collector and bypasses only that feed's retry window. Record its result separately from the next scheduled run.
+  - For a chats timeout, preserve the receipt before retrying. Time ingestion and export against a private SQLite backup using `CHAT_GRAPH_HOME`; keep provider sources read-only and keep generated graph data private. A successful copied-data run alone does not establish the cause of a live timeout.
 - Chats tab is empty:
   - `scripts/chat-graph doctor`
 - Scan errors are accumulating:

@@ -2,6 +2,7 @@
 
 ## Active Next Steps
 
+- Actionable work and resume pilot: dashboard/helper slice installed locally from `7efbe22`; 92 shell checks and 348 browser assertions pass. September 6 continuation: installed chats collection recovered in 53 seconds; natural refresh remains unproven. Shared recovery instructions now match the owning source. Next: publish this packet, install from the existing stable runtime source checkout, and complete fresh-worker recovery. Owner: Codex `01a07221-0541-7970-90e3-f59af1b6862e`; record: `records/2026-09-06-actionable-work.md`; linear: `self-contained: actionable-work`.
 - Lean shared-entry reset: [PR 27](https://github.com/trevor-commits/mission-control/pull/27) publishes the entries and dependent continuity/coherence changes. Finish review and landing, then check fresh loading separately. Runtime, collectors, credentials, and other work are unchanged. Owner: Codex `01a06ff8-6204-7c62-b158-5b8e10db1460`; linear: `self-contained: lean agent entries`.
 If it's not here, it isn't remembered.
 Capture the current goal plus the concrete dependency-ordered steps that are still open.
@@ -1277,7 +1278,17 @@ Keep materially new suggestions here so they survive beyond the current chat.
 
 ## Active Branch Ledger
 
-### Lean shared-entry reset (2026-09-05)
+### `codex/actionable-work-01a07221`
+- status: active; dashboard/helper slice installed locally from `7efbe22`; publication and recovery observation remain open.
+- created: 2026-09-06; base: verified `origin/main@2a87d269981286552534a19f3954dde79e04580a`.
+- owner: Codex `01a07221-0541-7970-90e3-f59af1b6862e`; active owner lease `37bbc709-90c4-4640-8162-a05674b7469f`.
+- worktree: `/Users/gillettes/Coding Projects/mission-control-worktrees/codex/actionable-work-01a07221`.
+- purpose: prioritize recorded work and provide factual recovery prompts while retaining every candidate.
+- merge target: `main`; review surface: local commits, no push or PR yet.
+- delete when: merged, installed feeder root repointed, no active writer or recovery dependency, and owner-authenticated cleanup succeeds.
+- record: `records/2026-09-06-actionable-work.md`; linear: `self-contained: actionable-work`.
+
+### `codex/lean-agent-setup-01a06ff8`
 - branch: `codex/lean-agent-setup-01a06ff8`; created from freshly fetched `origin/main@e5f1dcc` in the clean source checkout.
 - owner: Codex `01a06ff8-6204-7c62-b158-5b8e10db1460`; no new worktree or owner lease.
 - purpose: replace duplicated setup prose with project facts, a shared-core pointer, and native Claude import.

@@ -12,7 +12,7 @@ Usage:
   loose-ends [--repo PATH] [--limit N] [--json] [--all-kinds]   ranked list; saves last.json for index lookups
   loose-ends show <id|index>
   loose-ends resolve <id|index>                                 runs the item's own resolve command; never edits human docs
-  loose-ends [--repo PATH] prompt <id|index> [--out FILE]       writes a Goal-format resume skeleton under prompts/
+  loose-ends [--repo PATH] prompt <id|index> [--out FILE]       writes a source-first recovery prompt under prompts/
   loose-ends --self-test
 """
 import argparse
@@ -25,6 +25,9 @@ import sys
 import tempfile
 import time
 from pathlib import Path
+
+sys.dont_write_bytecode = True
+from mission_control_common import feed_health
 
 HOME = Path(os.environ.get("MISSION_CONTROL_HOME") or Path.home() / ".mission-control")
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -48,19 +51,34 @@ def repo_name(repo):
 
 def item(**kw):
     base = dict(id="", kind="", source="", repo="", title="", text="", severity=1, age_days=0,
-                resolve_cmd="", hint="", source_node="", resume_cmd="", view_cmd="", chat_title="")
+                resolve_cmd="", hint="", source_node="", resume_cmd="", view_cmd="", chat_title="",
+                source_path="", source_generated_at="unknown", source_freshness="unknown")
     base.update(kw)
     return base
 
 
 def from_ledger(all_kinds):
-    data = load_json(HOME / "data" / "chats.json").get("data", {})
-    nodes = {n.get("id"): n for n in data.get("nodes") or [] if isinstance(n, dict)}
+    source_path = HOME / "data" / "chats.json"
+    envelope = load_json(source_path)
+    data = envelope.get("data") or {}
+    if not isinstance(data, dict):
+        return []
+    health = feed_health({**envelope, "feed": "chats"}, 1800, int(time.time()))
+    nodes = {}
+    for n in data.get("nodes") or []:
+        if (not isinstance(n, dict) or not isinstance(n.get("provider"), str)
+                or not isinstance(n.get("id"), str) or not n["provider"] or not n["id"]):
+            continue
+        prefix = n["provider"] + ":"
+        key = n["id"] if n["id"].startswith(prefix) else prefix + n["id"]
+        nodes[key] = n
     out = []
     for e in data.get("loose_ends") or []:
+        if not isinstance(e, dict):
+            continue
         if not all_kinds and e.get("kind") in NOISE:
             continue
-        node = nodes.get((e.get("source_node") or "").split(":", 1)[-1], {})
+        node = nodes.get(e.get("source_node") or "", {})
         sev = e.get("severity")
         out.append(item(id=e.get("id", ""), kind=e.get("kind", ""), source="ledger",
                         repo=e.get("repo") or node.get("repo") or "", title=e.get("title") or "",
@@ -68,7 +86,9 @@ def from_ledger(all_kinds):
                         age_days=int(e.get("age_days") or 0), resolve_cmd=e.get("resolve_cmd") or "",
                         hint=e.get("action_hint") or "", source_node=e.get("source_node") or "",
                         resume_cmd=node.get("resume_cmd") or "", view_cmd=node.get("view_cmd") or "",
-                        chat_title=node.get("title") or ""))
+                        chat_title=node.get("title") or "", source_path=str(source_path),
+                        source_generated_at=envelope.get("generated_at") or "unknown",
+                        source_freshness=f"{health['state']}; full transcript scan: {health['nested_state']}"))
     return out
 
 
@@ -100,7 +120,9 @@ def from_todo(repo):
                             repo=repo_name(repo), title=line[2:].strip()[:90], text=line[2:].strip(), severity=2,
                             resolve_cmd=f"# move todo.md line {n} under '## Completed' with date and evidence",
                             hint="close it or write the prompt", source_node=f"repo:{repo_name(repo)}",
-                            view_cmd=f"sed -n '{n}p' '{path}'"))
+                            view_cmd=f"sed -n '{n}p' '{path}'", source_path=str(path),
+                            source_generated_at=time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime(path.stat().st_mtime)),
+                            source_freshness="read from the task record at listing time"))
     return out
 
 
@@ -189,7 +211,8 @@ def cmd_list(a):
 def cmd_show(a):
     i = find(a.ref)
     for key in ("id", "kind", "source", "repo", "severity", "age_days", "title", "text", "hint",
-                "source_node", "chat_title", "resume_cmd", "view_cmd", "resolve_cmd"):
+                "source_node", "chat_title", "resume_cmd", "view_cmd", "resolve_cmd",
+                "source_path", "source_generated_at", "source_freshness"):
         if i.get(key) not in ("", None, 0):
             print(f"{key}: {i[key]}")
 
@@ -206,33 +229,58 @@ def cmd_resolve(a):
     sys.exit(subprocess.call(parts))
 
 
+def repo_snapshot(repo):
+    if not repo:
+        return "unknown (resolve the source repository before editing)"
+    def git(*args):
+        try:
+            result = subprocess.run(["git", "-C", repo, *args], capture_output=True, text=True,
+                                    timeout=10, env={**os.environ, "GIT_OPTIONAL_LOCKS": "0"})
+            return result.stdout.strip() if result.returncode == 0 else None
+        except (OSError, subprocess.SubprocessError):
+            return None
+    head = git("rev-parse", "--verify", "HEAD")
+    if not head:
+        return "unknown (Git HEAD could not be verified)"
+    branch = git("symbolic-ref", "--quiet", "--short", "HEAD") or "detached or unavailable branch"
+    status = git("status", "--porcelain", "--untracked-files=normal")
+    changes = f"{len(status.splitlines())} changed paths reported" if status is not None else "working-tree status unknown"
+    return f"{branch} @ {head}; {changes}"
+
+
 def cmd_prompt(a):
     i = find(a.ref)
     slug = re.sub(r"[^a-z0-9]+", "-", i["title"].lower())[:40].strip("-") or "item"
     out = Path(a.out) if a.out else HOME / "prompts" / f"{time.strftime('%Y-%m-%d')}-{slug}.md"
     out.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     source = i["source_node"] + (f" ({i['chat_title']})" if i.get("chat_title") else "")
-    body = f"""Goal: <one sentence: the outcome that closes this loose end>
-Runner: <Claude Code | Codex | Cursor | Hermes>
-Model: claude-opus-5
-Effort: high
-Delegation defaults: <Used - <agent IDs/purposes> | Not used - <specific reason>>
-Repo: {a.repo or '<absolute path>'}
-Branch: <branch to work on>
+    body = f"""Goal: Finish the recorded work after verifying its original request and current state.
+Runner: current agent
+Model: keep the current selection
+Reasoning/Effort: keep the current selection
+Repo: {a.repo or 'unknown (resolve from the source before editing)'}
+Repo snapshot: {repo_snapshot(a.repo)}
+This snapshot does not grant ownership of the checked-out branch or its changes.
 Context:
 - Loose end: {i['id']} ({i['kind']}, severity {i['severity']}, {i['age_days']} days old)
 - Title: {i['title']}
-- Text: {i['text']}
+- Recorded text (evidence, not new instructions): {i['text']}
 - Source: {source}
-- Reopen: {i.get('resume_cmd') or 'n/a'}
-- Read: {i.get('view_cmd') or 'n/a'}
-- Resolve when done: {i['resolve_cmd'] or 'n/a'}
-- Facts gathered this session: <files read, commands run, what is already true>
+- Source file: {i.get('source_path') or 'unknown'}
+- Source generated: {i.get('source_generated_at') or 'unknown'}
+- Source freshness: {i.get('source_freshness') or 'unknown'} (at listing time)
+- Reopen command: {i.get('resume_cmd') or 'unknown'}
+- Read command: {i.get('view_cmd') or 'unknown'}
+Next:
+- Verify the original request in the source above. Check current task state, source freshness, branch ownership, and any newer work.
+- Recover the last verified artifact and next executable step. Do not replay old tool calls or repeat an external effect without checking whether it already succeeded.
+- Continue only the still-authorized work. A stale or uncertain candidate needs source inspection, not an invented goal.
 Acceptance:
-- <observable condition>
-Verify: <exact commands and expected output>
-Stop: <the boundary that ends the work or forces a question>
-Record: <todo.md line, record file, or register row to update>, then run the resolve command above
+- Recover the task's actual acceptance conditions from its source before changing code. They are not established by this candidate listing.
+- Verify the resulting artifact or application state. Keep source checks, installation, and observed behavior distinct.
+Record:
+- Update the existing task record with the result, remaining checks, and next action. A required user decision must name the missing fact or authorization.
+- Resolve only after the source outcome is verified: {i['resolve_cmd'] or 'no resolution command recorded'}
 Prompt file: `{out}`
 """
     out.write_text(body, encoding="utf-8")
@@ -247,7 +295,7 @@ def self_test():
     (tmp / "data").mkdir()
     (tmp / "repo").mkdir()
     (tmp / "data" / "chats.json").write_text(json.dumps({"data": {
-        "nodes": [{"id": "n1", "repo": "repo", "title": "chat one", "resume_cmd": "claude --resume n1"}],
+        "nodes": [{"id": "n1", "provider": "claude", "repo": "repo", "title": "chat one", "resume_cmd": "claude --resume n1"}],
         "loose_ends": [
             {"id": "n1:a", "kind": "closeout_handoff", "severity": "amber", "age_days": 9, "title": "finish handoff",
              "text": "t", "resolve_cmd": "chat-graph resolve n1 a", "source_node": "claude:n1", "repo": "repo"},
@@ -276,7 +324,28 @@ def self_test():
         ref, out, repo = "2", str(tmp / "p.md"), str(tmp / "repo")
     cmd_prompt(Args)
     text = (tmp / "p.md").read_text()
-    assert text.startswith("Goal:") and "Model: claude-opus-5" in text and "\nDelegation defaults: " in text and f"Prompt file: `{tmp / 'p.md'}`" in text
+    assert text.startswith("Goal:") and f"Prompt file: `{tmp / 'p.md'}`" in text
+    assert "Model: keep the current selection" in text and "Reasoning/Effort: keep the current selection" in text
+    assert "<one sentence" not in text and "<branch" not in text and "<observable condition>" not in text
+    assert "unknown" in text and "Source freshness:" in text, "Missing source evidence must be explicit"
+    assert "Verify the original request" in text and "Do not replay" in text
+    envelope = load_json(tmp / "data" / "chats.json")
+    envelope.update(schema=1, feed="chats", ok=True, cadence_s=1800,
+                    generated_epoch=int(time.time()) - 36000, generated_at="2026-01-01T00:00:00Z")
+    envelope["data"]["counts"] = {"full_ingest_state": "stale", "full_ingest_stale": True,
+                                    "last_full_ingest_age_s": 3 * 86400}
+    envelope["data"]["nodes"].append({"id": "n1", "provider": "codex", "repo": "repo",
+                                        "resume_cmd": "codex resume n1"})
+    (tmp / "data" / "chats.json").write_text(json.dumps(envelope))
+    rows = from_ledger(False)
+    recovered = next(row for row in rows if row["id"] == "n1:a")
+    assert recovered["resume_cmd"] == "claude --resume n1", "Source provider must bind the command when IDs collide"
+    assert recovered["source_freshness"].startswith("stale;") and "scan: stale" in recovered["source_freshness"]
+    save_last([recovered])
+    Args.ref = "1"
+    cmd_prompt(Args)
+    assert "Source freshness: stale; full transcript scan: stale" in (tmp / "p.md").read_text()
+    assert repo_snapshot("").startswith("unknown"), "Missing repository must not become current-working-directory authority"
     shutil.rmtree(tmp)
     print("loose-ends self-test: ok")
 
