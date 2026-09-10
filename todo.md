@@ -1308,7 +1308,7 @@ Keep materially new suggestions here so they survive beyond the current chat.
 - delete when: merged to main
 - linear: self-contained; repo-only
 ### `ops/interactive-work-continuity-20260820`
-- status: landed — source commit `c46d8b4ac5a7c10fe4723e20c9ef3ee8e3577242` is contained in pushed `origin/main` `67450da`; local ref reaped via lane-reap quarantine 2026-09-09 (delete-when satisfied).
+- status: landed — source commit `c46d8b4ac5a7c10fe4723e20c9ef3ee8e3577242` is contained in pushed `origin/main` `67450da`. No local branch ref remained to reap (verified 2026-09-09); delete-when satisfied.
 - created: 2026-08-20
 - base: `origin/main` at `ebc12f929c278b2e078e658e382ef87a5a248c93`
 - responsible/source chat: Hermes ops Desktop session, Trevor request to remove work-stopping limits and audit settings.
