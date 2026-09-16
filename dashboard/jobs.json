@@ -328,21 +328,6 @@
       "name": "hermes-interactive-work-continuity",
       "pseudo": true,
       "schedule": "every 300s"
-    },
-    {
-      "name": "keeper-drift-watch",
-      "label": "Keeper Deploy Convergence (T2)",
-      "kind": "monitor",
-      "expected_freshness_s": 1800,
-      "activation_required": false,
-      "evidence": [
-        {
-          "path": "/Users/gillettes/.hermes/profiles/ops/cron/output/keeper-drift-watch.last.json",
-          "role": "alert",
-          "semantic_status": true
-        }
-      ],
-      "notes": "ops cron 8b2f337ab558 every 15m; silent green; T2 DM on keeper layer drift / stalled deploy request / missing verify_ok"
     }
   ]
 }
