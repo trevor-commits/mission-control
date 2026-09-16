@@ -1,0 +1,563 @@
+#!/usr/bin/env python3
+"""loose-tree: the live hierarchical loose-ends board.
+
+One store (`<state>/data/loosetree.json`, dashboard-state adjacent) holding a
+flat node array with parent links: project -> area -> task -> subtask. Parents
+roll up (done only when every descendant is done/dropped). A parallel `Inbox`
+subtree holds machine-captured items (from the chats/git feeds); `adopt`
+promotes them into the real tree. Zero model calls; stdlib only.
+
+Usage:
+  loose-tree add   [--parent ID] [--kind K] --title T [--status S]
+                   [--origin O] [--harness H] [--session ID] [--repo R]
+                   [--commit C] [--note N] [--auto] [--auto-key K]
+  loose-tree update ID [--status S] [--title T] [--commit C] [--note N]
+                   [--decision D] [--parent P]
+  loose-tree done ID | drop ID | adopt ID [--parent P]
+  loose-tree board [--all] | show ID | json
+  loose-tree --self-test
+
+Statuses: todo doing blocked needs-decision awaiting-trevor done dropped
+"""
+import argparse
+import hashlib
+import json
+import os
+import sys
+import tempfile
+import time
+from datetime import datetime
+
+KINDS = ("project", "area", "task", "subtask", "inbox")
+STATUSES = ("todo", "doing", "blocked", "needs-decision", "awaiting-trevor",
+            "done", "dropped")
+LEAF_DONE = {"done", "dropped"}
+ORDER = {"awaiting-trevor": 0, "needs-decision": 1, "blocked": 2, "doing": 3,
+         "todo": 4, "done": 5, "dropped": 6}
+CHIP = {"awaiting-trevor": "WAIT-YOU", "needs-decision": "DECIDE",
+        "blocked": "BLOCKED", "doing": "DOING", "todo": "TODO",
+        "done": "DONE", "dropped": "DROP"}
+
+
+def default_store():
+    mc_home = os.environ.get("MISSION_CONTROL_HOME") or os.path.expanduser(
+        "~/.mission-control")
+    return os.path.join(mc_home, "data", "loosetree.json")
+
+
+def _store_path(args):
+    return getattr(args, "store", None) or os.environ.get("LOOSE_TREE_STORE") \
+        or default_store()
+
+
+def _now():
+    return int(time.time())
+
+
+def _load(path):
+    try:
+        with open(path, encoding="utf-8") as f:
+            d = json.load(f)
+    except (OSError, ValueError):
+        d = {}
+    if not isinstance(d, dict):
+        d = {}
+    d.setdefault("version", 1)
+    nodes = d.get("nodes")
+    d["nodes"] = nodes if isinstance(nodes, list) else []
+    return d
+
+
+def _save(path, data):
+    """Atomic write. LOOSE_TREE_FAULT=1 injects a post-buffer-flush failure so
+    tests can prove the on-disk store survives a mid-write crash."""
+    data["updated_at"] = _now()
+    directory = os.path.dirname(path) or "."
+    os.makedirs(directory, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=directory, prefix=".loosetree-", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=1, ensure_ascii=False)
+            f.write("\n")
+            f.flush()
+            os.fsync(f.fileno())
+            if os.environ.get("LOOSE_TREE_FAULT") == "1":
+                raise RuntimeError("injected fault (LOOSE_TREE_FAULT=1)")
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def _new_id():
+    stamp = datetime.now().strftime("T-%Y%m%d-%H%M-")
+    return stamp + hashlib.sha1(os.urandom(16)).hexdigest()[:4]
+
+
+def _children_map(data):
+    m = {}
+    for n in data["nodes"]:
+        m.setdefault(n.get("parent"), []).append(n)
+    return m
+
+
+def _recompute(data):
+    """Roll up counts bottom-up; parents whose descendants are all done/dropped
+    become done (their prior open status is parked in _pre_rollup_status and
+    restored if a descendant reopens)."""
+    by_id = {n["id"]: n for n in data["nodes"]}
+    kids = _children_map(data)
+    seen = set()
+
+    def roll(nid, depth=0):
+        if nid in seen or depth > 64:  # cycle guard for malformed stores
+            return {"done": 0, "total": 0}
+        seen.add(nid)
+        n = by_id[nid]
+        children = kids.get(nid, [])
+        if not children:
+            n["rollup"] = {"done": 1 if n["status"] in LEAF_DONE else 0,
+                           "total": 1}
+            return n["rollup"]
+        agg = {"done": 0, "total": 0}
+        for c in children:
+            r = roll(c["id"], depth + 1)
+            agg["done"] += r["done"]
+            agg["total"] += r["total"]
+        n["rollup"] = agg
+        if agg["total"] > 0 and agg["done"] == agg["total"]:
+            if n["status"] not in LEAF_DONE:
+                n["_pre_rollup_status"] = n["status"]
+                n["status"] = "done"
+        elif n["status"] == "done" and "_pre_rollup_status" in n:
+            n["status"] = n.pop("_pre_rollup_status")
+        return agg
+
+    for n in data["nodes"]:
+        if not n.get("parent") or n.get("parent") not in by_id:
+            roll(n["id"])
+    return data
+
+
+def _origin_t(origin):
+    prefix = (origin or "").split(":", 1)[0]
+    return prefix if prefix in ("chat", "profile", "repo", "cron", "system") \
+        else "system"
+
+
+def _find(data, nid):
+    for n in data["nodes"]:
+        if n.get("id") == nid:
+            return n
+    return None
+
+
+def cmd_add(args):
+    path = _store_path(args)
+    data = _load(path)
+    ids = {n["id"] for n in data["nodes"]}
+    if args.parent and args.parent not in ids:
+        print("loose-tree: no such parent %s" % args.parent, file=sys.stderr)
+        return 1
+    title = (args.title or "").strip()
+    if not title:
+        print("loose-tree: --title is required", file=sys.stderr)
+        return 1
+    if args.auto:
+        status = "todo"
+    elif args.status:
+        status = args.status
+    else:
+        status = "todo"
+    if status not in STATUSES:
+        print("loose-tree: bad status %s" % status, file=sys.stderr)
+        return 1
+    n = {
+        "id": _new_id(),
+        "parent": args.parent,
+        "kind": args.kind or ("inbox" if args.auto else "task"),
+        "title": title[:120],
+        "status": status,
+        "origin": args.origin or "",
+        "origin_t": _origin_t(args.origin or ""),
+        "harness": args.harness or "",
+        "session_id": args.session or "",
+        "repo": args.repo or "",
+        "commit": args.commit or "",
+        "created_at": _now(),
+        "updated_at": _now(),
+        "auto": bool(args.auto),
+        "auto_key": args.auto_key or "",
+        "note": args.note or "",
+        "decision": "",
+    }
+    data["nodes"].append(n)
+    _recompute(data)
+    _save(path, data)
+    print(n["id"])
+    return 0
+
+
+def cmd_update(args):
+    path = _store_path(args)
+    data = _load(path)
+    n = _find(data, args.id)
+    if not n:
+        print("loose-tree: no such item %s" % args.id, file=sys.stderr)
+        return 1
+    if args.status:
+        if args.status not in STATUSES:
+            print("loose-tree: bad status %s" % args.status, file=sys.stderr)
+            return 1
+        n["status"] = args.status
+    if args.title is not None:
+        t = args.title.strip()
+        if not t:
+            print("loose-tree: --title cannot be empty", file=sys.stderr)
+            return 1
+        n["title"] = t[:120]
+    if args.commit is not None:
+        n["commit"] = args.commit.strip()
+    if args.note is not None:
+        n["note"] = args.note.strip()
+    if args.decision is not None:
+        # A recorded decision answers a needs-decision/awaiting-trevor item and
+        # makes it actionable again; children carry the follow-through work.
+        n["decision"] = args.decision.strip()
+        if n["status"] in ("needs-decision", "awaiting-trevor"):
+            n["status"] = "todo"
+    if args.parent is not None:
+        if args.parent == n["id"]:
+            print("loose-tree: item cannot be its own parent", file=sys.stderr)
+            return 1
+        if args.parent not in {x["id"] for x in data["nodes"]}:
+            print("loose-tree: no such parent %s" % args.parent,
+                  file=sys.stderr)
+            return 1
+        n["parent"] = args.parent
+    n["updated_at"] = _now()
+    _recompute(data)
+    _save(path, data)
+    print(n["id"])
+    return 0
+
+
+def cmd_done(args):
+    path = _store_path(args)
+    data = _load(path)
+    n = _find(data, args.id)
+    if not n:
+        print("loose-tree: no such item %s" % args.id, file=sys.stderr)
+        return 1
+    open_kids = [c for c in data["nodes"]
+                 if c.get("parent") == args.id and c["status"] not in LEAF_DONE]
+    if open_kids:
+        print("loose-tree: %s still has %d open child(ren): %s" % (
+            args.id, len(open_kids),
+            ", ".join(c["id"] + " " + c["title"][:30] for c in open_kids)),
+            file=sys.stderr)
+        return 1
+    n["status"] = "done"
+    n.pop("_pre_rollup_status", None)
+    n["updated_at"] = _now()
+    _recompute(data)
+    _save(path, data)
+    print(n["id"])
+    return 0
+
+
+def cmd_drop(args):
+    path = _store_path(args)
+    data = _load(path)
+    n = _find(data, args.id)
+    if not n:
+        print("loose-tree: no such item %s" % args.id, file=sys.stderr)
+        return 1
+    n["status"] = "dropped"
+    n["updated_at"] = _now()
+    _recompute(data)
+    _save(path, data)
+    print(n["id"])
+    return 0
+
+
+def cmd_adopt(args):
+    path = _store_path(args)
+    data = _load(path)
+    n = _find(data, args.id)
+    if not n:
+        print("loose-tree: no such item %s" % args.id, file=sys.stderr)
+        return 1
+    if args.parent:
+        if args.parent not in {x["id"] for x in data["nodes"]}:
+            print("loose-tree: no such parent %s" % args.parent, file=sys.stderr)
+            return 1
+        if args.parent == n["id"]:
+            print("loose-tree: item cannot be its own parent", file=sys.stderr)
+            return 1
+    n["auto"] = False
+    if args.parent:
+        n["parent"] = args.parent
+        n["kind"] = "task" if n["kind"] == "inbox" else n["kind"]
+    n["updated_at"] = _now()
+    _recompute(data)
+    _save(path, data)
+    print(n["id"])
+    return 0
+
+
+def _render(n, depth=0):
+    chip = CHIP.get(n["status"], (n["status"] or "?").upper())
+    line = "  " * depth + "[%s] %s" % (chip, n.get("title") or "(untitled)")
+    extra = []
+    r = n.get("rollup")
+    if isinstance(r, dict) and r.get("total", 0) > 1:
+        extra.append("%d/%d done" % (r.get("done", 0), r.get("total", 0)))
+    if n.get("origin"):
+        extra.append(n["origin"])
+    if n.get("harness"):
+        extra.append(n["harness"])
+    if n.get("session_id"):
+        extra.append("session " + n["session_id"])
+    if n.get("repo"):
+        extra.append("repo " + n["repo"])
+    if n.get("commit"):
+        extra.append(n["commit"])
+    if extra:
+        line += "  · " + " · ".join(extra)
+    return line
+
+
+def cmd_board(args):
+    path = _store_path(args)
+    data = _load(path)
+    kids = _children_map(data)
+    out = []
+
+    def walk(nid, depth):
+        for c in sorted(kids.get(nid, []),
+                        key=lambda n: (ORDER.get(n["status"], 9),
+                                       -(n.get("updated_at") or 0))):
+            if c["status"] in LEAF_DONE and not args.all:
+                continue
+            out.append(_render(c, depth))
+            walk(c["id"], depth + 1)
+
+    roots = sorted((n for n in data["nodes"]
+                    if not n.get("parent") or n.get("parent") not in
+                    {x["id"] for x in data["nodes"]}),
+                   key=lambda n: (ORDER.get(n["status"], 9),
+                                  -(n.get("updated_at") or 0)))
+    for r in roots:
+        if r["status"] in LEAF_DONE and not args.all:
+            continue
+        out.append(_render(r))
+        walk(r["id"], 1)
+    print("\n".join(out) if out else "No loose ends. Nothing owed.")
+    return 0
+
+
+def cmd_show(args):
+    path = _store_path(args)
+    data = _load(path)
+    n = _find(data, args.id)
+    if not n:
+        print("loose-tree: no such item %s" % args.id, file=sys.stderr)
+        return 1
+    print(_render(n))
+    for c in data["nodes"]:
+        if c.get("parent") == args.id:
+            print("  " + _render(c))
+    if n.get("note"):
+        print("note: " + n["note"])
+    if n.get("decision"):
+        print("decision: " + n["decision"])
+    prov = " ".join(x for x in (n.get("origin"), n.get("harness"),
+                                n.get("session_id") and
+                                ("session " + n["session_id"]), n.get("repo"),
+                                n.get("commit")) if x)
+    if prov:
+        print("provenance: " + prov)
+    return 0
+
+
+def cmd_json(args):
+    path = _store_path(args)
+    data = _load(path)
+    json.dump(data, sys.stdout, indent=1, ensure_ascii=False)
+    sys.stdout.write("\n")
+    return 0
+
+
+def self_test():
+    """Fixture-backed end-to-end pass over the real code paths, in /tmp."""
+    import shutil
+    tmp = tempfile.mkdtemp(prefix="loose-tree-selftest-")
+    failures = []
+
+    def check(label, cond):
+        if not cond:
+            failures.append(label)
+
+    def run(*argv, fault=False, store=None):
+        env = dict(os.environ)
+        env.pop("LOOSE_TREE_FAULT", None)
+        if fault:
+            env["LOOSE_TREE_FAULT"] = "1"
+        argv = list(argv)
+        if store:
+            argv = ["--store", store] + argv
+        import subprocess
+        p = subprocess.run([sys.executable, os.path.abspath(__file__)] + argv,
+                           capture_output=True, text=True, env=env, timeout=30)
+        return p
+
+    store = os.path.join(tmp, "loosetree.json")
+    p = run("add", "--title", "Website", "--kind", "project",
+            "--origin", "chat:Website design", "--harness", "hermes/ops",
+            "--session", "s1", store=store)
+    check("add project rc", p.returncode == 0)
+    pid = p.stdout.strip()
+    check("add project id shape", pid.startswith("T-"))
+    p = run("add", "--parent", pid, "--title", "Form provider",
+            "--status", "needs-decision", store=store)
+    check("add child rc", p.returncode == 0)
+    c1 = p.stdout.strip()
+    d = json.load(open(store, encoding="utf-8"))
+    check("child linked", d["nodes"][1]["parent"] == pid)
+    check("child status", d["nodes"][1]["status"] == "needs-decision")
+    check("rollup counted", d["nodes"][0]["rollup"]["total"] == 1)
+    # done parent with open child refused
+    p = run("done", pid, store=store)
+    check("parent done refused", p.returncode == 1)
+    # record a decision -> actionable again
+    p = run("update", c1, "--decision", "use provider X", store=store)
+    check("decision recorded", p.returncode == 0)
+    d = json.load(open(store, encoding="utf-8"))
+    check("decision clears needs-decision",
+          d["nodes"][1]["status"] == "todo")
+    # close child -> parent auto-done
+    p = run("done", c1, store=store)
+    check("child done", p.returncode == 0)
+    d = json.load(open(store, encoding="utf-8"))
+    check("parent auto-done", d["nodes"][0]["status"] == "done")
+    # reopen child -> parent restores pre-rollup status
+    p = run("update", c1, "--status", "doing", store=store)
+    d = json.load(open(store, encoding="utf-8"))
+    check("reopen restores parent",
+          d["nodes"][0]["status"] == "todo")
+    # update: provenance fields (commit/note) and re-parenting
+    p = run("add", "--title", "prov", store=store)
+    prov_id = p.stdout.strip()
+    p = run("update", prov_id, "--status", "doing", "--commit",
+            "abc1234 (pushed)", "--note", "mid-flight", store=store)
+    check("update rc", p.returncode == 0)
+    d = json.load(open(store, encoding="utf-8"))
+    pn = next(n for n in d["nodes"] if n["id"] == prov_id)
+    check("update commit", "abc1234" in pn["commit"])
+    check("update note", pn["note"] == "mid-flight")
+    check("update status", pn["status"] == "doing")
+    p = run("update", prov_id, "--parent", pid, store=store)
+    check("re-parent rc", p.returncode == 0)
+    d = json.load(open(store, encoding="utf-8"))
+    check("re-parented", next(n for n in d["nodes"]
+                              if n["id"] == prov_id)["parent"] == pid)
+    # board ordering: awaiting-trevor first, done hidden without --all
+    run("add", "--title", "q-await", "--status", "awaiting-trevor",
+        store=store)
+    run("add", "--title", "q-done", "--status", "done", store=store)
+    p = run("board", store=store)
+    check("board awaiting first",
+          p.stdout.index("q-await") < p.stdout.index("Website"))
+    check("board hides done", "q-done" not in p.stdout)
+    p = run("board", "--all", store=store)
+    check("board --all shows done", "q-done" in p.stdout)
+    # adopt an auto inbox item under the project
+    p = run("add", "--title", "auto find", "--auto",
+            "--auto-key", "k1", store=store)
+    aid = p.stdout.strip()
+    p = run("adopt", aid, "--parent", pid, store=store)
+    check("adopt rc", p.returncode == 0)
+    d = json.load(open(store, encoding="utf-8"))
+    adopted = next(n for n in d["nodes"] if n["id"] == aid)
+    check("adopted flags", adopted["auto"] is False and
+          adopted["parent"] == pid and adopted["kind"] == "task")
+    # atomic write: injected fault leaves store intact, no tmp left
+    p = run("add", "--title", "boom", fault=True, store=store)
+    check("fault fails", p.returncode != 0)
+    d2 = json.load(open(store, encoding="utf-8"))
+    check("store survives fault",
+          all(n["title"] != "boom" for n in d2["nodes"]))
+    check("no tmp left",
+          not [f for f in os.listdir(os.path.dirname(store))
+               if f.endswith(".tmp")])
+    # bad inputs fail closed
+    check("bad status fails", run("add", "--title", "x", "--status", "weird",
+                                  store=store).returncode == 1)
+    check("missing parent fails",
+          run("add", "--title", "x", "--parent", "T-nope",
+              store=store).returncode == 1)
+    check("missing item fails",
+          run("update", "T-nope", "--status", "doing",
+              store=store).returncode == 1)
+
+    shutil.rmtree(tmp, ignore_errors=True)
+    if failures:
+        print("loose-tree self-test FAILED: " + ", ".join(failures),
+              file=sys.stderr)
+        return 1
+    print("loose-tree self-test: ok")
+    return 0
+
+
+def main(argv=None):
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if "--self-test" in argv:
+        return self_test()
+    p = argparse.ArgumentParser(prog="loose-tree")
+    p.add_argument("--store", help="store path (default MISSION_CONTROL_HOME "
+                                   "data/loosetree.json)")
+    sub = p.add_subparsers(dest="cmd")
+
+    a = sub.add_parser("add")
+    a.add_argument("--parent"), a.add_argument("--kind")
+    a.add_argument("--title"), a.add_argument("--status")
+    a.add_argument("--origin"), a.add_argument("--harness")
+    a.add_argument("--session"), a.add_argument("--repo")
+    a.add_argument("--commit"), a.add_argument("--note")
+    a.add_argument("--auto", action="store_true")
+    a.add_argument("--auto-key")
+    a.set_defaults(func=cmd_add)
+
+    u = sub.add_parser("update")
+    u.add_argument("id")
+    u.add_argument("--status"), u.add_argument("--title")
+    u.add_argument("--commit"), u.add_argument("--note")
+    u.add_argument("--decision"), u.add_argument("--parent")
+    u.set_defaults(func=cmd_update)
+
+    d = sub.add_parser("done"); d.add_argument("id")
+    d.set_defaults(func=cmd_done)
+    dr = sub.add_parser("drop"); dr.add_argument("id")
+    dr.set_defaults(func=cmd_drop)
+    ad = sub.add_parser("adopt"); ad.add_argument("id")
+    ad.add_argument("--parent"); ad.set_defaults(func=cmd_adopt)
+
+    b = sub.add_parser("board")
+    b.add_argument("--all", action="store_true"); b.set_defaults(func=cmd_board)
+    s = sub.add_parser("show"); s.add_argument("id")
+    s.set_defaults(func=cmd_show)
+    j = sub.add_parser("json"); j.set_defaults(func=cmd_json)
+
+    args = p.parse_args(argv)
+    if not getattr(args, "func", None):
+        p.print_usage(sys.stderr)
+        return 64
+    return args.func(args)
+
+
+if __name__ == "__main__":
+    sys.exit(main())
