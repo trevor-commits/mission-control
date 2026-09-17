@@ -42,6 +42,7 @@ for control_name in \
   DASHBOARD_TEST_REGISTER_PAUSE_MS \
   DASHBOARD_CMD_AUTOMATION DASHBOARD_CMD_USAGE DASHBOARD_CMD_GIT \
   DASHBOARD_CMD_CHATS DASHBOARD_CMD_DECISIONS DASHBOARD_CMD_ATTENTION \
+  DASHBOARD_CMD_LOOSETREE \
   DASHBOARD_CMD_BRIEF
 do
   eval "control_is_set=\${$control_name+x}"
@@ -278,6 +279,9 @@ FEEDS = [
     # Attention merges manual queue + fresh decisions + red automation after those
     # sibling feeds have been refreshed in this cycle (or last-good on disk).
     ("attention",   300, "", "DASHBOARD_CMD_ATTENTION", 30),
+    # Loose tree: manual hierarchy store + auto Inbox from the chats feed.
+    # Derived like attention: needs the chats snapshot, so it runs after it.
+    ("loosetree",   300, "", "DASHBOARD_CMD_LOOSETREE", 30),
     # Brief consumes the stable snapshots above and therefore MUST run last.
     ("brief",       300, "", "DASHBOARD_CMD_BRIEF", 30),
 ]
@@ -380,7 +384,7 @@ BROWSER_OMIT = {
 # NOT capped: nodes and edges. loose_ends joins to nodes by source_node, so
 # trimming nodes would silently blank the titles of rows that survive. That needs
 # referential work, not a cap.
-BROWSER_CAP = {"chats": {"loose_ends": 500}}
+BROWSER_CAP = {"chats": {"loose_ends": 500}, "loosetree": {"nodes": 400}}
 # Most actionable first: worst severity, then the ones sitting longest.
 _SEVERITY_RANK = {"red": 0, "amber": 1, "yellow": 1, "grey": 2, "green": 3}
 
@@ -1118,6 +1122,177 @@ def _run_builtin_chats(timeout_s):
         return None, "cannot read graph export: %s" % e
 
 
+# Kinds from the chats/git feeds that map into the loose-tree Inbox. The two
+# noise kinds (register_unverified, chat_open_end — ~16k rows historically)
+# stay out: chat_open_end rows are already surfaced by the chats tab, and the
+# needs-you questions ride the decisions/attention lanes.
+LOOSE_TREE_INBOX_KINDS = ("closeout_handoff", "todo_open", "repo_dirty",
+                          "nightly_finding", "register_open")
+
+
+def _run_builtin_loosetree(_timeout_s):
+    """Derive the loose-tree feed: the manual tree store merged with fresh
+    Inbox rows from the last chats/git feed snapshots."""
+    # State under <home>/loosetree/ — NOT data/loosetree.json, which is the feed.
+    store_path = os.path.join(HOME, "loosetree", "store.json")
+    if not os.path.exists(store_path):
+        # First collection in a fresh state dir: seed an empty tree instead of
+        # failing — the Inbox auto-parent + auto rows give it content.
+        os.makedirs(os.path.dirname(store_path), exist_ok=True)
+        store = {"version": 1, "updated_at": 0, "nodes": []}
+        _atomic_write(store_path, json.dumps(store, indent=1) + "\n")
+    try:
+        with open(store_path, encoding="utf-8") as f:
+            store = json.load(f)
+        if not isinstance(store, dict) or not isinstance(store.get("nodes"), list):
+            raise ValueError("store shape")
+    except (OSError, ValueError) as e:
+        return None, "loose-tree store unreadable: %s" % e
+    before_fingerprint = json.dumps(store, sort_keys=True)
+    nodes = store["nodes"]
+    known_keys = {n.get("auto_key") for n in nodes if n.get("auto_key")}
+
+    inbox_parent = None
+    for n in nodes:
+        if n.get("kind") == "inbox" and not n.get("parent"):
+            inbox_parent = n["id"]
+            break
+    if inbox_parent is None:
+        inbox_parent = "inbox-auto"
+        now = _now()
+        nodes.append({
+            "id": inbox_parent, "parent": None, "kind": "inbox",
+            "title": "Inbox (auto-captured)", "status": "todo",
+            "origin": "system:auto-capture", "origin_t": "system",
+            "harness": "", "session_id": "", "repo": "", "commit": "",
+            "created_at": now, "updated_at": now, "auto": True,
+            "auto_key": "", "note": "Adopt items into the real tree with "
+            "`loose-tree adopt <id> --parent <id>`.", "decision": "",
+        })
+
+    chats_env = _load("chats")
+    chats = (chats_env or {}).get("data") if isinstance(chats_env, dict) else None
+    rows = chats.get("loose_ends") if isinstance(chats, dict) else None
+    chats_ok = bool(isinstance(chats_env, dict) and chats_env.get("ok")
+                    and isinstance(rows, list))
+    new_rows = removed_rows = 0
+    # Merge + prune only when the chats snapshot is healthy. A chats outage
+    # must never wipe the Inbox (feed rows are derived, but the store is the
+    # durable copy the CLI adopts from).
+    if chats_ok:
+        chat_names = {}
+        for node in chats.get("nodes") or []:
+            if isinstance(node, dict) and node.get("id"):
+                chat_names[str(node["id"])] = str(node.get("title") or "")
+        source_keys = set()
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            if row.get("kind") not in LOOSE_TREE_INBOX_KINDS:
+                continue
+            key = str(row.get("item_key") or "")
+            if not key:
+                # Fallback identity for rows without an item_key (older
+                # fixtures/producers): stable across cycles from row content.
+                key = "syn-" + hashlib.sha1(("|".join(str(row.get(f) or "")
+                       for f in ("kind", "source_node", "title", "repo")))
+                       .encode("utf-8", errors="replace")).hexdigest()[:16]
+            source_keys.add(key)
+            if key in known_keys:
+                continue
+            known_keys.add(key)
+            source = str(row.get("source_node") or "")
+            harness, session_id, repo = "", "", (row.get("repo") or "")
+            chat_name = ""
+            if ":" in source:
+                prefix, ident = source.split(":", 1)
+                if prefix in ("codex", "hermes", "claude"):
+                    harness, session_id = prefix, ident
+                    chat_name = chat_names.get(ident, "")
+                elif prefix == "agent":
+                    harness, session_id = "hermes", ident
+                    chat_name = chat_names.get(ident, "")
+            now = _now()
+            origin = source or "system:auto-capture"
+            if chat_name:
+                origin = "chat:%s" % chat_name[:60]
+            nodes.append({
+                "id": "T-%s-%s" % (time.strftime("%Y%m%d-%H%M", time.localtime(now)),
+                                   hashlib.sha1(key.encode("utf-8",
+                                                 errors="replace")).hexdigest()[:4]),
+                "parent": inbox_parent, "kind": "inbox",
+                "title": (row.get("title") or row.get("text") or
+                          "(untitled)")[:120],
+                "status": "todo",
+                "origin": origin,
+                "origin_t": "repo" if source.startswith("repo:") else "system",
+                "harness": harness, "session_id": session_id, "repo": repo,
+                "commit": "", "created_at": now, "updated_at": now,
+                "auto": True, "auto_key": key,
+                "note": "", "decision": "",
+            })
+            new_rows += 1
+        # Churn: auto rows whose source item disappeared (resolved/done in the
+        # ledger) leave the Inbox. Adopted rows (auto=False) are kept forever.
+        for n in list(nodes):
+            if n.get("auto") and n.get("auto_key") and \
+                    n["auto_key"] not in source_keys and n.get("id") != inbox_parent:
+                nodes.remove(n)
+                removed_rows += 1
+
+    # Recompute rollups with the same semantics as the CLI (import from the
+    # installed/repo loose-tree so there is exactly one implementation).
+    tree_mod = _load_loose_tree_module()
+    if tree_mod is not None:
+        tree_mod._recompute(store)
+    # An older installed runtime without scripts/loose-tree still serves the
+    # tree (rollups just stay stale until the helper installs).
+    counts = {"open": sum(1 for n in store["nodes"]
+                          if n.get("status") == "todo"),
+              "doing": sum(1 for n in store["nodes"]
+                           if n.get("status") == "doing"),
+              "awaiting": sum(1 for n in store["nodes"]
+                              if n.get("status") == "awaiting-trevor"),
+              "blocked": sum(1 for n in store["nodes"]
+                             if n.get("status") == "blocked"),
+              "inbox_new": new_rows, "inbox_removed": removed_rows}
+    store["counts"] = counts
+    # Persist when anything changed vs. what was read (new/removed rows,
+    # rollup recompute, counts). Avoids pointless rewrites every 5 min.
+    if json.dumps(store, sort_keys=True) != before_fingerprint:
+        _atomic_write(store_path, json.dumps(store, indent=1) + "\n")
+    return store, None
+
+
+_LOOSE_TREE_MODULE = None
+
+
+def _load_loose_tree_module():
+    """Import scripts/loose-tree by path (repo or installed) once."""
+    global _LOOSE_TREE_MODULE
+    if _LOOSE_TREE_MODULE is not None:
+        return _LOOSE_TREE_MODULE
+    import importlib.util
+    from importlib.machinery import SourceFileLoader
+    for candidate in (os.path.join(REPO, "scripts", "loose-tree"),
+                      os.path.join(HOME, "bin", "loose-tree")):
+        if os.path.isfile(candidate):
+            try:
+                # scripts/loose-tree has no .py suffix, so the default
+                # spec_from_file_location returns None; load it explicitly.
+                loader = SourceFileLoader("loose_tree", candidate)
+                spec = importlib.util.spec_from_loader("loose_tree", loader)
+                if spec is None or spec.loader is None:
+                    continue
+                mod = importlib.util.module_from_spec(spec)
+                loader.exec_module(mod)
+            except Exception:
+                continue
+            _LOOSE_TREE_MODULE = mod
+            return _LOOSE_TREE_MODULE
+    return None
+
+
 def _run_builtin_brief(timeout_s):
     installed = os.path.join(HOME, "bin", "morning-brief")
     composer = installed if os.path.isfile(installed) and os.access(installed, os.X_OK) \
@@ -1264,6 +1439,8 @@ def _run_feeder(name, defcmd, envvar, timeout_s):
         return _demote_stale_decisions(obj), None
     if name == "attention":
         return _run_builtin_attention(timeout_s)
+    if name == "loosetree":
+        return _run_builtin_loosetree(timeout_s)
     if name == "brief":
         return _run_builtin_brief(timeout_s)
     argv = shlex.split(defcmd)

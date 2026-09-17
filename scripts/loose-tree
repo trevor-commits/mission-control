@@ -40,9 +40,10 @@ CHIP = {"awaiting-trevor": "WAIT-YOU", "needs-decision": "DECIDE",
 
 
 def default_store():
+    """State path — deliberately NOT data/loosetree.json (that is the feed)."""
     mc_home = os.environ.get("MISSION_CONTROL_HOME") or os.path.expanduser(
         "~/.mission-control")
-    return os.path.join(mc_home, "data", "loosetree.json")
+    return os.path.join(mc_home, "loosetree", "store.json")
 
 
 def _store_path(args):

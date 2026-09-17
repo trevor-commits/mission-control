@@ -1995,12 +1995,12 @@ c31() { # the real macOS Bash 3.2 path executes embedded Python, not EOF
   local h count rc; h="$(newhome)"
   MISSION_CONTROL_HOME="$h" bash "$DASH" collect --force >/dev/null 2>&1; rc=$?
   count="$(find "$h/data" -type f \( -name '*.json' -o -name '*.js' \) 2>/dev/null | wc -l | tr -d ' ')"
-  # Seven feeds emit canonical JSON + JS plus a healthy error sidecar. Keeping the
+  # Eight feeds emit canonical JSON + JS plus a healthy error sidecar. Keeping the
   # sidecar present prevents browsers from logging a missing resource on success.
-  if [ "$rc" -eq 0 ] && [ "$count" = 21 ]; then
+  if [ "$rc" -eq 0 ] && [ "$count" = 24 ]; then
     ok "bash-3.2: system /bin/bash executes the embedded Python engine"
   else
-    no "bash-3.2: dashboard returned rc=$rc with $count/21 feed files"
+    no "bash-3.2: dashboard returned rc=$rc with $count/24 feed files"
   fi
 }
 
@@ -3142,11 +3142,55 @@ PY
   else no "full ingest recovery contract"; fi
 }
 
+c57() { # the loose-tree feed derives its Inbox from the chats snapshot, stays
+  # idempotent across cycles, prunes resolved sources, and preserves the Inbox
+  # through a chats outage (the store is the durable copy the CLI adopts from).
+  local h rc fails=0 n1 n2 n3 n4 FIX
+  h="$(newhome)"
+  FIX="$REPO/dashboard/fixtures/chats.json"
+  MISSION_CONTROL_HOME="$h" DASHBOARD_CMD_CHATS="cat '$FIX'" \
+    bash "$DASH" collect --force chats loosetree >/dev/null 2>&1 || fails=1
+  [ -s "$h/data/loosetree.json" ] || fails=1
+  n1="$(python3 -c 'import json,sys;d=json.load(open(sys.argv[1]))["data"];print(len(d["nodes"]))' "$h/data/loosetree.json" 2>/dev/null)"
+  [ "$n1" = "6" ] || fails=1
+  MISSION_CONTROL_HOME="$h" DASHBOARD_CMD_CHATS="cat '$FIX'" \
+    bash "$DASH" collect --force chats loosetree >/dev/null 2>&1 || fails=1
+  n2="$(python3 -c 'import json,sys;print(len(json.load(open(sys.argv[1]))["data"]["nodes"]))' "$h/data/loosetree.json" 2>/dev/null)"
+  [ "$n2" = "$n1" ] || fails=1
+  python3 - "$h" <<'PY' || fails=1
+import json, sys
+home = sys.argv[1]
+store = json.load(open(home + "/loosetree/store.json"))
+kids = [n for n in store["nodes"] if n.get("parent")]
+assert len(kids) == 5, kids
+assert all(n.get("auto") and n.get("auto_key") for n in kids)
+assert any(n.get("harness") == "claude" for n in kids)
+assert any(n.get("harness", "").startswith("repo") or n.get("origin", "").startswith("repo:") for n in kids)
+PY
+  # resolved sources leave the Inbox
+  printf '{"schema":1,"feed":"chats","ok":true,"data":{"nodes":[],"loose_ends":[]}}\n' > "$h/empty.json"
+  MISSION_CONTROL_HOME="$h" DASHBOARD_CMD_CHATS="cat '$h/empty.json'" \
+    bash "$DASH" collect --force chats loosetree >/dev/null 2>&1 || fails=1
+  n3="$(python3 -c 'import json,sys;print(len(json.load(open(sys.argv[1]))["data"]["nodes"]))' "$h/data/loosetree.json" 2>/dev/null)"
+  [ "$n3" = "1" ] || fails=1
+  # a chats outage never wipes the Inbox: restore rows, then break chats
+  MISSION_CONTROL_HOME="$h" DASHBOARD_CMD_CHATS="cat '$FIX'" \
+    bash "$DASH" collect --force chats loosetree >/dev/null 2>&1 || fails=1
+  MISSION_CONTROL_HOME="$h" DASHBOARD_CMD_CHATS="false" \
+    bash "$DASH" collect --force chats loosetree >/dev/null 2>&1
+  n4="$(python3 -c 'import json,sys;print(len(json.load(open(sys.argv[1]))["data"]["nodes"]))' "$h/data/loosetree.json" 2>/dev/null)"
+  [ "$n4" = "6" ] || fails=1
+  if [ "$fails" -eq 0 ]; then ok "loose tree: inbox derivation, idempotence, prune, outage guard"
+  else no "loose tree feed contract (n1=$n1 n2=$n2 n3=$n3 n4=$n4)"; fi
+}
+
 case "${DASHBOARD_TEST_CASE:-}" in
 full-ingest-recovery)
   c56 ;;
 fixture-reaper)
   c39a ;;
+loose-tree-feed)
+  c57 ;;
 answered-pending-attention)
   c52 ;;
 temp-root)
@@ -3157,7 +3201,7 @@ invalid-group-receipt-cleanup)
   c55 ;;
 *)
   c0; c1; c2; c3; c4; c4b; c5; c6; c7; c8; c8a; c8b; c9; c10; c11; c12; c13; c14; c14a; c15; c16; c17; c18; c19; c20; c21; c22; c23; c24; c25; c26; c27; c28; c29; c30; c31; c32; c33; c34; c35; c36; c37; c38; c39; c39a; c40; c41; c42; c42a; c43; c44; c45; c46; c47; c48; c49; c50; c51
-  c52; c53; c54; c55; c56; c33b; c33c ;;
+  c52; c53; c54; c55; c56; c57; c33b; c33c ;;
 esac
 shell_contract
 LIVE_DATA_AFTER="$(live_data_fingerprint)"

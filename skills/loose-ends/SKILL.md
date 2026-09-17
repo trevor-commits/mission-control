@@ -9,7 +9,18 @@ One skill, four tools: Claude Code `/loose-ends`, Codex `$loose-ends`, Cursor `/
 
 ## Steps
 
-1. **List.** Inside a repo run `loose-ends --repo "$PWD"`, else `loose-ends`. Show Trevor the table as printed. The two noise kinds (`register_unverified`, `chat_open_end`) are hidden. `--all-kinds` restores them.
+0. **Record, don't remember.** The moment you identify a loose end — even a
+   one-off, a haphazard mention, or a question Trevor has not answered yet —
+   record it: `~/.mission-control/bin/loose-tree add --title "…" --origin
+   "chat:<chat name>" --harness <hermes/<profile>|codex|claude|cursor>
+   --session <session id> [--repo R] [--commit C]`. Questions awaiting Trevor
+   take `--status awaiting-trevor`; decision-shaped items take
+   `--status needs-decision`; a decision Trevor makes is recorded with
+   `update <id> --decision "…"` (which reopens the item for follow-through
+   work as child tasks). Starting work: `update <id> --status doing`;
+   finished: `done <id>` (only works when children are closed). No approval
+   needed to record. The Mission Control "Loose Ends" tab is the live board.
+1. **List.** Inside a repo run `loose-ends --repo "$PWD"`, else `loose-ends`. Show Trevor the table as printed. The two noise kinds (`register_unverified`, `chat_open_end`) are hidden. `--all-kinds` restores them. For the hierarchical view, run `loose-tree board`.
 2. **Pick one.** The item Trevor named, else row 1. `loose-ends show <n>` gives the text, source chat, reopen and read commands, and the resolve command.
 3. **Decide: close or prompt.** Close it now only if it is bounded, reversible, inside this repo, and verifiable in this session (the contract's autonomous-fix rule). Anything destructive, cross-repo, credential-bearing, or decision-shaped gets a prompt instead. Say which path and why in one sentence.
 4. **Close path.** Do the work → run the verification → write the durable record (`todo.md` line moved under `## Completed` with date and evidence, or the item's own record) → `loose-ends resolve <n>` → closeout card.

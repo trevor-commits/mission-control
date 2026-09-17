@@ -15,6 +15,7 @@
 <script src="data/automation.js"></script>
 <script src="data/decisions.js"></script>
 <script src="data/attention.js"></script>
+<script src="data/loosetree.js"></script>
 <script src="data/brief.js"></script>
 <script src="data/usage.error.js"></script>
 <script src="data/headroom.error.js"></script>
@@ -23,6 +24,7 @@
 <script src="data/automation.error.js"></script>
 <script src="data/decisions.error.js"></script>
 <script src="data/attention.error.js"></script>
+<script src="data/loosetree.error.js"></script>
 <script src="data/brief.error.js"></script>
 <!-- vendored graph engine (local, offline, no CDN) for the connection Map -->
 <script src="vendor/cytoscape.min.js"></script>
@@ -850,7 +852,8 @@ html[data-theme="dark"] .mc-heat-l4 { background: #35b98a; }
 
   // --- per-feed guard: schema/staleness/skew ---------------------------------
   var EXPECTED_CADENCE = { automation: 300, usage: 1800, headroom: 60, git: 900,
-                           chats: 1800, decisions: 300, attention: 300, brief: 300 };
+                           chats: 1800, decisions: 300, attention: 300,
+                           loosetree: 300, brief: 300 };
   function guard(name) {
     var env = MC.feeds[name];
     var currentError = MC.feedErrors[name];
@@ -2055,6 +2058,106 @@ html[data-theme="dark"] .mc-heat-l4 { background: #35b98a; }
           (item.why || item.source || "—") + " · " + age),
         h("td", null, cmd ? copyable(cmd, "Copy") : "—"));
       table.appendChild(tr);
+    });
+    p.body.appendChild(table);
+  }
+
+  // LOOSE TREE TAB — live hierarchical board (project → area → task → subtask).
+  // awaiting-trevor / needs-decision / blocked / doing render expanded; todo and
+  // done groups collapse behind count chips so the tab stays glanceable.
+  function ltChip(status) {
+    // Pure-DOM chip: glyph span + fixed label per status enum.
+    var map = { "awaiting-trevor": ["red", "WAIT-YOU"],
+                "needs-decision": ["amber", "DECIDE"],
+                "blocked": ["amber", "BLOCKED"],
+                "doing": ["blue", "DOING"],
+                "todo": ["grey", "TODO"],
+                "done": ["green", "DONE"],
+                "dropped": ["grey", "DROP"] };
+    var m = map[status] || ["grey", (status || "?").toUpperCase()];
+    var s = h("span", null, m[1]);
+    s.insertBefore(glyphSpan(m[0]), s.firstChild);
+    return s;
+  }
+
+  function renderLooseTree(main) {
+    var g = guard("loosetree");
+    var p = panel(g, "Loose Ends: the live work tree");
+    main.appendChild(p.wrap);
+    if (!p.body) return;
+    appendPanelProvenance(p.body, "loosetree", g);
+    var data = g.data || {};
+    var nodes = Array.isArray(data.nodes) ? data.nodes : [];
+    var counts = data.counts || {};
+    var chips = h("div", { class: "mc-filters" },
+      h("span", { class: "mc-chip" }, (counts.awaiting || 0) + " waiting on you"),
+      h("span", { class: "mc-chip" }, (counts.doing || 0) + " doing"),
+      h("span", { class: "mc-chip" }, (counts.open || 0) + " open"),
+      h("span", { class: "mc-chip" },
+        nodes.filter(function (n) { return n.auto; }).length + " auto-captured"));
+    p.body.appendChild(chips);
+    if (!nodes.length) {
+      p.body.appendChild(h("div", { class: "mc-allgreen" },
+        glyphSpan("green"), " No loose ends. Nothing owed."));
+      return;
+    }
+    var byId = {};
+    nodes.forEach(function (n) { byId[n.id] = n; });
+    var kids = {};
+    nodes.forEach(function (n) {
+      var k = n.parent || "";
+      (kids[k] = kids[k] || []).push(n);
+    });
+    Object.keys(kids).forEach(function (k) {
+      kids[k].sort(function (a, b) {
+        var rank = { "awaiting-trevor": 0, "needs-decision": 1, "blocked": 2,
+                     "doing": 3, "todo": 4, "done": 5, "dropped": 6 };
+        return (rank[a.status] || 9) - (rank[b.status] || 9);
+      });
+    });
+    var EXPANDED = { "awaiting-trevor": 1, "needs-decision": 1,
+                     "blocked": 1, "doing": 1 };
+
+    function rowEl(n, depth) {
+      var roll = (n.rollup && n.rollup.total > 1)
+        ? (" " + n.rollup.done + "/" + n.rollup.total + " done") : "";
+      var prov = [n.origin, n.harness,
+                  n.session_id ? "session " + n.session_id : "",
+                  n.repo ? "repo " + n.repo : "", n.commit]
+        .filter(Boolean).join(" · ");
+      // ltChip builds a pure-DOM chip (glyph span + fixed label text).
+      var chipWrap = h("span");
+      chipWrap.appendChild(ltChip(n.status));
+      return h("div", { style: "margin-left:" + (depth * 16) + "px" },
+        chipWrap,
+        " " + (n.title || "(untitled)") + roll,
+        prov ? h("div", { class: "mc-ellipsis", title: prov,
+          style: "font-size:11px;opacity:.65;margin-left:52px" }, prov) : null);
+    }
+
+    function walk(nid, depth, container) {
+      (kids[nid] || []).forEach(function (n) {
+        var showChildren = depth === 0 || EXPANDED[n.status] ||
+                           (n.rollup && n.rollup.total > n.rollup.done);
+        container.appendChild(rowEl(n, depth));
+        if (showChildren) walk(n.id, depth + 1, container);
+        else if ((kids[n.id] || []).length) {
+          container.appendChild(h("div", { style: "margin-left:" +
+            ((depth + 1) * 16) + "px;font-size:11px;opacity:.6" },
+            "+ " + (n.rollup ? n.rollup.total : 0) + " nested (open in status "
+            + n.status + ")"));
+        }
+      });
+    }
+
+    var table = h("div", {});
+    // roots: projects first (manual work), then the Inbox last
+    var roots = (kids[""] || []).slice().sort(function (a, b) {
+      return (a.kind === "inbox") - (b.kind === "inbox");
+    });
+    roots.forEach(function (r) {
+      table.appendChild(rowEl(r, 0));
+      walk(r.id, 1, table);
     });
     p.body.appendChild(table);
   }
@@ -3475,7 +3578,7 @@ html[data-theme="dark"] .mc-heat-l4 { background: #35b98a; }
   // ===========================================================================
   //  ROUTER + lifecycle
   // ===========================================================================
-  var TABS = [["home", "Home"], ["brief", "Brief"], ["map", "Map"], ["chats", "Chats"], ["git", "Git"], ["usage", "Usage"], ["automation", "Automation"], ["decisions", "Decisions"], ["attention", "Attention"]];
+  var TABS = [["home", "Home"], ["brief", "Brief"], ["map", "Map"], ["chats", "Chats"], ["git", "Git"], ["usage", "Usage"], ["automation", "Automation"], ["decisions", "Decisions"], ["attention", "Attention"], ["loosetree", "Loose Ends"]];
   var LAST_ANNOUNCED_TAB = null;
   var UNKNOWN_TAB = null;
   // pure render functions, spec shape render.<tab>(feed, el) reading window.MC.feeds.*
@@ -3488,7 +3591,8 @@ html[data-theme="dark"] .mc-heat-l4 { background: #35b98a; }
     usage:      function (feed, el) { renderUsage(el); },
     automation: function (feed, el) { renderAutomation(el); },
     decisions:  function (feed, el) { renderDecisions(el); },
-    attention:  function (feed, el) { renderAttention(el); }
+    attention:  function (feed, el) { renderAttention(el); },
+    loosetree:  function (feed, el) { renderLooseTree(el); }
   };
   var RENDER = render;
 
