@@ -337,12 +337,23 @@ def cmd_board(args):
     data = _load(path)
     kids = _children_map(data)
     out = []
+    show_inbox = bool(getattr(args, "inbox", False))
+
+    def inbox_summary(n, depth):
+        children = kids.get(n["id"], [])
+        open_n = sum(1 for c in children if c["status"] not in LEAF_DONE)
+        return ("  " * depth + "[INBOX] Inbox (auto-captured) — %d open item%s "
+                "(loose-tree board --inbox to expand)" % (
+                    open_n, "" if open_n == 1 else "s"))
 
     def walk(nid, depth):
         for c in sorted(kids.get(nid, []),
                         key=lambda n: (ORDER.get(n["status"], 9),
                                        -(n.get("updated_at") or 0))):
             if c["status"] in LEAF_DONE and not args.all:
+                continue
+            if c.get("kind") == "inbox" and not c.get("parent") and not show_inbox:
+                out.append(inbox_summary(c, depth))
                 continue
             out.append(_render(c, depth))
             walk(c["id"], depth + 1)
@@ -354,6 +365,9 @@ def cmd_board(args):
                                   -(n.get("updated_at") or 0)))
     for r in roots:
         if r["status"] in LEAF_DONE and not args.all:
+            continue
+        if r.get("kind") == "inbox" and not show_inbox:
+            out.append(inbox_summary(r, 0))
             continue
         out.append(_render(r))
         walk(r["id"], 1)
@@ -466,6 +480,21 @@ def self_test():
     d = json.load(open(store, encoding="utf-8"))
     check("re-parented", next(n for n in d["nodes"]
                               if n["id"] == prov_id)["parent"] == pid)
+    # board collapses the Inbox subtree by default; --inbox expands.
+    shell = run("add", "--title", "inbox-shell", "--kind", "inbox", "--auto",
+                "--auto-key", "k-shell", store=store)
+    shell_id = shell.stdout.strip()
+    ib = run("add", "--title", "inbox-child-visible", store=store)
+    ib_id = ib.stdout.strip()
+    # re-parent the child under the inbox shell
+    run("update", ib_id, "--parent", shell_id, store=store)
+    p = run("board", store=store)
+    check("board inbox collapsed", "inbox-child-visible" not in p.stdout
+          and "INBOX" in p.stdout)
+    p = run("board", "--inbox", store=store)
+    check("board --inbox expands", "inbox-child-visible" in p.stdout)
+    run("done", ib_id, store=store)
+
     # board ordering: awaiting-trevor first, done hidden without --all
     run("add", "--title", "q-await", "--status", "awaiting-trevor",
         store=store)
@@ -548,7 +577,10 @@ def main(argv=None):
     ad.add_argument("--parent"); ad.set_defaults(func=cmd_adopt)
 
     b = sub.add_parser("board")
-    b.add_argument("--all", action="store_true"); b.set_defaults(func=cmd_board)
+    b.add_argument("--all", action="store_true")
+    b.add_argument("--inbox", action="store_true",
+                   help="expand auto-captured Inbox items (hidden by default)")
+    b.set_defaults(func=cmd_board)
     s = sub.add_parser("show"); s.add_argument("id")
     s.set_defaults(func=cmd_show)
     j = sub.add_parser("json"); j.set_defaults(func=cmd_json)

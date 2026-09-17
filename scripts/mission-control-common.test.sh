@@ -413,6 +413,27 @@ assert v["present"] and not v["ok"] and v["reason"] == "malformed", v
 os.remove(stamp_path)
 v = verify_install_stamp(bin_dir)
 assert not v["present"] and not v["ok"] and v["reason"] == "missing", v
+
+# launchd print argv parsing must accept every header shape macOS emits:
+# legacy "program arguments = { ... };" and modern Tahoe "arguments = { ... }"
+# (no semicolon), plus the one-line fixture shape.
+from mission_control_common import launchd_argv_from_print
+legacy = 'x program arguments = { "/dashboard" "collect" };\n'
+assert launchd_argv_from_print(legacy) == ["/dashboard", "collect"], legacy
+modern = ("\tprogram = /bin/zsh\n"
+          "\targuments = {\n"
+          "\t\t/bin/zsh\n"
+          "\t\t-lc\n"
+          '\t\texec "$0" "$@"\n'
+          "\t\t/Users/x/.mission-control/bin/dashboard\n"
+          "\t\tcollect\n"
+          "\t\t--due\n"
+          "\t}\n")
+argv = launchd_argv_from_print(modern)
+assert argv == ["/bin/zsh", "-lc", 'exec "$0" "$@"',
+                "/Users/x/.mission-control/bin/dashboard", "collect", "--due"], argv
+assert launchd_argv_from_print("no arguments section here") is None
+assert launchd_argv_from_print(None) is None
 print("PYTHON PASS")
 PY
 RC=$?

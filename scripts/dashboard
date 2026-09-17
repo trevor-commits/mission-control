@@ -2271,7 +2271,7 @@ PYEOF
   # NOT in this set: it installs separately above with its REPO_ROOT baked in.
   # Keep aligned with REQUIRED_INSTALL_RUNTIMES in mission_control_common.py
   # minus dashboard; dashboard.test.sh asserts the exact stamped runtime set.
-  local required_runtimes="chat-graph morning-brief morning-brief-deadman decision-alert mission_control_common.py queue_admission.py compose-decision-prompt.py mc-panel.swift loose-ends self-repair usage-watch headroom-refresh"
+  local required_runtimes="chat-graph morning-brief morning-brief-deadman decision-alert mission_control_common.py queue_admission.py compose-decision-prompt.py mc-panel.swift loose-ends loose-tree self-repair usage-watch headroom-refresh"
   local required_assets="index.html vendor/cytoscape.min.js panel.html launchd/com.gillettes.mc-panel.plist.template"
   # Safe file install: refuse a symlink or non-regular-file destination (never
   # write THROUGH a link, which would escape the target dir), write via a temp

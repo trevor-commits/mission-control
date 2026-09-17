@@ -50,7 +50,7 @@ def valid_lifecycle_source(value):
 REQUIRED_INSTALL_RUNTIMES = (
     "dashboard", "chat-graph", "morning-brief", "morning-brief-deadman",
     "decision-alert", "mission_control_common.py", "queue_admission.py",
-    "compose-decision-prompt.py", "mc-panel.swift", "loose-ends",
+    "compose-decision-prompt.py", "mc-panel.swift", "loose-ends", "loose-tree",
     "self-repair", "usage-watch", "headroom-refresh",
 )
 REQUIRED_INSTALL_ASSETS = (
@@ -682,14 +682,35 @@ def launchd_argv_from_print(text):
     """Parse `launchctl print` output into its program arguments list.
 
     Returns the argv list, or None when the section is absent/unparseable.
-    Handles the quoted-list shape launchd emits; bounded by input size upstream.
+    Handles every header/body shape launchd has emitted:
+      - legacy one-line:  `program arguments = { "/a" "b" };`
+      - legacy per-line quoted: `program arguments = {\\n\\t\\t"$1"\\n...};`
+      - modern macOS (Tahoe-era): `arguments = {\\n\\t\\t/bin/zsh\\n...\\n\\t}`
+        (raw elements, one per line, no trailing semicolon)
+    Bounded by input size upstream.
     """
     if not isinstance(text, str) or len(text) > 1048576:
         return None
-    match = re.search(r"program\s+arguments\s*=\s*[\({](.*?)[\)}]\s*;", text, re.S)
+    match = re.search(
+        r"(?:\bprogram\s+)?arguments\s*=\s*[\({](.*?)[\)}]\s*;?",
+        text, re.S)
     if match is None:
         return None
     body = match.group(1)
+    if "\n" in body:
+        # One element per line. Elements are printed raw by modern launchd;
+        # legacy launchd quoted each element. Unquote only a fully-quoted line.
+        argv = []
+        for line in body.splitlines():
+            token = line.strip().rstrip(",")
+            if not token:
+                continue
+            if (len(token) >= 2 and token.startswith('"') and token.endswith('"')
+                    and not token[1:-1].count('"') % 2):
+                token = token[1:-1]
+                token = token.replace('\\"', '"').replace("\\\\", "\\")
+            argv.append(token)
+        return argv or None
     argv = []
     for quoted, bare in re.findall(r'"((?:\\.|[^"\\])*)"|([^"\s,][^\s,]*)', body):
         token = quoted or bare
