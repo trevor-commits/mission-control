@@ -1131,8 +1131,21 @@ LOOSE_TREE_INBOX_KINDS = ("closeout_handoff", "todo_open", "repo_dirty",
 
 
 def _run_builtin_loosetree(_timeout_s):
-    """Derive the loose-tree feed: the manual tree store merged with fresh
-    Inbox rows from the last chats/git feed snapshots."""
+    """Use the same transaction lock as CLI writers, not just atomic replace."""
+    tree_mod = _load_loose_tree_module()
+    if tree_mod is None or not hasattr(tree_mod, "store_lock"):
+        return None, "loose-tree runtime missing transaction support"
+    path = os.path.join(HOME, "loosetree", "store.json")
+    try:
+        with tree_mod.store_lock(path):
+            tree_mod._load(path)  # reject corruption before any mutation
+            return _merge_loosetree(_timeout_s)
+    except (OSError, ValueError) as exc:
+        return None, "loose-tree store preserved: %s" % exc
+
+
+def _merge_loosetree(_timeout_s):
+    """Derive the loose-tree feed inside the shared store transaction."""
     # State under <home>/loosetree/ — NOT data/loosetree.json, which is the feed.
     store_path = os.path.join(HOME, "loosetree", "store.json")
     if not os.path.exists(store_path):
@@ -1173,8 +1186,11 @@ def _run_builtin_loosetree(_timeout_s):
     chats_env = _load("chats")
     chats = (chats_env or {}).get("data") if isinstance(chats_env, dict) else None
     rows = chats.get("loose_ends") if isinstance(chats, dict) else None
+    chats_current = _current_status_env("chats")
     chats_ok = bool(isinstance(chats_env, dict) and chats_env.get("ok")
-                    and isinstance(rows, list))
+                    and isinstance(rows, list) and isinstance(chats_current, dict)
+                    and chats_current.get("ok") and
+                    not _verdict(chats_current, FEED_CADENCE["chats"])[1])
     new_rows = removed_rows = 0
     # Merge + prune only when the chats snapshot is healthy. A chats outage
     # must never wipe the Inbox (feed rows are derived, but the store is the
@@ -1219,7 +1235,7 @@ def _run_builtin_loosetree(_timeout_s):
             nodes.append({
                 "id": "T-%s-%s" % (time.strftime("%Y%m%d-%H%M", time.localtime(now)),
                                    hashlib.sha1(key.encode("utf-8",
-                                                 errors="replace")).hexdigest()[:4]),
+                                                 errors="replace")).hexdigest()[:16]),
                 "parent": inbox_parent, "kind": "inbox",
                 "title": (row.get("title") or row.get("text") or
                           "(untitled)")[:120],

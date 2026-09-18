@@ -2112,7 +2112,7 @@ html[data-theme="dark"] .mc-heat-l4 { background: #35b98a; }
       kids[k].sort(function (a, b) {
         var rank = { "awaiting-trevor": 0, "needs-decision": 1, "blocked": 2,
                      "doing": 3, "todo": 4, "done": 5, "dropped": 6 };
-        return (rank[a.status] || 9) - (rank[b.status] || 9);
+        return (rank[a.status] == null ? 9 : rank[a.status]) - (rank[b.status] == null ? 9 : rank[b.status]);
       });
     });
     var EXPANDED = { "awaiting-trevor": 1, "needs-decision": 1,
@@ -2135,31 +2135,47 @@ html[data-theme="dark"] .mc-heat-l4 { background: #35b98a; }
           style: "font-size:11px;opacity:.65;margin-left:52px" }, prov) : null);
     }
 
-    function walk(nid, depth, container) {
-      (kids[nid] || []).forEach(function (n) {
-        var showChildren = depth === 0 || EXPANDED[n.status] ||
-                           (n.rollup && n.rollup.total > n.rollup.done);
-        container.appendChild(rowEl(n, depth));
-        if (showChildren) walk(n.id, depth + 1, container);
-        else if ((kids[n.id] || []).length) {
-          container.appendChild(h("div", { style: "margin-left:" +
-            ((depth + 1) * 16) + "px;font-size:11px;opacity:.6" },
-            "+ " + (n.rollup ? n.rollup.total : 0) + " nested (open in status "
-            + n.status + ")"));
-        }
-      });
-    }
-
-    var table = h("div", {});
-    // roots: projects first (manual work), then the Inbox last
-    var roots = (kids[""] || []).slice().sort(function (a, b) {
-      return (a.kind === "inbox") - (b.kind === "inbox");
-    });
-    roots.forEach(function (r) {
-      table.appendChild(rowEl(r, 0));
-      walk(r.id, 1, table);
-    });
+    p.body.appendChild(h("p", { class: "mc-card-secondary" },
+      "Coverage: recorded tasks and supported source feeds. Casual mentions and unanswered " +
+      "questions still require an agent to record them. No notifications are sent by this board."));
+    var history = h("input", { type: "checkbox", "aria-label": "Show completed work" });
+    p.body.appendChild(h("label", {}, history, " Show completed work"));
+    var table = h("div", { "data-loose-tree": "true" });
     p.body.appendChild(table);
+    function terminal(n) { return n.status === "done" || n.status === "dropped"; }
+    function urgent(n, seen) {
+      if (seen[n.id]) return false;
+      seen[n.id] = true;
+      return !!EXPANDED[n.status] || (kids[n.id] || []).some(function (c) { return urgent(c, seen); });
+    }
+    function draw() {
+      while (table.firstChild) table.removeChild(table.firstChild);
+      var visited = {};
+      function append(n, depth, container) {
+        if (visited[n.id] || depth > 64) return;
+        visited[n.id] = true;
+        if (terminal(n) && !history.checked) return;
+        var children = (kids[n.id] || []).filter(function (c) { return history.checked || !terminal(c); });
+        var row = rowEl(n, 0);
+        row.setAttribute("data-loose-id", n.id);
+        row.title = [n.id, n.note, n.decision].filter(Boolean).join(" · ");
+        if (!children.length) { container.appendChild(row); return; }
+        var details = h("details", { style: "margin-left:12px" });
+        details.open = n.kind !== "inbox" && urgent(n, {});
+        details.appendChild(h("summary", {}, row));
+        children.forEach(function (c) { append(c, depth + 1, details); });
+        container.appendChild(details);
+      }
+      var roots = nodes.filter(function (n) { return !n.parent || !byId[n.parent]; });
+      roots.sort(function (a, b) {
+        return (a.kind === "inbox") - (b.kind === "inbox") ||
+          (EXPANDED[b.status] || 0) - (EXPANDED[a.status] || 0);
+      });
+      roots.forEach(function (r) { append(r, 0, table); });
+      if (!table.firstChild) table.appendChild(h("p", {}, "No open recorded items."));
+    }
+    history.addEventListener("change", draw);
+    draw();
   }
 
   function renderDecisions(main) {

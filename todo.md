@@ -2,6 +2,8 @@
 
 ## Active Next Steps
 
+- Live loose-ends board recovery: candidate fixes concurrent-write loss, corruption handling, cycle/closure guards and real UI collapse/history. Focused storage/feed/browser checks pass; full gate and immutable install remain pending. Installed data contains two distinct auto rows sharing one short ID; snapshot and repair before strict validation. Universal conversational capture is still unimplemented, not zero-token automatic coverage. Owner: Hermes ops session `20260915_113318_4b3d6c`; record: `records/2026-09-17-loose-tree-recovery.md`; linear: self-contained.
+
 - Actionable work and resume pilot: dashboard/helper slice installed locally from `7efbe22`; 92 shell checks and 348 browser assertions pass. September 6 continuation: installed chats collection recovered in 53 seconds; natural refresh remains unproven. Shared recovery instructions now match the owning source. Next: publish this packet, install from the existing stable runtime source checkout, and complete fresh-worker recovery. Owner: Codex `01a07221-0541-7970-90e3-f59af1b6862e`; record: `records/2026-09-06-actionable-work.md`; linear: `self-contained: actionable-work`.
 - Lean shared-entry reset: [PR 27](https://github.com/trevor-commits/mission-control/pull/27) publishes the entries and dependent continuity/coherence changes. Finish review and landing, then check fresh loading separately. Runtime, collectors, credentials, and other work are unchanged. Owner: Codex `01a06ff8-6204-7c62-b158-5b8e10db1460`; linear: `self-contained: lean agent entries`.
 If it's not here, it isn't remembered.

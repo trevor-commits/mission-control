@@ -450,7 +450,7 @@ import json, os, re, sys
 before = {r[0]: r for r in json.loads(os.environ["LIVE_BEFORE_JSON"])}
 after = {r[0]: r for r in json.loads(os.environ["LIVE_AFTER_JSON"])}
 allowed = re.compile(
-    r"^((usage|git|chats|automation|decisions|attention|brief)"
+    r"^((usage|git|chats|automation|decisions|attention|brief|loosetree)"
     r"\.(json|js|error\.js|error\.json)"
     r"|job-history\.json|\.[a-z-]+\.lockfile)$")
 changed = sorted(n for n in set(before) | set(after) if before.get(n) != after.get(n))
@@ -3214,6 +3214,13 @@ if [ "$LIVE_DATA_BEFORE" = "$LIVE_DATA_AFTER" ]; then
 elif live_data_change_is_refresher_only "$LIVE_DATA_BEFORE" "$LIVE_DATA_AFTER"; then
   ok "dashboard suite left live data untouched (only the live refresher's own mid-suite feed writes changed)"
 else
+  LIVE_BEFORE_JSON="$LIVE_DATA_BEFORE" LIVE_AFTER_JSON="$LIVE_DATA_AFTER" python3 - <<'PY'
+import json, os
+before = {r[0]: r for r in json.loads(os.environ["LIVE_BEFORE_JSON"])}
+after = {r[0]: r for r in json.loads(os.environ["LIVE_AFTER_JSON"])}
+print("Changed live paths:", ", ".join(sorted(n for n in before.keys() | after.keys()
+                                           if before.get(n) != after.get(n))))
+PY
   no "dashboard suite mutated live Mission Control data"
 fi
 echo "----"

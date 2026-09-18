@@ -130,6 +130,23 @@ async function operatorUxAudit(browser, root) {
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
   page.setDefaultTimeout(5000);
   try {
+    await block('loose tree is collapsed, ordered and preserves history', async () => {
+      const fixture = JSON.parse(fs.readFileSync(path.join(FIXTURES, 'loosetree.json'), 'utf8'));
+      fixture.generated_epoch = Math.floor(Date.now() / 1000);
+      fixture.generated_at = new Date().toISOString();
+      writeStateFeed(root, 'loosetree', fixture);
+      await page.goto(url('loosetree'), { waitUntil: 'load' });
+      check(await page.locator('[data-loose-id="T-fix-form"]').isVisible(), 'waiting question hidden');
+      check(!(await page.locator('[data-loose-id="T-fix-inbox1"]').isVisible()), 'Inbox is not collapsed');
+      check(await page.locator('[data-loose-id="T-fix-done1"]').count() === 0, 'done item shown by default');
+      const ids = await page.locator('[data-loose-id]').evaluateAll(ns => ns.map(n => n.dataset.looseId));
+      check(ids.indexOf('T-fix-form') < ids.indexOf('T-fix-adopted'), 'awaiting item sorts after doing');
+      await page.locator('summary').filter({ has: page.locator('[data-loose-id="inbox-auto"]') }).click();
+      check(await page.locator('[data-loose-id="T-fix-inbox1"]').isVisible(), 'Inbox cannot expand');
+      await page.getByRole('checkbox', { name: 'Show completed work' }).check();
+      check(await page.locator('[data-loose-id="T-fix-done1"]').isVisible(), 'history inaccessible');
+      check((await page.locator('body').innerText()).includes('still require an agent'), 'capture limits hidden');
+    });
     await block('a capped open-work list says so instead of implying completeness', async () => {
       await page.goto(`${pathToFileURL(path.join(root, 'index.html')).href}#chats`, { waitUntil: 'load' });
       await page.waitForTimeout(120);
