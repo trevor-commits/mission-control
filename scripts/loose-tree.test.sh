@@ -12,10 +12,6 @@ if ! MISSION_CONTROL_HOME="$(mktemp -d)" python3 "$ROOT/scripts/loose-tree" boar
 fi
 # json output must be parseable.
 MISSION_CONTROL_HOME="$(mktemp -d)" python3 "$ROOT/scripts/loose-tree" json | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d.get("version")==1 and d.get("nodes")==[]'
-# pytest file runs only where pytest is installed (optional extra signal).
-if python3 -c 'import pytest' 2>/dev/null; then
-  python3 -m pytest "$ROOT/scripts/loose-tree.test.py" -q
-else
-  echo "pytest unavailable; self-test is the authoritative check here"
-fi
+# Public-CLI regression coverage uses stdlib unittest, not optional pytest.
+python3 "$ROOT/scripts/loose-tree-regression.test.py"
 echo "loose-tree.test.sh: ok"

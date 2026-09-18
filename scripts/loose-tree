@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """loose-tree: the live hierarchical loose-ends board.
 
-One store (`<state>/data/loosetree.json`, dashboard-state adjacent) holding a
+One store (`<state>/loosetree/store.json`, dashboard-state adjacent) holding a
 flat node array with parent links: project -> area -> task -> subtask. Parents
 roll up (done only when every descendant is done/dropped). A parallel `Inbox`
 subtree holds machine-captured items (from the chats/git feeds); `adopt`
@@ -20,6 +20,8 @@ Usage:
 Statuses: todo doing blocked needs-decision awaiting-trevor done dropped
 """
 import argparse
+import fcntl
+from contextlib import contextmanager
 import hashlib
 import json
 import os
@@ -59,14 +61,45 @@ def _load(path):
     try:
         with open(path, encoding="utf-8") as f:
             d = json.load(f)
-    except (OSError, ValueError):
-        d = {}
-    if not isinstance(d, dict):
-        d = {}
-    d.setdefault("version", 1)
-    nodes = d.get("nodes")
-    d["nodes"] = nodes if isinstance(nodes, list) else []
+    except FileNotFoundError:
+        return {"version": 1, "nodes": []}
+    if not isinstance(d, dict) or d.get("version") != 1 or not isinstance(d.get("nodes"), list):
+        raise ValueError("invalid loose-tree store; preserved without changes")
+    ids = set()
+    for n in d["nodes"]:
+        if not isinstance(n, dict) or not n.get("id") or n["id"] in ids or n.get("status") not in STATUSES:
+            raise ValueError("invalid or duplicate tree node; store preserved")
+        ids.add(n["id"])
     return d
+
+
+@contextmanager
+def store_lock(path):
+    """Serialize the entire read/modify/write transaction across processes."""
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    with open(path + ".lock", "a", encoding="utf-8") as lock:
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+
+
+def _check_parent(data, nid, parent):
+    visited = {nid}
+    while parent:
+        if parent in visited:
+            raise ValueError("parent would create a cycle")
+        visited.add(parent)
+        node = _find(data, parent)
+        if node is None:
+            raise ValueError("no such parent " + parent)
+        parent = node.get("parent")
+
+
+def _check_close(data, nid):
+    if any(n.get("parent") == nid and n["status"] not in LEAF_DONE for n in data["nodes"]):
+        raise ValueError("item still has open children")
 
 
 def _save(path, data):
@@ -95,7 +128,7 @@ def _save(path, data):
 
 def _new_id():
     stamp = datetime.now().strftime("T-%Y%m%d-%H%M-")
-    return stamp + hashlib.sha1(os.urandom(16)).hexdigest()[:4]
+    return stamp + hashlib.sha1(os.urandom(16)).hexdigest()[:16]
 
 
 def _children_map(data):
@@ -213,6 +246,8 @@ def cmd_update(args):
         if args.status not in STATUSES:
             print("loose-tree: bad status %s" % args.status, file=sys.stderr)
             return 1
+        if args.status in LEAF_DONE:
+            _check_close(data, args.id)
         n["status"] = args.status
     if args.title is not None:
         t = args.title.strip()
@@ -227,6 +262,8 @@ def cmd_update(args):
     if args.decision is not None:
         # A recorded decision answers a needs-decision/awaiting-trevor item and
         # makes it actionable again; children carry the follow-through work.
+        if not args.decision.strip():
+            raise ValueError("an empty decision is not an answer")
         n["decision"] = args.decision.strip()
         if n["status"] in ("needs-decision", "awaiting-trevor"):
             n["status"] = "todo"
@@ -238,6 +275,7 @@ def cmd_update(args):
             print("loose-tree: no such parent %s" % args.parent,
                   file=sys.stderr)
             return 1
+        _check_parent(data, n["id"], args.parent)
         n["parent"] = args.parent
     n["updated_at"] = _now()
     _recompute(data)
@@ -277,6 +315,7 @@ def cmd_drop(args):
     if not n:
         print("loose-tree: no such item %s" % args.id, file=sys.stderr)
         return 1
+    _check_close(data, args.id)
     n["status"] = "dropped"
     n["updated_at"] = _now()
     _recompute(data)
@@ -301,6 +340,7 @@ def cmd_adopt(args):
             return 1
     n["auto"] = False
     if args.parent:
+        _check_parent(data, n["id"], args.parent)
         n["parent"] = args.parent
         n["kind"] = "task" if n["kind"] == "inbox" else n["kind"]
     n["updated_at"] = _now()
@@ -549,7 +589,7 @@ def main(argv=None):
         return self_test()
     p = argparse.ArgumentParser(prog="loose-tree")
     p.add_argument("--store", help="store path (default MISSION_CONTROL_HOME "
-                                   "data/loosetree.json)")
+                                   "loosetree/store.json)")
     sub = p.add_subparsers(dest="cmd")
 
     a = sub.add_parser("add")
@@ -589,7 +629,12 @@ def main(argv=None):
     if not getattr(args, "func", None):
         p.print_usage(sys.stderr)
         return 64
-    return args.func(args)
+    try:
+        with store_lock(_store_path(args)):
+            return args.func(args)
+    except (OSError, ValueError) as exc:
+        print("loose-tree: " + str(exc), file=sys.stderr)
+        return 1
 
 
 if __name__ == "__main__":
