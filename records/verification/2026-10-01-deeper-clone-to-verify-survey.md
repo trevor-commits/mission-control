@@ -12,7 +12,10 @@ path. Recommend closing PR #30 after PR #31 lands to avoid duplicate commits.
 
 ## Evidence (Linux cloud agent, offline profile)
 
-Cloud agent session: `bc-d9c9a757-d38f-5df4-ac47-5780d11930aa` (2026-10-01).
+Cloud agent sessions:
+
+- `bc-d9c9a757-d38f-5df4-ac47-5780d11930aa` (2026-10-01, initial deeper pass)
+- `bc-040668fa-7978-5f73-8084-43cc096b8704` (2026-10-01, failure-catalog + usage-burn map)
 
 Commands:
 
@@ -34,6 +37,24 @@ Observed (representative):
   and BSD `date -j` inside `scripts/usage-snapshot` drive the gap pattern
 - `usage-watch --self-test` — 21 passed; `headroom-refresh --self-test` — 15 passed
 - `verify.sh --self-test` — includes portable `mission_test_date_ymd_offset_days` check
+
+### Linux offline failure catalog (session `bc-040668fa`)
+
+Top-level FAIL suites from `verify-offline.sh` (intentional `self-fail` in
+aggregator self-test excluded):
+
+| Suite | Representative nested failure |
+| --- | --- |
+| dashboard | Morning Brief plist/install; fixture lifecycle env |
+| ER-134 usability | `mc-panel` binary / `.app` bundle staging |
+| shared Mission Control policy | `field-aware privacy matrix` |
+| Morning Brief delivery | deadman marker / plist template contracts |
+| Morning Brief deadman | Keychain `security` transport tests |
+| Morning Brief sender | Keychain `security` transport tests |
+| usage snapshot | notify argv, Codex window labels, credit lock recovery (`date -j`) |
+
+Documented in `docs/verification/clone-to-verify.md` under **Linux offline failure
+catalog** and **Usage-burn verification map**.
 
 ## Artifacts
 

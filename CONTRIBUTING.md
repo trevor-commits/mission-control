@@ -50,7 +50,7 @@ Values below are enforced in `.github/workflows/verify.yml` and
 | --- | --- | --- |
 | Python | **3.11+** (floor checked in `verify.sh`) | `actions/setup-python` uses 3.11 on CI |
 | Node.js | **22** (see `.node-version`) | `actions/setup-node` uses 22 on CI |
-| ShellCheck | required | CI: `brew install shellcheck`; Linux: `apt install shellcheck` |
+| ShellCheck | required | CI: `brew install shellcheck`; Linux: `apt install shellcheck`, or a [portable release binary](https://github.com/koalaman/shellcheck/releases) on `PATH` when apt is unavailable (cloud agents) |
 | OpenSpec CLI | **@fission-ai/openspec@1.5.0** | CI: global npm install. Local/agents without global write access: from repo root, `PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm install --no-save --no-package-lock --ignore-scripts @fission-ai/openspec@1.5.0 playwright@1.62.0` (adds `node_modules/.bin/openspec`; `verify-offline.sh` prepends that path). |
 | Playwright (client only) | **1.62.0** | Same local install as OpenSpec; export `MISSION_CONTROL_PLAYWRIGHT="$PWD/node_modules/playwright"` if `require('playwright')` fails |
 | Google Chrome | system browser | CI uses the `macos-15` image Chrome; Linux: set `MISSION_CONTROL_CHROME` to `google-chrome` or Chromium |

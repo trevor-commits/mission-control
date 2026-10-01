@@ -155,6 +155,64 @@ python3 scripts/ci-workflow.test.py
 - Nested **`PASS=n FAIL=m`** inside a suite (e.g. dashboard) — failure of that suite
   if `m>0`, even when most cases passed.
 
+## Linux offline failure catalog (expected gaps)
+
+After `PYTHONDONTWRITEBYTECODE=1 scripts/verify-offline.sh` on a typical Linux
+cloud agent, **`SUITES PASS=31 FAIL=7 SKIP=4`** is normal. The seven failing
+top-level suites are **macOS install / launchd / Keychain / Swift panel** contracts
+or **BSD-only date math** in the usage collector — not evidence that the harness
+stopped early.
+
+| Top-level suite | Typical nested signal on Linux | Root cause class |
+| --- | --- | --- |
+| `dashboard` | `PASS≈90 FAIL≈5` — Morning Brief plist/install, fixture lifecycle | launchd, `open`, macOS paths |
+| `ER-134 usability` | panel binary / app bundle staging | `swiftc` + `.app` layout (skipped separately in offline) |
+| `shared Mission Control policy` | `field-aware privacy matrix` | platform-specific privacy fixture |
+| `Morning Brief delivery` | deadman marker / plist templates | Keychain + LaunchAgent templates |
+| `Morning Brief deadman` | Keychain resolution tests | macOS `security` CLI |
+| `Morning Brief sender` | same Keychain transport tests | macOS `security` CLI |
+| `usage snapshot` | `PASS≈25 FAIL≈9` — notify/credit/Codex window cases | `date -j` in `scripts/usage-snapshot` collector |
+
+Suites that should stay **green** on Linux offline for **usage-burn** work:
+
+| Suite | Role |
+| --- | --- |
+| `usage watch (reset + silence)` | Detects quota resets and provider silence; feeds attention |
+| `headroom on-demand refresh` | Debounced on-demand headroom refresh contract |
+| `usage snapshot` (subset) | ccusage pin, GLM/Kimi normalization, malformed `used_pct` guards |
+
+Do **not** treat Linux `usage snapshot` nested FAIL as a reason to skip
+`usage-watch` / `headroom-refresh` self-tests — those are stdlib-only and are the
+fast gates for routing and dashboard headroom behavior.
+
+## Usage-burn verification map (offline, no live providers)
+
+“Usage-burn” in agent tasks means **reliability and docs around quota/headroom
+surfaces**, not a separate product binary. Offline proof layers:
+
+1. **Collector contracts** — `REPO_ROOT="$PWD" /bin/bash scripts/usage-snapshot.test.sh`
+   (full macOS on CI; partial on Linux — see table above).
+2. **Silence / reset detection** — `python3 scripts/usage-watch --self-test`.
+3. **On-demand refresh** — `python3 scripts/headroom-refresh --self-test`.
+4. **Dashboard render contracts** — `dashboard.test.sh` usage/headroom cases inside
+   the larger suite (Linux: install/plist cases fail; render-only cases usually pass).
+5. **Release truth** — `.github/workflows/verify.yml` on `macos-15` with
+   `SUITES FAIL=0` including browser + Swift panel suites.
+
+No step in this map performs live provider API calls when tests use `--no-ccusage`,
+fixtures, and self-test modes.
+
+## Cloud agent toolchain (no root apt)
+
+When `apt install shellcheck` is unavailable, install a **portable ShellCheck**
+release binary and prepend it to `PATH` before preflight. Repo-local OpenSpec and
+Playwright clients still come from:
+
+```bash
+PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm install --no-save --no-package-lock --ignore-scripts \
+  @fission-ai/openspec@1.5.0 playwright@1.62.0
+```
+
 ## Safety (unchanged)
 
 - No secrets in commits; synthetic fixtures only.
