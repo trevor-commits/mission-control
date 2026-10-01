@@ -49,14 +49,30 @@ rows marked “offline skip”.
 
 **Usage / headroom-related suites** (always run in offline profile):
 
-- `usage snapshot` — `scripts/usage-snapshot.test.sh` (ccusage pin + JSON shape).
-- `usage watch (reset + silence)` — `scripts/usage-watch --self-test`.
-- `headroom on-demand refresh` — `scripts/headroom-refresh --self-test`.
+| Suite | Entry | macOS CI | Linux offline (typical) |
+| --- | --- | --- | --- |
+| Usage snapshot | `REPO_ROOT=$PWD /bin/bash scripts/usage-snapshot.test.sh` | `PASS=24 FAIL=0` | `PASS≈25 FAIL≈9` — see below |
+| Usage watch | `python3 scripts/usage-watch --self-test` | PASS | PASS (stdlib; no live providers) |
+| Headroom refresh | `python3 scripts/headroom-refresh --self-test` | PASS | PASS (mocked collectors) |
 
-These are lightweight and do not call external provider APIs in self-test mode.
-Some cases assume macOS notification or Keychain semantics; on Linux they may
-contribute to suite FAIL counts inside `usage-snapshot.test.sh` even when the
-harness itself is healthy.
+Focused usage gate (fast iteration):
+
+```bash
+REPO_ROOT="$PWD" /bin/bash scripts/usage-snapshot.test.sh
+python3 scripts/usage-watch --self-test
+python3 scripts/headroom-refresh --self-test
+```
+
+`usage-snapshot.test.sh` uses `mission_test_date_ymd_offset_days` from
+`scripts/test-temp-root.sh` for fixture credit expiry strings. The **production**
+`scripts/usage-snapshot` collector still parses calendar dates with BSD `date -j`
+(credit advice, Codex window math, Copilot month rollover). On GNU/Linux those
+paths return `null` epochs, so notify/lock/history contract cases fail even though
+`--no-ccusage` never calls npm or provider APIs. That is **expected** until a
+portable date layer lands in the collector; it is not a harness no-op.
+
+Cases that usually stay green on Linux offline: ccusage pin argv, Kimi/GLM
+normalization, malformed `used_pct`, and most JSON-shape guards.
 
 ## Open draft PR survey (2026-10-01)
 
@@ -86,6 +102,8 @@ Other open PRs (non-draft) were out of scope for this reliability/docs burn.
 7. **Post-suite bytecode hygiene** — verify removes accidental `scripts/__pycache__`
    trees before the final artifact gate (suites should still run with
    `PYTHONDONTWRITEBYTECODE=1`).
+8. **Usage snapshot calendar dates** — test fixtures use a portable date helper;
+   collector `date -j` remains macOS-targeted (documented Linux FAIL pattern).
 
 ## Verify steps (copy/paste)
 

@@ -205,6 +205,14 @@ case "$id" in *$'\n'*) exit 1 ;; esac
 [[ "$id" =~ ^[0-9]+:[0-9]+:[0-9]+$ ]] || exit 1
 BASH
   printf 'verify self-test: GNU stat identity has no multiline stdout\n'
+
+  HELPER="$helper" /bin/bash <<'BASH' || return 1
+set -u
+source "$HELPER"
+out=$(mission_test_date_ymd_offset_days 1)
+[[ "$out" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]
+BASH
+  printf 'verify self-test: portable calendar date helper\n'
 }
 
 if [ "${1:-}" = "--self-test" ]; then

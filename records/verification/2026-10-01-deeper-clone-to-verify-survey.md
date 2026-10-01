@@ -12,6 +12,8 @@ path. Recommend closing PR #30 after PR #31 lands to avoid duplicate commits.
 
 ## Evidence (Linux cloud agent, offline profile)
 
+Cloud agent session: `bc-d9c9a757-d38f-5df4-ac47-5780d11930aa` (2026-10-01).
+
 Commands:
 
 ```bash
@@ -25,10 +27,13 @@ PYTHONDONTWRITEBYTECODE=1 scripts/verify-offline.sh
 Observed (representative):
 
 - `ci-workflow.test.py` — PASS
-- prerequisites offline — PASS
-- `verify-offline.sh` — `SKIP=4`; dashboard suite runs full case block (`PASS=90 FAIL=5` nested);
-  top-level FAIL from macOS-only install/Morning Brief/usage-snapshot contracts;
-  post-suite `__pycache__` artifact gate addressed in verify hygiene commit.
+- prerequisites offline — PASS (after `apt install shellcheck` + repo-local `npm install` CLIs)
+- `verify-offline.sh` — `SKIP=4`; `SUITES PASS=31 FAIL=7` top-level on Linux
+  (dashboard `PASS=90 FAIL=5`, ER-134, `mission-control-common`, three Morning Brief
+  delivery suites, `usage snapshot` `PASS=25 FAIL=9` nested); macOS install/launchd/Keychain
+  and BSD `date -j` inside `scripts/usage-snapshot` drive the gap pattern
+- `usage-watch --self-test` — 21 passed; `headroom-refresh --self-test` — 15 passed
+- `verify.sh --self-test` — includes portable `mission_test_date_ymd_offset_days` check
 
 ## Artifacts
 

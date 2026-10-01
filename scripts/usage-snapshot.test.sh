@@ -25,7 +25,7 @@ EOF
 exit 0
 EOF
   chmod +x "$T/bin/claude-glm" "$T/bin/hermes"
-  EXPIRES="$(date -v+1d +%Y-%m-%d)"
+  EXPIRES="$(mission_test_date_ymd_offset_days 1)"
   cat > "$T/credits.json" <<EOF
 {"credits":[{"provider":"codex","kind":"weekly","count":1,"expires":"$EXPIRES"}]}
 EOF

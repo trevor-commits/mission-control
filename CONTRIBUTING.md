@@ -71,6 +71,10 @@ Values below are enforced in `.github/workflows/verify.yml` and
    function naming); absorbed from draft PR #30 into the reliability branch.
 7. **Post-verify bytecode** — accidental `scripts/__pycache__` from nested Python
    imports is purged before the final artifact gate.
+8. **Usage snapshot on Linux** — test fixtures use portable calendar dates; the
+   collector still uses BSD `date -j` (credit notify + window math). Expect nested
+   FAIL in `usage-snapshot.test.sh` on GNU/Linux; see
+   [`docs/verification/clone-to-verify.md`](docs/verification/clone-to-verify.md).
 
 ### Open draft PRs (2026-10-01 survey)
 
