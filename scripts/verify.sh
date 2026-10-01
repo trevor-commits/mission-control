@@ -166,6 +166,17 @@ trap - EXIT HUP INT TERM
 /bin/rm -rf -- "$original" "$claim"
 BASH
   printf 'verify self-test: temp cleanup preserves replacements and resolves relative TMPDIR\n'
+
+  HELPER="$helper" /bin/bash <<'BASH' || return 1
+set -u
+source "$HELPER"
+d=$(mktemp -d)
+id=$(mission_test_temp_identity "$d")
+rmdir "$d"
+case "$id" in *$'\n'*) exit 1 ;; esac
+[[ "$id" =~ ^[0-9]+:[0-9]+:[0-9]+$ ]] || exit 1
+BASH
+  printf 'verify self-test: GNU stat identity has no multiline stdout\n'
 }
 
 if [ "${1:-}" = "--self-test" ]; then
