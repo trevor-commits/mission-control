@@ -11,13 +11,17 @@ export PYTHONDONTWRITEBYTECODE=1
 DASHBOARD_TEST_BASH=/bin/bash
 run_pinned_bash() {
   local child rc=0 separator=0
-  local -a env_args
+  local -a env_args=()
   while [ "$#" -gt 0 ]; do
     if [ "$1" = --dashboard-command ]; then separator=1; shift; break; fi
     env_args[${#env_args[@]}]="$1"
     shift
   done
-  [ "$separator" = 1 ] && [ "$#" -gt 0 ] || return 64
+  if [ "$separator" != 1 ] || [ "$#" -eq 0 ]; then
+    echo "run_pinned_bash: missing dashboard command" >&2
+    false
+    return
+  fi
   if [ "${#env_args[@]}" -gt 0 ]; then
     /usr/bin/env "${env_args[@]}" "$DASHBOARD_TEST_BASH" "$@" &
   else
@@ -26,42 +30,11 @@ run_pinned_bash() {
   child=$!
   register_owned_process "$child" 2>/dev/null || true
   wait "$child" || rc=$?
-  return "$rc"
+  [ "$rc" -eq 0 ]
 }
-bash() { run_pinned_bash --dashboard-command "$@"; }
-
-# `/usr/bin/env ... bash dashboard` cannot invoke a shell function itself.
-# Route that exact test pattern back through the one interruptible launcher;
-# preserve every other env invocation byte-for-byte through the system tool.
-env() {
-  local candidate
-  local -a original env_args
-  original=("$@")
-  while [ "$#" -gt 0 ]; do
-    if [ "$1" = bash ]; then
-      shift
-      candidate="${1:-}"
-      case "$candidate" in
-        "${DASH:-}"|*/scripts/dashboard|*/bin/dashboard)
-          if [ "${#env_args[@]}" -gt 0 ]; then
-            run_pinned_bash "${env_args[@]}" --dashboard-command "$@"
-          else
-            run_pinned_bash --dashboard-command "$@"
-          fi
-          return $?
-          ;;
-      esac
-      break
-    fi
-    env_args[${#env_args[@]}]="$1"
-    shift
-  done
-  if [ "${#original[@]}" -gt 0 ]; then
-    command /usr/bin/env "${original[@]}"
-  else
-    command /usr/bin/env
-  fi
-}
+# Dashboard CLI invocations use /bin/bash directly. Do not wrap them in shell
+# functions named like POSIX utilities (bash, env): GNU bash can treat `return`
+# from those names as returning from the caller, which silently skipped cases.
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 REPO="$(dirname "$HERE")"
@@ -396,10 +369,10 @@ PY
     exit $?
   fi
   if [ "$probe_kind" = env ]; then
-    PATH=/usr/bin:/bin env -u DASHBOARD_CMD_USAGE \
+    PATH=/usr/bin:/bin command /usr/bin/env -u DASHBOARD_CMD_USAGE \
       FIXTURE_PROBE_READY="$DASHBOARD_TEST_INTERRUPT_PROBE_READY" \
       FIXTURE_PROBE_ROOT="$ROOT" MISSION_CONTROL_HOME="$probe_home" \
-      DASHBOARD_CMD_GIT="$probe_script" bash "$DASH" collect --force git \
+      DASHBOARD_CMD_GIT="$probe_script" /bin/bash "$DASH" collect --force git \
       >"$DASHBOARD_TEST_INTERRUPT_PROBE_READY.dashboard.out" \
       2>"$DASHBOARD_TEST_INTERRUPT_PROBE_READY.dashboard.err"
   else
@@ -544,7 +517,7 @@ c0() { # synthetic/test controls require a physically isolated state home
   rc=0
   HOME="$fake_home" env -u MISSION_CONTROL_HOME \
     MISSION_CONTROL_NOW_EPOCH=1000 DASHBOARD_CMD_GIT="cat '$STUB/git.json'" \
-    bash "$DASH" collect --due git >"$ROOT/guard-omitted.out" 2>"$ROOT/guard-omitted.err" || rc=$?
+    /bin/bash "$DASH" collect --due git >"$ROOT/guard-omitted.out" 2>"$ROOT/guard-omitted.err" || rc=$?
   if [ "$rc" -ne 0 ] && [ ! -e "$fake_home/.mission-control" ] && \
      grep -q 'MISSION_CONTROL_HOME.*required' "$ROOT/guard-omitted.err"; then
     ok "synthetic controls reject an omitted Mission Control state home"
@@ -557,7 +530,7 @@ c0() { # synthetic/test controls require a physically isolated state home
   candidate="$fake_home/.mission-control"
   rc=0
   HOME="$fake_home" MISSION_CONTROL_HOME="$candidate" MISSION_CONTROL_NOW_EPOCH=1000 \
-    DASHBOARD_CMD_GIT="cat '$STUB/git.json'" bash "$DASH" collect --due git \
+    DASHBOARD_CMD_GIT="cat '$STUB/git.json'" /bin/bash "$DASH" collect --due git \
     >"$ROOT/guard-exact.out" 2>"$ROOT/guard-exact.err" || rc=$?
   if [ "$rc" -ne 0 ] && [ ! -e "$candidate" ]; then
     ok "synthetic controls reject the exact default state home"
@@ -568,7 +541,7 @@ c0() { # synthetic/test controls require a physically isolated state home
   candidate="$fake_home/./.mission-control/../.mission-control"
   rc=0
   HOME="$fake_home" MISSION_CONTROL_HOME="$candidate" MISSION_CONTROL_NOW_EPOCH=1000 \
-    DASHBOARD_CMD_GIT="cat '$STUB/git.json'" bash "$DASH" collect --due git \
+    DASHBOARD_CMD_GIT="cat '$STUB/git.json'" /bin/bash "$DASH" collect --due git \
     >"$ROOT/guard-normalized.out" 2>"$ROOT/guard-normalized.err" || rc=$?
   if [ "$rc" -ne 0 ] && [ ! -e "$fake_home/.mission-control" ]; then
     ok "synthetic controls reject a normalized default equivalent"
@@ -579,7 +552,7 @@ c0() { # synthetic/test controls require a physically isolated state home
   candidate="$fake_home/.mission-control/nested"
   rc=0
   HOME="$fake_home" MISSION_CONTROL_HOME="$candidate" MISSION_CONTROL_NOW_EPOCH=1000 \
-    DASHBOARD_CMD_GIT="cat '$STUB/git.json'" bash "$DASH" collect --due git \
+    DASHBOARD_CMD_GIT="cat '$STUB/git.json'" /bin/bash "$DASH" collect --due git \
     >"$ROOT/guard-child.out" 2>"$ROOT/guard-child.err" || rc=$?
   if [ "$rc" -ne 0 ] && [ ! -e "$fake_home/.mission-control" ]; then
     ok "synthetic controls reject a child of the default state home"
@@ -589,7 +562,7 @@ c0() { # synthetic/test controls require a physically isolated state home
   mkdir -p "$fake_home/.mission-control"
   rc=0
   HOME="$fake_home" MISSION_CONTROL_HOME="$fake_home" MISSION_CONTROL_NOW_EPOCH=1000 \
-    DASHBOARD_CMD_GIT="cat '$STUB/git.json'" bash "$DASH" collect --force git \
+    DASHBOARD_CMD_GIT="cat '$STUB/git.json'" /bin/bash "$DASH" collect --force git \
     >"$ROOT/guard-ancestor.out" 2>"$ROOT/guard-ancestor.err" || rc=$?
   if [ "$rc" -ne 0 ] && [ ! -e "$fake_home/data" ]; then
     ok "synthetic controls reject an ancestor of the default state home"
@@ -601,7 +574,7 @@ c0() { # synthetic/test controls require a physically isolated state home
   ln -s "$fake_home/.mission-control" "$alias"
   rc=0
   HOME="$fake_home" MISSION_CONTROL_HOME="$alias" MISSION_CONTROL_NOW_EPOCH=1000 \
-    DASHBOARD_CMD_GIT="cat '$STUB/git.json'" bash "$DASH" collect --due git \
+    DASHBOARD_CMD_GIT="cat '$STUB/git.json'" /bin/bash "$DASH" collect --due git \
     >"$ROOT/guard-symlink.out" 2>"$ROOT/guard-symlink.err" || rc=$?
   if [ "$rc" -ne 0 ] && [ ! -e "$fake_home/.mission-control/data" ]; then
     ok "synthetic controls reject a symlink alias of the default state home"
@@ -614,7 +587,7 @@ c0() { # synthetic/test controls require a physically isolated state home
   candidate="$fake_home/.MISSION-CONTROL"
   rc=0
   HOME="$fake_home" MISSION_CONTROL_HOME="$candidate" MISSION_CONTROL_NOW_EPOCH=1000 \
-    DASHBOARD_CMD_GIT="cat '$STUB/git.json'" bash "$DASH" collect --force git \
+    DASHBOARD_CMD_GIT="cat '$STUB/git.json'" /bin/bash "$DASH" collect --force git \
     >"$ROOT/guard-casefold-missing.out" 2>"$ROOT/guard-casefold-missing.err" || rc=$?
   if [ "$rc" -ne 0 ] && [ ! -e "$candidate" ] && [ ! -e "$fake_home/.mission-control" ]; then
     ok "synthetic controls reserve the absent default spelling across case modes"
@@ -625,7 +598,7 @@ c0() { # synthetic/test controls require a physically isolated state home
   candidate="$fake_home/.MISSION-CONTROL"
   rc=0
   HOME="$fake_home" MISSION_CONTROL_HOME="$candidate" MISSION_CONTROL_NOW_EPOCH=1000 \
-    DASHBOARD_CMD_GIT="cat '$STUB/git.json'" bash "$DASH" collect --due git \
+    DASHBOARD_CMD_GIT="cat '$STUB/git.json'" /bin/bash "$DASH" collect --due git \
     >"$ROOT/guard-casefold.out" 2>"$ROOT/guard-casefold.err" || rc=$?
   if [ "$rc" -ne 0 ] && [ ! -e "$fake_home/.mission-control/data" ]; then
     ok "synthetic controls reject the reserved alternate-case default spelling"
@@ -636,7 +609,7 @@ c0() { # synthetic/test controls require a physically isolated state home
   candidate="$fake_home/.MISSION-CONTROL/nested"
   rc=0
   HOME="$fake_home" MISSION_CONTROL_HOME="$candidate" MISSION_CONTROL_NOW_EPOCH=1000 \
-    DASHBOARD_CMD_GIT="cat '$STUB/git.json'" bash "$DASH" collect --due git \
+    DASHBOARD_CMD_GIT="cat '$STUB/git.json'" /bin/bash "$DASH" collect --due git \
     >"$ROOT/guard-casefold-child.out" 2>"$ROOT/guard-casefold-child.err" || rc=$?
   if [ "$rc" -ne 0 ] && [ ! -e "$fake_home/.mission-control/nested" ]; then
     ok "synthetic controls reject a descendant below a reserved case-fold default"
@@ -647,7 +620,7 @@ c0() { # synthetic/test controls require a physically isolated state home
   mkdir -p "$fake_home"
   rc=0
   HOME="$fake_home" MISSION_CONTROL_HOME="$candidate" MISSION_CONTROL_NOW_EPOCH=1000 \
-    DASHBOARD_CMD_GIT="cat '$STUB/git.json'" bash "$DASH" collect --force git \
+    DASHBOARD_CMD_GIT="cat '$STUB/git.json'" /bin/bash "$DASH" collect --force git \
     >"$ROOT/guard-isolated.out" 2>"$ROOT/guard-isolated.err" || rc=$?
   if [ "$rc" -eq 0 ] && [ -f "$candidate/data/git.json" ]; then
     ok "synthetic controls accept an explicit isolated temporary state home"
@@ -669,7 +642,7 @@ cat '$STUB/git.json'
 EOF
   chmod +x "$swap_stub"
   HOME="$fake_home" MISSION_CONTROL_HOME="$candidate" MISSION_CONTROL_NOW_EPOCH=1000 \
-    DASHBOARD_CMD_GIT="$swap_stub" bash "$DASH" collect --force git \
+    DASHBOARD_CMD_GIT="$swap_stub" /bin/bash "$DASH" collect --force git \
     >"$ROOT/guard-swap.out" 2>"$ROOT/guard-swap.err" &
   swap_pid=$!
   register_owned_process "$swap_pid"
@@ -703,7 +676,7 @@ EOF
 # --- case 1: collect --force writes dual-write files, every .json envelope-valid -------
 c1() {
   local H; H="$(newhome)"
-  MISSION_CONTROL_HOME="$H" bash "$DASH" collect --force >/dev/null 2>&1
+  MISSION_CONTROL_HOME="$H" /bin/bash "$DASH" collect --force >/dev/null 2>&1
   local f miss=0
   for f in usage git chats automation decisions attention brief; do
     [ -f "$H/data/$f.json" ] || miss=1
@@ -727,7 +700,7 @@ PYEOF
 # --- case 2: .js transport byte-equals .json canonical (incl hostile title) ----
 c2() {
   local H; H="$(newhome)"
-  MISSION_CONTROL_HOME="$H" bash "$DASH" collect --force >/dev/null 2>&1
+  MISSION_CONTROL_HOME="$H" /bin/bash "$DASH" collect --force >/dev/null 2>&1
   if python3 - "$H/data" <<'PYEOF'
 import json, os, sys
 d = sys.argv[1]
@@ -771,11 +744,11 @@ PYEOF
 # --- case 3: failing feeder -> that feed ok:false, others written, prior kept --
 c3() {
   local H; H="$(newhome)"
-  MISSION_CONTROL_HOME="$H" bash "$DASH" collect --force >/dev/null 2>&1
+  MISSION_CONTROL_HOME="$H" /bin/bash "$DASH" collect --force >/dev/null 2>&1
   local before; before="$(cat "$H/data/git.json")"
   sleep 1  # ensure a rewrite would change generated_epoch
   MISSION_CONTROL_HOME="$H" DASHBOARD_CMD_GIT="false" \
-    bash "$DASH" collect --force >/dev/null 2>&1
+    /bin/bash "$DASH" collect --force >/dev/null 2>&1
   local after; after="$(cat "$H/data/git.json")"
   if python3 - "$H/data" <<'PYEOF'
 import json, os, sys
@@ -796,13 +769,13 @@ PYEOF
 # --- case 4: --due honors cadence (fresh skipped, stale re-collected) ----------
 c4() {
   local H; H="$(newhome)"
-  MISSION_CONTROL_HOME="$H" bash "$DASH" collect --force >/dev/null 2>&1
+  MISSION_CONTROL_HOME="$H" /bin/bash "$DASH" collect --force >/dev/null 2>&1
   local usage_before
   usage_before="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["generated_epoch"])' "$H/data/usage.json")"
   # backdate git well past 6x cadence -> stale
   python3 -c 'import json,sys;p=sys.argv[1];e=json.load(open(p));e["generated_epoch"]=1;json.dump(e,open(p,"w"))' "$H/data/git.json"
   MISSION_CONTROL_HOME="$H" DASHBOARD_CMD_GIT="cat '$STUB/git2.json'" \
-    bash "$DASH" collect --due >/dev/null 2>&1
+    /bin/bash "$DASH" collect --due >/dev/null 2>&1
   if python3 - "$H/data" "$usage_before" <<'PYEOF'
 import json, os, sys
 d, ub = sys.argv[1], int(sys.argv[2])
@@ -820,11 +793,11 @@ c4b() {
   local H now next before after marker_git marker_auto rc out
   H="$(newhome)"; now=1000
   MISSION_CONTROL_HOME="$H" MISSION_CONTROL_NOW_EPOCH="$now" \
-    bash "$DASH" collect --force git automation >/dev/null 2>&1
+    /bin/bash "$DASH" collect --force git automation >/dev/null 2>&1
   before="$(cat "$H/data/git.json")"
 
   MISSION_CONTROL_HOME="$H" MISSION_CONTROL_NOW_EPOCH="$now" DASHBOARD_CMD_GIT="false" \
-    bash "$DASH" collect --force git >/dev/null 2>&1
+    /bin/bash "$DASH" collect --force git >/dev/null 2>&1
   after="$(cat "$H/data/git.json")"
   next="$(python3 - "$H/data/git.error.json" <<'PY'
 import json,sys
@@ -853,8 +826,8 @@ EOF
   scheduled_rc=0
   MISSION_CONTROL_HOME="$H" MISSION_CONTROL_NOW_EPOCH="$((next - 1))" \
     DASHBOARD_CMD_GIT="$ROOT/backoff-git" DASHBOARD_CMD_AUTOMATION="$ROOT/backoff-auto" \
-    bash "$DASH" collect --due >/dev/null 2>&1 || scheduled_rc=$?
-  out="$(MISSION_CONTROL_HOME="$H" MISSION_CONTROL_NOW_EPOCH="$((next - 1))" bash "$DASH" status 2>&1)"; rc=$?
+    /bin/bash "$DASH" collect --due >/dev/null 2>&1 || scheduled_rc=$?
+  out="$(MISSION_CONTROL_HOME="$H" MISSION_CONTROL_NOW_EPOCH="$((next - 1))" /bin/bash "$DASH" status 2>&1)"; rc=$?
   status_rc=$rc
   if [ ! -e "$marker_git" ] && [ -e "$marker_auto" ] && [ "$(cat "$H/data/git.json")" = "$before" ] && \
      [ "$scheduled_rc" -ne 0 ] && [ "$status_rc" -ne 0 ] && \
@@ -866,7 +839,7 @@ EOF
 
   rm -f "$marker_git"
   MISSION_CONTROL_HOME="$H" MISSION_CONTROL_NOW_EPOCH="$((next - 1))" \
-    DASHBOARD_CMD_GIT="$ROOT/backoff-git" bash "$DASH" collect --force git >/dev/null 2>&1
+    DASHBOARD_CMD_GIT="$ROOT/backoff-git" /bin/bash "$DASH" collect --force git >/dev/null 2>&1
   if [ -e "$marker_git" ] && [ ! -e "$H/data/git.error.json" ] && \
      python3 - "$H/data/git.json" "$((next - 1))" <<'PY'
 import json,sys
@@ -883,8 +856,8 @@ d["data"]["stale_providers"]=["chat-source"]
 json.dump(d,open(sys.argv[2],"w"))
 PY
   MISSION_CONTROL_HOME="$H" DASHBOARD_CMD_CHATS="cat '$ROOT/chats-degraded.json'" \
-    bash "$DASH" collect --force chats >/dev/null 2>&1
-  out="$(MISSION_CONTROL_HOME="$H" bash "$DASH" status 2>&1)"; rc=$?
+    /bin/bash "$DASH" collect --force chats >/dev/null 2>&1
+  out="$(MISSION_CONTROL_HOME="$H" /bin/bash "$DASH" status 2>&1)"; rc=$?
   if [ "$rc" -ne 0 ] && grep -Eq 'chats.*degraded: chat-source' <<< "$out"; then
     ok "status surfaces persisted chat metadata degradation"
   else no "status hid chat metadata degradation"; fi
@@ -893,10 +866,10 @@ PY
   # launchd entry point must not exit 1 forever — catch-up cannot clear it.
   H="$(newhome)"
   MISSION_CONTROL_HOME="$H" DASHBOARD_CMD_CHATS="cat '$ROOT/chats-degraded.json'" \
-    bash "$DASH" collect --force chats >/dev/null 2>&1
+    /bin/bash "$DASH" collect --force chats >/dev/null 2>&1
   scheduled_rc=0
-  MISSION_CONTROL_HOME="$H" bash "$DASH" collect --due chats >/dev/null 2>&1 || scheduled_rc=$?
-  out="$(MISSION_CONTROL_HOME="$H" bash "$DASH" status 2>&1)"; status_rc=$?
+  MISSION_CONTROL_HOME="$H" /bin/bash "$DASH" collect --due chats >/dev/null 2>&1 || scheduled_rc=$?
+  out="$(MISSION_CONTROL_HOME="$H" /bin/bash "$DASH" status 2>&1)"; status_rc=$?
   if [ "$scheduled_rc" -eq 0 ] && [ "$status_rc" -ne 0 ] && \
      grep -Eq 'chats.*degraded: chat-source' <<< "$out"; then
     ok "scheduled --due exits 0 on chat-source-only cosmetic degradation"
@@ -915,9 +888,9 @@ env["data"]["stale_providers"] = ["cursor"]
 json.dump(env, open(sys.argv[2], "w"))
 PY
   MISSION_CONTROL_HOME="$H" DASHBOARD_CMD_CHATS="cat '$ROOT/chats-degraded-real.json'" \
-    bash "$DASH" collect --force chats >/dev/null 2>&1
+    /bin/bash "$DASH" collect --force chats >/dev/null 2>&1
   reason_rc=0
-  reason_err="$(MISSION_CONTROL_HOME="$H" bash "$DASH" collect --due chats 2>&1 >/dev/null)" || reason_rc=$?
+  reason_err="$(MISSION_CONTROL_HOME="$H" /bin/bash "$DASH" collect --due chats 2>&1 >/dev/null)" || reason_rc=$?
   if [ "$reason_rc" -eq 1 ] && grep -q 'degraded cycle: chats: stale providers cursor' <<< "$reason_err"; then
     ok "degraded scheduled cycle names its reason on stderr"
   else
@@ -929,15 +902,15 @@ PY
 c5() {
   local H rc
   H="$(newhome)"
-  MISSION_CONTROL_HOME="$H" bash "$DASH" collect --force >/dev/null 2>&1
+  MISSION_CONTROL_HOME="$H" /bin/bash "$DASH" collect --force >/dev/null 2>&1
   make_valid_stamp "$H"
-  MISSION_CONTROL_HOME="$H" bash "$DASH" status >/dev/null 2>&1; rc=$?
+  MISSION_CONTROL_HOME="$H" /bin/bash "$DASH" status >/dev/null 2>&1; rc=$?
   if [ "$rc" -eq 0 ]; then ok "status exit 0 on all-green feeds"
   else no "status nonzero on all-green (rc=$rc)"; fi
   H="$(newhome)"
   MISSION_CONTROL_HOME="$H" DASHBOARD_CMD_AUTOMATION="cat '$STUB/auto_red.json'" \
-    bash "$DASH" collect --force >/dev/null 2>&1
-  MISSION_CONTROL_HOME="$H" bash "$DASH" status >/dev/null 2>&1; rc=$?
+    /bin/bash "$DASH" collect --force >/dev/null 2>&1
+  MISSION_CONTROL_HOME="$H" /bin/bash "$DASH" status >/dev/null 2>&1; rc=$?
   if [ "$rc" -ne 0 ]; then ok "status nonzero when automation feed has a red job"
   else no "status exit 0 despite red automation job"; fi
 }
@@ -946,7 +919,7 @@ c5() {
 c6() {
   rm -f "$STUB/open-called"
   local out dir brief_cadence
-  out="$(PATH="$STUB/bin:$PATH" DASHBOARD_NO_OPEN=1 bash "$DASH" demo 2>&1)"
+  out="$(PATH="$STUB/bin:$PATH" DASHBOARD_NO_OPEN=1 /bin/bash "$DASH" demo 2>&1)"
   dir="$(printf '%s\n' "$out" | sed -n 's/^demo state: //p')"
   brief_cadence="$(python3 - "$dir/data/brief.json" <<'PY' 2>/dev/null
 import json, sys
@@ -1035,7 +1008,7 @@ EOF
   local mch; mch="$(mktemp -d)"
   if env -u DASHBOARD_CMD_USAGE -u DASHBOARD_CMD_GIT -u DASHBOARD_CMD_CHATS -u DASHBOARD_CMD_AUTOMATION \
        REPO_ROOT="$fr" MISSION_CONTROL_HOME="$mch" CHAT_GRAPH_HOME="$cgh" \
-       bash "$DASH" collect --force >/dev/null 2>&1 \
+       /bin/bash "$DASH" collect --force >/dev/null 2>&1 \
      && [ -f "$mch/data/usage.json" ] && [ -f "$mch/data/git.json" ] \
      && [ -f "$mch/data/chats.json" ] && [ -f "$mch/data/automation.json" ] \
      && [ ! -f "$mch/data/usage.error.json" ]; then
@@ -1057,7 +1030,7 @@ EOF
   chmod +x "$stub"
   if DASHBOARD_CMD_GIT="$stub" \
      DASHBOARD_CMD_USAGE='echo {}' DASHBOARD_CMD_CHATS='echo {}' DASHBOARD_CMD_AUTOMATION='echo {}' \
-     MISSION_CONTROL_HOME="$mch" bash "$DASH" collect --force >/dev/null 2>&1 \
+     MISSION_CONTROL_HOME="$mch" /bin/bash "$DASH" collect --force >/dev/null 2>&1 \
      && [ -f "$mch/data/git.json" ] && [ ! -f "$mch/data/git.error.json" ]; then
     ok "git feeder exit 1 (findings) accepted as valid"
   else
@@ -1068,7 +1041,7 @@ fi
 c8a() { # env feeder overrides are argv-only; shell metacharacters are rejected
   local mch marker; mch="$(mktemp -d)"; marker="$ROOT/override-pwned"
   DASHBOARD_CMD_USAGE="echo {}; touch $marker" \
-    MISSION_CONTROL_HOME="$mch" bash "$DASH" collect --force usage >/dev/null 2>&1
+    MISSION_CONTROL_HOME="$mch" /bin/bash "$DASH" collect --force usage >/dev/null 2>&1
   if [ ! -e "$marker" ] \
      && [ -f "$mch/data/usage.error.json" ] \
      && grep -q "forbidden shell characters" "$mch/data/usage.error.json"; then
@@ -1091,7 +1064,7 @@ env = {"schema": 1, "feed": "chats", "generated_at": "now", "generated_epoch": n
                            "last_full_ingest_age_s": None}}}
 json.dump(env, open(sys.argv[1], "w"))
 PYEOF
-  local out; out="$(MISSION_CONTROL_HOME="$mch" bash "$DASH" status 2>/dev/null || true)"
+  local out; out="$(MISSION_CONTROL_HOME="$mch" /bin/bash "$DASH" status 2>/dev/null || true)"
   if grep -q "unknown full ingest" <<< "$out"; then
     ok "status: fresh chats feed still surfaces unknown full graph ingest"
   else
@@ -1128,7 +1101,7 @@ EOF
   printf '#!/bin/sh\nexit 0\n' > "$sbin/launchctl"; chmod +x "$sbin/launchctl"
   local mch; mch="$(mktemp -d)"
   PATH="$sbin:$PATH" REPO_ROOT="$fr" MISSION_CONTROL_HOME="$mch" DASHBOARD_INSTALL_NO_LAUNCHD=1 \
-    bash "$DASH" install >/dev/null 2>&1
+    /bin/bash "$DASH" install >/dev/null 2>&1
   if [ ! -x "$mch/bin/dashboard" ]; then
     no "install: bin/dashboard missing or not executable"; return; fi
   # baked default must be the REAL repo root, never the mission-control home
@@ -1137,7 +1110,7 @@ EOF
     no "install: REPO_ROOT_DEFAULT not baked into copy (got '$baked')"; return; fi
   # the copy runs headless — no DASHBOARD_CMD_* overrides, REPO_ROOT unset — and
   # resolves the baked repo's sibling feeders to write every feed.
-  if env -u DASHBOARD_CMD_USAGE -u DASHBOARD_CMD_GIT -u DASHBOARD_CMD_CHATS \
+  if command /usr/bin/env -u DASHBOARD_CMD_USAGE -u DASHBOARD_CMD_GIT -u DASHBOARD_CMD_CHATS \
          -u DASHBOARD_CMD_AUTOMATION -u DASHBOARD_CMD_DECISIONS -u REPO_ROOT \
          FIXTURE_DECISIONS="$REPO/dashboard/fixtures/decisions.json" \
          MISSION_CONTROL_HOME="$mch" CHAT_GRAPH_HOME="$cgh" \
@@ -1154,7 +1127,7 @@ EOF
   # The installed engine must import its adjacent stamped common module, not a
   # later dirty checkout copy at the baked feeder root.
   printf 'raise RuntimeError("POISONED_REPO_COMMON")\n' > "$fr/scripts/mission_control_common.py"
-  local status_out; status_out="$(env -u REPO_ROOT MISSION_CONTROL_HOME="$mch" \
+  local status_out; status_out="$(command /usr/bin/env -u REPO_ROOT MISSION_CONTROL_HOME="$mch" \
     MISSION_CONTROL_NOW_EPOCH="$(date +%s)" bash "$mch/bin/dashboard" status 2>&1 || true)"
   if grep -q '^install' <<< "$status_out" && \
      ! grep -q 'POISONED_REPO_COMMON\|Traceback' <<< "$status_out"; then
@@ -1224,8 +1197,8 @@ PY
 c13() { # FIX 6: the data/ dir must be 0700, not world-readable
   local mch; mch="$(mktemp -d)/mc"
   DASHBOARD_CMD_USAGE='echo {}' DASHBOARD_CMD_GIT='echo {}' DASHBOARD_CMD_CHATS='echo {}' DASHBOARD_CMD_AUTOMATION='echo {}' DASHBOARD_CMD_DECISIONS='echo {}' DASHBOARD_CMD_BRIEF='echo {}' \
-    MISSION_CONTROL_HOME="$mch" bash "$DASH" collect --force >/dev/null 2>&1
-  local p; p="$(stat -f '%Lp' "$mch/data" 2>/dev/null || stat -c '%a' "$mch/data" 2>/dev/null)"
+    MISSION_CONTROL_HOME="$mch" /bin/bash "$DASH" collect --force >/dev/null 2>&1
+  local p; p="$(mission_test_stat_mode "$mch/data")"
   [ "$p" = "700" ] && ok "data dir perms 700 (got $p)" || no "data dir world-readable (got $p, want 700)"
 }
 
@@ -1243,7 +1216,7 @@ EOF
   chmod +x "$sbin/launchctl"
   HOME="$h" PATH="$sbin:$PATH" REPO_ROOT="$REPO" MISSION_CONTROL_HOME="$mch" LAUNCH_CAPTURE="$h/bootstrapped" LAUNCH_STATE="$h/loaded" MC_PRINT_FIXTURE="$h/print-fixture" \
     DASHBOARD_INSTALL_ACTIVATE_GATED=1 \
-    bash "$DASH" install >/dev/null 2>&1
+    /bin/bash "$DASH" install >/dev/null 2>&1
   physical_mch="$(cd "$mch" && pwd -P)"
   local miss=0 p
   [ -x "$mch/bin/morning-brief" ] || miss=1
@@ -1279,7 +1252,7 @@ EOF
   chmod +x "$sbin/launchctl"
   HOME="$h" PATH="$sbin:$PATH" REPO_ROOT="$REPO" MISSION_CONTROL_HOME="$mch" \
     LAUNCH_CAPTURE="$h/bootstrapped" LAUNCH_STATE="$h/loaded" MC_PRINT_FIXTURE="$h/print-fixture" \
-    bash "$DASH" install >/dev/null 2>&1
+    /bin/bash "$DASH" install >/dev/null 2>&1
   [ -f "$h/Library/LaunchAgents/com.gillettes.mission-control.plist" ] || miss=1
   for p in com.gillettes.outcome-extractor.plist com.gillettes.morning-brief.plist \
            com.gillettes.morning-brief-deadman.plist; do
@@ -1299,9 +1272,9 @@ path, epoch = sys.argv[1], int(sys.argv[2])
 json.dump({"brief_id": "stale-fixture", "generated_epoch": epoch,
            "generated_at": "2000-01-01T00:00:00Z", "sections": {}}, open(path, "w"))
 PY
-  env -u DASHBOARD_CMD_BRIEF MISSION_CONTROL_HOME="$mch" \
-    bash "$DASH" collect --force brief >/dev/null 2>&1
-  out="$(MISSION_CONTROL_HOME="$mch" bash "$DASH" status 2>/dev/null || true)"
+  command /usr/bin/env -u DASHBOARD_CMD_BRIEF MISSION_CONTROL_HOME="$mch" \
+    /bin/bash "$DASH" collect --force brief >/dev/null 2>&1
+  out="$(MISSION_CONTROL_HOME="$mch" /bin/bash "$DASH" status 2>/dev/null || true)"
   if [ "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["generated_epoch"])' "$mch/data/brief.json")" = "$old_epoch" ] \
      && grep -Eqi 'brief.*(stale|red|aging)' <<< "$out"; then
     ok "brief freshness preserves the sidecar compose age"
@@ -1319,7 +1292,7 @@ json.dump({"brief_id": "valid-fixture", "generated_epoch": now,
            "generated_at": "2026-07-10T09:00:00Z", "sections": {}}, open(sys.argv[1], "w"))
 PY
   env -u DASHBOARD_CMD_BRIEF MISSION_CONTROL_HOME="$mch" \
-    bash "$DASH" collect --force brief >/dev/null 2>&1
+    /bin/bash "$DASH" collect --force brief >/dev/null 2>&1
   before="$(shasum -a 256 "$mch/data/brief.json" | awk '{print $1}')"
   for value in '"oops"' '["oops"]' '[]' '{}' 'null' '0' 'true'; do
     python3 - "$mch/morning-brief/latest.json" "$value" <<'PY'
@@ -1327,12 +1300,12 @@ import json, sys
 json.dump({"brief_id": "bad-fixture", "generated_epoch": json.loads(sys.argv[2]),
            "sections": {}}, open(sys.argv[1], "w"))
 PY
-    env -u DASHBOARD_CMD_BRIEF MISSION_CONTROL_HOME="$mch" \
-      bash "$DASH" collect --force brief >/dev/null 2>&1
+    command /usr/bin/env -u DASHBOARD_CMD_BRIEF MISSION_CONTROL_HOME="$mch" \
+      /bin/bash "$DASH" collect --force brief >/dev/null 2>&1
     [ -f "$mch/data/brief.error.json" ] || miss=1
     [ -f "$mch/data/brief.error.js" ] && grep -q 'feedErrors.brief' "$mch/data/brief.error.js" || miss=1
     [ "$(shasum -a 256 "$mch/data/brief.json" | awk '{print $1}')" = "$before" ] || miss=1
-    out="$(MISSION_CONTROL_HOME="$mch" bash "$DASH" status 2>/dev/null || true)"
+    out="$(MISSION_CONTROL_HOME="$mch" /bin/bash "$DASH" status 2>/dev/null || true)"
     grep -Eqi 'brief.*error' <<< "$out" || miss=1
   done
   grep -q 'data/brief.error.js' "$REPO/dashboard/index.html" || miss=1
@@ -1351,7 +1324,7 @@ exit 2
 EOF
   chmod +x "$stub"
   MISSION_CONTROL_EGRESS_DENYLIST='forbidden-term' DASHBOARD_CMD_USAGE="$stub" \
-  MISSION_CONTROL_HOME="$mch" bash "$DASH" collect --force usage >/dev/null 2>&1
+  MISSION_CONTROL_HOME="$mch" /bin/bash "$DASH" collect --force usage >/dev/null 2>&1
   for artifact in "$mch/data/usage.error.json" "$mch/data/usage.error.js"; do
     [ -f "$artifact" ] || miss=1
     grep -Fq "$fake_secret" "$artifact" && miss=1
@@ -1364,7 +1337,7 @@ assert d["ok"] is False
 assert c["dropped_fields"] == 1
 assert c["reason_secret"] == c["reason_email"] == c["reason_phone"] == c["reason_denylist"] == 1
 PY
-  status="$(MISSION_CONTROL_HOME="$mch" bash "$DASH" status 2>/dev/null || true)"
+  status="$(MISSION_CONTROL_HOME="$mch" /bin/bash "$DASH" status 2>/dev/null || true)"
   grep -Eqi 'usage.*error' <<< "$status" || miss=1
   grep -Fq "$fake_secret" <<< "$status" && miss=1
   grep -Eq 'operator@example.com|415-555-1212|forbidden-term' <<< "$status" && miss=1
@@ -1380,14 +1353,14 @@ c18() { # dashboard dismiss routes to the transactional queue and executes no ac
     --action-json '["touch","'$marker'"]' --json)" || { no "dashboard decide fixture ingest failed"; return; }
   id="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["decision"]["id"])' "$created")"
   env -u DASHBOARD_CMD_DECISIONS REPO_ROOT="$REPO" MISSION_CONTROL_HOME="$mch" \
-    bash "$DASH" collect --force decisions >/dev/null 2>&1
+    /bin/bash "$DASH" collect --force decisions >/dev/null 2>&1
   python3 - "$mch/data/decisions.json" "$id" <<'PY' || { no "dashboard decision fixture was not pinned"; return; }
 import json,sys
 d=json.load(open(sys.argv[1]))["data"]
 assert sys.argv[2] in [x["id"] for x in d["pinned"]]
 PY
-  env -u DASHBOARD_CMD_DECISIONS REPO_ROOT="$REPO" MISSION_CONTROL_HOME="$mch" \
-    bash "$DASH" decide dismiss "$id" >/dev/null 2>&1
+  command /usr/bin/env -u DASHBOARD_CMD_DECISIONS REPO_ROOT="$REPO" MISSION_CONTROL_HOME="$mch" \
+    /bin/bash "$DASH" decide dismiss "$id" >/dev/null 2>&1
   state="$(MISSION_CONTROL_HOME="$mch" "$REPO/scripts/decision-alert" list --state dismissed --json)"
   if [ ! -e "$marker" ] && grep -Fq "$id" <<< "$state" &&
      python3 - "$mch/data/decisions.json" "$id" <<'PY'
@@ -1408,7 +1381,7 @@ PY
     --trust structured --provenance manual --json)" || { no "dashboard lock fixture ingest failed"; return; }
   locked_id="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["decision"]["id"])' "$locked_created")"
   env -u DASHBOARD_CMD_DECISIONS REPO_ROOT="$REPO" MISSION_CONTROL_HOME="$mch" \
-    bash "$DASH" collect --force decisions >/dev/null 2>&1
+    /bin/bash "$DASH" collect --force decisions >/dev/null 2>&1
   local lock_ready lock_pid
   lock_ready="$mch/data/.decisions-lock-ready"
   python3 - "$mch/data/.decisions.lockfile" "$lock_ready" <<'PY' &
@@ -1428,8 +1401,8 @@ PY
     sleep 0.02
     lock_wait=$((lock_wait + 1))
   done
-  if env -u DASHBOARD_CMD_DECISIONS REPO_ROOT="$REPO" MISSION_CONTROL_HOME="$mch" \
-       bash "$DASH" decide dismiss "$locked_id" >/dev/null 2>&1; then
+  if command /usr/bin/env -u DASHBOARD_CMD_DECISIONS REPO_ROOT="$REPO" MISSION_CONTROL_HOME="$mch" \
+       /bin/bash "$DASH" decide dismiss "$locked_id" >/dev/null 2>&1; then
     no "dashboard dismiss claimed refresh while decisions feed was locked"
   else
     ok "dashboard dismiss fails visibly when pinned feed refresh is locked"
@@ -1442,7 +1415,7 @@ PY
 c19() { # code-only install cannot write or bootstrap launchd jobs
   local mch fakehome; mch="$(mktemp -d)"; fakehome="$(mktemp -d)"
   if HOME="$fakehome" MISSION_CONTROL_HOME="$mch" REPO_ROOT="$REPO" \
-       DASHBOARD_INSTALL_NO_LAUNCHD=1 bash "$DASH" install >/dev/null 2>&1 &&
+       DASHBOARD_INSTALL_NO_LAUNCHD=1 /bin/bash "$DASH" install >/dev/null 2>&1 &&
      [ -x "$mch/bin/dashboard" ] && [ -x "$mch/bin/decision-alert" ] &&
      [ ! -d "$fakehome/Library/LaunchAgents" ]; then
     ok "code-only install updates runtime without launchd side effects"
@@ -1468,7 +1441,7 @@ env = {"schema": 1, "feed": "brief", "generated_at": "t", "generated_epoch": gen
        "data": {"brief_id": "today", "generated_epoch": gen}}
 json.dump(env, open(sys.argv[1], "w"))
 PY
-  out="$(MISSION_CONTROL_HOME="$mch" MISSION_CONTROL_NOW_EPOCH="$NOW" bash "$DASH" status 2>/dev/null || true)"
+  out="$(MISSION_CONTROL_HOME="$mch" MISSION_CONTROL_NOW_EPOCH="$NOW" /bin/bash "$DASH" status 2>/dev/null || true)"
   if grep -Eq '^brief.*([Ss][Tt][Aa][Ll][Ee]|[Aa][Gg][Ii][Nn][Gg])' <<< "$out"; then
     no "status flags a same-day brief stale on poll cadence (validity ignored)"
   else
@@ -1543,7 +1516,7 @@ json.dump({"brief_id": "valid-fixture", "generated_epoch": now,
            "sections": {}}, open(sys.argv[1], "w"))
 PY
   env -u DASHBOARD_CMD_BRIEF MISSION_CONTROL_HOME="$mch" \
-    bash "$DASH" collect --force brief >/dev/null 2>&1
+    /bin/bash "$DASH" collect --force brief >/dev/null 2>&1
   if python3 - "$mch/data/brief.json" <<'PY'
 import json, sys
 e = json.load(open(sys.argv[1]))
@@ -1583,9 +1556,9 @@ json.dump({"schema": 1, "brief_id": bid, "state": "delivered",
 PYEOF
   # PRE: builtin reads the legacy sidecar (no valid_until) -> brief stale -> rc!=0.
   env -u DASHBOARD_CMD_BRIEF MISSION_CONTROL_HOME="$H" MISSION_CONTROL_NOW_EPOCH="$NOW" \
-    DASHBOARD_CMD_CHATS="cat '$RAWCHATS'" bash "$DASH" collect --force >/dev/null 2>&1
+    DASHBOARD_CMD_CHATS="cat '$RAWCHATS'" /bin/bash "$DASH" collect --force >/dev/null 2>&1
   env -u DASHBOARD_CMD_BRIEF MISSION_CONTROL_HOME="$H" MISSION_CONTROL_NOW_EPOCH="$NOW" \
-    bash "$DASH" status >/dev/null 2>&1; rc=$?
+    /bin/bash "$DASH" status >/dev/null 2>&1; rc=$?
   if [ "$rc" -eq 0 ]; then no "brief-migrate setup: legacy brief was not stale pre-migration"; return; fi
   # A no-arg compose defers (no re-send) and migrates valid_until in place.
   MISSION_CONTROL_HOME="$H" MORNING_BRIEF_NOW_EPOCH="$NOW" "$BRIEF" >/dev/null 2>&1
@@ -1601,9 +1574,9 @@ PYEOF
   fi
   # POST: collect re-derives brief.json from the migrated sidecar; status reads fresh.
   env -u DASHBOARD_CMD_BRIEF MISSION_CONTROL_HOME="$H" MISSION_CONTROL_NOW_EPOCH="$NOW" \
-    DASHBOARD_CMD_CHATS="cat '$RAWCHATS'" bash "$DASH" collect --force >/dev/null 2>&1
+    DASHBOARD_CMD_CHATS="cat '$RAWCHATS'" /bin/bash "$DASH" collect --force >/dev/null 2>&1
   env -u DASHBOARD_CMD_BRIEF MISSION_CONTROL_HOME="$H" MISSION_CONTROL_NOW_EPOCH="$NOW" \
-    bash "$DASH" status >/dev/null 2>&1; rc=$?
+    /bin/bash "$DASH" status >/dev/null 2>&1; rc=$?
   if ! python3 - "$H" "$GEN" <<'PYEOF'
 import json, os, sys, time
 home, gen = sys.argv[1], int(sys.argv[2])
@@ -1627,7 +1600,7 @@ print(int(time.mktime((local.tm_year, local.tm_mon, local.tm_mday + 1,
 PY
 )"
   AFTER=$((EXPECTED + 1))
-  out="$(MISSION_CONTROL_HOME="$H" MISSION_CONTROL_NOW_EPOCH="$AFTER" bash "$DASH" status 2>/dev/null || true)"
+  out="$(MISSION_CONTROL_HOME="$H" MISSION_CONTROL_NOW_EPOCH="$AFTER" /bin/bash "$DASH" status 2>/dev/null || true)"
   if grep -Eq '^brief.*[Ss][Tt][Aa][Ll][Ee]' <<< "$out"; then
     ok "brief-migrate validity expires exactly after next local midnight"
   else
@@ -1755,14 +1728,14 @@ for name,cadence in cadences.items():
          "ok":True,"error":None,"data":data}
     json.dump(env,open(os.path.join(root,name+".json"),"w"))
 PY
-  out="$(MISSION_CONTROL_HOME="$mch" MISSION_CONTROL_NOW_EPOCH="$now" bash "$DASH" status 2>&1)"; rc=$?
+  out="$(MISSION_CONTROL_HOME="$mch" MISSION_CONTROL_NOW_EPOCH="$now" /bin/bash "$DASH" status 2>&1)"; rc=$?
   if [ "$rc" -ne 0 ] && grep -q '^install.*UNVERIFIED: missing' <<< "$out"; then
     ok "status: missing install stamp is an explicit red row"
   else
     no "status: missing install stamp was omitted or green (rc=$rc out=$out)"
   fi
   mkdir -p "$mch/bin"; printf '[]\n' > "$mch/bin/install-stamp.json"
-  out="$(MISSION_CONTROL_HOME="$mch" MISSION_CONTROL_NOW_EPOCH="$now" bash "$DASH" status 2>&1)"; rc=$?
+  out="$(MISSION_CONTROL_HOME="$mch" MISSION_CONTROL_NOW_EPOCH="$now" /bin/bash "$DASH" status 2>&1)"; rc=$?
   if [ "$rc" -ne 0 ] && grep -q '^install.*UNVERIFIED: malformed' <<< "$out" && \
      ! grep -q 'Traceback' <<< "$out"; then
     ok "status: malformed install stamp fails closed without traceback"
@@ -1774,7 +1747,7 @@ PY
 c26() { # production install never silently downgrades to an uncommitted worktree
   local fr mch rc; fr="$(mktemp -d)"; mch="$(mktemp -d)"
   REPO_ROOT="$fr" MISSION_CONTROL_HOME="$mch" DASHBOARD_INSTALL_NO_LAUNCHD=1 \
-    bash "$DASH" install >/dev/null 2>&1; rc=$?
+    /bin/bash "$DASH" install >/dev/null 2>&1; rc=$?
   if [ "$rc" -ne 0 ] && [ ! -e "$mch/bin/install-stamp.json" ]; then
     ok "install: missing git HEAD fails closed without a stamp"
   else
@@ -1925,7 +1898,7 @@ c28() { # malformed feed envelopes are red, never a status/freshness traceback
   local h out rc kind fails=0; h="$(newhome)"
   make_valid_stamp "$h"
   for kind in epoch ok cadence cadence_huge data; do
-    MISSION_CONTROL_HOME="$h" bash "$DASH" collect --force >/dev/null 2>&1
+    MISSION_CONTROL_HOME="$h" /bin/bash "$DASH" collect --force >/dev/null 2>&1
     python3 - "$h/data/usage.json" "$kind" <<'PY'
 import json,sys
 p,kind=sys.argv[1:]; d=json.load(open(p))
@@ -1936,7 +1909,7 @@ elif kind == "cadence_huge": d["cadence_s"] = 1000000000
 elif kind == "data": d["data"] = []
 json.dump(d,open(p,"w"))
 PY
-    out="$(MISSION_CONTROL_HOME="$h" bash "$DASH" status 2>&1)"; rc=$?
+    out="$(MISSION_CONTROL_HOME="$h" /bin/bash "$DASH" status 2>&1)"; rc=$?
     [ "$rc" -ne 0 ] && ! grep -q 'Traceback' <<< "$out" || fails=1
   done
   if [ "$fails" = 0 ]; then
@@ -1993,7 +1966,7 @@ EOF
 
 c31() { # the real macOS Bash 3.2 path executes embedded Python, not EOF
   local h count rc; h="$(newhome)"
-  MISSION_CONTROL_HOME="$h" bash "$DASH" collect --force >/dev/null 2>&1; rc=$?
+  MISSION_CONTROL_HOME="$h" /bin/bash "$DASH" collect --force >/dev/null 2>&1; rc=$?
   count="$(find "$h/data" -type f \( -name '*.json' -o -name '*.js' \) 2>/dev/null | wc -l | tr -d ' ')"
   # Eight feeds emit canonical JSON + JS plus a healthy error sidecar. Keeping the
   # sidecar present prevents browsers from logging a missing resource on success.
@@ -2171,7 +2144,7 @@ wait
 EOF
   chmod +x "$gr/scripts/chat-graph"
   start="$(python3 -c 'import time; print(time.monotonic())')"
-  env -u DASHBOARD_CMD_CHATS REPO_ROOT="$gr" MISSION_CONTROL_HOME="$mch" \
+  command /usr/bin/env -u DASHBOARD_CMD_CHATS REPO_ROOT="$gr" MISSION_CONTROL_HOME="$mch" \
     CHAT_GRAPH_HOME="$cgh" bash "$gr/scripts/dashboard" collect --force chats \
     >/dev/null 2>&1; rc=$?
   end="$(python3 -c 'import time; print(time.monotonic())')"
@@ -2233,7 +2206,7 @@ EOF
       CHAT_GRAPH_NIGHTLY_REPORT_GLOB="$roots/reports/*.md" \
       CHAT_GRAPH_HERMES_STATE_DB="$roots/hermes.db" \
       REPO_ROOT="$gr" MISSION_CONTROL_HOME="$mch" \
-      bash "$DASH" collect --force git chats >/dev/null 2>&1
+      /bin/bash "$DASH" collect --force git chats >/dev/null 2>&1
     PIPELINE_MCH="$mch"
     PIPELINE_CGH="$cgh"
     PIPELINE_ROOTS="$roots"
@@ -2282,7 +2255,7 @@ trap '' TERM INT
 while :; do sleep 1; done
 EOF
   chmod +x "$gr/scripts/chat-graph"
-  env -u DASHBOARD_CMD_CHATS REPO_ROOT="$gr" MISSION_CONTROL_HOME="$mch" \
+  command /usr/bin/env -u DASHBOARD_CMD_CHATS REPO_ROOT="$gr" MISSION_CONTROL_HOME="$mch" \
     CHAT_GRAPH_HOME="$cgh" bash "$gr/scripts/dashboard" collect --force chats \
     >/dev/null 2>&1; rc=$?
   if [ "$rc" -eq 0 ] && [ -f "$cgh/ingest.lock/owner.json" ]; then
@@ -2520,7 +2493,7 @@ os._exit(0)
 PY
   chmod +x "$gr/scripts/chat-graph"
   start="$(python3 -c 'import time; print(time.monotonic())')"
-  env -u DASHBOARD_CMD_CHATS REPO_ROOT="$gr" MISSION_CONTROL_HOME="$mch" \
+  command /usr/bin/env -u DASHBOARD_CMD_CHATS REPO_ROOT="$gr" MISSION_CONTROL_HOME="$mch" \
     CHAT_GRAPH_HOME="$cgh" bash "$gr/scripts/dashboard" collect --force chats \
     >/dev/null 2>&1; rc=$?
   end="$(python3 -c 'import time; print(time.monotonic())')"
@@ -2566,12 +2539,12 @@ PY
     --text 'Choose dashboard backfill decision' --evidence 'dash-bf' \
     --trust structured --provenance git-facts --json)" || { no "alert-backfill fixture ingest failed"; return; }
   id="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["decision"]["id"])' "$created")"
-  if env -u DASHBOARD_CMD_DECISIONS REPO_ROOT="$REPO" MISSION_CONTROL_HOME="$mch" \
-       bash "$DASH" decide alert-backfill --max 26 >/dev/null 2>&1; then
+  if command /usr/bin/env -u DASHBOARD_CMD_DECISIONS REPO_ROOT="$REPO" MISSION_CONTROL_HOME="$mch" \
+       /bin/bash "$DASH" decide alert-backfill --max 26 >/dev/null 2>&1; then
     no "dashboard alert-backfill accepted max above ceiling"; return
   fi
-  diag="$(env -u DASHBOARD_CMD_DECISIONS REPO_ROOT="$REPO" MISSION_CONTROL_HOME="$mch" \
-    bash "$DASH" decide alert-backfill --chat-id ignored 2>&1 || true)"
+  diag="$(command /usr/bin/env -u DASHBOARD_CMD_DECISIONS REPO_ROOT="$REPO" MISSION_CONTROL_HOME="$mch" \
+    /bin/bash "$DASH" decide alert-backfill --chat-id ignored 2>&1 || true)"
   if grep -qi 'fixed to the Control route' <<< "$diag" &&
      ! grep -Eqi 'chat.*env|destination.*env' <<< "$diag"; then
     :
@@ -2580,8 +2553,8 @@ PY
   fi
   out="$(DECISION_ALERT_SEND_BIN="$sender" \
     DECISION_SEND_CAPTURE="$capture" \
-    env -u DASHBOARD_CMD_DECISIONS REPO_ROOT="$REPO" MISSION_CONTROL_HOME="$mch" \
-    bash "$DASH" decide alert-backfill --max 2)" || { no "dashboard alert-backfill send failed"; return; }
+    command /usr/bin/env -u DASHBOARD_CMD_DECISIONS REPO_ROOT="$REPO" MISSION_CONTROL_HOME="$mch" \
+    /bin/bash "$DASH" decide alert-backfill --max 2)" || { no "dashboard alert-backfill send failed"; return; }
   if python3 - "$out" "$id" "$capture" <<'PY'
 import json,sys
 x=json.loads(sys.argv[1])
@@ -2610,7 +2583,7 @@ EOF
   chmod +x "$stub"
   LOCK_ENGINE_PID="$mch/engine.pid" LOCK_FEEDER_PID="$mch/feeder.pid" \
     DASHBOARD_CMD_USAGE="$stub" MISSION_CONTROL_HOME="$mch" \
-    bash "$DASH" collect --force usage >/dev/null 2>&1 &
+    /bin/bash "$DASH" collect --force usage >/dev/null 2>&1 &
   runner=$!
   register_owned_process "$runner"
   for _ in $(seq 1 100); do [ -f "$mch/engine.pid" ] && break; sleep 0.05; done
@@ -2620,7 +2593,7 @@ EOF
   wait "$runner" 2>/dev/null || true
   [ -z "$feeder" ] || kill -KILL "$feeder" 2>/dev/null || true
   DASHBOARD_CMD_USAGE="cat $STUB/usage.json" MISSION_CONTROL_HOME="$mch" \
-    bash "$DASH" collect --force --strict usage >/dev/null 2>&1; rc=$?
+    /bin/bash "$DASH" collect --force --strict usage >/dev/null 2>&1; rc=$?
   if [ "$rc" -eq 0 ] && [ -f "$mch/data/usage.json" ]; then
     ok "feed-lock: process death releases ownership for the next collector"
   else
@@ -2632,7 +2605,7 @@ c42a() { # lock setup failures are errors, not false contention
   local mch rc=0
   mch="$(newhome)"; mkdir -p "$mch/data/.usage.lockfile"
   DASHBOARD_CMD_USAGE="cat $STUB/usage.json" MISSION_CONTROL_HOME="$mch" \
-    bash "$DASH" collect --force --strict usage >/dev/null 2>&1 || rc=$?
+    /bin/bash "$DASH" collect --force --strict usage >/dev/null 2>&1 || rc=$?
   if [ "$rc" -ne 0 ] && python3 - "$mch/data/usage.error.json" <<'PY'
 import json,sys
 row=json.load(open(sys.argv[1]))
@@ -2654,7 +2627,7 @@ import json,sys
 json.dump({"schema":1,"feed":"usage","generated_epoch":2000,"data":{"marker":"old"}},open(sys.argv[1],"w"))
 PY
   MISSION_CONTROL_NOW_EPOCH=1000 DASHBOARD_CMD_USAGE="cat $STUB/usage.json" \
-    MISSION_CONTROL_HOME="$mch" bash "$DASH" collect --due usage >/dev/null 2>&1
+    MISSION_CONTROL_HOME="$mch" /bin/bash "$DASH" collect --due usage >/dev/null 2>&1
   marker="$(python3 -c 'import json,sys;print((json.load(open(sys.argv[1])).get("data") or {}).get("providers",[{}])[0].get("name",""))' "$mch/data/usage.json")"
   if [ "$marker" = claude ]; then
     ok "cadence: future-dated feed is recollected instead of skipped"
@@ -2667,7 +2640,7 @@ c44() { # invalid decision ids fail before any prompt or answer write
   local mch did rc escaped
   mch="$(newhome)"; did='../../escaped-audit'; escaped="$(dirname "$mch")/escaped-audit.md"
   rm -f "$escaped"
-  MISSION_CONTROL_HOME="$mch" bash "$DASH" decide answer "$did" 1 >/dev/null 2>&1; rc=$?
+  MISSION_CONTROL_HOME="$mch" /bin/bash "$DASH" decide answer "$did" 1 >/dev/null 2>&1; rc=$?
   if [ "$rc" -eq 2 ] && [ ! -e "$escaped" ] && \
      [ ! -e "$mch/prompts" ] && [ ! -e "$mch/answers" ]; then
     ok "decide-answer: invalid id is rejected before every filesystem write"
@@ -2680,11 +2653,11 @@ c44() { # invalid decision ids fail before any prompt or answer write
 c45() { # every declared healthy browser asset exists in collected and demo state
   local mch demo out name miss=0
   mch="$(newhome)"
-  MISSION_CONTROL_HOME="$mch" bash "$DASH" collect --force >/dev/null 2>&1
+  MISSION_CONTROL_HOME="$mch" /bin/bash "$DASH" collect --force >/dev/null 2>&1
   for name in usage git chats automation decisions attention brief; do
     [ -f "$mch/data/$name.error.js" ] || miss=1
   done
-  out="$(DASHBOARD_NO_OPEN=1 MISSION_CONTROL_HOME="$mch" bash "$DASH" demo 2>/dev/null)"
+  out="$(DASHBOARD_NO_OPEN=1 MISSION_CONTROL_HOME="$mch" /bin/bash "$DASH" demo 2>/dev/null)"
   demo="$(printf '%s\n' "$out" | sed -n 's/^demo state: //p' | tail -1)"
   [ -n "$demo" ] && [ -f "$demo/vendor/cytoscape.min.js" ] || miss=1
   for name in usage git chats automation decisions attention brief; do
@@ -2743,13 +2716,13 @@ c47() { # concurrent answers publish one internally consistent choice
       --text '**DECISION NEEDED:** Pick one. **`One`**. **`Two`**.' \
       --trust structured --provenance manual --json)" || { miss=1; break; }
     did="$(python3 -c 'import json,sys;print(json.loads(sys.argv[1])["decision"]["id"])' "$created")"
-    env -u DASHBOARD_CMD_DECISIONS REPO_ROOT="$REPO" MISSION_CONTROL_HOME="$mch" \
-      bash "$DASH" collect --force decisions >/dev/null 2>&1
-    ( env -u DASHBOARD_CMD_DECISIONS MC_DECISION_ANSWER_LOCK_HELD=1 REPO_ROOT="$REPO" MISSION_CONTROL_HOME="$mch" \
-        bash "$DASH" decide answer "$did" 1 >"$mch/one-$i.out" 2>&1; echo $? >"$mch/one-$i.rc" ) & p1=$!
+    command /usr/bin/env -u DASHBOARD_CMD_DECISIONS REPO_ROOT="$REPO" MISSION_CONTROL_HOME="$mch" \
+      /bin/bash "$DASH" collect --force decisions >/dev/null 2>&1
+    ( command /usr/bin/env -u DASHBOARD_CMD_DECISIONS MC_DECISION_ANSWER_LOCK_HELD=1 REPO_ROOT="$REPO" MISSION_CONTROL_HOME="$mch" \
+        /bin/bash "$DASH" decide answer "$did" 1 >"$mch/one-$i.out" 2>&1; echo $? >"$mch/one-$i.rc" ) & p1=$!
     register_owned_process "$p1"
-    ( env -u DASHBOARD_CMD_DECISIONS MC_DECISION_ANSWER_LOCK_HELD=1 REPO_ROOT="$REPO" MISSION_CONTROL_HOME="$mch" \
-        bash "$DASH" decide answer "$did" 2 >"$mch/two-$i.out" 2>&1; echo $? >"$mch/two-$i.rc" ) & p2=$!
+    ( command /usr/bin/env -u DASHBOARD_CMD_DECISIONS MC_DECISION_ANSWER_LOCK_HELD=1 REPO_ROOT="$REPO" MISSION_CONTROL_HOME="$mch" \
+        /bin/bash "$DASH" decide answer "$did" 2 >"$mch/two-$i.out" 2>&1; echo $? >"$mch/two-$i.rc" ) & p2=$!
     register_owned_process "$p2"
     wait "$p1" || true; wait "$p2" || true
     MISSION_CONTROL_HOME="$mch" "$REPO/scripts/decision-alert" history "$did" --json >"$mch/history-$i.json" || miss=1
@@ -2786,12 +2759,12 @@ c48() { # blocked publication stays open; exact answered-pending state is recove
     --trust structured --provenance manual --json)" || { no "decide-answer: blocked fixture ingest"; return; }
   did="$(python3 -c 'import json,sys;print(json.loads(sys.argv[1])["decision"]["id"])' "$created")"
   env -u DASHBOARD_CMD_DECISIONS REPO_ROOT="$REPO" MISSION_CONTROL_HOME="$mch" \
-    bash "$DASH" collect --force decisions >/dev/null 2>&1
+    /bin/bash "$DASH" collect --force decisions >/dev/null 2>&1
   mkdir -p "$mch/answers" "$mch/prompts"
   printf 'unchanged\n' > "$victim"
   ln -s "$victim" "$mch/answers/$did.json"
   env -u DASHBOARD_CMD_DECISIONS REPO_ROOT="$REPO" MISSION_CONTROL_HOME="$mch" \
-    bash "$DASH" decide answer "$did" 1 >"$mch/blocked.out" 2>"$mch/blocked.err" || first_rc=$?
+    /bin/bash "$DASH" decide answer "$did" 1 >"$mch/blocked.out" 2>"$mch/blocked.err" || first_rc=$?
   MISSION_CONTROL_HOME="$mch" "$REPO/scripts/decision-alert" history "$did" --json >"$mch/blocked-history.json" || miss=1
   python3 - "$first_rc" "$victim" "$mch/answers/$did.json" \
     "$mch/prompts/$did.md" "$mch/blocked-history.json" <<'PY' || miss=1
@@ -2803,8 +2776,8 @@ assert not os.path.exists(sys.argv[4])
 assert json.load(open(sys.argv[5]))["decision"]["state"] == "open"
 PY
   rm -f "$mch/answers/$did.json"
-  env -u DASHBOARD_CMD_DECISIONS REPO_ROOT="$REPO" MISSION_CONTROL_HOME="$mch" \
-    bash "$DASH" decide answer "$did" 1 >"$mch/retry.out" 2>"$mch/retry.err" || miss=1
+  command /usr/bin/env -u DASHBOARD_CMD_DECISIONS REPO_ROOT="$REPO" MISSION_CONTROL_HOME="$mch" \
+    /bin/bash "$DASH" decide answer "$did" 1 >"$mch/retry.out" 2>"$mch/retry.err" || miss=1
   MISSION_CONTROL_HOME="$mch" "$REPO/scripts/decision-alert" history "$did" --json >"$mch/retry-history.json" || miss=1
   python3 - "$mch/answers/$did.json" "$mch/prompts/$did.md" "$mch/retry-history.json" <<'PY' || miss=1
 import json,sys
@@ -2823,13 +2796,13 @@ PY
     --trust structured --provenance manual --json)" || miss=1
   recover_did="$(python3 -c 'import json,sys;print(json.loads(sys.argv[1])["decision"]["id"])' "$recover_created")"
   env -u DASHBOARD_CMD_DECISIONS REPO_ROOT="$REPO" MISSION_CONTROL_HOME="$mch" \
-    bash "$DASH" collect --force decisions >/dev/null 2>&1
+    /bin/bash "$DASH" collect --force decisions >/dev/null 2>&1
   MISSION_CONTROL_HOME="$mch" "$REPO/scripts/decision-alert" resolve "$recover_did" \
     --evidence-type manual_resolution --evidence-ref mc-answer:1 \
     --source dashboard-test --json >/dev/null || miss=1
   [ ! -e "$mch/answers/$recover_did.json" ] && [ ! -e "$mch/prompts/$recover_did.md" ] || miss=1
   env -u DASHBOARD_CMD_DECISIONS REPO_ROOT="$REPO" MISSION_CONTROL_HOME="$mch" \
-    bash "$DASH" decide answer "$recover_did" 1 >"$mch/recover.out" 2>"$mch/recover.err" || miss=1
+    /bin/bash "$DASH" decide answer "$recover_did" 1 >"$mch/recover.out" 2>"$mch/recover.err" || miss=1
   python3 - "$mch/answers/$recover_did.json" "$mch/prompts/$recover_did.md" <<'PY' || miss=1
 import json,sys
 assert json.load(open(sys.argv[1]))["choice"] == 1
@@ -2855,8 +2828,8 @@ c49() { # linked transaction parent directories cannot redirect artifacts
     [ "$kind" = prompts ] && mkdir -p "$mch/answers"
     ln -s "$outside" "$mch/$kind"
     rc=0
-    env -u DASHBOARD_CMD_DECISIONS REPO_ROOT="$REPO" MISSION_CONTROL_HOME="$mch" \
-      bash "$DASH" decide answer "$did" 1 >"$mch/$kind.out" 2>"$mch/$kind.err" || rc=$?
+    command /usr/bin/env -u DASHBOARD_CMD_DECISIONS REPO_ROOT="$REPO" MISSION_CONTROL_HOME="$mch" \
+      /bin/bash "$DASH" decide answer "$did" 1 >"$mch/$kind.out" 2>"$mch/$kind.err" || rc=$?
     history="$(MISSION_CONTROL_HOME="$mch" "$REPO/scripts/decision-alert" history "$did" --json)" || { miss=1; continue; }
     count="$(find "$outside" -mindepth 1 -maxdepth 1 -type f | wc -l | tr -d ' ')"
     if [ "$rc" -eq 0 ] || [ "$count" -ne 1 ] || [ "$(cat "$outside/sentinel")" != unchanged ] || \
@@ -2885,10 +2858,10 @@ c50() { # renamed transaction directories fail before resolution or publication
       --trust structured --provenance manual --json)" || { miss=1; continue; }
     did="$(python3 -c 'import json,sys;print(json.loads(sys.argv[1])["decision"]["id"])' "$created")"
     env -u DASHBOARD_CMD_DECISIONS REPO_ROOT="$REPO" MISSION_CONTROL_HOME="$mch" \
-      bash "$DASH" collect --force decisions >/dev/null 2>&1 || { miss=1; continue; }
+      /bin/bash "$DASH" collect --force decisions >/dev/null 2>&1 || { miss=1; continue; }
     DASHBOARD_TESTING=1 env -u DASHBOARD_CMD_DECISIONS \
       REPO_ROOT="$REPO" MISSION_CONTROL_HOME="$mch" \
-      bash "$DASH" decide answer "$did" 1 >"$mch/$kind-swap.out" 2>"$mch/$kind-swap.err" &
+      /bin/bash "$DASH" decide answer "$did" 1 >"$mch/$kind-swap.out" 2>"$mch/$kind-swap.err" &
     pid=$!
     register_owned_process "$pid"
     i=0
@@ -2929,7 +2902,7 @@ c51() { # committed upstream specimens run through the real dashboard wrapper
   local mch fixtures; mch="$(newhome)"; fixtures="$REPO/dashboard/fixtures/feeders"
   if DASHBOARD_CMD_USAGE="cat '$fixtures/usage-snapshot.json'" \
      DASHBOARD_CMD_GIT="cat '$fixtures/scan-unfinished-work.json'" \
-     MISSION_CONTROL_HOME="$mch" bash "$DASH" collect --force usage git >/dev/null 2>&1 \
+     MISSION_CONTROL_HOME="$mch" /bin/bash "$DASH" collect --force usage git >/dev/null 2>&1 \
      && python3 - "$mch/data" "$fixtures" <<'PYEOF'
 import json, os, sys
 data, fixtures = sys.argv[1:]
@@ -2977,8 +2950,8 @@ json.dump({
     "data": {"pinned": rows, "counts": {"open": 2, "structured_open": 2}},
 }, open(path, "w"))
 PYEOF
-  if env -u DASHBOARD_CMD_ATTENTION REPO_ROOT="$REPO" MISSION_CONTROL_HOME="$mch" \
-       bash "$DASH" collect --force attention >/dev/null 2>&1 \
+  if command /usr/bin/env -u DASHBOARD_CMD_ATTENTION REPO_ROOT="$REPO" MISSION_CONTROL_HOME="$mch" \
+       /bin/bash "$DASH" collect --force attention >/dev/null 2>&1 \
      && python3 - "$mch/data/attention.json" <<'PYEOF'
 import json, sys
 data = json.load(open(sys.argv[1]))["data"]
@@ -3009,7 +2982,7 @@ c54() { # a feeder may finish before the test harness records its private group
   mch="$(newhome)"
   DASHBOARD_TESTING=1 DASHBOARD_TEST_REGISTER_PAUSE_MS=50 \
     DASHBOARD_CMD_GIT=/usr/bin/true MISSION_CONTROL_HOME="$mch" \
-    bash "$DASH" collect --force git >/dev/null 2>&1 || true
+    /bin/bash "$DASH" collect --force git >/dev/null 2>&1 || true
   error="$(python3 - "$mch/data/git.error.json" <<'PYEOF'
 import json, sys
 try:
@@ -3149,12 +3122,12 @@ c57() { # the loose-tree feed derives its Inbox from the chats snapshot, stays
   h="$(newhome)"
   FIX="$REPO/dashboard/fixtures/chats.json"
   MISSION_CONTROL_HOME="$h" DASHBOARD_CMD_CHATS="cat '$FIX'" \
-    bash "$DASH" collect --force chats loosetree >/dev/null 2>&1 || fails=1
+    /bin/bash "$DASH" collect --force chats loosetree >/dev/null 2>&1 || fails=1
   [ -s "$h/data/loosetree.json" ] || fails=1
   n1="$(python3 -c 'import json,sys;d=json.load(open(sys.argv[1]))["data"];print(len(d["nodes"]))' "$h/data/loosetree.json" 2>/dev/null)"
   [ "$n1" = "6" ] || fails=1
   MISSION_CONTROL_HOME="$h" DASHBOARD_CMD_CHATS="cat '$FIX'" \
-    bash "$DASH" collect --force chats loosetree >/dev/null 2>&1 || fails=1
+    /bin/bash "$DASH" collect --force chats loosetree >/dev/null 2>&1 || fails=1
   n2="$(python3 -c 'import json,sys;print(len(json.load(open(sys.argv[1]))["data"]["nodes"]))' "$h/data/loosetree.json" 2>/dev/null)"
   [ "$n2" = "$n1" ] || fails=1
   python3 - "$h" <<'PY' || fails=1
@@ -3170,14 +3143,14 @@ PY
   # resolved sources leave the Inbox
   printf '{"schema":1,"feed":"chats","ok":true,"data":{"nodes":[],"loose_ends":[]}}\n' > "$h/empty.json"
   MISSION_CONTROL_HOME="$h" DASHBOARD_CMD_CHATS="cat '$h/empty.json'" \
-    bash "$DASH" collect --force chats loosetree >/dev/null 2>&1 || fails=1
+    /bin/bash "$DASH" collect --force chats loosetree >/dev/null 2>&1 || fails=1
   n3="$(python3 -c 'import json,sys;print(len(json.load(open(sys.argv[1]))["data"]["nodes"]))' "$h/data/loosetree.json" 2>/dev/null)"
   [ "$n3" = "1" ] || fails=1
   # a chats outage never wipes the Inbox: restore rows, then break chats
   MISSION_CONTROL_HOME="$h" DASHBOARD_CMD_CHATS="cat '$FIX'" \
-    bash "$DASH" collect --force chats loosetree >/dev/null 2>&1 || fails=1
+    /bin/bash "$DASH" collect --force chats loosetree >/dev/null 2>&1 || fails=1
   MISSION_CONTROL_HOME="$h" DASHBOARD_CMD_CHATS="false" \
-    bash "$DASH" collect --force chats loosetree >/dev/null 2>&1
+    /bin/bash "$DASH" collect --force chats loosetree >/dev/null 2>&1
   n4="$(python3 -c 'import json,sys;print(len(json.load(open(sys.argv[1]))["data"]["nodes"]))' "$h/data/loosetree.json" 2>/dev/null)"
   [ "$n4" = "6" ] || fails=1
   if [ "$fails" -eq 0 ]; then ok "loose tree: inbox derivation, idempotence, prune, outage guard"
