@@ -8,7 +8,9 @@ assert "brew install shellcheck" in s, "ShellCheck install missing"
 assert "@fission-ai/openspec@1.5.0" in s, "pinned OpenSpec CLI missing"
 assert "playwright@1.62.0" in s, "pinned Playwright client missing"
 assert (root / "scripts/verify-offline.sh").is_file(), "offline verifier script required"
+assert (root / "scripts/check-verify-prerequisites.sh").is_file(), "verify prerequisites script required"
 assert (root / "CONTRIBUTING.md").is_file(), "CONTRIBUTING.md required"
+assert (root / "docs/verification/clone-to-verify.md").is_file(), "clone-to-verify deep doc required"
 assert (root / ".node-version").read_text().strip() == "22", "Node 22 pin missing"
 # Every `uses:` must be SHA-pinned (40-hex) — no mutable tag refs.
 for line in s.splitlines():

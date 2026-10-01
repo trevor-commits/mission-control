@@ -23,6 +23,9 @@ There is no separate `CONTRIBUTING` workflow beyond this file and the verifier
 below. GitHub Actions on `main` and PRs runs the same authoritative check as
 local full verify.
 
+**Deep reference:** suite inventory, draft-PR survey, and Linux vs macOS
+interpretation: [`docs/verification/clone-to-verify.md`](docs/verification/clone-to-verify.md).
+
 ## Verification profiles
 
 | Command | When to use |
@@ -64,6 +67,17 @@ Values below are enforced in `.github/workflows/verify.yml` and
 4. **`ci-workflow.test.py`** did not assert OpenSpec/Playwright version pins (now
    covered).
 5. **Node version** was implicit in workflow only (now `.node-version`).
+6. **Linux dashboard harness** stopped after a handful of checks (GNU `stat` + shell
+   function naming); absorbed from draft PR #30 into the reliability branch.
+7. **Post-verify bytecode** — accidental `scripts/__pycache__` from nested Python
+   imports is purged before the final artifact gate.
+
+### Open draft PRs (2026-10-01 survey)
+
+| PR | Topic | Notes |
+| --- | --- | --- |
+| [#31](https://github.com/trevor-commits/mission-control/pull/31) | Clone-to-verify | Primary draft; includes this deeper pass |
+| [#30](https://github.com/trevor-commits/mission-control/pull/30) | Linux harness | Merged into #31 branch; close after #31 lands |
 
 ## Safety (all contributors)
 

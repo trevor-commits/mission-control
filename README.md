@@ -32,7 +32,8 @@ The page lives at `~/.mission-control/index.html` (installed copy), refreshes it
 ## Repo notes
 
 Start with `AGENTS.md`. For **clone-to-verify** toolchain pins and CI parity, see
-`CONTRIBUTING.md`. The local governance files are intentionally present in this
+`CONTRIBUTING.md` and the deep reference `docs/verification/clone-to-verify.md`.
+The local governance files are intentionally present in this
 repo now: `PROJECT_INTENT.md`, `todo.md`, `CONTINUITY.md`, `COHERENCE.md`,
 `LINEAR.md`, and `CLAUDE.md`.
 

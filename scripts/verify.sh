@@ -66,6 +66,10 @@ source_tree_artifacts() {
   fi
 }
 
+purge_scripts_pycache() {
+  find "$ROOT/scripts" -type d -name '__pycache__' -prune -exec rm -rf {} + 2>/dev/null || true
+}
+
 python_syntax() {
   python3 - "$ROOT/scripts" <<'PY'
 from pathlib import Path
@@ -212,7 +216,7 @@ if [ $# -ne 0 ]; then
 usage: scripts/verify.sh [--self-test]
 
 Environment:
-  VERIFY_OFFLINE=1          Skip browser + Swift panel compile suites (see CONTRIBUTING.md).
+  VERIFY_OFFLINE=1          Skip browser + Swift panel compile suites (see docs/verification/clone-to-verify.md).
   VERIFY_SKIP_BROWSER=1     Skip dashboard-browser and panel-browser only.
   VERIFY_SKIP_SWIFT=1       Skip mc-panel Swift compile suites only.
 EOF
@@ -264,6 +268,7 @@ run "OpenSpec strict" openspec validate --all --strict
 run "Python syntax (auto-discovered)" python_syntax
 run "shell syntax (auto-discovered)" shell_syntax
 run "ShellCheck" shellcheck_sources
+purge_scripts_pycache
 run "source tree artifacts" source_tree_artifacts
 
 printf '\n====\nSUITES PASS=%s FAIL=%s SKIP=%s\n' "$PASS" "$FAIL" "$SKIP"
