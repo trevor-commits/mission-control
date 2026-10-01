@@ -8,8 +8,34 @@ if [[ -z "${MISSION_TEST_NATIVE_MKTEMP:-}" ]]; then
   export MISSION_TEST_NATIVE_MKTEMP
 fi
 
+mission_test_stat_mode() {
+  local path="$1" mode
+  if mode="$(stat -c '%a' "$path" 2>/dev/null)" && [ -n "$mode" ]; then
+    printf '%s\n' "$mode"
+    return 0
+  fi
+  stat -f '%Lp' "$path" 2>/dev/null
+}
+
+# Calendar date YYYY-MM-DD offset from today (BSD date -v vs GNU date -d).
+mission_test_date_ymd_offset_days() {
+  local days="${1:-0}" out
+  if out="$(date -v+"${days}d" +%Y-%m-%d 2>/dev/null)" && [ -n "$out" ]; then
+    printf '%s\n' "$out"
+    return 0
+  fi
+  date -d "today + ${days} days" +%Y-%m-%d
+}
+
 mission_test_temp_identity() {
-  stat -f '%d:%i:%u' "$1" 2>/dev/null || stat -c '%d:%i:%u' "$1" 2>/dev/null
+  # GNU stat treats -f as --filesystem and may print multi-line output to stdout
+  # before exiting non-zero; never chain with || or the identity string is corrupt.
+  local id
+  if id="$(stat -c '%d:%i:%u' "$1" 2>/dev/null)" && [ -n "$id" ]; then
+    printf '%s\n' "$id"
+    return 0
+  fi
+  stat -f '%d:%i:%u' "$1" 2>/dev/null
 }
 
 mission_test_temp_before_claim() {
