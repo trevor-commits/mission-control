@@ -21,8 +21,21 @@ function loadPlaywright() {
 
 const ROOT = path.resolve(__dirname, '..');
 const PANEL = path.join(ROOT, 'dashboard', 'panel.html');
-const CHROME = process.env.MISSION_CONTROL_CHROME ||
-  '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+function resolveChromeExecutable() {
+  const candidates = [
+    process.env.MISSION_CONTROL_CHROME,
+    '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+    '/usr/local/bin/google-chrome',
+    '/usr/bin/google-chrome',
+    '/usr/bin/chromium',
+    '/usr/bin/chromium-browser',
+  ].filter(Boolean);
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) return candidate;
+  }
+  return '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+}
+const CHROME = resolveChromeExecutable();
 const NOW = Math.floor(Date.now() / 1000);
 const SOURCE = fs.readFileSync(PANEL, 'utf8')
   .replace(/<script src="data\/[^"]+"><\/script>\s*/g, '');

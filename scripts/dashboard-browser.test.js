@@ -22,8 +22,21 @@ function loadPlaywright() {
 const ROOT = path.resolve(__dirname, '..');
 const DASH = path.join(ROOT, 'scripts', 'dashboard');
 const FIXTURES = path.join(ROOT, 'dashboard', 'fixtures');
-const CHROME = process.env.MISSION_CONTROL_CHROME ||
-  '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+function resolveChromeExecutable() {
+  const candidates = [
+    process.env.MISSION_CONTROL_CHROME,
+    '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+    '/usr/local/bin/google-chrome',
+    '/usr/bin/google-chrome',
+    '/usr/bin/chromium',
+    '/usr/bin/chromium-browser',
+  ].filter(Boolean);
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) return candidate;
+  }
+  return '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+}
+const CHROME = resolveChromeExecutable();
 const ARTIFACTS = process.env.MISSION_CONTROL_BROWSER_ARTIFACT_DIR || '';
 let passed = 0;
 

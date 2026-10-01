@@ -31,19 +31,24 @@ The page lives at `~/.mission-control/index.html` (installed copy), refreshes it
 
 ## Repo notes
 
-Start with `AGENTS.md`. The local governance files are intentionally present in
-this repo now: `PROJECT_INTENT.md`, `todo.md`, `CONTINUITY.md`, `COHERENCE.md`,
+Start with `AGENTS.md`. For **clone-to-verify** toolchain pins and CI parity, see
+`CONTRIBUTING.md`. The local governance files are intentionally present in this
+repo now: `PROJECT_INTENT.md`, `todo.md`, `CONTINUITY.md`, `COHERENCE.md`,
 `LINEAR.md`, and `CLAUDE.md`.
 
 ## Tests
 
 ```bash
-scripts/verify.sh
+PYTHONDONTWRITEBYTECODE=1 scripts/verify.sh          # full matrix (matches GitHub Actions on macOS)
+PYTHONDONTWRITEBYTECODE=1 scripts/verify-offline.sh  # portable matrix (no browser / swiftc gates)
+scripts/check-verify-prerequisites.sh full         # preflight toolchain
 ```
 
-That command runs every committed shell/Python/Node suite, the real-browser
-desktop/mobile file:// gate, the scanner self-test, strict OpenSpec validation,
-and static syntax checks. Focused suites remain available for narrow iteration.
+Full verify runs every committed shell/Python/Node suite, the real-browser
+desktop/mobile file:// gate, Swift panel compile checks, the scanner self-test,
+strict OpenSpec validation, and static syntax checks. Offline verify skips
+browser and Swift compile suites for Linux/cloud checkouts. Focused suites remain
+available for narrow iteration.
 
 ## Safety
 

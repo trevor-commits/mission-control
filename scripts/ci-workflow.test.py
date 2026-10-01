@@ -5,6 +5,11 @@ s = (root / ".github/workflows/verify.yml").read_text()
 assert re.search(r"uses: actions/setup-python@[0-9a-f]{40}", s), "pinned Python setup missing"
 assert 'python-version: "3.11"' in s, "Python 3.11 missing"
 assert "brew install shellcheck" in s, "ShellCheck install missing"
+assert "@fission-ai/openspec@1.5.0" in s, "pinned OpenSpec CLI missing"
+assert "playwright@1.62.0" in s, "pinned Playwright client missing"
+assert (root / "scripts/verify-offline.sh").is_file(), "offline verifier script required"
+assert (root / "CONTRIBUTING.md").is_file(), "CONTRIBUTING.md required"
+assert (root / ".node-version").read_text().strip() == "22", "Node 22 pin missing"
 # Every `uses:` must be SHA-pinned (40-hex) — no mutable tag refs.
 for line in s.splitlines():
     if "uses:" in line:

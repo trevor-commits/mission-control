@@ -10,6 +10,7 @@ source "$ROOT/scripts/test-temp-root.sh"
 mission_test_temp_init mission-control-verify || exit 1
 PASS=0
 FAIL=0
+SKIP=0
 
 run() {
   local label="$1"; shift
@@ -20,6 +21,29 @@ run() {
     FAIL=$((FAIL + 1))
     printf 'FAILED: %s\n' "$label" >&2
   fi
+}
+
+verify_truthy() {
+  case "${1:-}" in 1|true|yes|YES) return 0 ;; *) return 1 ;; esac
+}
+
+verify_skip_browser() {
+  verify_truthy "${VERIFY_SKIP_BROWSER:-}" || verify_truthy "${VERIFY_OFFLINE:-}"
+}
+
+verify_skip_swift() {
+  verify_truthy "${VERIFY_SKIP_SWIFT:-}" || verify_truthy "${VERIFY_OFFLINE:-}"
+}
+
+run_or_skip() {
+  local label="$1" predicate="$2"
+  shift 2
+  if "$predicate"; then
+    printf '\n== skipped: %s (VERIFY_OFFLINE or VERIFY_SKIP_* set) ==\n' "$label"
+    SKIP=$((SKIP + 1))
+    return 0
+  fi
+  run "$label" "$@"
 }
 
 python_floor() {
@@ -173,11 +197,22 @@ if [ "${1:-}" = "--self-test" ]; then
   exit $?
 fi
 if [ $# -ne 0 ]; then
-  echo "usage: scripts/verify.sh [--self-test]" >&2
+  cat >&2 <<'EOF'
+usage: scripts/verify.sh [--self-test]
+
+Environment:
+  VERIFY_OFFLINE=1          Skip browser + Swift panel compile suites (see CONTRIBUTING.md).
+  VERIFY_SKIP_BROWSER=1     Skip dashboard-browser and panel-browser only.
+  VERIFY_SKIP_SWIFT=1       Skip mc-panel Swift compile suites only.
+EOF
   exit 2
 fi
 
 cd "$ROOT" || exit 1
+if [ -d "$ROOT/node_modules/.bin" ]; then
+  PATH="$ROOT/node_modules/.bin:$PATH"
+fi
+run "source tree artifacts (pre-suite)" source_tree_artifacts
 run "Python floor (3.11+)" python_floor
 run "verify aggregator self-test" /bin/bash scripts/verify.sh --self-test
 run "automation status" /bin/bash scripts/automation-status.test.sh
@@ -207,10 +242,10 @@ run "usage watch (reset + silence)" python3 scripts/usage-watch --self-test
 run "headroom on-demand refresh" python3 scripts/headroom-refresh --self-test
 run "attention lane" /bin/bash scripts/attention-lane.test.sh
 run "queue admission" python3 scripts/queue_admission.test.py
-run "dashboard browser" node scripts/dashboard-browser.test.js
-run "panel browser" node scripts/panel-browser.test.js
-run "native panel headroom" python3 scripts/mc-panel-headroom.test.py
-run "native panel core feeds" python3 scripts/mc-panel-summary.test.py
+run_or_skip "dashboard browser" verify_skip_browser node scripts/dashboard-browser.test.js
+run_or_skip "panel browser" verify_skip_browser node scripts/panel-browser.test.js
+run_or_skip "native panel headroom" verify_skip_swift python3 scripts/mc-panel-headroom.test.py
+run_or_skip "native panel core feeds" verify_skip_swift python3 scripts/mc-panel-summary.test.py
 run "unfinished-work scanner" scripts/scan-unfinished-work --self-test
 run "jobs registry schema" python3 scripts/jobs-registry.test.py
 run "vendor hash lock" /usr/bin/shasum -a 256 -c dashboard/vendor/cytoscape.min.js.sha256
@@ -220,5 +255,5 @@ run "shell syntax (auto-discovered)" shell_syntax
 run "ShellCheck" shellcheck_sources
 run "source tree artifacts" source_tree_artifacts
 
-printf '\n====\nSUITES PASS=%s FAIL=%s\n' "$PASS" "$FAIL"
+printf '\n====\nSUITES PASS=%s FAIL=%s SKIP=%s\n' "$PASS" "$FAIL" "$SKIP"
 [ "$FAIL" -eq 0 ]
