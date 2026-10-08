@@ -78,17 +78,29 @@ page navigation does not reload rewritten data scripts; reload after a fixture
 change before asserting the new data. This was the first new browser fixture's
 failure, with no production source defect or weakened expectation.
 
-The final full local gate and focused independent repair recheck remain required
-before publication. Install only after remote-main containment, through
-`DASHBOARD_INSTALL_NO_LAUNCHD=1 scripts/dashboard install` from the stable,
-clean canonical main. First verify every unaffected installed runtime/asset
-against its existing source, preserve every prior runtime/asset/stamp and LKG
-snapshot, and retain rollback bytes before native pruning. Read back the
-complete native aggregate stamp and exact payloads. Use controlled offline
-installed CLI fixtures and installed HTML label checks; preserve services,
-private configuration, accounts, schedules and outbound approval boundaries.
-Do not install from this source worktree: the installed dashboard bakes its
-repository path and this owned lane will be released.
+The final full local gate passed all 42 suites. The focused independent recheck
+accepted all three repairs: 14 native methods passed across both Python versions,
+all 15 reviewed hashes stayed unchanged, and all owned children exited.
+Implementation `4eafbced9311fafbc07d0e2fafaf84703131fa45` is verified on remote
+main and the clean canonical checkout. Its normal guarded push also passed all
+42 suites. GitHub accepted that push under the account's configured exemption
+while its GitHub Actions `verify` status remained absent. No hosted runner or
+rules change supplied that acceptance; the local gate and server exemption are
+separate evidence.
+
+The supported aggregate installer ran with `DASHBOARD_INSTALL_NO_LAUNCHD=1`
+from stable canonical main. Fresh preflight matched all 94 preserved entries.
+All 18 installed payloads match committed bytes and private modes; the complete
+native stamp verifies the exact implementation. Installed HTML labels match,
+both prior LKG generations retain their bytes, metadata and identities, and the
+new third LKG verifies. Unaffected originals and service plists remain intact.
+Fourteen unchanged receipt methods pass against the actual installed runtime.
+Three actual installed CLI controls verify provider acceptance, dedupe with no
+new send, and malformed receipt rejection. All use disposable synthetic state
+and senders; their integrity checks pass, children exit and fixtures are removed.
+No provider request, live decision-state change or service activation was used
+to obtain this proof. Future installation must use a stable checkout because
+the native dashboard bakes that repository path.
 
 The private before-image retains 79 files (5,309,335 logical bytes), the stamp,
 pointer and both prior LKG generations. A native restore drill verifies the old
