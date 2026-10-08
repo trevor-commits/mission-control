@@ -187,6 +187,7 @@ run "dashboard demo contracts" python3 scripts/dashboard-demo.test.py
 run "state-home expansion" python3 scripts/mission-control-home.test.py
 run "CI verifier prerequisites" python3 scripts/ci-workflow.test.py
 run "decision alert" /bin/bash scripts/decision-alert.test.sh
+run "alert provider receipt durability" python3 scripts/alert-receipts.test.py
 run "rollup answer" python3 scripts/rollup-answer.test.py
 run "decision operation bounds" python3 scripts/decision-bounds.test.py
 run "ER-134 usability" /bin/bash scripts/er134-usability.test.sh

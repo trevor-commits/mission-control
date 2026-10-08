@@ -36,6 +36,35 @@ It combines usage, git, chats, and automation feeds from the ER-087 scripts into
   - `scripts/dashboard open --serve`
 - Run `--serve` when the shell opens but feeds fail to render or feed files do not load as expected.
 
+## Preserve an installed aggregate before an upgrade
+
+Verify the current 14 runtime and 4 asset bytes, then preserve the runtime
+payloads, install stamp, assets, LKG pointer and every prior release before the
+native installer can prune them. Restore into a private directory and run the
+restored `verify_install_stamp` there. Retain the live data and services in their
+current ownership; install reviewed committed source from the stable canonical
+checkout with `DASHBOARD_INSTALL_NO_LAUNCHD=1` when no service change is intended.
+
+The October 7, 2026 native drill found that `ditto` and a successful ordinary
+`setxattr` could still produce different `com.apple.provenance` on four optional
+copies outside the replacement set. Compare metadata on readback, export the
+original attribute bytes privately and preserve the unchanged originals in
+place. Restore only replaced payloads/assets/stamp and governed LKG state;
+never overwrite an unchanged compiled panel or cache with an optional copy
+whose provenance differs. Replacement payloads and retained releases still
+require exact bytes and metadata. Evidence and scope are in
+`records/2026-10-07-alert-provider-receipts.md`; revalidate this sequence when
+the native installer surface or OS copy behavior changes.
+
+For alert sender cleanup, acquire the real child handle and start identity
+before raising TERM/INT, and stop its exact new process group before calling
+`wait` or `poll`. The October 7 native controls passed with `waitid(WNOWAIT)`
+and, on Apple's Python without waitid, a zombie-state observation through ps.
+Darwin can omit an exited leader from getpgid and return EPERM when no process
+remains in its group. Verify numeric group membership; a remaining member or
+failed completion persistence cannot become a success receipt. The 14 private
+`scripts/alert-receipts.test.py` methods cover both acceptance and rejection.
+
 ## Troubleshooting
 - Feed is red:
   - Inspect `scripts/dashboard status` and `~/.mission-control/data/<feed>.error.json` first. The sidecar records the original attempt, error, and retry window; the JSON feed retains its last successful data.

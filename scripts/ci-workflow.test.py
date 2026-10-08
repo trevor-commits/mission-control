@@ -4,7 +4,10 @@ root = Path(__file__).resolve().parents[1]
 s = (root / ".github/workflows/verify.yml").read_text()
 assert re.search(r"uses: actions/setup-python@[0-9a-f]{40}", s), "pinned Python setup missing"
 assert 'python-version: "3.11"' in s, "Python 3.11 missing"
-assert "brew install shellcheck" in s, "ShellCheck install missing"
+assert "runs-on: ubuntu-latest" in s, "current Linux runner missing"
+assert "sudo apt-get install -y shellcheck" in s, "Linux ShellCheck install missing"
+assert "workflow_dispatch:" in s, "manual verification trigger missing"
+assert not re.search(r"(?m)^\s+(push|pull_request|schedule):", s), "routine tests must remain manual"
 # Every `uses:` must be SHA-pinned (40-hex) — no mutable tag refs.
 for line in s.splitlines():
     if "uses:" in line:

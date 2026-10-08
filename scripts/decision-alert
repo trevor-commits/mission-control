@@ -16,6 +16,8 @@ import hashlib
 import json
 import os
 import re
+import selectors
+import signal
 import sqlite3
 import stat
 import subprocess
@@ -50,6 +52,7 @@ _SEVERITY_RANK = {"normal": 0, "security": 1}
 ALERT_RESERVATION_LEASE_S = 60
 ALERT_BACKFILL_DEFAULT_MAX = 10
 ALERT_BACKFILL_HARD_CEILING = 25
+ALERT_RECEIPT_MAX_BYTES = 4096
 STATUS_CADENCE_S = 300
 TRUST_STATES = ("structured", "inferred")
 RESOLUTION_TYPES = (
@@ -521,7 +524,26 @@ def _receipt(con, decision_id, fingerprint):
     row = con.execute("""SELECT attempt_id,succeeded_at,message_hash
         FROM alert_receipts WHERE decision_id=? AND evidence_fingerprint=?""",
         (decision_id, fingerprint)).fetchone()
-    return dict(row) if row else None
+    if row is None:
+        return None
+    result = dict(row)
+    result.update(provider_accepted=False, verification="legacy_sender_exit")
+    event = con.execute("""SELECT evidence_type,detail_json FROM decision_events
+        WHERE decision_id=? AND evidence_fingerprint=? AND event_type='alert_success'
+          AND evidence_ref=? ORDER BY event_id DESC LIMIT 1""",
+        (decision_id, fingerprint, row["attempt_id"])).fetchone()
+    if event is not None and event["evidence_type"] == "provider_acceptance_receipt":
+        try:
+            detail = json.loads(event["detail_json"] or "null", object_pairs_hook=_unique_json_object)
+            provider = _validate_provider_receipt(
+                detail["provider_receipt"], decision_id, row["message_hash"])
+        except (ValueError, TypeError, KeyError, RecursionError, DecisionError):
+            result["verification"] = "invalid_provider_receipt"
+        else:
+            result.update(provider_accepted=True, verification="provider_accepted",
+                          provider=provider["provider"], message_id=provider["message_id"],
+                          recipient_hash=provider["recipient_hash"])
+    return result
 
 
 def _latest_attempt(con, decision_id, fingerprint):
@@ -2857,8 +2879,197 @@ def _reserve_alert(decision_id, now):
         con.close()
 
 
+def _validate_provider_receipt(value, decision_id, message_hash):
+    fields = {"schema", "provider", "provider_accepted", "decision_id",
+              "message_hash", "recipient_hash", "message_id"}
+    if (not isinstance(value, dict) or set(value) != fields or
+            type(value.get("schema")) is not int or value["schema"] != 1 or
+            value.get("provider") != "telegram" or value.get("provider_accepted") is not True or
+            value.get("decision_id") != decision_id or value.get("message_hash") != message_hash or
+            type(value.get("message_id")) is not int or value["message_id"] <= 0 or
+            not all(isinstance(value.get(key), str) and _SHA256_RE.fullmatch(value[key])
+                    for key in ("message_hash", "recipient_hash"))):
+        raise DecisionError("provider receipt is invalid or unbound")
+    return dict(value)
+
+
+def _unique_json_object(pairs):
+    value = dict(pairs)
+    if len(value) != len(pairs):
+        raise ValueError("duplicate receipt fields")
+    return value
+
+
+def _parse_provider_receipt(output, decision_id, message):
+    try:
+        if len(output) > ALERT_RECEIPT_MAX_BYTES:
+            raise ValueError("oversized receipt")
+        value = json.loads(output.decode("utf-8"), object_pairs_hook=_unique_json_object)
+    except (ValueError, UnicodeError, RecursionError):
+        raise DecisionError("provider receipt is invalid or unbound")
+    return _validate_provider_receipt(value, decision_id, _sha(message))
+
+
+def _record_sender_process(attempt_id, decision, kind, process):
+    con = _connect()
+    try:
+        _tx(con)
+        _event(con, decision["decision_id"], kind,
+               decision["evidence_fingerprint"], _now(),
+               evidence_type="owned_sender_process", evidence_ref=attempt_id,
+               detail=process)
+        con.commit()
+    except BaseException:
+        con.rollback()
+        raise
+    finally:
+        con.close()
+
+
+def _sender_exited_unreaped(proc):
+    """Keep the child PID pinned until its entire owned group has been stopped."""
+    if hasattr(os, "waitid"):
+        result = os.waitid(os.P_PID, proc.pid,
+                           os.WEXITED | os.WNOHANG | os.WNOWAIT)
+        return result is not None and result.si_pid == proc.pid
+    # Apple's older system Python omits waitid. ps observes its zombie without
+    # waitpid/poll reaping it; Darwin getpgid no longer finds an exited leader.
+    state = subprocess.check_output(
+        ["/bin/ps", "-p", str(proc.pid), "-o", "stat="],
+        stderr=subprocess.DEVNULL, text=True, timeout=3).strip()
+    return state.startswith("Z")
+
+
+def _sender_group_members(group):
+    rows = subprocess.check_output(
+        ["/bin/ps", "-e", "-o", "pid=,pgid=,stat="],
+        stderr=subprocess.DEVNULL, text=True, timeout=3).splitlines()
+    return [int(fields[0]) for row in rows if len(fields := row.split()) == 3
+            and fields[1] == str(group)]
+
+
+def _run_alert_sender(argv, timeout, attempt_id, decision):
+    """Capture one small receipt; own, interrupt and reap the fixed sender group."""
+    acquiring = True
+    pending_signal = None
+
+    def interrupted(signum, _frame):
+        nonlocal pending_signal
+        if acquiring:
+            pending_signal = signum
+            return
+        raise SystemExit(128 + signum)
+
+    handlers = {}
+    proc = None
+    process = None
+    selector = selectors.DefaultSelector()
+    deadline = time.monotonic() + timeout
+    try:
+        for signum in (signal.SIGTERM, signal.SIGINT):
+            handlers[signum] = signal.signal(signum, interrupted)
+        try:
+            if pending_signal is not None:
+                raise SystemExit(128 + pending_signal)
+            proc = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                                    start_new_session=True)
+            identity = subprocess.check_output(
+                ["/bin/ps", "-p", str(proc.pid), "-o", "pid=,lstart="],
+                stderr=subprocess.DEVNULL, text=True, timeout=3).strip()
+            group_verification = "native_getpgid"
+            try:
+                group = os.getpgid(proc.pid)
+            except ProcessLookupError:
+                if not _sender_exited_unreaped(proc):
+                    raise DecisionError("sender ownership could not be recorded")
+                group = proc.pid
+                group_verification = "new_session_unreaped_child"
+            if not identity.startswith(str(proc.pid) + " ") or group != proc.pid:
+                raise DecisionError("sender ownership could not be recorded")
+            process = {"owner": attempt_id, "pid": proc.pid, "process_group": group,
+                       "start_identity": identity, "purpose": "fixed Control alert sender",
+                       "port": None, "retention": "none", "group_verification": group_verification,
+                       "stop_method": "kill exact group while child PID is unreaped, then wait/reap"}
+        finally:
+            # Defer raising the actual signal until assignment/identity is safe.
+            # The child inherits no additional blocked signal mask.
+            acquiring = False
+            if pending_signal is not None:
+                raise SystemExit(128 + pending_signal)
+        _record_sender_process(attempt_id, decision, "alert_sender_start", process)
+        selector.register(proc.stdout, selectors.EVENT_READ)
+        output = bytearray()
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0 or not selector.select(remaining):
+                raise subprocess.TimeoutExpired(argv, timeout)
+            block = os.read(proc.stdout.fileno(), ALERT_RECEIPT_MAX_BYTES + 1 - len(output))
+            if not block:
+                break
+            output.extend(block)
+            if len(output) > ALERT_RECEIPT_MAX_BYTES:
+                raise DecisionError("provider receipt exceeded the byte limit")
+        while not _sender_exited_unreaped(proc):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise subprocess.TimeoutExpired(argv, timeout)
+            time.sleep(min(0.02, remaining))
+    finally:
+        prior_mask = signal.pthread_sigmask(signal.SIG_BLOCK, (signal.SIGTERM, signal.SIGINT))
+        try:
+            selector.close()
+            if proc is not None:
+                group_signal_denied = False
+                if proc.returncode is None:
+                    # No poll/wait has reaped this child. Its PID cannot be
+                    # reused, so the constructor's new group remains ours even
+                    # when the exited leader is absent from Darwin getpgid.
+                    try:
+                        os.killpg(proc.pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+                    except PermissionError:
+                        # Darwin can report EPERM for a group whose exited
+                        # leader is its final member. Refuse success if native
+                        # membership still shows any process in that group.
+                        group_signal_denied = bool(_sender_group_members(proc.pid))
+                    finally:
+                        proc.wait(timeout=5)
+                proc.stdout.close()
+                if process is not None:
+                    group_deadline = time.monotonic() + 1
+                    group_empty = False
+                    while time.monotonic() < group_deadline:
+                        if not _sender_group_members(process["process_group"]):
+                            group_empty = True
+                            break
+                        time.sleep(0.02)
+                    process.update(reaped=True, exit_code=proc.returncode,
+                                   group_stopped_before_reap=not group_signal_denied,
+                                   group_signal_denied=group_signal_denied, group_empty=group_empty,
+                                   retention="none" if group_empty else "cleanup-unverified",
+                                   finish_persistence_verified=True)
+                    try:
+                        _record_sender_process(attempt_id, decision, "alert_sender_finish", process)
+                    except (sqlite3.Error, DecisionError):
+                        # Keep already-captured acknowledgment bytes available
+                        # to the caller's known-acceptance/unverified branch.
+                        process["finish_persistence_verified"] = False
+        finally:
+            for signum, handler in handlers.items():
+                signal.signal(signum, handler)
+            signal.pthread_sigmask(signal.SIG_SETMASK, prior_mask)
+    return subprocess.CompletedProcess(argv, proc.returncode, bytes(output)), process
+
+
 def _finish_alert(attempt_id, decision, now, success, message,
-                  failure_category=None):
+                  failure_category=None, provider_receipt=None, sender_process=None):
+    if success:
+        provider_receipt = _validate_provider_receipt(
+            provider_receipt, decision["decision_id"], _sha(message))
+        if sender_process and (sender_process.get("finish_persistence_verified") is False or
+                               sender_process.get("group_empty") is False):
+            raise DecisionError("sender completion is unverified")
     con = _connect()
     try:
         _tx(con)
@@ -2866,6 +3077,9 @@ def _finish_alert(attempt_id, decision, now, success, message,
                           (attempt_id,)).fetchone()
         if row is None or row["state"] != "reserved":
             raise DecisionError("alert reservation is missing or already finished")
+        if (row["decision_id"] != decision["decision_id"] or
+                row["evidence_fingerprint"] != decision["evidence_fingerprint"]):
+            raise DecisionError("alert reservation binding differs")
         state = "success" if success else "failed"
         con.execute("""UPDATE alert_attempts SET state=?,failure_category=?
             WHERE attempt_id=?""", (state, failure_category, attempt_id))
@@ -2882,12 +3096,16 @@ def _finish_alert(attempt_id, decision, now, success, message,
                 ))
             _event(con, decision["decision_id"], "alert_success",
                    decision["evidence_fingerprint"], now,
-                   evidence_type="fixed_argv_receipt", evidence_ref=attempt_id)
+                   evidence_type="provider_acceptance_receipt", evidence_ref=attempt_id,
+                   detail={"provider_receipt": provider_receipt,
+                           "sender_process": sender_process})
         else:
             _event(con, decision["decision_id"], "alert_failure",
                    decision["evidence_fingerprint"], now,
                    evidence_type="send_failure", evidence_ref=attempt_id,
-                   detail={"category": failure_category or "unknown"})
+                   detail={"category": failure_category or "unknown",
+                           "provider_acceptance": "unverified",
+                           "sender_process": sender_process})
         con.commit()
     except Exception:
         con.rollback()
@@ -2971,6 +3189,8 @@ def alert(args):
                 item["would_send_error"] = str(exc)
         return {"ok": True, "mode": "preview", "eligible_count": len(preview),
                 "sent_count": 0, "failed_count": 0, "decisions": preview,
+                "provider_accepted_count": 0, "provider_receipts": [],
+                "provider_accepted_persistence_unverified_count": 0,
                 "max": max_send or None,
                 "fresh_within_s": None if decision_ids else fresh_within,
                 "bypass": "decision_id" if decision_ids else None,
@@ -2983,6 +3203,8 @@ def alert(args):
         raise DecisionError("alert sender is missing or not executable")
     counters = EgressCounters()
     sent = []
+    provider_receipts = []
+    accepted_persistence_unverified = []
     failed = []
     skipped = []
     candidates = eligible if max_send <= 0 else eligible[:max_send]
@@ -2991,6 +3213,8 @@ def alert(args):
         if not attempt_id:
             skipped.append(candidate["decision_id"])
             continue
+        provider_receipt = None
+        sender_process = None
         try:
             message = _alert_message(current, counters)
         except DecisionError:
@@ -3004,20 +3228,35 @@ def alert(args):
             # Phase 0.2: without this, the Telegram verb's button/reply paths are
             # unreachable — only a hand-typed `dismiss decision:<full-id>` works.
             num_options = len(_presentation_from_text(current.get("text")).get("options") or [])
-            result = subprocess.run(
+            result, sender_process = _run_alert_sender(
                 [sender, "decision-send", "--route", "control",
                  current["decision_id"], message, str(num_options)],
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                timeout=max(1, int(args.timeout)), check=False)
+                max(1, int(args.timeout)), attempt_id, current)
             success = result.returncode == 0
             category = None if success else "sender_exit"
+            if success:
+                provider_receipt = _parse_provider_receipt(
+                    result.stdout, current["decision_id"], message)
         except subprocess.TimeoutExpired:
             success = False; category = "timeout"
-        except OSError:
+        except (OSError, subprocess.CalledProcessError):
             success = False; category = "sender_error"
-        _finish_alert(attempt_id, current, now, success, message, category)
+        except DecisionError:
+            success = False; category = "provider_receipt_invalid"
+        try:
+            _finish_alert(attempt_id, current, now, success, message, category,
+                          provider_receipt, sender_process)
+        except (sqlite3.Error, DecisionError):
+            if provider_receipt is not None:
+                accepted_persistence_unverified.append(current["decision_id"])
+            failed.append({"id": current["decision_id"], "category": "receipt_persistence",
+                           "provider_accepted": provider_receipt is not None,
+                           "persistence_verified": False, "sender_process": sender_process})
+            continue
         if success:
             sent.append(current["decision_id"])
+            provider_receipts.append(dict(provider_receipt, attempt_id=attempt_id,
+                                          evidence_fingerprint=current["evidence_fingerprint"]))
             if current["decision_id"] in escalations:
                 # Re-ask escalation is recorded, never silent: this send was
                 # allowed through group suppression only because severity
@@ -3032,6 +3271,9 @@ def alert(args):
         "eligible_count": len(eligible),
         "attempted_count": len(candidates),
         "sent_count": len(sent),
+        "provider_accepted_count": len(provider_receipts),
+        "provider_receipts": provider_receipts,
+        "provider_accepted_persistence_unverified_count": len(accepted_persistence_unverified),
         "failed_count": len(failed),
         "sent": sent,
         "failed": failed,

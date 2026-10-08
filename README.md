@@ -35,6 +35,13 @@ Start with `AGENTS.md`. The local governance files are intentionally present in
 this repo now: `PROJECT_INTENT.md`, `todo.md`, `CONTINUITY.md`, `COHERENCE.md`,
 `LINEAR.md`, and `CLAUDE.md`.
 
+Alert success requires one bounded provider acknowledgment bound to the exact
+decision and message hash. Its metadata is committed with the existing attempt
+and receipt; old sender-exit receipts retain dedupe and display delivery as
+unverified. API acceptance does not prove user-visible delivery. A local commit
+failure after acceptance is reported separately, without creating a success
+receipt. Sender PID/group/start and completion remain in the existing event log.
+
 ## Tests
 
 ```bash

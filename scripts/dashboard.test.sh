@@ -2547,7 +2547,7 @@ c41() { # decide alert-backfill is an explicit capped operator path (stub sender
   mch="$(mktemp -d)"; sender="$mch/sender.py"; capture="$mch/send.json"
   cat > "$sender" <<'PY'
 #!/usr/bin/env python3
-import fcntl,json,os,sys
+import fcntl,hashlib,json,os,sys
 p=os.environ["DECISION_SEND_CAPTURE"]
 with open(p,"a+") as handle:
     fcntl.flock(handle,fcntl.LOCK_EX)
@@ -2556,6 +2556,9 @@ with open(p,"a+") as handle:
     except Exception: rows=[]
     rows.append(sys.argv[1:])
     handle.seek(0); handle.truncate(); json.dump(rows,handle); handle.flush()
+print(json.dumps({"schema":1,"provider":"telegram","provider_accepted":True,
+                 "decision_id":sys.argv[4],"message_hash":hashlib.sha256(sys.argv[5].encode()).hexdigest(),
+                 "recipient_hash":hashlib.sha256(b"555").hexdigest(),"message_id":51}))
 sys.exit(0)
 PY
   chmod +x "$sender"

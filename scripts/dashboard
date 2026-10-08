@@ -1369,6 +1369,8 @@ def _run_builtin_decisions(timeout_s):
             "ok": False,
             "error": aerr or "alert runner failed",
             "sent_count": 0,
+            "provider_accepted_count": 0,
+            "provider_accepted_persistence_unverified_count": 0,
             "failed_count": 0,
             "eligible_count": 0,
         }
@@ -1381,6 +1383,9 @@ def _run_builtin_decisions(timeout_s):
                         "error": None if ap.returncode == 0 else (
                             (ap.stderr or "").strip()[:200] or "alert exit %d" % ap.returncode),
                         "sent_count": int(aobj.get("sent_count") or 0),
+                        "provider_accepted_count": int(aobj.get("provider_accepted_count") or 0),
+                        "provider_accepted_persistence_unverified_count": int(
+                            aobj.get("provider_accepted_persistence_unverified_count") or 0),
                         "failed_count": int(aobj.get("failed_count") or 0),
                         "eligible_count": int(aobj.get("eligible_count") or 0),
                         "sent": aobj.get("sent") or [],

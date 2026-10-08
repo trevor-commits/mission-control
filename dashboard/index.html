@@ -1916,7 +1916,8 @@ html[data-theme="dark"] .mc-heat-l4 { background: #35b98a; }
           var receipt = decision.alert_receipt;
           var attempt = decision.alert_attempt;
           if (receipt && receipt.succeeded_at) {
-            item.appendChild(h("div", { class: "mc-row-meta" }, "Alert receipt on file"));
+            item.appendChild(h("div", { class: "mc-row-meta" },
+              receipt.provider_accepted === true ? "Provider accepted alert" : "Historical alert — delivery unverified"));
           } else if (attempt && attempt.state === "failed") {
             item.appendChild(h("div", { class: "mc-row-meta" }, "Alert attempt failed — will retry"));
           } else {
@@ -2255,11 +2256,16 @@ html[data-theme="dark"] .mc-heat-l4 { background: #35b98a; }
     try {
       var dg = guard("decisions");
       var alert = dg && dg.data && dg.data.alert;
-      if (alert && alert.eligible_count > 0 && !(alert.sent_count > 0)) {
+      if (alert && alert.provider_accepted_persistence_unverified_count > 0) {
+        alertNote = " · provider accepted " + alert.provider_accepted_persistence_unverified_count +
+          "; local receipt unverified";
+      } else if (alert && alert.provider_accepted_count > 0) {
+        alertNote = " · provider accepted " + alert.provider_accepted_count + " this cycle";
+      } else if (alert && alert.sent_count > 0) {
+        alertNote = " · " + alert.sent_count + " historical sender receipt(s) unverified";
+      } else if (alert && alert.eligible_count > 0) {
         alertNote = " · " + alert.eligible_count + " alert(s) waiting";
         if (alert.error) alertNote += " (" + String(alert.error).slice(0, 48) + ")";
-      } else if (alert && alert.sent_count > 0) {
-        alertNote = " · alerted " + alert.sent_count + " this cycle";
       }
     } catch (e) {}
     glance.appendChild(h("div", { class: "mc-glance-health" },

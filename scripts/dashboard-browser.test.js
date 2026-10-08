@@ -476,6 +476,41 @@ async function operatorUxAudit(browser, root) {
       await Promise.all([page.waitForNavigation({ waitUntil: 'load' }), page.reload({ waitUntil: 'load' })]);
       check(await page.locator('.mc-collapse').first().getAttribute('aria-expanded') === 'true', 'Automation disclosure state did not survive reload');
     });
+    await block('alert labels preserve provider acceptance and historical uncertainty', async () => {
+      const original = JSON.parse(fs.readFileSync(path.join(root, 'data', 'decisions.json'), 'utf8'));
+      const feed = JSON.parse(JSON.stringify(original));
+      const now = Math.floor(Date.now() / 1000);
+      feed.generated_epoch = now;
+      feed.generated_at = new Date(now * 1000).toISOString();
+      feed.data.pinned = feed.data.pinned.slice(0, 2);
+      feed.data.pinned[0].alert_receipt = { succeeded_at: now, provider_accepted: true };
+      feed.data.pinned[1].alert_receipt = { succeeded_at: now, provider_accepted: false };
+      feed.data.alert = { sent_count: 1, provider_accepted_count: 1, failed_count: 0, eligible_count: 2 };
+      try {
+        writeStateFeed(root, 'decisions', feed);
+        await page.goto(url('home'), { waitUntil: 'load' });
+        await page.reload({ waitUntil: 'load' });
+        check(await page.getByText('Provider accepted alert', { exact: true }).count() > 0,
+          'accepted provider receipt lacks its truthful label');
+        check(await page.getByText('Historical alert — delivery unverified', { exact: true }).count() > 0,
+          'historical sender-only receipt is presented as confirmed delivery');
+        check((await page.locator('.mc-glance-health').innerText()).includes('provider accepted 1 this cycle'),
+          'accepted cycle count lost its provider qualification');
+        feed.data.alert = { sent_count: 2, failed_count: 0, eligible_count: 2 };
+        writeStateFeed(root, 'decisions', feed);
+        await page.reload({ waitUntil: 'load' });
+        check((await page.locator('.mc-glance-health').innerText()).includes('historical sender receipt(s) unverified'),
+          'legacy cycle count is presented as confirmed delivery');
+        feed.data.alert = { sent_count: 0, provider_accepted_count: 0,
+          provider_accepted_persistence_unverified_count: 1, failed_count: 1, eligible_count: 2 };
+        writeStateFeed(root, 'decisions', feed);
+        await page.reload({ waitUntil: 'load' });
+        check((await page.locator('.mc-glance-health').innerText()).includes('provider accepted 1; local receipt unverified'),
+          'provider acceptance followed by uncertain persistence is hidden');
+      } finally {
+        writeStateFeed(root, 'decisions', original);
+      }
+    });
   } finally {
     await page.close();
   }

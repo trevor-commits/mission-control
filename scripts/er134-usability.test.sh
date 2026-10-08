@@ -442,7 +442,7 @@ cp "$ROOT/scripts/mission_control_common.py" "$ALERT_TMP/repo/scripts/mission_co
 cp "$ROOT/scripts/queue_admission.py" "$ALERT_TMP/repo/scripts/queue_admission.py"
 cat > "$ALERT_TMP/sender" <<'SEND'
 #!/usr/bin/env python3
-import json,os,sys
+import hashlib,json,os,sys
 p=os.environ["ALERT_CAPTURE"]
 rows=[]
 if os.path.exists(p):
@@ -450,6 +450,9 @@ if os.path.exists(p):
   except Exception: rows=[]
 rows.append(sys.argv[1:])
 json.dump(rows, open(p,"w"))
+print(json.dumps({"schema":1,"provider":"telegram","provider_accepted":True,
+                 "decision_id":sys.argv[4],"message_hash":hashlib.sha256(sys.argv[5].encode()).hexdigest(),
+                 "recipient_hash":hashlib.sha256(b"555").hexdigest(),"message_id":51}))
 SEND
 chmod +x "$ALERT_TMP/sender"
 export ALERT_CAPTURE="$ALERT_TMP/capture.json"
