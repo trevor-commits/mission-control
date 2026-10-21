@@ -13,3 +13,14 @@ Provider auth status: loggedIn true, authMethod oauth_token, firstParty, no API 
 Publication preflight: repo PUBLIC, default main, only workflow_dispatch trigger, ubuntu-latest standard runner. No hosted workflow dispatched or trigger changed.
 Delivery evidence: exact remote containment, final normal gate and live no-call hold readback are recorded privately at /Users/gillettes/.codex/automation-state/unfinished-work-review/repair-delivery.json. Source publication does not imply account recovery. Existing installed dashboard routes extract-outcomes to the canonical source checkout; no aggregate installer or service restart is needed.
 Rollback: disable Tier2 through the existing set-enabled0 control before reverting source that predates the access hold; restore prior exact extractor/skill bytes. Keep the daily direct-source review unless Trevor stops it. Prior heartbeat prompt and runtime files are preserved privately under the existing unfinished-work-review state directory.
+
+
+## Hosted verification platform repair
+
+The normal42-suite Mac gate passed and2028106 reached origin/main. GitHub accepted the direct push under its configured bypass while the expected Verify status was absent. The existing manual public workflow was dispatched as run39644561367 to obtain that proof, not treated as green from the push.
+
+That run failed27/42 suites passing. Logs prove the workflow used Ubuntu for required macOS AppKit, Keychain, plutil and Chrome-path checks. Extractor assertions passed; its cleanup also relies on the Mac test-root contract. No test was removed or weakened.
+
+The verification job now uses the standard macos-15 label, Homebrew ShellCheck, and an explicit native prerequisite check. The existing manual-only trigger, one job,20-minute bound, pinned actions and no-mutation permission remain. The focused workflow test accepts the Mac configuration and rejects Ubuntu/Linux package setup. No deployment/operational workflow changed.
+
+GitHub's current runner reference lists macos-15 as standard and states standard runners are free in public repositories: https://docs.github.com/en/actions/reference/runners/github-hosted-runners . Repository visibility was verified PUBLIC. This is a bounded verification run, not recurring CI activation. Preserve the failed Ubuntu evidence; final Mac CI status belongs in the existing private delivery receipt.

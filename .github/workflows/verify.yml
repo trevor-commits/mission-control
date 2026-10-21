@@ -16,7 +16,7 @@ concurrency:
 
 jobs:
   verify:
-    runs-on: ubuntu-latest
+    runs-on: macos-15
     timeout-minutes: 20
 
 
@@ -40,7 +40,14 @@ jobs:
 
 
       - name: Install required ShellCheck
-        run: sudo apt-get update && sudo apt-get install -y shellcheck
+        run: brew install shellcheck
+
+
+      - name: Verify native test prerequisites
+        run: |
+          xcrun --find swiftc
+          test -x /usr/bin/security
+          test -x "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
 
 
       - name: Install the pinned OpenSpec CLI

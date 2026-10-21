@@ -4,8 +4,21 @@ root = Path(__file__).resolve().parents[1]
 s = (root / ".github/workflows/verify.yml").read_text()
 assert re.search(r"uses: actions/setup-python@[0-9a-f]{40}", s), "pinned Python setup missing"
 assert 'python-version: "3.11"' in s, "Python 3.11 missing"
-assert "runs-on: ubuntu-latest" in s, "current Linux runner missing"
-assert "sudo apt-get install -y shellcheck" in s, "Linux ShellCheck install missing"
+def native_prerequisites(workflow):
+    assert "runs-on: macos-15" in workflow, "AppKit/Keychain tests require standard macOS"
+    assert "brew install shellcheck" in workflow, "macOS ShellCheck install missing"
+    assert "xcrun --find swiftc" in workflow, "native compiler preflight missing"
+    assert 'test -x "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"' in workflow, "Chrome preflight missing"
+
+native_prerequisites(s)
+for broken in (s.replace("runs-on: macos-15", "runs-on: ubuntu-latest"),
+               s.replace("brew install shellcheck", "sudo apt-get install -y shellcheck")):
+    try:
+        native_prerequisites(broken)
+    except AssertionError:
+        pass
+    else:
+        raise AssertionError("incompatible runner/prerequisite must fail")
 assert "workflow_dispatch:" in s, "manual verification trigger missing"
 assert not re.search(r"(?m)^\s+(push|pull_request|schedule):", s), "routine tests must remain manual"
 # Every `uses:` must be SHA-pinned (40-hex) — no mutable tag refs.
