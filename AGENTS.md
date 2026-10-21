@@ -2,7 +2,7 @@
 
 <!-- agent-entry: shared-v1 -->
 
-Use `/Users/gillettes/.codex/AGENTS.md` as Trevor's shared contract if it is not already in context. This repository owns Mission Control source and the existing loose-ends workflow; `/Users/gillettes/.mission-control` is installed runtime state, not a substitute source checkout.
+Use `/Users/gillettes/.codex/AGENTS.md` as Trevor's shared contract when that file is available (typically on Trevor's Mac). Cloud or Linux checkouts should treat this repo's `AGENTS.md`, `PROJECT_INTENT.md`, and `todo.md` as authoritative when the home-directory contract is not present. This repository owns Mission Control source and the existing loose-ends workflow; `/Users/gillettes/.mission-control` (or `$HOME/.mission-control` on the host) is installed runtime state, not a substitute source checkout.
 
 - `PROJECT_INTENT.md`, `notes/DIRECTION-2026-07-04.md`, and `docs/MISSION_CONTROL_PLAN.md` explain project direction. Read the portion relevant to the current decision.
 - `todo.md` under `## Active Next Steps` is the work queue. Its branch, issue, and testing ledgers also hold current state; read them when relevant. `STATE.md` is generated, so verify Git when it disagrees.
