@@ -107,3 +107,15 @@ DASHBOARD_INSTALL_ACTIVATE_GATED=1 \
   REPO_ROOT="$PWD" \
   scripts/dashboard install
 ```
+
+## Provider access denial and newer answers — October 21, 2026
+
+A synthetic installed-wrapper probe returned HTTP 403 with subscription access disabled by the organization. No private transcript was sent in that probe. Generic failure counts previously concealed this cause.
+
+A structured 401 or 403 now stops the entire model batch and writes the private content-free `outcome-extractor/provider-access.json` hold. Later runs make zero model calls while that file exists. Corrupt holds remain blocking. Deterministic ingest/export and native daily Codex review remain available; this is degraded coverage, not successful Tier 2 extraction. The hold applies to primary and escalation calls. Historical failed attempts remain historical failures.
+
+Restore the account's supported subscription access outside the review. Then use the existing `chat-graph extract-outcomes --set-enabled 1 --json` operator command to clear the hold, and run one bounded authorized proof. Never switch models, introduce paid API credentials, or clear the hold on a timer. Revalidate this handling when the Claude JSON error-envelope schema or authentication route changes.
+
+The extractor's assistant-only taxonomy cannot prove whether Trevor answered in a newer user message or another chat. The daily review and loose-ends skill must check the original question, later user replies, structured answer events, and linked/newer related chats before asking. Record exact answer provenance in the existing ledger; preserve unresolved agent follow-through. Missing access is unknown, not an unanswered question.
+
+Daily 08:00 Pacific was explicitly confirmed in thread `01a15e1d-56ed-78d2-811d-19817731d768`. The existing heartbeat retains this cadence and performs the answer check. Its source review remains the fallback while external provider access is blocked.

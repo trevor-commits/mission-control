@@ -21,6 +21,8 @@ One skill, four tools: Claude Code `/loose-ends`, Codex `$loose-ends`, Cursor `/
    finished: `done <id>` (only works when children are closed). No approval
    needed to record. The Mission Control "Loose Ends" tab is the live board.
 1. **List.** Inside a repo run `loose-ends --repo "$PWD"`, else `loose-ends`. Show Trevor the table as printed. The two noise kinds (`register_unverified`, `chat_open_end`) are hidden. `--all-kinds` restores them. For the hierarchical view, run `loose-tree board`.
+Before presenting a question as unanswered, read newer user messages in its source and linked continuation chats. Search related newer chats for the exact subject, including structured question replies after the last assistant summary. Record the answer source and time on the existing item. Answered, approved, deferred, cancelled, or completed questions must not be repeated. Keep unresolved agent work open. Missing access means answer status unknown, not proof Trevor has not answered. Do not infer broad approval from a reply about another item.
+
 2. **Pick one.** The item Trevor named, else row 1. `loose-ends show <n>` gives the text, source chat, reopen and read commands, and the resolve command.
 3. **Decide: close or prompt.** Close it now only if it is bounded, reversible, inside this repo, and verifiable in this session (the contract's autonomous-fix rule). Anything destructive, cross-repo, credential-bearing, or decision-shaped gets a prompt instead. Say which path and why in one sentence.
 4. **Close path.** Do the work → run the verification → write the durable record (`todo.md` line moved under `## Completed` with date and evidence, or the item's own record) → `loose-ends resolve <n>` → closeout card.

@@ -99,6 +99,11 @@ elif behavior == "defer_slow":
     time.sleep(int(os.environ.get("CLAUDE_OAUTH_LOCK_TIMEOUT", "1")) + 0.2)
     sys.stderr.write("claude-oauth-lock: another claude holds the OAuth lock\n")
     sys.exit(75)
+elif behavior in ("denied", "auth"):
+    print(json.dumps({"is_error": True,
+                      "api_error_status": 403 if behavior == "denied" else 401,
+                      "result": "PRIVATE_ERROR_MUST_NOT_BE_PERSISTED"}))
+    sys.exit(1)
 elif behavior == "invalid":
     print("not-json")
     sys.exit(0)
@@ -1069,6 +1074,88 @@ then
   pass "changed source plus Tier 2 failure makes exact current Tier 1 latest"
 else
   fail "exact-tail Tier 1 failure fallback"
+fi
+
+# Provider-wide access denial stops after one call and persists across tails/runs.
+new_env
+SID_ACCESS_A="10101010-1010-4010-8010-101010101010"
+SID_ACCESS_B="20202020-2020-4020-8020-202020202020"
+write_claude_source "$SID_ACCESS_A" structured
+write_claude_source "$SID_ACCESS_B" structured
+seed_high_value "$SID_ACCESS_A"
+seed_high_value "$SID_ACCESS_B"
+if PYTHONPATH="$HERE" python3 - "$CG" <<'PYTEST'
+import contextlib, importlib.machinery, io, json, os, pathlib, sys
+from unittest import mock
+import outcome_extractor as extractor
+
+graph = importlib.machinery.SourceFileLoader("chat_graph_access", sys.argv[1]).load_module()
+for behavior, expected in (("denied", "access_denied"), ("auth", "auth_required")):
+    os.environ["STUB_BEHAVIOR"] = behavior
+    reply = extractor._invoke_model("fictional input", extractor.DEFAULT_MODEL, 8)
+    assert reply["status"] == expected, reply
+    assert "PRIVATE" not in json.dumps(reply)
+
+def run():
+    output = io.StringIO()
+    with contextlib.redirect_stdout(output):
+        assert extractor.run(graph, ["--days", "7", "--limit", "20", "--json"]) == 0
+    return json.loads(output.getvalue())
+
+os.environ["STUB_BEHAVIOR"] = "denied"
+first = run()
+assert first["calls"] == 1 and first["failures"] == 1 and first["access_blocked"], first
+block = pathlib.Path(extractor._access_block_path())
+assert json.loads(block.read_text())["status"] == "access_denied"
+assert "PRIVATE" not in block.read_text()
+assert block.stat().st_mode & 0o777 == 0o600
+assert json.loads(pathlib.Path(extractor._run_marker_path()).read_text())["status"] == "access_blocked"
+with mock.patch.object(extractor, "_invoke_model", side_effect=AssertionError("must not call")):
+    second = run()
+assert second["calls"] == 0 and second["access_blocked"], second
+# Corrupt holds remain blocked rather than silently permitting another call.
+block.write_text("broken")
+with mock.patch.object(extractor, "_invoke_model", side_effect=AssertionError("must not call")):
+    assert run()["access_blocked"]
+# Failed recovery persistence must leave the access hold intact.
+with mock.patch.object(extractor, "_atomic_json", side_effect=OSError("fixture")):
+    try:
+        extractor._set_enabled(True)
+    except OSError:
+        pass
+    else:
+        raise AssertionError("recovery write should fail")
+assert block.exists()
+# A known calibrated operator recovery clears only the provider hold.
+extractor._atomic_json(extractor._config_path(), {
+    "schema": "mission-control/outcome-extractor-config/v1", "enabled": True,
+    "daily_call_cap": 20, "daily_token_cap": 100000,
+    "providers": {p: True for p in extractor.PROVIDERS},
+})
+extractor._set_enabled(True)
+assert not block.exists()
+os.environ["STUB_BEHAVIOR"] = "success"
+recovered = run()
+assert recovered["successes"] == 2, recovered
+# An escalation denial also stops the run and keeps no inferred success.
+extractor._block_provider_access("auth_required")
+assert run()["calls"] == 0
+extractor._set_enabled(True)
+responses = iter([
+    {"status": "success", "latency_ms": 0, "result": {
+        "did": [], "left_open": [], "needs_trevor": ["provide_input"],
+        "confidence": 0.5, "ambiguity": True}},
+    {"status": "access_denied", "latency_ms": 0},
+])
+os.environ["MORNING_BRIEF_LLM_TEST_PROMPT_VERSION"] = "99"
+with mock.patch.object(extractor, "_invoke_model", side_effect=lambda *_: next(responses)):
+    escalated = run()
+assert escalated["calls"] == 2 and escalated["access_blocked"] and escalated["successes"] == 0, escalated
+PYTEST
+then
+  pass "provider denial blocks primary, escalation and later runs; explicit recovery works"
+else
+  fail "provider-wide access hold and recovery"
 fi
 
 # The extractor's own lock and model latency cannot hold the collector DB lock.

@@ -344,6 +344,21 @@ def _run_marker_path():
     return os.path.join(_state_home(), "outcome-extractor", "last-run.json")
 
 
+def _access_block_path():
+    return os.path.join(_state_home(), "outcome-extractor", "provider-access.json")
+
+
+def _block_provider_access(status):
+    # Content-free, provider-wide hold: changing sessions must not retry a 403.
+    _atomic_json(_access_block_path(), {
+        "schema": 1, "status": status, "blocked_at": int(time.time()),
+    }, private_parent=True)
+
+
+def _provider_access_blocked():
+    return os.path.lexists(_access_block_path())
+
+
 def _atomic_json(path, value, private_parent=False):
     parent = os.path.dirname(os.path.abspath(path))
     os.makedirs(parent, mode=0o700, exist_ok=True)
@@ -530,6 +545,12 @@ def _set_enabled(enabled):
     config["enabled"] = bool(enabled)
     config["updated_at"] = int(time.time())
     _atomic_json(_config_path(), config, private_parent=True)
+    if enabled:
+        # Clear only after configuration persistence succeeds.
+        try:
+            os.unlink(_access_block_path())
+        except FileNotFoundError:
+            pass
     return config
 
 
@@ -569,10 +590,18 @@ def _invoke_model(prompt, model, timeout_s):
     latency = int((time.monotonic() - started) * 1000)
     if completed.returncode == 75 or "holds the OAuth lock" in stderr:
         return {"status": "deferred", "latency_ms": latency}
+    try:
+        outer = json.loads(stdout)
+    except (TypeError, ValueError):
+        outer = None
+    if isinstance(outer, dict) and outer.get("is_error"):
+        status = outer.get("api_error_status")
+        if type(status) is int and status in (401, 403):
+            return {"status": "access_denied" if status == 403 else "auth_required",
+                    "latency_ms": latency}
     if completed.returncode != 0:
         return {"status": "failed", "latency_ms": latency}
     try:
-        outer = json.loads(stdout)
         if not isinstance(outer, dict) or outer.get("is_error"):
             raise ValueError("model result envelope")
         result = outer.get("structured_output")
@@ -976,6 +1005,14 @@ def run(graph, args):
         else:
             print("chat-graph: Tier 2 disabled; Tier 1 remains active")
         return 0
+    if _provider_access_blocked():
+        summary["access_blocked"] = True
+        summary["provider_skips"] = 1
+        _health(graph, "access_blocked", provider_skips=1)
+        _write_run_marker(summary, "access_blocked")
+        print(json.dumps(summary, sort_keys=True) if parsed.json else
+              "chat-graph: provider access blocked; Tier 1 remains active")
+        return 0
     if not _acquire_lock(graph):
         summary["lock_skip"] = True
         _health(graph, "lock_skip", lock_skips=1)
@@ -1120,9 +1157,14 @@ def run(graph, args):
                 summary["failures"] += 1
                 _finish_call(graph, response["status"], estimated_input,
                              latency_ms=response.get("latency_ms", 0), failures=1)
-                _record_attempt(graph, sid, provider, tier1["tail_hash"], cache_key,
-                                response["status"], FAILURE_RETRY_S)
+                if response["status"] not in ("access_denied", "auth_required"):
+                    _record_attempt(graph, sid, provider, tier1["tail_hash"], cache_key,
+                                    response["status"], FAILURE_RETRY_S)
                 _observe_tier1(graph, sid, tier1["tail_hash"])
+                if response["status"] in ("access_denied", "auth_required"):
+                    _block_provider_access(response["status"])
+                    summary["access_blocked"] = True
+                    break
                 continue
             clean = _clean_result(response["result"], allow_ambiguous_empty=True)
             if clean is None:
@@ -1175,6 +1217,17 @@ def run(graph, args):
                 summary["escalations"] += 1
                 _health(graph, "escalating", escalations=1)
                 second = _invoke_model(prompt, escalation_model, timeout_s)
+                if second["status"] in ("access_denied", "auth_required"):
+                    if sample_mode:
+                        sample_observations.append(_sample_row(
+                            provider, escalation_model, second, second_estimate))
+                    summary["failures"] += 1
+                    _finish_call(graph, second["status"], second_estimate,
+                                 latency_ms=second.get("latency_ms", 0), failures=1)
+                    _observe_tier1(graph, sid, tier1["tail_hash"])
+                    _block_provider_access(second["status"])
+                    summary["access_blocked"] = True
+                    break
                 if second["status"] == "model_policy":
                     if sample_mode:
                         sample_observations.append(_sample_row(
@@ -1277,6 +1330,7 @@ def run(graph, args):
         summary["calibration_path"] = os.path.abspath(parsed.calibration_out)
 
     marker_status = (
+        "access_blocked" if summary.get("access_blocked") else
         "completed_with_failures" if summary["failures"] else
         "uncalibrated" if summary["uncalibrated_skips"] else
         "budget_limited" if summary["budget_skips"] else
