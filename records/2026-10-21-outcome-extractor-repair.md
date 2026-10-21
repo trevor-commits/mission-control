@@ -24,3 +24,13 @@ That run failed27/42 suites passing. Logs prove the workflow used Ubuntu for req
 The verification job now uses the standard macos-15 label, Homebrew ShellCheck, and an explicit native prerequisite check. The existing manual-only trigger, one job,20-minute bound, pinned actions and no-mutation permission remain. The focused workflow test accepts the Mac configuration and rejects Ubuntu/Linux package setup. No deployment/operational workflow changed.
 
 GitHub's current runner reference lists macos-15 as standard and states standard runners are free in public repositories: https://docs.github.com/en/actions/reference/runners/github-hosted-runners . Repository visibility was verified PUBLIC. This is a bounded verification run, not recurring CI activation. Preserve the failed Ubuntu evidence; final Mac CI status belongs in the existing private delivery receipt.
+
+## Authorized Codex replacement
+
+Trevor requested the same extractor use Codex instead of Claude. Scope: replace only the classifier engine and its private access hold, preserving source flags, budgets, deterministic Tier 1, newer-answer review, existing schedules and foreground model/access settings. Current clean main checkout is reused; integration target origin/main. Exit condition: affected tests, full required gate, remote containment and one bounded uncached installed Codex result. Natural-run acceptance remains separate.
+
+The bundled CLI succeeded with fictional JSON using gpt-6.1-sol/max and the existing local desktop route. Homebrew CLI probes rejected that selected model, so production pins the bundled executable. Historical Claude denial remains preserved. Cache version and provider identity isolate old results. No provider fallback or new scheduler is added. Rollback: revert this migration commit; the historical Claude hold will resume blocking calls rather than retrying its account failure.
+
+Validation and live delivery receipt: private `unfinished-work-review/codex-delivery.json`; report and checkpoint retain natural-run acceptance.
+
+Observed manual installed proof: days=1, limit=1; 25 candidate sources inspected, 11 eligible, one uncached call, one success, zero failures. Focused extractor suite passes, including credential stripping, loopback-only route, tool/incomplete response rejection and historical Claude-hold preservation. Full pre-push verification and remote containment are recorded in the private delivery receipt after completion.

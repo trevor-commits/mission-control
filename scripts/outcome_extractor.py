@@ -16,18 +16,21 @@ import os
 import subprocess
 import tempfile
 import time
+import signal
 
 from mission_control_common import (NARRATIVE, EgressCounters,
                                     process_start_identity,
                                     sanitize_model_messages, sanitize_text)
 from outcome_sources import PROVIDERS, read_messages, recent_sources
 
-EXTRACTOR_VERSION = 1
+EXTRACTOR_VERSION = 2
 PROMPT_VERSION = 3
 EGRESS_POLICY_VERSION = 3
-DEFAULT_MODEL = "claude-opus-5"
-DEFAULT_ESCALATION_MODEL = "claude-opus-5"
-DEFAULT_CLAUDE = os.path.expanduser("~/.local/bin/claude")
+DEFAULT_MODEL = "gpt-6.1-sol"
+DEFAULT_ESCALATION_MODEL = DEFAULT_MODEL
+DEFAULT_CODEX = "/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex"
+DEFAULT_REASONING = "max"
+CODEX_INPUT_OVERHEAD = 20000
 DEFAULT_MAX_OUTPUT_TOKENS = 512
 MAX_MODEL_OUTPUT_BYTES = 16 * 1024
 LOCK_STALE_S = 30 * 60
@@ -328,7 +331,7 @@ def _model_command():
         # Test mode is a synthetic-only escape hatch.  It must never fall back
         # to the installed subscription wrapper when a fixture forgot its stub.
         return os.path.expanduser(configured) if configured else ""
-    return DEFAULT_CLAUDE
+    return DEFAULT_CODEX
 
 
 def _state_home():
@@ -345,7 +348,7 @@ def _run_marker_path():
 
 
 def _access_block_path():
-    return os.path.join(_state_home(), "outcome-extractor", "provider-access.json")
+    return os.path.join(_state_home(), "outcome-extractor", "codex-provider-access.json")
 
 
 def _block_provider_access(status):
@@ -560,64 +563,127 @@ def _invoke_model(prompt, model, timeout_s):
     command = _model_command()
     if not (os.path.isfile(command) and os.access(command, os.X_OK)):
         return {"status": "unavailable", "latency_ms": 0}
-    argv = [
-        command, "-p", "--model", model, "--output-format", "json",
-        "--json-schema", json.dumps(_RESULT_SCHEMA, sort_keys=True,
-                                     separators=(",", ":")),
-        "--no-session-persistence", "--tools", "",
-    ]
-    child_env = dict(os.environ)
-    # The installed wrapper otherwise waits 900s for OAuth serialization while
-    # this command times out much sooner. Force wrapper defer to happen first.
-    child_env["CLAUDE_OAUTH_LOCK_TIMEOUT"] = str(max(1, min(60, timeout_s - 5)))
     started = time.monotonic()
     try:
-        with tempfile.TemporaryFile(mode="w+b") as stdout_file, \
+        with tempfile.TemporaryDirectory(prefix="outcome-codex-") as scratch, \
+                tempfile.TemporaryFile(mode="w+b") as stdout_file, \
                 tempfile.TemporaryFile(mode="w+b") as stderr_file:
-            completed = subprocess.run(
-                argv, input=prompt.encode("utf-8"), stdout=stdout_file,
-                stderr=stderr_file, timeout=timeout_s, check=False, env=child_env)
-            stdout_size = os.fstat(stdout_file.fileno()).st_size
-            stderr_size = os.fstat(stderr_file.fileno()).st_size
-            if stdout_size > MAX_MODEL_OUTPUT_BYTES or stderr_size > MAX_MODEL_OUTPUT_BYTES:
-                return {"status": "output_too_large",
-                        "latency_ms": int((time.monotonic() - started) * 1000)}
-            stdout_file.seek(0); stderr_file.seek(0)
+            schema_path = os.path.join(scratch, "schema.json")
+            _atomic_json(schema_path, _RESULT_SCHEMA)
+            argv = [command, "exec", "--ignore-user-config", "--ignore-rules",
+                    "--strict-config", "--ephemeral", "--skip-git-repo-check",
+                    "--sandbox", "read-only", "--json", "--color", "never",
+                    "--model", model, "-C", scratch, "--output-schema", schema_path]
+            # Reuse the existing bounded Codex auditor contract. This affects
+            # only the classifier child, never Trevor's interactive settings.
+            for feature in (
+                    "apps", "auth_elicitation", "browser_use", "browser_use_external",
+                    "browser_use_full_cdp_access", "computer_use", "hooks",
+                    "image_generation", "in_app_browser", "memories", "multi_agent",
+                    "multi_agent_v2", "plugins", "remote_plugin",
+                    "request_permissions_tool", "shell_snapshot", "shell_tool",
+                    "tool_call_mcp_elicitation", "tool_suggest", "unified_exec",
+                    "workspace_dependencies", "view_image", "code_mode",
+                    "code_mode_host", "skill_search"):
+                argv.extend(("--disable", feature))
+            settings = [
+                'approval_policy="never"', "project_doc_max_bytes=0",
+                "include_apps_instructions=false",
+                "include_collaboration_mode_instructions=false",
+                "include_environment_context=false", "include_permissions_instructions=false",
+                'shell_environment_policy.inherit="none"', 'web_search="disabled"',
+                "mcp_servers={}", 'forced_login_method="chatgpt"',
+                'model_reasoning_effort="%s"' % DEFAULT_REASONING,
+            ]
+            # Preserve only the installed desktop route, never arbitrary tools,
+            # hooks or provider credentials from the user's configuration.
+            if not _flag("MORNING_BRIEF_LLM_TESTING", False):
+                config_path = os.path.join(os.environ.get(
+                    "CODEX_HOME", os.path.expanduser("~/.codex")), "config.toml")
+                route = None
+                with open(config_path, encoding="utf-8") as handle:
+                    for line in handle:
+                        line = line.strip()
+                        if line.startswith("["):
+                            break
+                        key, separator, value = line.partition("=")
+                        if separator and key.strip() == "openai_base_url":
+                            # Accept only a JSON-compatible quoted top-level URL.
+                            # Other TOML forms fail closed, never use a guessed route.
+                            route = json.loads(value.strip())
+                if route:
+                    from urllib.parse import urlsplit
+                    parsed = urlsplit(route)
+                    if (parsed.scheme != "http" or parsed.hostname not in
+                            ("127.0.0.1", "localhost", "::1") or parsed.username or
+                            parsed.password or parsed.query or parsed.fragment):
+                        return {"status": "model_policy", "latency_ms": 0}
+                    settings.append("openai_base_url=" + json.dumps(route))
+            for setting in settings:
+                argv.extend(("-c", setting))
+            argv.append("-")
+            child_env = dict(os.environ)
+            for key in ("OPENAI_API_KEY", "CODEX_API_KEY", "OPENAI_BASE_URL"):
+                child_env.pop(key, None)
+            proc = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=stdout_file,
+                                    stderr=stderr_file, env=child_env,
+                                    start_new_session=True, cwd=scratch)
+            try:
+                proc.communicate(prompt.encode("utf-8"), timeout=timeout_s)
+            except subprocess.TimeoutExpired:
+                # The process group belongs exclusively to this call.
+                os.killpg(proc.pid, signal.SIGKILL)
+                proc.wait()
+                return {"status": "failed", "latency_ms": int(
+                    (time.monotonic() - started) * 1000)}
+            if (os.fstat(stdout_file.fileno()).st_size > MAX_MODEL_OUTPUT_BYTES or
+                    os.fstat(stderr_file.fileno()).st_size > MAX_MODEL_OUTPUT_BYTES):
+                return {"status": "output_too_large", "latency_ms": int(
+                    (time.monotonic() - started) * 1000)}
+            stdout_file.seek(0)
             stdout = stdout_file.read(MAX_MODEL_OUTPUT_BYTES).decode("utf-8", "replace")
-            stderr = stderr_file.read(MAX_MODEL_OUTPUT_BYTES).decode("utf-8", "replace")
-    except (OSError, subprocess.TimeoutExpired):
+    except (OSError, ValueError):
         return {"status": "failed", "latency_ms": int((time.monotonic() - started) * 1000)}
     latency = int((time.monotonic() - started) * 1000)
-    if completed.returncode == 75 or "holds the OAuth lock" in stderr:
+    if proc.returncode == 75:
         return {"status": "deferred", "latency_ms": latency}
     try:
-        outer = json.loads(stdout)
-    except (TypeError, ValueError):
-        outer = None
-    if isinstance(outer, dict) and outer.get("is_error"):
-        status = outer.get("api_error_status")
-        if type(status) is int and status in (401, 403):
-            return {"status": "access_denied" if status == 403 else "auth_required",
-                    "latency_ms": latency}
-    if completed.returncode != 0:
-        return {"status": "failed", "latency_ms": latency}
-    try:
-        if not isinstance(outer, dict) or outer.get("is_error"):
-            raise ValueError("model result envelope")
-        result = outer.get("structured_output")
-        if result is None:
-            result = outer.get("result")
-            if isinstance(result, str):
-                result = json.loads(result)
-        if not isinstance(result, dict):
-            raise ValueError("model result object")
-        usage = outer.get("usage") if isinstance(outer.get("usage"), dict) else {}
-        return {
-            "status": "success", "result": result, "latency_ms": latency,
-            "input_tokens": int(usage.get("input_tokens") or 0),
-            "output_tokens": int(usage.get("output_tokens") or 0),
-        }
-    except (TypeError, ValueError, json.JSONDecodeError):
+        events = [json.loads(line) for line in stdout.splitlines() if line.strip()]
+        messages, usage, completed = [], None, False
+        for event in events:
+            if not isinstance(event, dict):
+                raise ValueError("invalid event")
+            if event.get("type") in ("error", "turn.failed"):
+                error = event.get("error", event)
+                message = error.get("message", "") if isinstance(error, dict) else ""
+                try:
+                    details = json.loads(message)
+                except (ValueError, TypeError):
+                    details = error
+                status = details.get("status") if isinstance(details, dict) else None
+                if type(status) is int and status in (401, 403):
+                    return {"status": "access_denied" if status == 403 else "auth_required",
+                            "latency_ms": latency}
+                raise ValueError("failed turn")
+            if event.get("type") in ("item.started", "item.completed"):
+                item = event.get("item", {})
+                kind = item.get("type")
+                if kind not in ("agent_message", "reasoning", "error"):
+                    raise ValueError("unexpected tool event")
+                if event["type"] == "item.completed" and kind == "agent_message":
+                    messages.append(item.get("text", ""))
+            if event.get("type") == "turn.completed":
+                usage = event.get("usage")
+                completed = True
+        if proc.returncode != 0 or not completed or not messages or not isinstance(usage, dict):
+            raise ValueError("incomplete turn")
+        result = json.loads(messages[-1])
+        tokens = [usage.get(key) for key in ("input_tokens", "output_tokens")]
+        if not isinstance(result, dict) or any(type(n) is not int or n < 0 for n in tokens):
+            raise ValueError("invalid result or usage")
+        return {"status": "success", "result": result, "latency_ms": latency,
+                "input_tokens": tokens[0], "output_tokens": tokens[1]}
+    except (TypeError, ValueError, AttributeError):
         return {"status": "failed", "latency_ms": latency}
 
 
@@ -1081,7 +1147,8 @@ def run(graph, args):
                 "extractor": EXTRACTOR_VERSION, "prompt": prompt_version,
                 "egress_policy": EGRESS_POLICY_VERSION, "session_id": sid,
                 "provider": provider, "tail": metadata["sanitized_tail_hash"],
-                "primary_model": primary_model,
+                "primary_model": primary_model, "inference_provider": "codex",
+                "reasoning_effort": DEFAULT_REASONING,
                 "escalation_model": escalation_model,
             }, sort_keys=True))
             cached = _cache_lookup(graph, cache_key)
@@ -1113,7 +1180,7 @@ def run(graph, args):
                 continue
 
             prompt = _prompt(packet)
-            estimated_input = int(math.ceil(len(prompt.encode("utf-8")) / 4.0)) + 512
+            estimated_input = int(math.ceil(len(prompt.encode("utf-8")) / 4.0)) + CODEX_INPUT_OVERHEAD
             sample_call_cap = parsed.sample_per_provider * len(PROVIDERS)
             sample_token_cap = max(100000, sample_call_cap * (estimated_input + max_output))
             reservation = _reserve_budget(

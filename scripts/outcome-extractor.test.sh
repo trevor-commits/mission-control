@@ -64,11 +64,11 @@ SH
   export MORNING_BRIEF_LLM_COPILOT=1
   export MORNING_BRIEF_LLM_DAILY_CALL_CAP=20
   export MORNING_BRIEF_LLM_DAILY_TOKEN_CAP=100000
-  export MORNING_BRIEF_LLM_MODEL="claude-opus-5"
+  export MORNING_BRIEF_LLM_MODEL="gpt-6.1-sol"
   export MORNING_BRIEF_LLM_TIMEOUT=8
   export MORNING_BRIEF_LLM_TESTING=1
   unset MORNING_BRIEF_LLM_TEST_PROMPT_VERSION MORNING_BRIEF_LLM_MAX_OUTPUT_TOKENS
-  export MORNING_BRIEF_LLM_CMD="$TIER2_TMP/claude-stub"
+  export MORNING_BRIEF_LLM_CMD="$TIER2_TMP/codex-stub"
   export STUB_CAPTURE="$TIER2_TMP/model-calls.jsonl"
   export STUB_PROMPT="$TIER2_TMP/model-prompt.txt"
   export STUB_STARTED="$TIER2_TMP/model-started"
@@ -83,7 +83,9 @@ with open(os.environ["STUB_PROMPT"], "w") as handle:
 with open(os.environ["STUB_CAPTURE"], "a") as handle:
     handle.write(json.dumps({
         "argv": sys.argv[1:],
-        "oauth_timeout": int(os.environ.get("CLAUDE_OAUTH_LOCK_TIMEOUT", "0")),
+        "schema": json.load(open(sys.argv[sys.argv.index("--output-schema")+1])),
+        "cwd": os.getcwd(),
+        "api_credentials_present": any(os.environ.get(k) for k in ("OPENAI_API_KEY", "CODEX_API_KEY", "OPENAI_BASE_URL")),
         "newest_marker": "NEWEST_MARKER" in prompt,
     }, sort_keys=True) + "\n")
 with open(os.environ["STUB_CAPTURE"]) as handle:
@@ -96,13 +98,13 @@ elif behavior == "defer":
     sys.stderr.write("claude-oauth-lock: another claude holds the OAuth lock\n")
     sys.exit(75)
 elif behavior == "defer_slow":
-    time.sleep(int(os.environ.get("CLAUDE_OAUTH_LOCK_TIMEOUT", "1")) + 0.2)
+    time.sleep(1.2)
     sys.stderr.write("claude-oauth-lock: another claude holds the OAuth lock\n")
     sys.exit(75)
 elif behavior in ("denied", "auth"):
-    print(json.dumps({"is_error": True,
-                      "api_error_status": 403 if behavior == "denied" else 401,
-                      "result": "PRIVATE_ERROR_MUST_NOT_BE_PERSISTED"}))
+    print(json.dumps({"type": "turn.failed", "error": {"message": json.dumps({
+        "status": 403 if behavior == "denied" else 401,
+        "error": "PRIVATE_ERROR_MUST_NOT_BE_PERSISTED"})}}))
     sys.exit(1)
 elif behavior == "invalid":
     print("not-json")
@@ -133,11 +135,14 @@ elif behavior == "ambiguous_always":
         "left_open": [], "needs_trevor": [], "confidence": 0.31,
         "ambiguity": True,
     }
-print(json.dumps({
-    "type": "result", "subtype": "success", "is_error": False,
-    "result": json.dumps(result, sort_keys=True),
-    "usage": {"input_tokens": 120, "output_tokens": 44},
-}))
+print(json.dumps({"type": "thread.started", "thread_id": "fictional"}))
+if behavior == "tool_event":
+    print(json.dumps({"type": "item.completed", "item": {"type": "command_execution"}}))
+print(json.dumps({"type": "item.completed", "item": {
+    "type": "agent_message", "text": json.dumps(result, sort_keys=True)}}))
+if behavior != "incomplete":
+    print(json.dumps({"type": "turn.completed",
+                     "usage": {"input_tokens": 120, "output_tokens": 44}}))
 PY
   chmod +x "$MORNING_BRIEF_LLM_CMD"
 }
@@ -181,17 +186,17 @@ run_extract() {
 if PYTHONPATH="$HERE" python3 - <<'PY'
 import outcome_extractor as extractor
 
-assert extractor.DEFAULT_MODEL == "claude-opus-5"
-assert extractor.DEFAULT_ESCALATION_MODEL == "claude-opus-5"
+assert extractor.DEFAULT_MODEL == "gpt-6.1-sol"
+assert extractor.DEFAULT_ESCALATION_MODEL == "gpt-6.1-sol"
 assert extractor._invoke_model("prompt", "claude-sonnet-4-6", 8) == {
     "status": "model_policy",
     "latency_ms": 0,
 }
 PY
 then
-  pass "non-Opus 5 selectors fail before model invocation"
+  pass "non-Codex selectors fail before model invocation"
 else
-  fail "Opus 5 model policy"
+  fail "Codex model policy"
 fi
 
 new_env
@@ -541,15 +546,23 @@ import json, os, sqlite3, sys
 capture, prompt_path, db, sid, marker_path = sys.argv[1:]
 call = json.loads(open(capture).readline())
 argv = call["argv"]
-assert 1 <= call["oauth_timeout"] < 8, call["oauth_timeout"]
-assert "--model" in argv and argv[argv.index("--model") + 1] == "claude-opus-5"
-assert "--output-format" in argv and argv[argv.index("--output-format") + 1] == "json"
-schema=json.loads(argv[argv.index("--json-schema")+1])
+assert argv[0] == "exec"
+assert "--ignore-user-config" in argv and "--ignore-rules" in argv
+assert "--strict-config" in argv
+assert argv[argv.index("--sandbox")+1] == "read-only"
+for feature in ("shell_tool", "unified_exec", "hooks", "plugins", "apps", "memories", "multi_agent", "code_mode_host"):
+    assert any(argv[i:i+2] == ["--disable", feature] for i in range(len(argv)))
+assert 'forced_login_method="chatgpt"' in argv
+assert 'model_reasoning_effort="max"' in argv
+assert call["cwd"] == argv[argv.index("-C")+1]
+assert "--model" in argv and argv[argv.index("--model") + 1] == "gpt-6.1-sol"
+assert "--json" in argv
+schema=call["schema"]
 assert schema["properties"]["did"]["maxItems"] == 4
 assert "analysis_completed" in schema["properties"]["did"]["items"]["enum"]
 assert "Run deploy" not in schema["properties"]["did"]["items"]["enum"]
-assert "--no-session-persistence" in argv
-assert "--tools" in argv and argv[argv.index("--tools") + 1] == ""
+assert "--ephemeral" in argv
+assert "mcp_servers={}" in argv and 'web_search="disabled"' in argv
 assert all("The run completed" not in value for value in argv)
 prompt = open(prompt_path).read()
 assert "The run completed" in prompt
@@ -599,7 +612,7 @@ fi
 
 KILL_CAL="$TIER2_TMP/kill-calibration.json"
 cat > "$KILL_CAL" <<'JSON'
-{"schema":"mission-control/outcome-calibration/v1","model_calls":1,"observations":[{"provider":"claude","model":"claude-opus-5","input_tokens":120,"output_tokens":44,"latency_ms":1,"status":"success"}],"recommended_caps":{"daily_call_cap":5,"daily_token_cap":50000}}
+{"schema":"mission-control/outcome-calibration/v1","model_calls":1,"observations":[{"provider":"claude","model":"gpt-6.1-sol","input_tokens":120,"output_tokens":44,"latency_ms":1,"status":"success"}],"recommended_caps":{"daily_call_cap":5,"daily_token_cap":50000}}
 JSON
 "$CG" extract-outcomes --apply-calibration "$KILL_CAL" --json >/dev/null
 export MORNING_BRIEF_LLM=1
@@ -785,7 +798,7 @@ if run_extract > "$TIER2_TMP/variant-2.json" 2> "$TIER2_TMP/variant-2.err" \
 import json,sys
 rows=[json.loads(line) for line in open(sys.argv[1])]
 models=[row["argv"][row["argv"].index("--model")+1] for row in rows]
-assert models == ["claude-opus-5","claude-opus-5"], models
+assert models == ["gpt-6.1-sol","gpt-6.1-sol"], models
 PY
 then
   pass "pinned prompt variant changes preserve a new Tier-2 version"
@@ -793,7 +806,7 @@ else
   fail "Tier-2 extraction variant uniqueness"
 fi
 
-# Opus 5 retries exactly once only when its structured result says ambiguous.
+# Codex retries exactly once only when its structured result says ambiguous.
 new_env
 SID3B="33333333-3333-4333-8333-333333333334"
 write_claude_source "$SID3B" structured
@@ -804,16 +817,16 @@ if run_extract > "$TIER2_TMP/ambiguous.json" 2> "$TIER2_TMP/ambiguous.err" \
 import json,sqlite3,sys
 calls=[json.loads(line)["argv"] for line in open(sys.argv[1])]
 models=[argv[argv.index("--model")+1] for argv in calls]
-assert models == ["claude-opus-5", "claude-opus-5"], models
+assert models == ["gpt-6.1-sol", "gpt-6.1-sol"], models
 con=sqlite3.connect(sys.argv[2])
 card=json.loads(con.execute("SELECT outcome_json FROM session_outcomes WHERE session_id=? AND method='tier2'",(sys.argv[3],)).fetchone()[0])
 assert card["did"] == ["The work was verified."]
-assert card["model_metadata"]["model"] == "claude-opus-5"
+assert card["model_metadata"]["model"] == "gpt-6.1-sol"
 health=con.execute("SELECT calls,escalations,successes FROM outcome_extraction_health").fetchone()
 assert health == (2,1,1), health
 PY
 then
-  pass "explicit ambiguity alone retries once on pinned Opus 5"
+  pass "explicit ambiguity alone retries once on pinned Codex"
 else
   fail "ambiguity escalation contract"
 fi
@@ -830,7 +843,7 @@ if run_extract > "$TIER2_TMP/ambiguous-always.json" 2> "$TIER2_TMP/ambiguous-alw
    && [ "$(q "SELECT COUNT(*) FROM session_outcomes WHERE session_id='$SID3D' AND method='tier2'")" = 0 ] \
    && [ "$(q "SELECT failures FROM outcome_extraction_health")" -ge 1 ] \
    && [ "$(q "SELECT successes FROM outcome_extraction_health")" = 0 ]; then
-  pass "ambiguity remaining after the Opus 5 retry fails open to Tier 1"
+  pass "ambiguity remaining after the Codex retry fails open to Tier 1"
 else
   fail "unresolved ambiguity fail-open"
 fi
@@ -871,8 +884,8 @@ assert config["daily_call_cap"] == sample["recommended_caps"]["daily_call_cap"]
 assert config["daily_token_cap"] == sample["recommended_caps"]["daily_token_cap"]
 assert config["enabled"] is True
 assert disabled["enabled"] is False and enabled["enabled"] is True
-assert disabled["model"] == "claude-opus-5"
-assert enabled["model"] == "claude-opus-5"
+assert disabled["model"] == "gpt-6.1-sol"
+assert enabled["model"] == "gpt-6.1-sol"
 assert config["providers"]["claude"] is True
 assert all(config["providers"][name] is False for name in ("codex","cursor","hermes","copilot"))
 assert stat.S_IMODE(os.stat(sys.argv[2]).st_mode) == 0o600
@@ -987,7 +1000,7 @@ if run_extract > "$TIER2_TMP/defer.json" 2> "$TIER2_TMP/defer.err" \
    && [ "$(q "SELECT COUNT(*) FROM session_outcomes WHERE session_id='$SID4' AND method='tier2'")" = 0 ]; then
   pass "OAuth exit 75 defers without replacing Tier 1"
 else
-  fail "OAuth lock defer"
+  fail "explicit transient defer"
 fi
 
 new_env
@@ -1004,15 +1017,15 @@ if python3 - "$START_DEFER" "$END_DEFER" "$STUB_CAPTURE" \
 import json,sqlite3,sys
 assert float(sys.argv[2])-float(sys.argv[1]) < 5
 call=json.loads(open(sys.argv[3]).readline())
-assert 1 <= call["oauth_timeout"] < 6
+assert call["argv"][0] == "exec"
 con=sqlite3.connect(sys.argv[4])
 assert con.execute("SELECT deferred FROM outcome_extraction_health").fetchone()[0] >= 1
 assert con.execute("SELECT COUNT(*) FROM session_outcomes WHERE session_id=? AND method='tier2'",(sys.argv[5],)).fetchone()[0] == 0
 PY
 then
-  pass "OAuth wrapper defers before the extractor timeout"
+  pass "bounded defer finishes before the extractor timeout"
 else
-  fail "OAuth wrapper versus extractor timeout ordering"
+  fail "defer versus extractor timeout ordering"
 fi
 
 new_env
@@ -1090,11 +1103,34 @@ from unittest import mock
 import outcome_extractor as extractor
 
 graph = importlib.machinery.SourceFileLoader("chat_graph_access", sys.argv[1]).load_module()
-for behavior, expected in (("denied", "access_denied"), ("auth", "auth_required")):
+for behavior, expected in (("denied", "access_denied"), ("auth", "auth_required"),
+                           ("tool_event", "failed"), ("incomplete", "failed")):
     os.environ["STUB_BEHAVIOR"] = behavior
     reply = extractor._invoke_model("fictional input", extractor.DEFAULT_MODEL, 8)
     assert reply["status"] == expected, reply
     assert "PRIVATE" not in json.dumps(reply)
+
+# Production routing accepts only the existing loopback connection and strips
+# API credentials. Use the same synthetic stub, never a real provider.
+config_home = pathlib.Path(os.environ["TIER2_TMP"]) / "codex-config"
+config_home.mkdir()
+config = config_home / "config.toml"
+stub = os.environ["MORNING_BRIEF_LLM_CMD"]
+os.environ["STUB_BEHAVIOR"] = "success"
+with mock.patch.dict(os.environ, {"CODEX_HOME": str(config_home),
+        "MORNING_BRIEF_LLM_TESTING": "0", "OPENAI_API_KEY": "fictional",
+        "CODEX_API_KEY": "fictional", "OPENAI_BASE_URL": "https://invalid.example"}), \
+        mock.patch.object(extractor, "_model_command", return_value=stub):
+    config.write_text('openai_base_url = "http://127.0.0.1:1234/v1"\n[features]\nhooks=true\n')
+    assert extractor._invoke_model("fictional", extractor.DEFAULT_MODEL, 8)["status"] == "success"
+    call = json.loads(pathlib.Path(os.environ["STUB_CAPTURE"]).read_text().splitlines()[-1])
+    assert not call["api_credentials_present"]
+    assert 'openai_base_url="http://127.0.0.1:1234/v1"' in call["argv"]
+    for route in ("https://external.example/v1", "http://user:pass@localhost/v1",
+                  "http://localhost/v1?secret=fictional"):
+        config.write_text("openai_base_url=" + json.dumps(route))
+        with mock.patch.object(extractor.subprocess, "Popen", side_effect=AssertionError("must not spawn")):
+            assert extractor._invoke_model("fictional", extractor.DEFAULT_MODEL, 8)["status"] == "model_policy"
 
 def run():
     output = io.StringIO()
@@ -1102,6 +1138,10 @@ def run():
         assert extractor.run(graph, ["--days", "7", "--limit", "20", "--json"]) == 0
     return json.loads(output.getvalue())
 
+legacy = pathlib.Path(extractor._access_block_path()).with_name("provider-access.json")
+legacy.parent.mkdir(parents=True, exist_ok=True)
+legacy.write_text('{"status":"access_denied"}')
+assert not extractor._provider_access_blocked()
 os.environ["STUB_BEHAVIOR"] = "denied"
 first = run()
 assert first["calls"] == 1 and first["failures"] == 1 and first["access_blocked"], first
@@ -1134,6 +1174,7 @@ extractor._atomic_json(extractor._config_path(), {
 })
 extractor._set_enabled(True)
 assert not block.exists()
+assert legacy.exists(), "Claude hold must be preserved"
 os.environ["STUB_BEHAVIOR"] = "success"
 recovered = run()
 assert recovered["successes"] == 2, recovered

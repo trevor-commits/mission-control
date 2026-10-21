@@ -10,7 +10,7 @@ High-value means the session is repo-linked, names a commit, or participates in 
 
 - Ingest and export never call a model.
 - The extractor has its own lock and closes SQLite before every model call.
-- Calls use `~/.local/bin/claude`, the OAuth-lock wrapper, with tools disabled and the prompt on stdin.
+- Calls use the fixed desktop-bundled Codex CLI, ChatGPT authentication, ephemeral sessions, an isolated read-only scratch directory, disabled execution/apps/plugins/hooks, schema-constrained JSON, and the prompt on stdin. Interactive access settings are unchanged.
 - Exit 75 is a benign defer. Timeout, invalid output, missing calibration, privacy rejection, and budget exhaustion all fall back to Tier 1.
 - Transcript tails are assistant-only, bounded, and sanitized before egress. Raw tool output is excluded.
 - The model selects only fixed outcome-taxonomy codes. Deterministic code validates the exact response schema and maps recognized codes to fixed plain-language sentences, so free-form model commands, IDs, SHAs, repo names, paths, secrets, counts, and contact details cannot enter a card. Unknown or malformed results fail open to Tier 1; the private cache stores only the canonical code shape; deterministic titles, repos, and anchors are copied from graph/Tier 1 only.
@@ -95,7 +95,7 @@ Disabling Tier 2 does not remove or weaken Tier 1. Persistent off dominates any 
 
 ## Scheduling
 
-`launchd/com.gillettes.outcome-extractor.plist.template` starts at 04:40, ahead of the 05:00 brief, with bounded 04:47 and 04:54 retry opportunities. Successful unchanged work is served from cache without another model call; OAuth defers back off for five minutes, so a later slot can retry. It invokes the stable installed dashboard command, which routes to the explicit extractor command. The job writes a content-free last-run marker for Automation health.
+`launchd/com.gillettes.outcome-extractor.plist.template` starts at 04:40, ahead of the 05:00 brief, with bounded 04:47 and 04:54 retry opportunities. Successful unchanged work is served from cache without another model call; Explicit transient defers back off for five minutes, so a later slot can retry. It invokes the stable installed dashboard command, which routes to the explicit extractor command. The job writes a content-free last-run marker for Automation health.
 
 Do not install or bootstrap the LaunchAgent until the authorized sample, calibration, manual proof, and explicit activation decision are complete.
 
@@ -119,3 +119,15 @@ Restore the account's supported subscription access outside the review. Then use
 The extractor's assistant-only taxonomy cannot prove whether Trevor answered in a newer user message or another chat. The daily review and loose-ends skill must check the original question, later user replies, structured answer events, and linked/newer related chats before asking. Record exact answer provenance in the existing ledger; preserve unresolved agent follow-through. Missing access is unknown, not an unanswered question.
 
 Daily 08:00 Pacific was explicitly confirmed in thread `01a15e1d-56ed-78d2-811d-19817731d768`. The existing heartbeat retains this cadence and performs the answer check. Its source review remains the fallback while external provider access is blocked.
+
+## Codex migration — October 21, 2026
+
+Trevor explicitly requested replacing Claude to remove its organization-access dependency. The classifier now selects `gpt-6.1-sol` with `max` reasoning, matching the installed Codex settings at migration. It never changes the foreground chat, falls back to Claude, or introduces API credentials. Source-provider flags still refer to transcript sources, not inference engines.
+
+Use `/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex`. The older Homebrew CLI rejected the same model; the bundled CLI completed a fictional structured-output probe. Preserve only the configured top-level `openai_base_url` when it names a loopback HTTP endpoint. A non-JSON-compatible string or non-loopback override fails closed. Other user configuration is excluded. Revalidate after desktop authentication, route, binary, or event-schema changes.
+
+Codex JSONL must contain a completed turn, an object-valued final message, and valid token usage. Tool events, incomplete turns, malformed output, oversized output and timeouts fall back to Tier 1. Timeout kills and reaps only the call-owned process group. The first measured probe used about 17,000 input tokens including Codex instructions; reservations include 20,000 tokens of overhead without raising existing caps. Actual usage replaces estimates.
+
+The inference provider, model, reasoning and extractor version distinguish cache identities. The active hold is now `outcome-extractor/codex-provider-access.json`. The historical Claude `provider-access.json` is preserved and cannot block Codex. Structured Codex 401/403 errors stop the batch and hold later calls; `--set-enabled 1` recovers only the Codex hold after a successful configuration write. Existing disabled state and source-provider switches remain authoritative.
+
+Assistant-only classifications remain hints, not proof of unfinished work or unanswered questions. The daily reviewer must inspect the latest user answers and linked continuations before showing `NEEDS YOU`; inaccessible evidence remains unknown. A manual Codex response does not prove the next natural extractor wake succeeded.
