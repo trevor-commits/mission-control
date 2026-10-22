@@ -131,3 +131,34 @@ Codex JSONL must contain a completed turn, an object-valued final message, and v
 The inference provider, model, reasoning and extractor version distinguish cache identities. The active hold is now `outcome-extractor/codex-provider-access.json`. The historical Claude `provider-access.json` is preserved and cannot block Codex. Structured Codex 401/403 errors stop the batch and hold later calls; `--set-enabled 1` recovers only the Codex hold after a successful configuration write. Existing disabled state and source-provider switches remain authoritative.
 
 Assistant-only classifications remain hints, not proof of unfinished work or unanswered questions. The daily reviewer must inspect the latest user answers and linked continuations before showing `NEEDS YOU`; inaccessible evidence remains unknown. A manual Codex response does not prove the next natural extractor wake succeeded.
+
+## Shared loose-ends skill installation receipt
+
+After changing and publishing `skills/loose-ends/SKILL.md`, keep its installed
+source receipt current. The October 21 newer-answer guard reached the source
+and installed skill, while the receipt still named an older commit and hash.
+
+Before changing `~/.codex/skills/installed-sources.json`, verify that the exact
+skill source commit is on remote main and that its complete committed file map
+matches the clean source directory, installed directory and every existing
+provider alias. Reuse `committed_files` and `files_under` from
+`~/.codex/scripts/check-installed-skill-sources.py`; do not replace a failing
+hash with the observed hash without verifying the published source.
+
+Back up the receipt privately. Refresh only the `loose-ends` entry's source
+commit, source/installed file maps and verified existing aliases. Preserve all
+other entries and metadata. Compare the original bytes immediately before an
+atomic replacement; stop if another writer changed them. Never revert the skill
+or remove its newer-answer guard merely to match an old receipt.
+
+Run `python3 -IB ~/.codex/scripts/check-installed-skill-sources.py` after the
+refresh, followed by its `.test.py` suite and
+`bash ~/.codex/scripts/validate-global-policy-stack.sh`. Keep the backup and the
+exact before/after entry in the task's private evidence. A rollback must preserve
+any later receipt edits; do not blindly restore a whole stale manifest.
+
+Verified October 21, 2026: the installed source map matches published skill
+commit `20281065ca7bacb4071426367661ba4200c1b347`; the complete receipt checker
+and three existing acceptance/rejection regressions pass. Revalidate this
+procedure when the receipt schema, checker, source location or alias layout
+changes. This is a source/installation check, not a natural collector-run proof.
