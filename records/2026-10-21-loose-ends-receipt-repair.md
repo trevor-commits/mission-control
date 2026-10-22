@@ -56,6 +56,20 @@ After-manifest SHA-256:
   owned process groups before this task is reported complete. This external
   receipt records final publication without a self-referential follow-up commit.
 
+The full native diagnostic subsequently completed with exit 0 and
+`GLOBAL POLICY STACK: PASS`, including the skill receipt, 79 runtime hostile
+fixtures and full installed cleanup-source verification.
+
+The first normal source push was rejected after `SUITES PASS=41 FAIL=1`.
+Its sole failing suite was the Python floor: the inherited command path selected
+Apple Python 3.9.6, below the required 3.11. All other suites passed. The installed
+Homebrew Python 3.11.16 passes the unchanged requirement. Retry the normal HTTPS
+push with only its Python command directory prepended through a task-scoped
+`env PATH=...`; preserve the failure log and every test/assertion. No shell
+profile, global hook, Python floor or test budget is changed. The supported
+version matches the repository CI toolchain. Terminal proof remains the external
+receipt above.
+
 Rollback: preserve the private predecessor receipt. If rollback is needed,
 compare the live receipt against this exact post-repair entry and merge only the
 owned entry; never overwrite later unrelated changes. No active checkout or

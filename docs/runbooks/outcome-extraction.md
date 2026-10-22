@@ -161,4 +161,8 @@ Verified October 21, 2026: the installed source map matches published skill
 commit `20281065ca7bacb4071426367661ba4200c1b347`; the complete receipt checker
 and three existing acceptance/rejection regressions pass. Revalidate this
 procedure when the receipt schema, checker, source location or alias layout
-changes. This is a source/installation check, not a natural collector-run proof.
+changes. For source publication, verify `python3 --version` first: Mission
+Control requires 3.11 or newer. If the session selects Apple Python 3.9, prepend
+the already installed supported Python command directory for that push only;
+keep the normal gate and version floor unchanged. This is a source/installation
+check, not a natural collector-run proof.
