@@ -158,7 +158,9 @@ def collect(repo, all_kinds):
         want = repo_name(repo)
         items = [i for i in items if not i["repo"] or i["repo"] == want]  # ponytail: repo match by basename
     want = repo_name(repo)
-    items.sort(key=lambda i: (-i["severity"], 0 if want and i["repo"] == want else 1, -i["age_days"], i["id"]))
+    # An explicit repo is the recovery target. Unscoped alerts remain visible,
+    # but cannot displace that repo's work merely through age or severity.
+    items.sort(key=lambda i: (0 if want and i["repo"] == want else 1, -i["severity"], -i["age_days"], i["id"]))
     seen, out = set(), []
     for i in items:
         if i["id"] not in seen:
@@ -312,13 +314,15 @@ def self_test():
     ids = [i["id"] for i in items]
     assert "n1:b" not in ids, "noise kind must be filtered"
     assert "r:c" not in ids, "another repo's item must be filtered under --repo"
-    assert ids[0] == "att:1", f"highest severity first, got {ids}"
+    assert items[0]["repo"] == "repo", f"explicit repo work must precede unscoped candidates, got {ids}"
+    assert "att:1" in ids, "unscoped attention remains discoverable"
+    assert collect("", False)[0]["id"] == "att:1", "unscoped listing retains severity ordering"
     assert "n1:a" in ids and items[[i["id"] for i in items].index("n1:a")]["resume_cmd"] == "claude --resume n1"
     assert any(i["id"].startswith("todo:") and i["title"].startswith("ship the thing") for i in items), ids
     assert not any("Keep this section" in i["title"] for i in items), "instruction bullets are not work"
     assert "n1:b" in [i["id"] for i in collect("", True)], "--all-kinds restores noise"
     save_last(items)
-    assert find("1")["id"] == "att:1"
+    assert find("1")["repo"] == "repo"
 
     class Args:
         ref, out, repo = "2", str(tmp / "p.md"), str(tmp / "repo")

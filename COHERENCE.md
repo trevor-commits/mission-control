@@ -23,3 +23,5 @@ Use this map as a navigation aid. Update useful entries when their dependencies 
 Keep real dependency information useful and current. Historical map entries do not restore retired startup instructions, per-task paperwork, or fixed provider duties.
 
 `AGENTS.md` remains the entry point. `CONTINUITY.md` provides optional handoff guidance. `LINEAR.md` records the repository-only tracking mode.
+
+| `scripts/loose-ends` | `README.md; this record` | October 23 bounded archive application: invocation, evidence limits and durable owner record change together. |

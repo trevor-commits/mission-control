@@ -1846,3 +1846,6 @@ Focused validation: `DASHBOARD_TEST_CASE=full-ingest-recovery bash scripts/dashb
 ### Codex setup source lane
 
 Branch `codex/setup-collector-recovery-01a073a1`; owner `01a073a1-714a-7e72-801c-d3df97bb4114`; source clone `/private/tmp/mission-control-install-01a073a1`; purpose: repair bounded chats-collector full-ingest recovery; merge target: `origin/main`; delete-when: merged source and installed runtime verified, after preserving recovery and checking no active writer. This clone is independent of the foreign lean-entry checkout, whose matching own edits were removed after preserving this patch.
+
+### 2026-10-23 — Bounded archive application
+- Work Record / test evidence / self-audit / rollback: [owner record](records/2026-10-23-archive-application.md). by: Codex `01a167db-3b8c-7540-a13a-adc56c63c963`. linear: self-contained accepted slice. Software delivery and external evidence states are recorded there; unrelated backlog remains unchanged.
