@@ -44,6 +44,16 @@ receipt. Sender PID/group/start and completion remain in the existing event log.
 
 ## Tests
 
+Use Python 3.11 or newer. On this Mac, put the existing Homebrew Python
+first for the verifier and Git hooks:
+
+```bash
+export PATH="/opt/homebrew/opt/python@3.13/libexec/bin:$PATH"
+python3 --version
+```
+
+The verifier rejects Apple Python 3.9 before running the suites.
+
 ```bash
 scripts/verify.sh
 ```
