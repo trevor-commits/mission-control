@@ -76,6 +76,56 @@ the installed runtime and live prompt were unchanged and the ledger had no
 managed/dispatch nodes before releasing the hold at17:40UTC. Publication,
 installation and live acceptance remain separate next gates.
 
+## Installed acceptance
+
+At17:42UTC the normal installer copied committed implementation753d151 into the
+existing runtime, with launchd installation disabled. The installed stamp passed
+with no missing, unexpected or mismatched files. The actual installed dashboard
+was opened in an isolated test browser: both active work items, next actions and
+exact owner links rendered correctly; the browser exited after the check.
+
+The existing08:00 review was updated through the native app and read back with
+its original ID, owner, cadence and settings. Its next nominal wake is October30
+08:00 America/Los_Angeles. The independent Gmail07:00/Friday16:00 jobs were read
+back unchanged. There is no new monitor or schedule.
+
+The first live eight-item source reconciliation is reserved and delivered to the
+existing review owner, bound to native turn01a188c4-8719-74f1-aa9b-23543cca674a.
+It remains Doing until the integrator checks its exact terminal result and all
+acceptance artifacts. Its proof is recorded under the private existing state
+directory `mc-actionable-20261029-live/`; publication and final acceptance are
+recorded in `mc-actionable-20261029-closeout.json`. These receipts are the current
+operational continuation of this source record. A later manual check never
+stands in for the next natural daily review.
+
+## Evidence Checked
+
+Confirmed: source and negative regressions, independent exact-snapshot review,
+installed hashes, rendered owner links, native delivery marker/turn and saved
+schedule. The live reconciliation is a bounded batch, not full corpus coverage.
+
+## Decision Status
+
+Confirmed: reuse meets the demonstrated local coordination requirements without
+another dependency or scheduler. Inferred: this is the best practical fit for
+Trevor's current setup. Needs More Evidence: sustained usefulness and the next
+natural review under the new contract. Do Not Do Yet: claim the whole candidate
+inventory is audited or any partial project is completed.
+
+## Challenge Findings
+
+The first review found real false-closure paths despite passing initial tests.
+Independent negative cases were necessary. Same-title rows were not exact
+duplicates, and source omission was not completion. The code checks proof
+bindings, not the truth of arbitrary prose; source judgment remains necessary.
+
+## Unresolved
+
+Candidate coverage and owner-adapter availability remain explicit limitations.
+Daily coordination is not instant event processing for every provider. The next
+natural08:00 review verifies original terminal outcomes and continues its saved
+candidate cursor; no extra watchdog is warranted by this implementation.
+
 Private live before-images and native delivery/evidence receipts belong in the
 existing unfinished-work-review state. Rollback uses the owned source commit,
 checked runtime preimages and original review prompt; never erases later task
