@@ -130,3 +130,37 @@ Private live before-images and native delivery/evidence receipts belong in the
 existing unfinished-work-review state. Rollback uses the owned source commit,
 checked runtime preimages and original review prompt; never erases later task
 history or repeats an uncertain dispatch.
+
+## Live findings and focused follow-up
+
+The exact delivered reconciliation turn completed with no native error. Its
+eight selected nodes, retained source identities/notes, source-answer evidence,
+artifact hashes and current queue were independently checked by the integrator.
+The dispatched outcome is now Verified done. One cancelled Telegram question was
+retired; no duplicate merge was supported. Finance retains its already-active
+owner, Gmail waits for its existing worker, and unresolved questions stay open.
+The batch did not source-audit416 machine candidates and59 other curated rows.
+
+Live use exposed a stale cached `work_queue` in JSON exports after CLI changes.
+The export now computes its in-memory view through the same pure function as
+`queue`; reads never rewrite the store. The regression fails on the old helper
+and passes through Ready/Doing/Waiting/retired transitions with unchanged nodes,
+history and persisted bytes. Independent review passed19 repository tests and
+35 additional checks; the old installed helper failed9 freshness checks. Its
+exact runtime/review hashes are in `mc-json-queue-20261029-independent/` under the
+same private review state. That fix was held out of installation until PASS.
+
+Normal publication initially stopped at the unchanged panel test suite. Besides
+three-second fixture navigation deadlines, synthetic fresh data aged against
+real time during slow browser setup. Test setup now fixes Date to the fixture's
+NOW while real timers run, and gives navigation15seconds separately from the
+unchanged3second assertions. Production panel code and all rejection cases are
+unchanged. A bounded aging reproduction fails on the prior fixture clock and
+passes after the correction; the complete repaired panel suite passes22/22.
+Independent source review found no issue in the five setup lines. The first
+over-broad aging probe timed out and is not acceptance evidence; its exact owned
+orphan browser was identified by start time and fixture cwd, stopped and reaped.
+
+Final publication/installation and the next natural review still require their
+own evidence in `mc-actionable-20261029-closeout.json`; none is inferred from this
+focused follow-up. No additional live routing demonstration is needed.

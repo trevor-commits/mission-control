@@ -186,6 +186,35 @@ class StorageTests(unittest.TestCase):
         self.assertEqual([n['id'] for n in queue['waiting']], [nid])
         self.assertEqual(queue['verified_done'], [])
 
+    def test_json_projects_current_queue_without_changing_the_store(self):
+        nid, target = self.add('current outcome'), self.add('canonical outcome')
+        data = json.loads(self.store.read_text())
+        data['work_queue'] = {'ready': [{'id': 'obsolete-cached-task'}]}
+        self.store.write_text(json.dumps(data))
+
+        def check(bucket):
+            before = self.store.read_bytes()
+            exported = json.loads(self.run_cli('json').stdout)
+            current = json.loads(self.run_cli('queue').stdout)
+            self.assertEqual(exported['work_queue'], current)
+            self.assertEqual(self.store.read_bytes(), before, 'read rewrote the ledger')
+            self.assertEqual(exported['nodes'], json.loads(before)['nodes'])
+            if bucket:
+                self.assertIn(nid, [n['id'] for n in current[bucket]])
+
+        self.manage(nid)
+        check('ready')
+        self.assertEqual(self.run_cli('update', nid, '--status', 'doing').returncode, 0)
+        check('doing')
+        self.assertEqual(self.run_cli('update', nid, '--status', 'blocked').returncode, 0)
+        check('waiting')
+        p = json.loads(Path(self.proof(nid)).read_text())
+        p.update(target_id=target, reason='same checked outcome')
+        p['checks'][0]['criterion'] = 'same outcome or superseded authority'
+        self.assertEqual(self.run_cli('supersede', nid, '--evidence', self.evidence('supersede.json', p)).returncode, 0)
+        check(None)
+        self.assertEqual(json.loads(self.run_cli('json').stdout)['work_queue']['retired_count'], 1)
+
     def test_prepared_without_receipt_cannot_close(self):
         nid = self.add('prepared only')
         self.manage(nid)

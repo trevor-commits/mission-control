@@ -462,6 +462,8 @@ def cmd_show(args):
 def cmd_json(args):
     path = _store_path(args)
     data = _load(path)
+    # The collector's saved projection may predate a CLI mutation or review age.
+    data["work_queue"] = work_queue(data)
     json.dump(data, sys.stdout, indent=1, ensure_ascii=False)
     sys.stdout.write("\n")
     return 0

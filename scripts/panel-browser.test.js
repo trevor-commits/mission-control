@@ -112,6 +112,11 @@ async function main() {
     });
     const page = await context.newPage();
     page.setDefaultTimeout(3000);
+    // File navigation is fixture setup, not an application latency assertion.
+    page.setDefaultNavigationTimeout(15000);
+    // Keep synthetic freshness relative to NOW even when host setup is slow.
+    // Real timers and all stale/error rejection assertions remain unchanged.
+    await page.clock.setFixedTime(NOW * 1000);
     const browserErrors = [];
     page.on('pageerror', error => browserErrors.push(`pageerror:${error.message}`));
     page.on('console', message => {
