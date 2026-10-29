@@ -15,6 +15,10 @@ Usage:
                    [--decision D] [--parent P]
   loose-tree done ID | drop ID | adopt ID [--parent P]
   loose-tree board [--all] | show ID | json
+  loose-tree manage ID --plan FILE | queue
+  loose-tree dispatch ID --observation FILE
+  loose-tree receipt ID --evidence FILE | verify ID --evidence FILE
+  loose-tree supersede ID --evidence FILE
   loose-tree --self-test
 
 Statuses: todo doing blocked needs-decision awaiting-trevor done dropped
@@ -162,6 +166,12 @@ def _recompute(data):
             agg["done"] += r["done"]
             agg["total"] += r["total"]
         n["rollup"] = agg
+        if n.get("workflow"):
+            # Child completion is not the parent's acceptance evidence.
+            if agg["done"] != agg["total"] and n["status"] == "done":
+                n["status"] = "blocked"
+                n["verification"] = {"result": "stale", "reason": "child outcome reopened"}
+            return agg
         if agg["total"] > 0 and agg["done"] == agg["total"]:
             if n["status"] not in LEAF_DONE:
                 n["_pre_rollup_status"] = n["status"]
@@ -243,11 +253,17 @@ def cmd_update(args):
         print("loose-tree: no such item %s" % args.id, file=sys.stderr)
         return 1
     if args.status:
+        if n.get("superseded_by"):
+            raise ValueError("superseded work stays retired; record a new authorized outcome")
         if args.status not in STATUSES:
             print("loose-tree: bad status %s" % args.status, file=sys.stderr)
             return 1
         if args.status in LEAF_DONE:
+            if n.get("workflow"):
+                raise ValueError("managed work closes through verify or supersede")
             _check_close(data, args.id)
+        if n.get("dispatch", {}).get("state") in ("prepared", "delivered", "unknown"):
+            raise ValueError("reconcile the existing dispatch before changing status")
         n["status"] = args.status
     if args.title is not None:
         t = args.title.strip()
@@ -291,6 +307,8 @@ def cmd_done(args):
     if not n:
         print("loose-tree: no such item %s" % args.id, file=sys.stderr)
         return 1
+    if n.get("workflow") or n.get("superseded_by"):
+        raise ValueError("managed work requires independent artifact verification")
     open_kids = [c for c in data["nodes"]
                  if c.get("parent") == args.id and c["status"] not in LEAF_DONE]
     if open_kids:
@@ -315,6 +333,8 @@ def cmd_drop(args):
     if not n:
         print("loose-tree: no such item %s" % args.id, file=sys.stderr)
         return 1
+    if n.get("workflow"):
+        raise ValueError("managed work retires through evidence-backed supersede")
     _check_close(data, args.id)
     n["status"] = "dropped"
     n["updated_at"] = _now()
@@ -444,6 +464,254 @@ def cmd_json(args):
     data = _load(path)
     json.dump(data, sys.stdout, indent=1, ensure_ascii=False)
     sys.stdout.write("\n")
+    return 0
+
+
+def _json_evidence(path):
+    if not os.path.isabs(path) or os.path.islink(path) or not os.path.isfile(path):
+        raise ValueError("evidence must be an absolute regular-file path")
+    with open(path, "rb") as f:
+        raw = f.read(4 * 1024 * 1024 + 1)
+    if len(raw) > 4 * 1024 * 1024:
+        raise ValueError("evidence exceeds 4 MiB")
+    value = json.loads(raw)
+    if not isinstance(value, dict):
+        raise ValueError("evidence must be an object")
+    return value, {"path": path, "sha256": hashlib.sha256(raw).hexdigest()}
+
+
+def _fresh(value, age=86400):
+    return type(value) is int and 0 <= _now() - value <= age
+
+
+def _text(value):
+    return isinstance(value, str) and bool(value.strip())
+
+
+def _task(args):
+    path = _store_path(args)
+    data = _load(path)
+    n = _find(data, args.id)
+    if n is None:
+        raise ValueError("no such item " + args.id)
+    return path, data, n
+
+
+def _record(path, data, n, event, evidence):
+    n.setdefault("workflow_history", []).append({"at": _now(), "event": event, **evidence})
+    n["updated_at"] = _now()
+    _recompute(data)
+    _save(path, data)
+
+
+def _pending(n):
+    return n.get("dispatch", {}).get("state") in ("prepared", "delivered", "unknown")
+
+
+def cmd_manage(args):
+    path, data, n = _task(args)
+    if _pending(n) or n["status"] in LEAF_DONE or n.get("superseded_by"):
+        raise ValueError("existing dispatch or terminal outcome needs reconciliation first")
+    plan, binding = _json_evidence(args.plan)
+    for key in ("owner_session", "owner_harness", "authority", "next_action"):
+        if not _text(plan.get(key)):
+            raise ValueError("missing plan field: " + key)
+    acceptance = plan.get("acceptance")
+    dependencies = plan.get("dependencies", [])
+    if not isinstance(acceptance, list) or not acceptance or not all(map(_text, acceptance)) or len(set(acceptance)) != len(acceptance):
+        raise ValueError("acceptance must contain unique concrete checks")
+    if not isinstance(dependencies, list) or any(not isinstance(d, str) or d == n['id'] or _find(data, d) is None for d in dependencies):
+        raise ValueError("dependencies must name other existing tasks")
+    priority = plan.get("priority", 2)
+    if type(priority) is not int or priority not in range(4):
+        raise ValueError("priority must be 0..3")
+    if n.get("workflow"):
+        n.setdefault("workflow_history", []).append(dict(at=_now(), event="plan-replaced",
+            workflow=n["workflow"], dispatch=n.pop("dispatch", None), verification=n.pop("verification", None)))
+    n["workflow"] = {k: plan[k].strip() for k in ("owner_session", "owner_harness", "authority", "next_action")}
+    n["workflow"].update(acceptance=acceptance, dependencies=dependencies,
+                         priority=priority, reviewed_at=_now(), binding=binding)
+    # Planning is explicit source review. Questions/holds keep their status.
+    n["auto"] = False
+    _record(path, data, n, "managed", binding)
+    print(n["id"])
+    return 0
+
+
+def work_queue(data):
+    result = {key: [] for key in ("ready", "doing", "waiting", "verified_done")}
+    result.update(candidate_count=0, legacy_closed_count=0, retired_count=0)
+    parents = {n.get("parent") for n in data["nodes"]}
+    for n in data["nodes"]:
+        if n['id'] in parents and not n.get("workflow"):
+            continue
+        plan = n.get("workflow") or {}
+        row = {k: n.get(k) for k in ("id", "title", "status", "repo")}
+        row.update(owner=plan.get("owner_session"), owner_harness=plan.get("owner_harness"), next_action=plan.get("next_action"),
+                   acceptance=plan.get("acceptance", []), priority=plan.get("priority", 2))
+        if n["status"] == "dropped" or n.get("superseded_by"):
+            result["retired_count"] += 1
+        elif n["status"] == "done":
+            if n.get("verification", {}).get("result") == "passed":
+                result["verified_done"].append(row)
+            else:
+                result["legacy_closed_count"] += 1
+        elif not plan or n.get("auto"):
+            result["candidate_count"] += 1
+        elif _pending(n):
+            row["waiting_for"] = "existing dispatch: " + n["dispatch"]["state"]
+            result["doing"].append(row)
+        elif n["status"] == "doing":
+            row["waiting_for"] = "owner already working; inspect before routing"
+            result["doing"].append(row)
+        elif n["status"] != "todo":
+            row["waiting_for"] = n["status"]
+            result["waiting"].append(row)
+        elif not _fresh(plan.get("reviewed_at")):
+            row["waiting_for"] = "source review older than 24 hours"
+            result["waiting"].append(row)
+        elif any(c.get("parent") == n['id'] and c['status'] not in LEAF_DONE for c in data['nodes']):
+            row["waiting_for"] = "open child outcomes"
+            result["waiting"].append(row)
+        elif any((_find(data, d) or {}).get("verification", {}).get("result") != "passed"
+                 or (_find(data, d) or {}).get("status") != "done" for d in plan.get("dependencies", [])):
+            row["waiting_for"] = "dependency lacks verified completion"
+            result["waiting"].append(row)
+        else:
+            result["ready"].append(row)
+    for key in ("ready", "doing", "waiting", "verified_done"):
+        result[key].sort(key=lambda n: (n["priority"], n["id"]))
+    return result
+
+
+def cmd_queue(args):
+    print(json.dumps(work_queue(_load(_store_path(args))), indent=2))
+    return 0
+
+
+def cmd_dispatch(args):
+    path, data, n = _task(args)
+    if n["id"] not in {r["id"] for r in work_queue(data)["ready"]}:
+        raise ValueError("task is not ready; inspect its source/dependencies/dispatch")
+    plan = n["workflow"]
+    obs, binding = _json_evidence(args.observation)
+    if (obs.get("owner_session") != plan["owner_session"] or obs.get("state") != "idle"
+            or not _fresh(obs.get("observed_at"), 300)
+            or obs.get("latest_intent_checked") is not True or obs.get("no_active_writer") is not True
+            or obs.get("authority") != plan["authority"] or not _text(obs.get("source"))):
+        raise ValueError("fresh exact-owner idle state and current authority are required")
+    if any(_pending(other) and other.get("workflow", {}).get("owner_session") == plan["owner_session"]
+           for other in data["nodes"]):
+        raise ValueError("owner already has an unresolved dispatch")
+    attempt = _new_id()
+    n["dispatch"] = dict(id=attempt, state="prepared", owner_session=plan["owner_session"],
+                         prepared_at=_now(), observation=binding, plan=plan["binding"])
+    n["status"] = "doing"
+    _record(path, data, n, "dispatch-prepared", {"attempt": attempt, **binding})
+    print(json.dumps(n["dispatch"]))
+    return 0
+
+
+def cmd_receipt(args):
+    path, data, n = _task(args)
+    receipt, binding = _json_evidence(args.evidence)
+    dispatch = n.get("dispatch") or {}
+    if (not _pending(n) or receipt.get("attempt") != dispatch.get("id")
+            or receipt.get("owner_session") != dispatch.get("owner_session")
+            or receipt.get("state") not in ("delivered", "unknown")
+            or (receipt.get("state") == "delivered" and not _text(receipt.get("turn_id")))
+            or not _text(receipt.get("source"))):
+        raise ValueError("receipt must bind the existing attempt and owner")
+    if dispatch.get("state") == "delivered":
+        if receipt["state"] != "delivered" or receipt.get("turn_id") != dispatch.get("turn_id"):
+            raise ValueError("confirmed delivery turn is immutable")
+        print(n['id'])  # exact repeated receipt is an idempotent readback
+        return 0
+    dispatch.update(state=receipt["state"], receipt=binding,
+                    turn_id=receipt.get("turn_id") if receipt["state"] == "delivered" else None)
+    _record(path, data, n, "dispatch-" + receipt["state"], binding)
+    print(n['id'])
+    return 0
+
+
+def _checked_artifacts(proof, criteria):
+    checks = proof.get("checks")
+    if not isinstance(checks, list) or not checks or {c.get("criterion") for c in checks if isinstance(c, dict)} != set(criteria):
+        raise ValueError("proof must cover every acceptance criterion")
+    for c in checks:
+        if not isinstance(c, dict) or c.get("passed") is not True or not _text(c.get("path")):
+            raise ValueError("each criterion requires a checked artifact")
+        p = c["path"]
+        if not os.path.isabs(p) or os.path.islink(p) or not os.path.isfile(p):
+            raise ValueError("artifact must be an absolute regular-file path")
+        with open(p, 'rb') as f:
+            hashed = hashlib.sha256()
+            for chunk in iter(lambda: f.read(1024 * 1024), b''):
+                hashed.update(chunk)
+            digest = hashed.hexdigest()
+        if c.get("sha256") != digest:
+            raise ValueError("artifact hash mismatch: " + p)
+
+
+def cmd_verify(args):
+    path, data, n = _task(args)
+    plan = n.get("workflow") or {}
+    proof, binding = _json_evidence(args.evidence)
+    if (not plan or n.get("superseded_by") or proof.get("task_id") != n['id'] or proof.get("owner_session") != plan.get("owner_session")
+            or proof.get("plan_sha256") != plan.get("binding", {}).get("sha256")
+            or not _text(proof.get("verifier_session")) or proof["verifier_session"] == plan["owner_session"]
+            or not _fresh(proof.get("checked_at")) or proof.get("result") not in ("passed", "partial", "blocked")):
+        raise ValueError("fresh independent verification must bind this task and owner")
+    terminal = proof.get("terminal") or {}
+    if terminal.get("status") not in ("completed", "failed", "interrupted"):
+        raise ValueError("owner terminal status is required; idle alone is not completion")
+    dispatch = n.get("dispatch")
+    if proof.get("attempt") is not None and not dispatch:
+        raise ValueError("prior dispatch cannot verify the current plan")
+    if dispatch and (dispatch.get("state") != "delivered" or not dispatch.get("turn_id")
+                     or dispatch.get("owner_session") != plan["owner_session"]
+                     or dispatch.get("plan") != plan["binding"]
+                     or proof.get("attempt") != dispatch.get("id")
+                     or not _text(terminal.get("id"))
+                     or type(terminal.get("started_at")) is not int
+                     or terminal['started_at'] < dispatch['prepared_at'] - 5
+                     or (dispatch.get("turn_id") and terminal['id'] != dispatch['turn_id'])):
+        raise ValueError("verification must bind this dispatch and its actual owner turn")
+    if proof["result"] == "passed":
+        if terminal.get("status") != "completed" or "error" not in terminal or terminal["error"] is not None:
+            raise ValueError("successful original terminal result required")
+        _checked_artifacts(proof, plan["acceptance"])
+        _check_close(data, n['id'])
+        n["status"] = "done"
+        n.pop("_pre_rollup_status", None)
+    else:
+        if not _text(proof.get("reason")):
+            raise ValueError("partial/blocked verification needs a concrete reason")
+        n["status"] = "blocked"
+    n["verification"] = dict(result=proof['result'], checked_at=proof['checked_at'], evidence=binding,
+                             reason=proof.get('reason', ''))
+    if n.get("dispatch"):
+        n["dispatch"]["state"] = "reconciled"
+    _record(path, data, n, "verification-" + proof['result'], binding)
+    print(n['id'])
+    return 0
+
+
+def cmd_supersede(args):
+    path, data, n = _task(args)
+    proof, binding = _json_evidence(args.evidence)
+    target = _find(data, proof.get("target_id"))
+    if (proof.get("task_id") != n['id'] or not _fresh(proof.get("checked_at"))
+            or not _text(proof.get("reason")) or not target or target['id'] == n['id']
+            or target.get("superseded_by") or _pending(n) or n['status'] in LEAF_DONE):
+        raise ValueError("supersession needs a current canonical target and source proof")
+    _checked_artifacts(proof, ["same outcome or superseded authority"])
+    _check_close(data, n['id'])
+    n["superseded_by"] = target['id']
+    n["status"] = "dropped"
+    n["auto"] = False  # retain the original source key/history across collector pruning
+    _record(path, data, n, "superseded", {"target_id": target['id'], **binding})
+    print(n['id'])
     return 0
 
 
@@ -624,6 +892,18 @@ def main(argv=None):
     s = sub.add_parser("show"); s.add_argument("id")
     s.set_defaults(func=cmd_show)
     j = sub.add_parser("json"); j.set_defaults(func=cmd_json)
+
+    m = sub.add_parser("manage")
+    m.add_argument("id"); m.add_argument("--plan", required=True)
+    m.set_defaults(func=cmd_manage)
+    q = sub.add_parser("queue"); q.set_defaults(func=cmd_queue)
+    dp = sub.add_parser("dispatch")
+    dp.add_argument("id"); dp.add_argument("--observation", required=True)
+    dp.set_defaults(func=cmd_dispatch)
+    for name, func in (("receipt", cmd_receipt), ("verify", cmd_verify), ("supersede", cmd_supersede)):
+        ep = sub.add_parser(name)
+        ep.add_argument("id"); ep.add_argument("--evidence", required=True)
+        ep.set_defaults(func=func)
 
     args = p.parse_args(argv)
     if not getattr(args, "func", None):

@@ -134,8 +134,19 @@ async function operatorUxAudit(browser, root) {
       const fixture = JSON.parse(fs.readFileSync(path.join(FIXTURES, 'loosetree.json'), 'utf8'));
       fixture.generated_epoch = Math.floor(Date.now() / 1000);
       fixture.generated_at = new Date().toISOString();
+      fixture.data.work_queue = {
+        candidate_count: 7,
+        ready: [{ id: 'ready-example', title: 'Check published report', owner_harness: 'codex',
+          owner: '00000000-0000-0000-0000-000000000001', next_action: 'Read the exact result',
+          acceptance: ['Report matches source'] }],
+        doing: [], waiting: [], verified_done: []
+      };
       writeStateFeed(root, 'loosetree', fixture);
       await page.goto(url('loosetree'), { waitUntil: 'load' });
+      check(await page.locator('[data-work-queue]').isVisible(), 'next-action view missing');
+      check((await page.locator('[data-work-state="ready"]').innerText()).includes('Read the exact result'), 'next action missing');
+      check((await page.locator('[data-work-queue]').innerText()).includes('7 candidates'), 'candidate coverage missing');
+      check(await page.getByRole('link', { name: 'Open owner chat' }).getAttribute('href') === 'codex://threads/00000000-0000-0000-0000-000000000001', 'wrong owner link');
       check(await page.locator('[data-loose-id="T-fix-form"]').isVisible(), 'waiting question hidden');
       check(!(await page.locator('[data-loose-id="T-fix-inbox1"]').isVisible()), 'Inbox is not collapsed');
       check(await page.locator('[data-loose-id="T-fix-done1"]').count() === 0, 'done item shown by default');

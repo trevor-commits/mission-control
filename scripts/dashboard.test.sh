@@ -3146,7 +3146,7 @@ PY
 }
 
 c57() { # the loose-tree feed derives its Inbox from the chats snapshot, stays
-  # idempotent across cycles, prunes resolved sources, and preserves the Inbox
+  # idempotent across cycles, retains unknown sources, and preserves the Inbox
   # through a chats outage (the store is the durable copy the CLI adopts from).
   local h rc fails=0 n1 n2 n3 n4 FIX
   h="$(newhome)"
@@ -3167,23 +3167,27 @@ store = json.load(open(home + "/loosetree/store.json"))
 kids = [n for n in store["nodes"] if n.get("parent")]
 assert len(kids) == 5, kids
 assert all(n.get("auto") and n.get("auto_key") for n in kids)
+assert all(n.get("source_text") and n["title"] == n["source_text"][:120] for n in kids)
+assert not any(n.get("source_missing") for n in kids)
 assert any(n.get("harness") == "claude" for n in kids)
 assert any(n.get("harness", "").startswith("repo") or n.get("origin", "").startswith("repo:") for n in kids)
 PY
-  # resolved sources leave the Inbox
+  # Missing source rows remain unknown candidates; omission is not resolution.
   printf '{"schema":1,"feed":"chats","ok":true,"data":{"nodes":[],"loose_ends":[]}}\n' > "$h/empty.json"
   MISSION_CONTROL_HOME="$h" DASHBOARD_CMD_CHATS="cat '$h/empty.json'" \
     bash "$DASH" collect --force chats loosetree >/dev/null 2>&1 || fails=1
   n3="$(python3 -c 'import json,sys;print(len(json.load(open(sys.argv[1]))["data"]["nodes"]))' "$h/data/loosetree.json" 2>/dev/null)"
-  [ "$n3" = "1" ] || fails=1
+  [ "$n3" = "6" ] || fails=1
+  python3 -c 'import json,sys;d=json.load(open(sys.argv[1]));kids=[n for n in d["nodes"] if n.get("auto_key")];assert len(kids)==5 and all(n.get("source_missing") for n in kids)' "$h/loosetree/store.json" || fails=1
   # a chats outage never wipes the Inbox: restore rows, then break chats
   MISSION_CONTROL_HOME="$h" DASHBOARD_CMD_CHATS="cat '$FIX'" \
     bash "$DASH" collect --force chats loosetree >/dev/null 2>&1 || fails=1
+  python3 -c 'import json,sys;d=json.load(open(sys.argv[1]));kids=[n for n in d["nodes"] if n.get("auto_key")];assert len(kids)==5 and not any(n.get("source_missing") for n in kids)' "$h/loosetree/store.json" || fails=1
   MISSION_CONTROL_HOME="$h" DASHBOARD_CMD_CHATS="false" \
     bash "$DASH" collect --force chats loosetree >/dev/null 2>&1
   n4="$(python3 -c 'import json,sys;print(len(json.load(open(sys.argv[1]))["data"]["nodes"]))' "$h/data/loosetree.json" 2>/dev/null)"
   [ "$n4" = "6" ] || fails=1
-  if [ "$fails" -eq 0 ]; then ok "loose tree: inbox derivation, idempotence, prune, outage guard"
+  if [ "$fails" -eq 0 ]; then ok "loose tree: actual task text, idempotence, missing-source preservation, outage guard"
   else no "loose tree feed contract (n1=$n1 n2=$n2 n3=$n3 n4=$n4)"; fi
 }
 

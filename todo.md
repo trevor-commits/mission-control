@@ -2,6 +2,12 @@
 
 ## Active Next Steps
 
+- Mission Control actionable work loop: reconcile stale/duplicate records, route
+  already-authorized tasks to existing owners, and verify completion. Owner Codex
+  `01a16afb-4d78-7fd2-beec-605a7fd11e64`; main → origin/main; no new scheduler.
+  Acceptance and recovery: [record](records/2026-10-29-actionable-work-loop.md).
+  Disposition: self-contained, Trevor October29 implementation request.
+
 - Codex outcome-extractor replacement: implemented with focused tests and one uncached installed success; normal publication gate and remote delivery tracked in the record. Next natural run remains unverified. Owner: Codex 01a15e1d. [Record](records/2026-10-21-outcome-extractor-repair.md).
 
 - October21 outcome extractor repair: provider-access hold and newer-answer guard implemented; daily review confirmed. Source regressions pass. Configured Claude subscription access remains403; successful natural Tier2 extraction awaits account restoration. Owner Codex `01a15e1d-56ed-78d2-811d-19817731d768`; record `records/2026-10-21-outcome-extractor-repair.md` links final delivery/runtime proof.

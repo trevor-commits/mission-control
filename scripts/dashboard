@@ -1164,6 +1164,7 @@ def _merge_loosetree(_timeout_s):
     before_fingerprint = json.dumps(store, sort_keys=True)
     nodes = store["nodes"]
     known_keys = {n.get("auto_key") for n in nodes if n.get("auto_key")}
+    by_source_key = {n.get("auto_key"): n for n in nodes if n.get("auto_key")}
 
     inbox_parent = None
     for n in nodes:
@@ -1215,6 +1216,15 @@ def _merge_loosetree(_timeout_s):
                        .encode("utf-8", errors="replace")).hexdigest()[:16]
             source_keys.add(key)
             if key in known_keys:
+                existing = by_source_key.get(key)
+                if existing and existing.get("auto") and not existing.get("workflow"):
+                    # Source headings such as 'Repo: X' are not task identity.
+                    # Refresh only untouched machine candidates, never curated history.
+                    existing["title"] = str(row.get("text") or row.get("title") or "(untitled)")[:120]
+                    existing["source_text"] = str(row.get("text") or "")
+                    existing["source_node"] = str(row.get("source_node") or "")
+                    existing["source_updated_at"] = row.get("updated_at")
+                    existing["source_missing"] = False
                 continue
             known_keys.add(key)
             source = str(row.get("source_node") or "")
@@ -1237,8 +1247,11 @@ def _merge_loosetree(_timeout_s):
                                    hashlib.sha1(key.encode("utf-8",
                                                  errors="replace")).hexdigest()[:16]),
                 "parent": inbox_parent, "kind": "inbox",
-                "title": (row.get("title") or row.get("text") or
+                "title": (row.get("text") or row.get("title") or
                           "(untitled)")[:120],
+                "source_text": str(row.get("text") or ""),
+                "source_node": source,
+                "source_updated_at": row.get("updated_at"),
                 "status": "todo",
                 "origin": origin,
                 "origin_t": "repo" if source.startswith("repo:") else "system",
@@ -1248,19 +1261,20 @@ def _merge_loosetree(_timeout_s):
                 "note": "", "decision": "",
             })
             new_rows += 1
-        # Churn: auto rows whose source item disappeared (resolved/done in the
-        # ledger) leave the Inbox. Adopted rows (auto=False) are kept forever.
+        # A missing source row may mean capped/stale collection, not resolution.
+        # Keep candidates and their history until evidence-backed reconciliation.
         for n in list(nodes):
             if n.get("auto") and n.get("auto_key") and \
                     n["auto_key"] not in source_keys and n.get("id") != inbox_parent:
-                nodes.remove(n)
-                removed_rows += 1
+                n["source_missing"] = True
 
     # Recompute rollups with the same semantics as the CLI (import from the
     # installed/repo loose-tree so there is exactly one implementation).
     tree_mod = _load_loose_tree_module()
     if tree_mod is not None:
         tree_mod._recompute(store)
+        if hasattr(tree_mod, "work_queue"):
+            store["work_queue"] = tree_mod.work_queue(store)
     # An older installed runtime without scripts/loose-tree still serves the
     # tree (rollups just stay stale until the helper installs).
     counts = {"open": sum(1 for n in store["nodes"]
@@ -1272,6 +1286,7 @@ def _merge_loosetree(_timeout_s):
               "blocked": sum(1 for n in store["nodes"]
                              if n.get("status") == "blocked"),
               "inbox_new": new_rows, "inbox_removed": removed_rows}
+    counts["inbox_source_missing"] = sum(1 for n in nodes if n.get("auto") and n.get("source_missing"))
     store["counts"] = counts
     # Persist when anything changed vs. what was read (new/removed rows,
     # rollup recompute, counts). Avoids pointless rewrites every 5 min.

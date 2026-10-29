@@ -2090,6 +2090,36 @@ html[data-theme="dark"] .mc-heat-l4 { background: #35b98a; }
     var data = g.data || {};
     var nodes = Array.isArray(data.nodes) ? data.nodes : [];
     var counts = data.counts || {};
+    var queue = data.work_queue;
+    if (queue) {
+      var actionView = h("div", { "data-work-queue": "true" });
+      actionView.appendChild(h("h2", {}, "Next actions"));
+      actionView.appendChild(h("p", { class: "mc-card-secondary" },
+        String(queue.candidate_count || 0) + " candidates still need source review. " +
+        "Only reviewed, authorized work appears ready. Delivery is not completion."));
+      [["ready", "Ready"], ["doing", "Doing"], ["waiting", "Waiting"],
+       ["verified_done", "Verified done"]].forEach(function (group) {
+        var entries = Array.isArray(queue[group[0]]) ? queue[group[0]] : [];
+        var section = h("details", { "data-work-state": group[0] });
+        section.open = group[0] === "ready" || group[0] === "doing";
+        section.appendChild(h("summary", {}, group[1] + " (" + entries.length + ")"));
+        entries.forEach(function (item) {
+          var card = h("div", { class: "mc-card-secondary" },
+            h("strong", {}, item.title || "Untitled"),
+            h("div", {}, "Next: " + (item.next_action || "Source review required")),
+            item.waiting_for ? h("div", {}, "Waiting for: " + item.waiting_for) : null,
+            h("div", {}, "Done when: " + (item.acceptance || []).join("; ")));
+          if (item.owner_harness === "codex" && /^[a-f0-9-]{36}$/.test(item.owner || "")) {
+            card.appendChild(h("a", { href: "codex://threads/" + item.owner }, "Open owner chat"));
+          } else {
+            card.appendChild(h("div", {}, "Owner: " + (item.owner || "Unresolved")));
+          }
+          section.appendChild(card);
+        });
+        actionView.appendChild(section);
+      });
+      p.body.appendChild(actionView);
+    }
     var chips = h("div", { class: "mc-filters" },
       h("span", { class: "mc-chip" }, (counts.awaiting || 0) + " waiting on you"),
       h("span", { class: "mc-chip" }, (counts.doing || 0) + " doing"),

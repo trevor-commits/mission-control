@@ -31,6 +31,13 @@ The page lives at `~/.mission-control/index.html` (installed copy), refreshes it
 
 ## Repo notes
 
+The Loose Ends tab now includes Ready, Doing, Waiting and Verified done. The
+existing daily review coordinates already-authorized work through exact owners;
+machine candidates stay outside Ready until source review. See
+[the actionable work procedure](docs/runbooks/actionable-work.md) for `manage`,
+`queue`, reserved native routing and artifact-backed verification. Installation
+and natural review behavior remain separately verified in the dated work record.
+
 Start with `AGENTS.md`. The local governance files are intentionally present in
 this repo now: `PROJECT_INTENT.md`, `todo.md`, `CONTINUITY.md`, `COHERENCE.md`,
 `LINEAR.md`, and `CLAUDE.md`.
