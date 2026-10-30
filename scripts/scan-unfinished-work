@@ -31,6 +31,7 @@ set -euo pipefail
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd -P)
 # All scanner Git reads must avoid opportunistic index refresh/lock writes.
 export GIT_OPTIONAL_LOCKS=0
+export PYTHONDONTWRITEBYTECODE=1
 
 STALE_DAYS_DEFAULT=21
 CODING_ROOT="${CODING_ROOT:-/Users/gillettes/Coding Projects}"
@@ -85,13 +86,16 @@ if [ "$SELF_TEST" = 1 ]; then
   git -C "$LOCAL_ONLY" init -q -b main .
   git -C "$LOCAL_ONLY" config user.email t@t; git -C "$LOCAL_ONLY" config user.name t
   echo local > "$LOCAL_ONLY/f"; git -C "$LOCAL_ONLY" add f; git -C "$LOCAL_ONLY" commit -qm "init"
+  mkdir -p "$TMP/scanner"
+  cp "$SCRIPT_DIR/scan-unfinished-work" "$SCRIPT_DIR/mission_control_common.py" "$TMP/scanner/"
   set +e
-  LOCAL_MAIN=$("$0" --json --repo "$LOCAL_ONLY" 2>/dev/null); LOCAL_MAIN_RC=$?
+  LOCAL_MAIN=$(env -u PYTHONDONTWRITEBYTECODE "$TMP/scanner/scan-unfinished-work" --json --repo "$LOCAL_ONLY" 2>/dev/null); LOCAL_MAIN_RC=$?
   git -C "$LOCAL_ONLY" checkout -qb feature-unexplained
   git -C "$LOCAL_ONLY" commit -qm "feature" --allow-empty
   LOCAL_FEATURE=$("$0" --json --repo "$LOCAL_ONLY" 2>/dev/null); LOCAL_FEATURE_RC=$?
   set -e
   [ "$LOCAL_MAIN_RC" -eq 0 ] || { echo "SELF-TEST FAIL: local main false finding"; exit 1; }
+  [ ! -d "$TMP/scanner/__pycache__" ] || { echo "SELF-TEST FAIL: standalone scanner wrote bytecode"; exit 1; }
   [ "$LOCAL_FEATURE_RC" -eq 1 ] || { echo "SELF-TEST FAIL: lifecycle finding returned $LOCAL_FEATURE_RC"; exit 1; }
   printf '%s\n%s\n' "$LOCAL_MAIN" "$LOCAL_FEATURE" | python3 -c '
 import json,sys

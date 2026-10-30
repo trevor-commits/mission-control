@@ -2705,8 +2705,9 @@ c46() { # ER-134 prompt/panel surfaces are immutable and stamp-attested
   gr="$(_mkrepo)"; mch="$(mktemp -d)"; expected="$(mktemp)"
   git -C "$gr" show HEAD:scripts/compose-decision-prompt.py > "$expected"
   printf '\n# DIRTY_WORKTREE_SENTINEL\n' >> "$gr/scripts/compose-decision-prompt.py"
-  REPO_ROOT="$gr" MISSION_CONTROL_HOME="$mch" DASHBOARD_INSTALL_NO_LAUNCHD=1 \
+  env -u PYTHONDONTWRITEBYTECODE REPO_ROOT="$gr" MISSION_CONTROL_HOME="$mch" DASHBOARD_INSTALL_NO_LAUNCHD=1 \
     bash "$gr/scripts/dashboard" install >/dev/null 2>&1 || miss=1
+  [ ! -d "$gr/scripts/__pycache__" ] && [ ! -d "$mch/bin/__pycache__" ] || miss=1
   cmp -s "$expected" "$mch/bin/compose-decision-prompt.py" || miss=1
   before="$(PYTHONPATH="$mch/bin" python3 - "$mch/bin" <<'PY'
 import json,sys
@@ -3192,6 +3193,8 @@ PY
 }
 
 case "${DASHBOARD_TEST_CASE:-}" in
+install-attestation)
+  c24; c46 ;;
 full-ingest-recovery)
   c56 ;;
 fixture-reaper)

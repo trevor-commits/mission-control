@@ -15,6 +15,7 @@
 # bash-3.2 safe; python3 stdlib only.
 
 set -uo pipefail
+export PYTHONDONTWRITEBYTECODE=1  # includes every embedded helper, not only engine()
 
 # Resolve code/config roots before a synthetic state home can pin this process's
 # working directory. Relative REPO_ROOT overrides keep their caller-relative
