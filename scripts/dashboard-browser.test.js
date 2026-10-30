@@ -368,10 +368,7 @@ async function operatorUxAudit(browser, root) {
       })));
       check(chatClickControls.length > 0 && chatClickControls.every(x => x.tag === 'BUTTON' && x.type === 'button'),
         `Chats filter/focus controls are not native buttons (${JSON.stringify(chatClickControls)})`);
-      await Promise.all([
-        page.waitForNavigation({ waitUntil: 'load' }),
-        page.reload({ waitUntil: 'load' }),
-      ]);
+      await page.reload({ waitUntil: 'load' });
       check(await page.getByLabel('Search chats and open work').inputValue() === 'Needle', 'Chats query did not survive reload');
       check(await page.locator('#mc-chat-repo-filter').inputValue() === 'repo-b', 'Chats repo filter did not survive reload');
       check(await page.getByRole('button', { name: 'Only chats with unfinished work' }).getAttribute('aria-pressed') === 'true',
@@ -385,10 +382,7 @@ async function operatorUxAudit(browser, root) {
       if (await page.getByRole('button', { name: 'Claude', exact: true }).getAttribute('aria-pressed') === 'false') await claudeFilter.click();
       await page.evaluate(() => window.scrollTo(0, 900));
       const before = await page.evaluate(() => scrollY);
-      await Promise.all([
-        page.waitForNavigation({ waitUntil: 'load' }),
-        page.reload({ waitUntil: 'load' }),
-      ]);
+      await page.reload({ waitUntil: 'load' });
       await page.waitForTimeout(80);
       const after = await page.evaluate(() => scrollY);
       check(before > 500 && after > 500 && Math.abs(after - before) < 160,
@@ -419,10 +413,7 @@ async function operatorUxAudit(browser, root) {
       check(sideConnections.length > 0 && sideConnections.every(tag => tag === 'BUTTON'),
         `Map connection controls are not native buttons (${sideConnections.join(',')})`);
 
-      await Promise.all([
-        page.waitForNavigation({ waitUntil: 'load' }),
-        page.reload({ waitUntil: 'load' }),
-      ]);
+      await page.reload({ waitUntil: 'load' });
       await page.waitForTimeout(120);
       check(await page.getByLabel('Search map chats').inputValue() === 'Map Needle beyond the old cap', 'Map query did not survive reload');
       check(await page.locator('#mc-map-repo-filter').inputValue() === 'repo-b', 'Map repo filter did not survive reload');
@@ -475,7 +466,7 @@ async function operatorUxAudit(browser, root) {
       check(await gitDisclosure.getAttribute('aria-expanded') === 'false', 'Git disclosure lacks collapsed aria-expanded state');
       await gitDisclosure.click();
       check(await gitDisclosure.getAttribute('aria-expanded') === 'true', 'Git disclosure does not expose expanded state');
-      await Promise.all([page.waitForNavigation({ waitUntil: 'load' }), page.reload({ waitUntil: 'load' })]);
+      await page.reload({ waitUntil: 'load' });
       check(await page.locator('.mc-collapse').first().getAttribute('aria-expanded') === 'true', 'Git disclosure state did not survive reload');
 
       await page.goto(url('automation'), { waitUntil: 'load' });
@@ -484,7 +475,7 @@ async function operatorUxAudit(browser, root) {
       check(await automationDisclosure.getAttribute('aria-controls') != null, 'Automation disclosure lacks aria-controls');
       await automationDisclosure.click();
       check(await automationDisclosure.getAttribute('aria-expanded') === 'true', 'Automation disclosure does not expose expanded state');
-      await Promise.all([page.waitForNavigation({ waitUntil: 'load' }), page.reload({ waitUntil: 'load' })]);
+      await page.reload({ waitUntil: 'load' });
       check(await page.locator('.mc-collapse').first().getAttribute('aria-expanded') === 'true', 'Automation disclosure state did not survive reload');
     });
     await block('alert labels preserve provider acceptance and historical uncertainty', async () => {

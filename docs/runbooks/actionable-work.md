@@ -120,11 +120,22 @@ Keep the existing source fingerprints and inspect actual coverage/freshness for
 Codex, Claude, Cursor, Hermes and Copilot. ChatGPT metadata is not transcript
 coverage. Use direct provider/local transcript reads when feeds are stale; a
 title-only search with no match does not establish an unanswered question.
+Pass bare provider IDs or supported URLs to `chat-source`; graph keys such as
+`codex:<uuid>` are not resolver handles. An exact lookup failure may use native
+metadata and the canonical compressed sibling; check the returned identity.
+Do not fan out broad fallback scans. Bind timeouts to the owned process group
+and reap descendants, preserving every unrelated service.
 For each human question, search message bodies from its original timestamp
 through the present in source and linked/newer chats, including structured
 replies and messages after summaries. Save exact answer identity/time and
 inspected coverage. Strip ambient UI/environment/tool wrappers; never retain
 authentication URLs or secrets. Inaccessible evidence means answer unknown.
+
+Native routed prompts may appear as `functionCallOutput` items. For exact marker
+readback, use one bounded `read_thread` with outputs enabled and retain only the
+matching delivery item and turn metadata. A compact snapshot or outputs-disabled
+read can omit the marker; preserve unknown/no-resend until exact readback succeeds.
+These routes were verified October29; revalidate if provider item shapes change.
 
 Preserve provider access holds and current models. HTTP401/403 remains a visible
 access blocker; do not clear holds, switch providers, use API credentials or

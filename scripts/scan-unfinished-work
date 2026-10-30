@@ -66,14 +66,6 @@ is_git_repo() { [ -d "$1/.git" ] || [ "$(git -C "$1" rev-parse --is-inside-work-
 
 repo_short() { basename "$1"; }
 
-# days since last commit on a branch (arg: repo, ref); empty if unresolvable
-days_since() {
-  local repo="$1" ref="$2" ts
-  ts=$(git -C "$repo" log -1 --format=%ct "$ref" 2>/dev/null || true)
-  [ -z "$ts" ] && { echo ""; return; }
-  echo $(( ( $(date +%s) - ts ) / 86400 ))
-}
-
 # ─── self-test ────────────────────────────────────────────────────────────
 if [ "$SELF_TEST" = 1 ]; then
   [ "${GIT_OPTIONAL_LOCKS:-}" = "0" ] || { echo "SELF-TEST FAIL: GIT_OPTIONAL_LOCKS"; exit 1; }
@@ -107,10 +99,57 @@ main, feature = [json.loads(line) for line in sys.stdin if line.strip()]
 mr, fr = main["repos"][0], feature["repos"][0]
 assert main["findings_total"] == 0, main
 assert mr["default_branch"] == "main", mr
+assert mr["integration_ref"] == "refs/heads/main" and mr["integration_evidence"] == "local_branch", mr
 assert {b["name"]:b for b in mr["branch_facts"]}["main"]["metadata_status"] == "not-required", mr
 assert feature["findings_total"] > 0, feature
 assert any(r["kind"] == "unexplained-branch" for r in fr["decision_rows"]), fr
 ' || { echo "SELF-TEST FAIL: local lifecycle assertions"; exit 1; }
+  # A stale local main must not hide integration already present in the local
+  # remote-tracking ref. These fixtures never contact a network remote.
+  git clone -q "$UP" "$TMP/integration-checkout"
+  INTEGRATION_WORK="$TMP/integration-checkout"
+  git -C "$INTEGRATION_WORK" config user.email t@t
+  git -C "$INTEGRATION_WORK" config user.name t
+  git -C "$INTEGRATION_WORK" checkout -qb feature-integrated
+  INTEGRATION_DATE=$(python3 -c 'import datetime; print((datetime.datetime.now(datetime.timezone.utc)-datetime.timedelta(days=2)).isoformat())')
+  GIT_AUTHOR_DATE="$INTEGRATION_DATE" GIT_COMMITTER_DATE="$INTEGRATION_DATE" \
+    git -C "$INTEGRATION_WORK" commit -qm "integrated feature" --allow-empty
+  # Seed only this fixture tracking ref; remote freshness is intentionally
+  # unverified by the collector, and no push hook or provider is involved.
+  git -C "$INTEGRATION_WORK" update-ref refs/remotes/origin/main "$(git -C "$INTEGRATION_WORK" rev-parse feature-integrated)"
+  git -C "$INTEGRATION_WORK" checkout -qb feature-unmerged main
+  GIT_AUTHOR_DATE="$INTEGRATION_DATE" GIT_COMMITTER_DATE="$INTEGRATION_DATE" \
+    git -C "$INTEGRATION_WORK" commit -qm "unmerged feature" --allow-empty
+  git -C "$INTEGRATION_WORK" checkout -q main
+  INTEGRATED=$("$0" --json --repo "$INTEGRATION_WORK" --stale-days 0 2>/dev/null || true)
+  git -C "$INTEGRATION_WORK" symbolic-ref -d refs/remotes/origin/HEAD
+  INTEGRATION_UNKNOWN=$("$0" --json --repo "$INTEGRATION_WORK" --stale-days 0 2>/dev/null || true)
+  git -C "$INTEGRATION_WORK" symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/missing
+  INTEGRATION_MISSING=$("$0" --json --repo "$INTEGRATION_WORK" --stale-days 0 2>/dev/null || true)
+  printf '%s\n%s\n%s\n' "$INTEGRATED" "$INTEGRATION_UNKNOWN" "$INTEGRATION_MISSING" | python3 -c '
+import json,sys
+known, unknown, missing = [json.loads(line) for line in sys.stdin if line.strip()]
+repo = known["repos"][0]
+branches = {b["name"]:b for b in repo["branch_facts"]}
+assert branches["feature-integrated"]["merged_to_default"] is True, repo
+assert branches["feature-unmerged"]["merged_to_default"] is False, repo
+assert "feature-integrated" not in {b["name"] for b in repo["branches"]}, repo
+assert "feature-unmerged" in {b["name"] for b in repo["branches"]}, repo
+assert not any(r["kind"] == "stale-branch" and "feature-integrated" in r["detail"] for r in repo["decision_rows"]), repo
+assert repo["integration_ref"] == "refs/remotes/origin/main", repo
+assert repo["integration_evidence"] == "local_tracking_ref", repo
+assert len(repo["integration_sha"]) == 40 and repo["remote_integration_checked"] is False, repo
+for doc in (unknown, missing):
+    row = doc["repos"][0]
+    assert row["integration_ref"] is None and row["integration_sha"] is None, row
+    assert all(b["merged_to_default"] is None for b in row["branch_facts"]), row
+    assert not row["branches"], row
+    assert not any(r["kind"] == "stale-branch" for r in row["decision_rows"]), row
+    assert any(r["kind"] == "integration-unknown" for r in row["decision_rows"]), row
+    assert doc["findings_total"] > 0, doc
+    assert all(not b["push_eligible"] for b in row["branch_facts"]), row
+    assert all("integration_ref_unknown" in b["refusal_reasons"] for b in row["branch_facts"]), row
+' || { echo "SELF-TEST FAIL: integration reference assertions"; exit 1; }
   # Clone, create a non-current branch that is one old commit ahead, and prove
   # the branch-local contract independently from the current checkout.
   git clone -q "$UP" "$TMP/work"
@@ -410,46 +449,19 @@ for repo in "${repos[@]}"; do
   detached=0
   git -C "$repo" symbolic-ref -q HEAD >/dev/null 2>&1 || detached=1
 
-  # stale unmerged branches (not HEAD's branch, not main/master, older than STALE_DAYS)
-  stale_branches=""
   cur_branch=$(git -C "$repo" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
-  # emit each stale branch as a TSV record for later JSON assembly
-  stale_records=""
-  while IFS= read -r br; do
-    [ -z "$br" ] && continue
-    case "$br" in main|master) continue ;; esac
-    [ "$br" = "$cur_branch" ] && continue
-    # is it merged into main/master?
-    merged=0
-    for mb in main master; do
-      if git -C "$repo" rev-parse --verify "$mb" >/dev/null 2>&1; then
-        if git -C "$repo" merge-base --is-ancestor "$br" "$mb" 2>/dev/null; then merged=1; break; fi
-      fi
-    done
-    [ "$merged" = 1 ] && continue
-    age=$(days_since "$repo" "$br")
-    [ -z "$age" ] && continue
-    if [ "$age" -ge "$STALE_DAYS" ]; then
-      stale_branches+=$(printf '\n    %s — %sd old' "$br" "$age")
-      # NOT $(printf ...\n): command substitution strips the trailing newline, so
-      # records run together into one line and the JSON parser gets >2 tab fields
-      # and crashes (ValueError: too many values to unpack). Append newline directly.
-      stale_records+="$br"$'\t'"$age"$'\n'
-    fi
-  done < <(git -C "$repo" branch --format='%(refname:short)' 2>/dev/null)
 
   repo_findings=0
   [ "$dirty" = 1 ] && repo_findings=$((repo_findings+1))
   [ "$ahead" -gt 0 ] && repo_findings=$((repo_findings+1))
   [ "$detached" = 1 ] && repo_findings=$((repo_findings+1))
-  [ -n "$stale_branches" ] && repo_findings=$((repo_findings+1))
   findings_total=$((findings_total + repo_findings))
 
-  # Emit one JSONL line per repo: python builds the object, TSV feeds branches.
-    printf '%s' "$stale_records" | python3 -c '
+  # Emit one JSONL line per repo from a single integration/ancestry calculation.
+    python3 -c '
 import json, os, re, subprocess, sys, time
 from urllib.parse import urlsplit
-short, path, branch, upstream, dirty, dirty_files, ahead, behind, detached, script_dir = sys.argv[1:11]
+short, path, branch, upstream, dirty, dirty_files, ahead, behind, detached, script_dir, stale_days = sys.argv[1:12]
 sys.path.insert(0, script_dir)
 from mission_control_common import ACTION, IDENTIFIER, NARRATIVE, EgressCounters, sanitize_text
 counters = EgressCounters()
@@ -457,16 +469,6 @@ def screened(value, field_class):
     result = sanitize_text(value, field_class, counters=counters)
     return None if result.dropped else result.value
 stale_branches = []
-for line in sys.stdin:
-    line = line.rstrip("\n")
-    if not line: continue
-    parts = line.split("\t", 1)
-    if len(parts) != 2: continue
-    name, age = parts
-    if "\t" in name or "\n" in name or "\r" in name: continue
-    safe_name = screened(name, IDENTIFIER)
-    if safe_name is not None:
-        stale_branches.append({"name": safe_name, "age_days": int(age)})
 git_env = dict(os.environ)
 git_env["GIT_OPTIONAL_LOCKS"] = "0"
 def git_result(*args):
@@ -687,6 +689,8 @@ def decision_rows_for_repo(branch_rows, worktree_rows):
         add("amber", "behind-upstream", "Branch is behind GitHub", "%s is %s commit(s) behind upstream" % (safe_branch or branch or "current branch", behind), "get GitHub updates")
     if detached == "1":
         add("amber", "detached-head", "Detached worktree", "%s is not on a named branch" % (safe_short or short), "check branch")
+    if integration_sha is None or any(row.get("merged_to_default") is None for row in branch_rows):
+        add("amber", "integration-unknown", "Integration state unknown", "Default integration or ancestry is unavailable from local Git refs", "refresh integration evidence")
     for row in branch_rows:
         if row.get("is_default"):
             continue
@@ -697,7 +701,7 @@ def decision_rows_for_repo(branch_rows, worktree_rows):
             add("amber", "partial-branch-metadata", "Branch metadata incomplete", "%s is missing lifecycle fields" % row.get("name", "branch"), "complete branch ledger metadata")
         if row.get("ahead", 0) > 0:
             add("amber", "unpushed-branch", "Branch has local commits", "%s has %s commit(s) not on its upstream" % (row.get("name", "branch"), row.get("ahead")), "review push readiness")
-        if ((row.get("last_activity") or {}).get("state") == "stale" and not row.get("merged_to_default")):
+        if ((row.get("last_activity") or {}).get("state") == "stale" and row.get("merged_to_default") is False):
             add("amber", "stale-branch", "Ready to check merge", "%s has not moved recently" % row.get("name", "branch"), "review merge readiness")
     for row in worktree_rows:
         status = row.get("metadata_status")
@@ -745,6 +749,23 @@ if not remote_names:
             local_default = candidate
             break
 
+# One repository integration target for all merge observations. Remote-tracking
+# refs are local evidence, not a fresh remote check. Never fall back to a stale
+# local main when a configured remote has no known/resolvable default.
+integration_remote = "origin" if "origin" in remote_names else (remote_names[0] if len(remote_names) == 1 else None)
+integration_default = default_by_remote.get(integration_remote) if remote_names else local_default
+integration_ref = None
+integration_sha = None
+integration_evidence = "unknown"
+if integration_default:
+    candidate_ref = ("refs/remotes/%s/%s" % (integration_remote, integration_default)
+                     if remote_names else "refs/heads/%s" % integration_default)
+    safe_ref = screened(candidate_ref, IDENTIFIER)
+    candidate_sha = git("rev-parse", "--verify", "%s^{commit}" % candidate_ref) if safe_ref else ""
+    if re.fullmatch(r"[0-9a-fA-F]{40,64}", candidate_sha):
+        integration_ref, integration_sha = safe_ref, candidate_sha
+        integration_evidence = "local_tracking_ref" if remote_names else "local_branch"
+
 branch_facts = []
 for name in local_branch_names:
     if not name:
@@ -790,6 +811,7 @@ for name in local_branch_names:
     elif remote_class not in ("https", "ssh", "local"): reasons.append("remote_unsafe_or_unknown")
     if has_query_or_fragment: reasons.append("remote_query_or_fragment")
     if default_branch is None: reasons.append("default_branch_unknown")
+    if integration_sha is None: reasons.append("integration_ref_unknown")
     if is_default: reasons.append("default_branch")
     if is_protected: reasons.append("protected_branch")
     if remote_is_default: reasons.append("remote_target_default_branch")
@@ -884,10 +906,17 @@ ledger = parse_branch_ledger()
 for b in branch_facts:
     b["age_days"] = int((b.get("last_activity") or {}).get("age_seconds", 0) // 86400) if (b.get("last_activity") or {}).get("age_seconds") is not None else None
     default_for_branch = b.get("default_branch")
-    if default_for_branch and b.get("name") != default_for_branch:
-        b["merged_to_default"] = git_result("merge-base", "--is-ancestor", "refs/heads/%s" % b.get("name"), "refs/heads/%s" % default_for_branch).returncode == 0
-    else:
-        b["merged_to_default"] = False
+    merged = None
+    if integration_sha and b.get("local_ref"):
+        ancestry = git_result("merge-base", "--is-ancestor", b["local_ref"], integration_sha)
+        if ancestry.returncode in (0, 1):
+            merged = ancestry.returncode == 0
+    b["merged_to_default"] = merged
+    commit_epoch = (b.get("last_commit") or {}).get("epoch")
+    if merged is False and b.get("name") not in (safe_branch, "main", "master") and commit_epoch is not None:
+        age = max(0, (generated_epoch - commit_epoch) // 86400)
+        if age >= int(stale_days):
+            stale_branches.append({"name": b["name"], "age_days": age})
     merge_lifecycle(b, lifecycle_metadata(
         ledger, branch_name=b.get("name"), default_branch=default_for_branch,
         is_default=b.get("is_default") is True,
@@ -925,6 +954,8 @@ print(json.dumps({"repo": safe_short, "path": safe_path, "branch": safe_branch,
                   "remote_name": current_facts.get("remote_name"),
                   "remote_classification": current_facts.get("remote_classification", "missing"),
                   "default_branch": current_facts.get("default_branch"),
+                  "integration_ref": integration_ref, "integration_sha": integration_sha,
+                  "integration_evidence": integration_evidence, "remote_integration_checked": False,
                   "dirty": dirty == "1", "dirty_files": int(dirty_files),
                   "ahead": int(ahead), "behind": int(behind),
                   "detached": detached == "1", "worktrees": worktrees,
@@ -937,7 +968,7 @@ print(json.dumps({"repo": safe_short, "path": safe_path, "branch": safe_branch,
                                   "epoch": int(epoch) if epoch else None},
                   "recent_commits": recent,
                   "privacy_counters": counters.snapshot()}))
-' "$short" "$repo" "$cur_branch" "$upstream" "$dirty" "$dirty_lines" "$ahead" "$behind" "$detached" "$SCRIPT_DIR" >> "$JSONL_FILE"
+' "$short" "$repo" "$cur_branch" "$upstream" "$dirty" "$dirty_lines" "$ahead" "$behind" "$detached" "$SCRIPT_DIR" "$STALE_DAYS" >> "$JSONL_FILE"
   if [ "$JSON" != 1 ] && [ "$repo_findings" -gt 0 ]; then
     # Human output uses content-free labels. The machine-readable path/refs are
     # screened by the shared field-aware policy above; raw shell values must
@@ -946,7 +977,6 @@ print(json.dumps({"repo": safe_short, "path": safe_path, "branch": safe_branch,
     [ "$dirty" = 1 ] && printf '  ⚠ dirty tree: %s uncommitted file(s)\n' "$dirty_lines"
     [ "$ahead" -gt 0 ] && printf '  ⚠ %s unpushed commit(s)\n' "$ahead"
     [ "$detached" = 1 ] && printf '  ⚠ detached HEAD\n'
-    [ -n "$stale_branches" ] && printf '  ⚠ stale unmerged branch(es) detected\n'
     echo
   fi
 done
@@ -960,7 +990,8 @@ with open(sys.argv[1]) as fh:
         line = line.strip()
         if line: repos.append(json.loads(line))
 decision_total = sum(len(repo.get("decision_rows") or []) for repo in repos)
-total = max(int(sys.argv[3]), decision_total)
+stale_repo_total = sum(bool(repo.get("branches")) for repo in repos)
+total = max(int(sys.argv[3]) + stale_repo_total, decision_total)
 print(json.dumps({"generated": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
                   "stale_days": int(sys.argv[2]), "findings_total": total,
                   "repos": repos}))
@@ -983,8 +1014,10 @@ else
 import json,sys
 doc=json.load(sys.stdin)
 for repo in doc.get("repos",[]):
+    if repo.get("branches"):
+        print("## Repository finding\n  ⚠ stale unmerged branch(es) detected\n")
     lifecycle=[r for r in repo.get("decision_rows",[]) if r.get("kind") in
-               ("unexplained-branch","partial-branch-metadata","unexplained-worktree","partial-worktree-metadata")]
+               ("unexplained-branch","partial-branch-metadata","unexplained-worktree","partial-worktree-metadata","integration-unknown")]
     if lifecycle:
         print("## Lifecycle finding")
         for row in lifecycle:

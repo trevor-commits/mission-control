@@ -7,6 +7,10 @@
   `01a16afb-4d78-7fd2-beec-605a7fd11e64`; main → origin/main; no new scheduler.
   Acceptance and recovery: [record](records/2026-10-29-actionable-work-loop.md).
   Disposition: self-contained, Trevor October29 implementation request.
+  Frozen follow-up:414/414 reviewed;162 retired/linked;18 accepted items assigned;
+  234 agent evidence gaps retained. Four exact existing-owner deliveries are
+  bound; source repair publication/install gates and later owner verification
+  remain separate. Private receipts are linked from the same record.
 
 - Codex outcome-extractor replacement: implemented with focused tests and one uncached installed success; normal publication gate and remote delivery tracked in the record. Next natural run remains unverified. Owner: Codex 01a15e1d. [Record](records/2026-10-21-outcome-extractor-repair.md).
 

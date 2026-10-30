@@ -98,6 +98,50 @@ recorded in `mc-actionable-20261029-closeout.json`. These receipts are the curre
 operational continuation of this source record. A later manual check never
 stands in for the next natural daily review.
 
+## Complete frozen candidate review
+
+Trevor's later October29 request explicitly covered the remaining414 candidates.
+The frozen cohort has414 unique reviewed IDs:146 stale/non-task/answered captures
+retired,16 duplicates linked to canonical outcomes,18 accepted items assigned,
+and234 evidence gaps retained with agent next actions. Three exact old choices
+were answered in later user messages. This is review coverage, not completion
+of the underlying projects or a claim of corpus-wide capture.
+
+Four bounded continuations reached existing native owners: Hermes reliability,
+storage, Gillette form requirements, and website consolidation. Each reserves
+one attempt and binds its marker to the actual native turn. The storage candidate
+links the already existing canonical task. Fifteen Claude/Cursor items remain
+assigned but blocked on current owner/access proof. No retired workflow, Gmail
+writer, external communication, model selection or schedule was changed.
+
+The existing private review directory is
+`~/.codex/automation-state/unfinished-work-review/candidate-review-20261029-01a16afb/`.
+Its inventory, four per-source reports, independent review, application journal,
+reconciliation plan and native receipts retain the exact proof. The existing
+daily08:00 reviewer owns later artifact-backed completion verification.
+
+Capture repairs use one repository integration ref for branch ancestry; a stale
+local main no longer makes published tips look unmerged. Unknown integration
+stays explicit. Closeouts now distinguish actual fields from quotes, code and
+empty Markdown values. Register status is parsed from its status column; landed
+is not verified, and unreadable input preserves both register capture paths.
+Todo continuation context and dated nightly provenance survive intake. Parser6
+uses the existing bounded cursor invalidation rather than an additional scanner.
+
+Independent reviewers challenged the exact patches and all414 dispositions.
+One retained external-drive worktree was correctly kept unknown: later Hermes
+release evidence did not close that different outcome. The first full gate
+exposed inherited Python3.9 selection and a redacted nightly source-date test;
+both were corrected without weakening checks. A later gate found the browser
+probe waiting twice for one reload. The redundant deprecated navigation waits
+were removed; all reload and UI persistence assertions remain.
+
+Source validation, publication, installed parity and later natural operation
+remain separate receipts. The final closeout artifact records each completed
+gate and every remaining limit. Reverting the owned source commit and restoring
+the prior checked runtime is the code rollback; do not undo reviewed ledger
+history or replay any reserved delivery.
+
 ## Evidence Checked
 
 Confirmed: source and negative regressions, independent exact-snapshot review,

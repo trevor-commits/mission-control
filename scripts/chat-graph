@@ -45,7 +45,7 @@ def _git_feed_path():
         return os.path.join(os.path.expanduser(mission_home), "data", "git.json")
     return os.path.expanduser("~/.mission-control/data/git.json")
 GIT_FEED      = _git_feed_path
-TIER1_PARSER_VERSION = 5
+TIER1_PARSER_VERSION = 6
 
 # Dashboard timeouts send SIGTERM to the whole feeder process group. Raising
 # SystemExit lets cmd_ingest's finally block release ingest.lock before exit.
@@ -894,7 +894,7 @@ _UUID_RE = re.compile(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]
 _CODE_RE = re.compile(r"\b(?:ER|GR|HB|HR)-\d{3}\b")
 _SPAWNED_BY_RE    = re.compile(r"Spawned-by:\s*parent_provider=(\S+)\s+parent_id=(\S+)")
 _SPAWNED_CHILD_RE = re.compile(r"Spawned-child:\s*provider=(\S+)\s+child_id=(\S+)")
-_HANDOFF_RE = re.compile(r"Handoff:\s*(.+)")
+_HANDOFF_RE = re.compile(r"^(?:[-*]\s+)?(?:\*\*)?Handoff:(?:\*\*)?\s*(.+)$", re.I)
 _EXPLICIT_RESOLVED_RE = re.compile(r"(?im)^\s*Resolved:\s*([0-9a-f]{40})\s*$")
 _EXPLICIT_RESOLVES_RE = re.compile(r"(?im)^\s*Resolves:\s*([0-9a-f]{40})\s*$")
 _EXPLICIT_ANSWERS_RE = re.compile(r"(?im)^\s*Answers:\s*([0-9a-f]{40})\s*$")
@@ -1056,6 +1056,49 @@ def _user_role(rec):
     elif isinstance(payload, dict):
         role = role or payload.get("role")
     return role == "user" or typ in ("user", "user.message")
+
+def _closeout_handoff(rec, text):
+    """Read a closeout field, never quoted prose, code or a table cell.
+
+    Users may supply the explicit one-line marker. Multiline blocks must be
+    assistant-authored; pasted reports are evidence, not new assignments.
+    None means no closeout; an empty string means an explicit empty handoff.
+    """
+    compact = re.fullmatch(r"Session Closeout Handoff:\s*(.+)", text.strip(), re.I) if not text.startswith(("    ", "\t")) else None
+    if compact:
+        value = compact.group(1)
+    elif not _assistant_role(rec):
+        return None
+    else:
+        fence, in_closeout, value = None, False, None
+        for raw in text.splitlines():
+            line = raw.strip()
+            marker = re.match(r"^(`{3,}|~{3,})(.*)$", line)
+            if fence:
+                if marker and marker.group(1)[0] == fence[0] and len(marker.group(1)) >= len(fence) and not marker.group(2).strip():
+                    fence = None
+                continue
+            if marker:
+                fence = marker.group(1)
+                continue
+            if raw.startswith(("    ", "\t")) or line.startswith((">", "|")):
+                continue
+            heading = re.sub(r"^#{1,6}\s+", "", line).strip("* :")
+            if heading.lower() == "session closeout":
+                in_closeout = True
+                continue
+            if line.startswith("#"):
+                in_closeout = False
+            match = _HANDOFF_RE.fullmatch(line) if in_closeout else None
+            if match:
+                value = match.group(1)
+        if value is None:
+            return None
+    value = value.strip().strip("`*_ ")
+    if re.fullmatch(r"(?:none(?: required| needed)?|n/a|na|no handoff(?: required| needed)?|-)\.?", value, re.I):
+        return ""
+    return value if len(value) > 3 else ""
+
 
 def _utf8_tail(value, limit):
     data = (value or "").encode("utf-8", "replace")
@@ -1541,21 +1584,40 @@ def _rec_uuid(rec):
     return p.get("id") if isinstance(p, dict) else None
 
 _REGISTER_CACHE = {}
+def _register_entries():
+    """Parse the status cell, not incidental 'verified' words in the request."""
+    entries, status_column = [], None
+    try:
+        with open(REGISTER(), errors="replace") as source:
+            for line in source:
+                if not line.lstrip().startswith("|"):
+                    continue
+                cells = [cell.strip() for cell in re.split(r"(?<!\\)\|", line.strip().strip("|"))]
+                headers = [cell.strip("`* ").lower() for cell in cells]
+                if "status" in headers and headers[0] == "id":
+                    status_column = headers.index("status")
+                    continue
+                code = _CODE_RE.fullmatch(cells[0].strip("` ")) if cells else None
+                if not code or not code.group().startswith("ER-"):
+                    continue
+                column = status_column if status_column is not None else len(cells) - 1
+                status = cells[column].replace("`", "").replace("**", "").strip() if column < len(cells) else ""
+                terminal = bool(re.match(r"^(verified|done|closed|retired|superseded|cancelled|canceled)(?:\s|$)", status, re.I))
+                entries.append((code.group(), re.sub(r"\s+", " ", line.strip(" |\n")), terminal))
+    except OSError:
+        return None
+    return entries
+
+
 def _register_status(code):
     """'verified' / 'unverified' / None(no row). Register file parsed once."""
     rows = _REGISTER_CACHE.get("rows")
     if rows is None:
         rows = {}
-        try:
-            with open(REGISTER()) as f:
-                for ln in f:
-                    for m in _CODE_RE.finditer(ln):
-                        c = m.group(0)
-                        v = bool(re.search(r"verified", ln, re.I))
-                        if c not in rows or v:
-                            rows[c] = "verified" if v else "unverified"
-        except OSError:
-            pass
+        entries = _register_entries()
+        _REGISTER_CACHE["available"] = entries is not None
+        for c, _, terminal in entries or []:
+            rows[c] = "verified" if terminal else "unverified"
         _REGISTER_CACHE["rows"] = rows
     return rows.get(code)
 
@@ -1689,6 +1751,7 @@ def _scan_one(con, path, provider, sid, known, mtime_s):
     blob_parts, spawn_targets, first_uuid = [], set(), None
     assistant_tail = deque(maxlen=TIER1_MAX_MESSAGES)
     answer_markers = []
+    handoff = None
     record_positions = {}
     n_lerr, got_first = 0, False
     with open(path, errors="strict") as f:
@@ -1707,6 +1770,9 @@ def _scan_one(con, path, provider, sid, known, mtime_s):
             txt = _msg_text(rec)
             if txt is None:
                 continue
+            current_handoff = _closeout_handoff(rec, txt)
+            if current_handoff is not None:
+                handoff = current_handoff
             if _assistant_role(rec):
                 assistant_tail.append(rec)
                 record_positions[_assistant_message_ref(rec, txt)] = lineno
@@ -1739,21 +1805,20 @@ def _scan_one(con, path, provider, sid, known, mtime_s):
         n_sig += 1
         if _register_status(c) == "unverified":
             open_now.setdefault("register_unverified", {})["register:%s" % c] = c
-    if "Session Closeout" in blob:
-        m = _HANDOFF_RE.search(blob)
-        if m:
-            txt = m.group(1).strip()
-            if len(txt) > 3 and txt.lower() not in ("none", "n/a", "na", "-"):
-                open_now.setdefault("closeout_handoff", {})["closeout_handoff"] = txt
-                con.execute("UPDATE sessions SET closeout_seen=1 WHERE id=?", (sid,))
+    if handoff is not None:
+        con.execute("UPDATE sessions SET closeout_seen=1 WHERE id=?", (sid,))
+        if handoff:
+            open_now.setdefault("closeout_handoff", {})["closeout_handoff"] = handoff
     # Reconcile only source-backed scanner kinds. `chat_open_end` is deliberately
     # absent: a finalized extraction omitting an item is never resolution proof.
     closeout_seen = con.execute("SELECT closeout_seen FROM sessions WHERE id=?", (sid,)).fetchone()
     if open_now.get("closeout_handoff") or (closeout_seen and closeout_seen["closeout_seen"]):
         _reconcile_open_session_kind(con, sid, "closeout_handoff",
                                      open_now.get("closeout_handoff", {}))
-    _reconcile_open_session_kind(con, sid, "register_unverified",
-                                 open_now.get("register_unverified", {}))
+    _register_status(None)  # load availability even when this transcript has no codes
+    if _REGISTER_CACHE.get("available"):
+        _reconcile_open_session_kind(con, sid, "register_unverified",
+                                     open_now.get("register_unverified", {}))
     n_sig += sum(len(v) for v in open_now.values())
     con.execute("UPDATE sessions SET provider=COALESCE(NULLIF(provider,''),?), "
                 "last_activity=?, first_msg_uuid=COALESCE(first_msg_uuid,?) WHERE id=?",
@@ -2015,7 +2080,8 @@ def collect_todo_open(con):
         in_work, cap = False, 0
         try:
             with open(todo, errors="replace") as f:
-                for line in f:
+                lines = f.readlines()
+                for offset, line in enumerate(lines):
                     hm = re.match(r"^\s*##+\s+(.+?)\s*$", line)
                     if hm:
                         h = hm.group(1).lower()
@@ -2030,7 +2096,17 @@ def collect_todo_open(con):
                     item = re.sub(r"\s+", " ", m.group(1)).strip()
                     if not item:
                         continue
-                    text = "%s: %s" % (repo, item[:220])
+                    continuation = []
+                    indent = len(line) - len(line.lstrip())
+                    for following in lines[offset + 1:]:
+                        if not following.strip():
+                            continue
+                        if len(following) - len(following.lstrip()) <= indent or re.match(r"\s*(?:#+|[-*]\s+\[[ xX]\])", following):
+                            break
+                        continuation.append(following.strip())
+                    if continuation:
+                        item += " " + re.sub(r"\s+", " ", " ".join(continuation))
+                    text = "%s: %s" % (repo, item)
                     cap += 1
                     active[(sid, "todo:%s:%d" % (repo, cap))] = text
                     if cap >= 50:
@@ -2041,9 +2117,12 @@ def collect_todo_open(con):
     return len(active) + n
 
 def collect_nightly_findings(con):
+    def report_order(path):
+        date = re.match(r"^(\d{4}-\d{2}-\d{2})(?:\D|$)", os.path.basename(path))
+        # Copying an old dated report must not make it the newest report.
+        return date.group(1) if date else time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(os.path.getmtime(path)))
     files = sorted(glob.glob(os.path.expanduser(NIGHTLY_GLOB())),
-                   key=lambda p: os.path.getmtime(p) if os.path.exists(p) else 0,
-                   reverse=True)
+                   key=report_order, reverse=True)
     active = {}
     if files:
         path = files[0]
@@ -2058,10 +2137,10 @@ def collect_nightly_findings(con):
                         continue
                     repo_m = re.search(r"(?:Coding Projects/|repo[:=]\s*`?)([A-Za-z0-9_.-]+)", s)
                     item_sid = _repo_node(con, repo_m.group(1)) if repo_m else sid
-                    text = re.sub(r"\s+", " ", re.sub(r"^[-*]\s+", "", s))[:240]
+                    text = "%s:%d: %s" % (os.path.basename(path), lineno, re.sub(r"\s+", " ", re.sub(r"^[-*]\s+", "", s)))
                     active[(item_sid, "%s:%d" % (path, lineno))] = text
         except OSError:
-            pass
+            return 0
     _reconcile_open_kind(con, "nightly_finding", active)
     return len(active)
 
@@ -2098,23 +2177,13 @@ def collect_repo_dirty(con):
 
 def collect_register_open(con):
     active = {}
-    try:
-        with open(REGISTER(), errors="replace") as f:
-            for line in f:
-                if "ER-" not in line or not line.lstrip().startswith("|"):
-                    continue
-                codes = _CODE_RE.findall(line)
-                if not codes:
-                    continue
-                low = line.lower()
-                if re.search(r"\|\s*(verified|landed|done|closed)\s*\|", low):
-                    continue
-                sid = _repo_node(con, "global-implementations")
-                text = re.sub(r"\s+", " ", line.strip(" |\n"))[:240]
-                for code in codes[:1]:
-                    active[(sid, code)] = text
-    except OSError:
-        pass
+    entries = _register_entries()
+    if entries is None:
+        return 0  # an unreadable register cannot resolve existing candidates
+    for code, text, terminal in entries:
+        if not terminal:
+            sid = _repo_node(con, "global-implementations")
+            active[(sid, code)] = text
     _reconcile_open_kind(con, "register_open", active)
     return len(active)
 

@@ -869,6 +869,41 @@ umsg "just a normal follow-up message now" u20b > "$(cl_root)/CLOSE20.jsonl"
 ok 0 "$(q "SELECT COUNT(*) FROM open_ends WHERE session_id='CLOSE20' AND resolved_at IS NULL")" \
    "open_end auto-resolved when closeout block disappears on later pass"
 
+# Real closeouts survive; quoted docs, code, and explicit empty handoffs do not.
+if python3 - "$CG" <<'PY'
+import runpy, sys
+from pathlib import Path
+sys.path.insert(0, str(Path(sys.argv[1]).parent))
+parse = runpy.run_path(sys.argv[1])["_closeout_handoff"]
+assistant, user = {"role":"assistant"}, {"role":"user"}
+block = "## Session Closeout\n- **Handoff:** finish the migration and verify"
+assert parse(assistant, block) == "finish the migration and verify"
+assert parse(user, "Session Closeout Handoff: finish the migration and verify") == "finish the migration and verify"
+assert parse(user, "Codex said:\n" + block) is None
+assert parse(assistant, "```markdown\n" + block + "\n```") is None
+assert parse(assistant, "````markdown\n```\n" + block + "\n````") is None
+assert parse(assistant, "```markdown\n~~~\n" + block + "\n```") is None
+assert parse(assistant, "    ## Session Closeout\n    Handoff: quoted task") is None
+assert parse(assistant, "| Session Closeout Handoff: ` text -> open_ends |") is None
+assert parse(assistant, 'The scanner reads "Session Closeout Handoff:" notes.') is None
+assert parse(assistant, "> ## Session Closeout\n> Handoff: quoted task") is None
+for empty in ("None", "None.", "None required.", "** None required.", "`None`", "_None_", "N/A", "-"):
+    assert parse(assistant, "## Session Closeout\nHandoff: " + empty) == "", empty
+PY
+then pass "closeout extraction separates actual fields from quoted/template/empty text"
+else fail "closeout field provenance or empty normalization"; fi
+
+python3 - "$(cl_root)/CLOSE20.jsonl" <<'PY'
+import json, sys
+with open(sys.argv[1], "w") as f:
+    for text in ("## Session Closeout\n- **Handoff:** old unfinished item",
+                 "## Session Closeout\n- **Handoff:** None required."):
+        f.write(json.dumps({"role":"assistant", "content":text}) + "\n")
+PY
+"$CG" ingest --full >/dev/null 2>&1
+ok 0 "$(q "SELECT COUNT(*) FROM open_ends WHERE session_id='CLOSE20' AND kind='closeout_handoff' AND resolved_at IS NULL")" \
+   "latest explicit empty closeout replaces an older handoff"
+
 # --- 21. export -> validate-export round-trip green + atomic (no tmp left) ---
 new_env
 mkdir -p "$(cl_root)"
@@ -1119,10 +1154,14 @@ export CHAT_GRAPH_REPO_ROOTS="$R29"
 cat > "$R29/todo.md" <<'MD'
 ## Active Work
 - [ ] Wire the usage routing pointer into the dashboard
+  Owner: exact existing source chat. Preserve all original holds.
+  Acceptance: independent natural receipt, not only tests.
 MD
 "$CG" ingest --collector todo_open >/dev/null
 ok 1 "$(q "SELECT COUNT(*) FROM open_ends WHERE kind='todo_open' AND resolved_at IS NULL")" \
    "todo_open collector inserts unchecked repo todo item"
+ok 1 "$(q "SELECT COUNT(*) FROM open_ends WHERE kind='todo_open' AND text LIKE '%Owner: exact existing source chat.%Acceptance: independent natural receipt%'")" \
+   "todo capture preserves multiline owner and acceptance context"
 HASH29="$(q "SELECT text_hash FROM open_ends WHERE kind='todo_open' AND resolved_at IS NULL LIMIT 1")"
 "$CG" resolve "repo:repo-alpha" "$HASH29" >/dev/null
 ok 0 "$(q "SELECT COUNT(*) FROM open_ends WHERE kind='todo_open' AND resolved_at IS NULL")" \
@@ -1416,6 +1455,33 @@ MD
 "$CG" ingest --collector register_open >/dev/null
 ok 0 "$(q "SELECT COUNT(*) FROM open_ends WHERE kind='register_open' AND resolved_at IS NULL")" \
    "register_open auto-resolves after verified status"
+cat > "$CHAT_GRAPH_REGISTER" <<'MD'
+| ID | Request | Status | Notes |
+| ER-997 | Verified source needs live proof | `unverified` | pending |
+| ER-998 | completed change | `verified` — actual acceptance observed | retained |
+| ER-999 | partial change | `in-progress` | verified tests only |
+MD
+"$CG" ingest --collector register_open >/dev/null
+ok 2 "$(q "SELECT COUNT(*) FROM open_ends WHERE kind='register_open' AND resolved_at IS NULL")" \
+   "register status column handles Markdown and notes without mistaking verified prose for completion"
+printf '%s\n' '| ER-996 | published change | `landed` — live adoption unproven | retained |' >> "$CHAT_GRAPH_REGISTER"
+"$CG" ingest --collector register_open >/dev/null
+ok 3 "$(q "SELECT COUNT(*) FROM open_ends WHERE kind='register_open' AND resolved_at IS NULL")" \
+   "landed source is not verified live acceptance"
+mv "$CHAT_GRAPH_REGISTER" "$CHAT_GRAPH_REGISTER.unavailable"
+"$CG" ingest --collector register_open >/dev/null
+ok 3 "$(q "SELECT COUNT(*) FROM open_ends WHERE kind='register_open' AND resolved_at IS NULL")" \
+   "unreadable register preserves existing candidates"
+mv "$CHAT_GRAPH_REGISTER.unavailable" "$CHAT_GRAPH_REGISTER"
+mkdir -p "$(cl_root)"
+umsg "Follow up ER-997" u31 > "$(cl_root)/REGISTER31.jsonl"
+"$CG" ingest >/dev/null 2>&1
+ok 1 "$(q "SELECT COUNT(*) FROM open_ends WHERE session_id='REGISTER31' AND kind='register_unverified' AND resolved_at IS NULL")" \
+   "incidental verified prose does not close an unverified status"
+mv "$CHAT_GRAPH_REGISTER" "$CHAT_GRAPH_REGISTER.unavailable"
+"$CG" ingest --full >/dev/null 2>&1
+ok 1 "$(q "SELECT COUNT(*) FROM open_ends WHERE session_id='REGISTER31' AND kind='register_unverified' AND resolved_at IS NULL")" \
+   "unreadable register also preserves transcript-derived register candidates"
 
 # --- 32. loose-ends: severity rules are computed from kind/text/age ---------
 new_env
@@ -1471,6 +1537,23 @@ touch -t 202607080200 "$N32/new.md"
 "$CG" ingest --collector nightly_finding >/dev/null
 ok 0 "$(q "SELECT COUNT(*) FROM open_ends WHERE kind='nightly_finding' AND resolved_at IS NULL")" \
    "nightly_finding auto-resolves when newer report omits it"
+N33="$(mktemp -d)"
+export CHAT_GRAPH_NIGHTLY_REPORT_GLOB="$N33/*.md"
+printf '%s\n' '- old report needs investigation' > "$N33/2026-08-23.md"
+printf '%s\n' '- all watched jobs green' > "$N33/2026-10-29.md"
+touch -t 202610290000 "$N33/2026-10-29.md"
+touch -t 202610300000 "$N33/2026-08-23.md"
+"$CG" ingest --collector nightly_finding >/dev/null
+ok 0 "$(q "SELECT COUNT(*) FROM open_ends WHERE kind='nightly_finding' AND resolved_at IS NULL")" \
+   "copying an older dated report cannot make it the latest nightly evidence"
+python3 - "$N33/2026-10-29.md" <<'PY'
+from pathlib import Path
+import sys
+Path(sys.argv[1]).write_text('- needs ' + 'full context ' * 30 + 'FINAL-BOUNDARY\n')
+PY
+"$CG" ingest --collector nightly_finding >/dev/null
+ok 1 "$(q "SELECT COUNT(*) FROM open_ends WHERE kind='nightly_finding' AND resolved_at IS NULL AND text LIKE '%2026-10-29.md:1:%FINAL-BOUNDARY%'")" \
+   "nightly finding retains dated source location and complete boundary text"
 
 # --- 34. validate-export requires the loose_ends contract -------------------
 new_env
@@ -1722,7 +1805,7 @@ for command in ("export API_MODE=safe","curl https://example.invalid/health",
                 "./verify-token"):
     assert command in multi["anchors"]["commands"], (command,multi["anchors"])
 assert not any("exact operator procedure" in x for x in multi["anchors"]["commands"])
-assert multi["parser_version"]==5
+assert multi["parser_version"]==6
 PYEOF
 then pass "Tier 1 uses stable content keys, field-aware actions/counters, and hard byte cap"
 else fail "Tier 1 stable/action/counter/byte contract"; fi
