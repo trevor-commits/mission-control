@@ -703,7 +703,13 @@ async function actionableWorkAudit(browser, root) {
         });
         for (const tab of ['home', 'brief', 'map', 'chats', 'git', 'usage', 'automation']) {
           await page.goto(`${pathToFileURL(path.join(root, 'index.html')).href}#${tab}`, { waitUntil: 'load' });
-          await page.waitForTimeout(tab === 'map' ? 300 : 50);
+          if (tab === 'map') {
+            // The graph is created asynchronously; wait for the required result,
+            // rather than assuming a loaded host renders it within 300ms.
+            await page.locator('#mc-graph canvas').first().waitFor({ state: 'attached' });
+          } else {
+            await page.waitForTimeout(50);
+          }
           const metrics = await page.evaluate(() => ({
             html: document.documentElement.scrollWidth,
             body: document.body.scrollWidth,
