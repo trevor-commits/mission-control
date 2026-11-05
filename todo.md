@@ -3,6 +3,12 @@
 ## Active Next Steps
 
 - Background safety audit: repair self-repair stale-input restart authority and missing job-health verification; keep supported DISABLE containment until reviewed installed acceptance. Owner Codex 01a1a5ca; self-contained/repo-only; source branch codex/background-safety-01a1a5ca, target main. Record: records/2026-11-04-background-safety.md.
+  - [x] Reproduce unsafe restart/verification paths and verify the repairs; e1626fa passes 42 local/remote suites and exact-head Codex review.
+  - [ ] Finish final documentation review and publish the pinned source to main; preserve the collector-lock repair.
+  - [ ] Verify the coherent retained source with the existing collector coordinator, save/check runtime preimages, and use the supported code-only installer.
+  - [ ] Verify installed bytes/stamp and isolated failure paths; remove only this audit's unchanged DISABLE after acceptance.
+  - [ ] Record later natural-run receipts separately; preserve automatic-routing holds.
+  - [ ] Deliver final installed/held states and rollback evidence in the Global map and system-change ledger.
 
 - Collector lock repair: source candidate passes 25 focused regressions; five
   failures reproduce on the original source. Finish normal publication and

@@ -15,6 +15,7 @@ SCRIPTS = ROOT / "scripts"
 
 class StateHomeExpansionTests(unittest.TestCase):
     def test_python_runtimes_expand_tilde_mission_control_home(self) -> None:
+        """Preserve expanded state homes and heartbeat diagnostics in isolation."""
         program = r'''
 import importlib.machinery, importlib.util, json, os, sys
 scripts = sys.argv[1]
