@@ -1131,38 +1131,50 @@ LOOSE_TREE_INBOX_KINDS = ("closeout_handoff", "todo_open", "repo_dirty",
                           "nightly_finding", "register_open")
 
 
-def _run_builtin_loosetree(_timeout_s):
-    """Use the same transaction lock as CLI writers, not just atomic replace."""
+def _run_builtin_loosetree(timeout_s):
+    """Apply the same bounded process lifecycle as the other file-backed feeds."""
+    proc, error = _run_argv(
+        ["/bin/bash", os.path.join(RUNTIME_DIR, "dashboard"), "_loosetree-snapshot"],
+        timeout_s)
+    if error:
+        return None, error
+    if proc.returncode:
+        return None, "loose-tree collection failed: %s" % (proc.stderr or "").strip()[:200]
+    try:
+        return json.loads(proc.stdout), None
+    except ValueError:
+        return None, "loose-tree collection returned invalid JSON"
+
+
+def cmd_loosetree_snapshot(argv):
+    """Prepare upstream I/O before the short shared store transaction."""
+    if argv:
+        return 2
     tree_mod = _load_loose_tree_module()
     if tree_mod is None or not hasattr(tree_mod, "store_lock"):
-        return None, "loose-tree runtime missing transaction support"
+        sys.stderr.write("loose-tree runtime missing transaction support\n")
+        return 1
+    chats_env = _load("chats")
+    chats_current = _effective_status_env(chats_env, _load_error("chats"))
     path = os.path.join(HOME, "loosetree", "store.json")
     try:
         with tree_mod.store_lock(path):
-            tree_mod._load(path)  # reject corruption before any mutation
-            return _merge_loosetree(_timeout_s)
+            # Reload after feed preparation so concurrent CLI edits/history win.
+            store = tree_mod._load(path)
+            before = json.dumps(store, sort_keys=True)
+            _merge_loosetree(store, chats_env, chats_current, tree_mod)
+            if json.dumps(store, sort_keys=True) != before:
+                tree_mod._save(path, store)
     except (OSError, ValueError) as exc:
-        return None, "loose-tree store preserved: %s" % exc
+        sys.stderr.write("loose-tree store preserved: %s\n" % exc)
+        return 1
+    # Large output and a slow consumer must never extend the transaction lock.
+    print(_dumps(store))
+    return 0
 
 
-def _merge_loosetree(_timeout_s):
-    """Derive the loose-tree feed inside the shared store transaction."""
-    # State under <home>/loosetree/ — NOT data/loosetree.json, which is the feed.
-    store_path = os.path.join(HOME, "loosetree", "store.json")
-    if not os.path.exists(store_path):
-        # First collection in a fresh state dir: seed an empty tree instead of
-        # failing — the Inbox auto-parent + auto rows give it content.
-        os.makedirs(os.path.dirname(store_path), exist_ok=True)
-        store = {"version": 1, "updated_at": 0, "nodes": []}
-        _atomic_write(store_path, json.dumps(store, indent=1) + "\n")
-    try:
-        with open(store_path, encoding="utf-8") as f:
-            store = json.load(f)
-        if not isinstance(store, dict) or not isinstance(store.get("nodes"), list):
-            raise ValueError("store shape")
-    except (OSError, ValueError) as e:
-        return None, "loose-tree store unreadable: %s" % e
-    before_fingerprint = json.dumps(store, sort_keys=True)
+def _merge_loosetree(store, chats_env, chats_current, tree_mod):
+    """Merge one prepared feed into the latest locked store, without input I/O."""
     nodes = store["nodes"]
     known_keys = {n.get("auto_key") for n in nodes if n.get("auto_key")}
     by_source_key = {n.get("auto_key"): n for n in nodes if n.get("auto_key")}
@@ -1185,10 +1197,8 @@ def _merge_loosetree(_timeout_s):
             "`loose-tree adopt <id> --parent <id>`.", "decision": "",
         })
 
-    chats_env = _load("chats")
     chats = (chats_env or {}).get("data") if isinstance(chats_env, dict) else None
     rows = chats.get("loose_ends") if isinstance(chats, dict) else None
-    chats_current = _current_status_env("chats")
     chats_ok = bool(isinstance(chats_env, dict) and chats_env.get("ok")
                     and isinstance(rows, list) and isinstance(chats_current, dict)
                     and chats_current.get("ok") and
@@ -1271,13 +1281,8 @@ def _merge_loosetree(_timeout_s):
 
     # Recompute rollups with the same semantics as the CLI (import from the
     # installed/repo loose-tree so there is exactly one implementation).
-    tree_mod = _load_loose_tree_module()
-    if tree_mod is not None:
-        tree_mod._recompute(store)
-        if hasattr(tree_mod, "work_queue"):
-            store["work_queue"] = tree_mod.work_queue(store)
-    # An older installed runtime without scripts/loose-tree still serves the
-    # tree (rollups just stay stale until the helper installs).
+    tree_mod._recompute(store)
+    store["work_queue"] = tree_mod.work_queue(store)
     counts = {"open": sum(1 for n in store["nodes"]
                           if n.get("status") == "todo"),
               "doing": sum(1 for n in store["nodes"]
@@ -1289,11 +1294,6 @@ def _merge_loosetree(_timeout_s):
               "inbox_new": new_rows, "inbox_removed": removed_rows}
     counts["inbox_source_missing"] = sum(1 for n in nodes if n.get("auto") and n.get("source_missing"))
     store["counts"] = counts
-    # Persist when anything changed vs. what was read (new/removed rows,
-    # rollup recompute, counts). Avoids pointless rewrites every 5 min.
-    if json.dumps(store, sort_keys=True) != before_fingerprint:
-        _atomic_write(store_path, json.dumps(store, indent=1) + "\n")
-    return store, None
 
 
 _LOOSE_TREE_MODULE = None
@@ -1674,10 +1674,12 @@ def _load_error(name):
 
 
 def _current_status_env(name):
-    good = _load(name)
+    return _effective_status_env(_load(name), _load_error(name))
+
+
+def _effective_status_env(good, error):
     if not isinstance(good, dict):
         good = None
-    error = _load_error(name)
     error_epoch = _wire_epoch(error.get("generated_epoch")) if error else 0
     good_epoch = _wire_epoch(good.get("generated_epoch")) if good else 0
     error_epoch = error_epoch if error_epoch is not None else _now()
@@ -1836,7 +1838,8 @@ def main():
     rest = sys.argv[2:]
     fn = {"collect": cmd_collect, "status": cmd_status,
           "demo": cmd_demo, "freshness": cmd_freshness,
-          "attention": cmd_attention}.get(cmd)
+          "attention": cmd_attention,
+          "_loosetree-snapshot": cmd_loosetree_snapshot}.get(cmd)
     if not fn:
         sys.stderr.write("dashboard-engine: unknown command %r\n" % cmd)
         return 2
@@ -2851,6 +2854,7 @@ valid_decision_id() {
 cmd="${1:-}"
 [ $# -gt 0 ] && shift
 case "$cmd" in
+  _loosetree-snapshot) engine _loosetree-snapshot "$@" ;;
   collect)  engine collect "$@" ;;
   refresh)  engine collect --force "$@" ;;
   status)   engine status "$@"; exit $? ;;

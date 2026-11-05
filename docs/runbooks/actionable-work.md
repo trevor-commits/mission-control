@@ -116,6 +116,16 @@ owners, unknown/no-resend history and all original account/security boundaries.
 
 ## Coverage and recovery
 
+The collector prepares the chats snapshot before taking the loose-tree store
+lock, then reloads and atomically commits the latest store. Its existing feeder
+budget bounds the worker. Read-only CLI commands use the last committed snapshot;
+writers wait at most five seconds for the transaction lock and fail without
+mutation on contention. A timeout is a failed observation, not permission to
+delete a lock file or signal another owner. Check installed provenance before
+assuming a source repair is live. The collector-lock record dated November4
+separates source regression proof, independent review, installation and natural
+collector acceptance.
+
 Keep the existing source fingerprints and inspect actual coverage/freshness for
 Codex, Claude, Cursor, Hermes and Copilot. ChatGPT metadata is not transcript
 coverage. Use direct provider/local transcript reads when feeds are stale; a

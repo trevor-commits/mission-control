@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 """Storage invariants, exercised through the public CLI in temporary homes."""
 import concurrent.futures
+import errno
+import fcntl
 import hashlib
 import json
 import os
+import signal
 from pathlib import Path
 import subprocess
 import sys
@@ -11,7 +14,8 @@ import tempfile
 import time
 import unittest
 
-CLI = Path(__file__).with_name('loose-tree')
+# Allows the same regression cases to challenge an immutable prior source tree.
+CLI = Path(os.environ.get('LOOSE_TREE_TEST_SCRIPTS', Path(__file__).parent)) / 'loose-tree'
 
 
 class StorageTests(unittest.TestCase):
@@ -42,6 +46,50 @@ class StorageTests(unittest.TestCase):
         nodes = json.loads(self.store.read_text())['nodes']
         self.assertEqual(len(nodes), 48)
         self.assertEqual(len({n['id'] for n in nodes}), 48)
+
+    def test_readers_use_committed_store_while_writer_holds_lock(self):
+        nid = self.add('committed obligation')
+        with open(str(self.store) + '.lock', 'a') as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            for args in [('json',), ('queue',), ('show', nid), ('board',)]:
+                p = subprocess.run([sys.executable, str(CLI), '--store',
+                                    str(self.store), *args], capture_output=True,
+                                   text=True, timeout=3)
+                self.assertEqual(p.returncode, 0, p.stderr)
+
+    def test_competing_writer_times_out_without_replacing_lock_or_store(self):
+        self.add('preserve me')
+        before = self.store.read_bytes()
+        with open(str(self.store) + '.lock', 'a') as lock:
+            inode = os.fstat(lock.fileno()).st_ino
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            started = time.monotonic()
+            p = subprocess.run([sys.executable, str(CLI), '--store',
+                                str(self.store), 'add', '--title', 'must not land'],
+                               capture_output=True, text=True, timeout=7)
+            self.assertNotEqual(p.returncode, 0)
+            self.assertIn('timed out', p.stderr)
+            self.assertLess(time.monotonic() - started, 6.5)
+            self.assertEqual(os.stat(str(self.store) + '.lock').st_ino, inode)
+        self.assertEqual(self.store.read_bytes(), before)
+        self.add('writer works after release')
+
+    def test_slow_json_consumer_does_not_lock_out_writers(self):
+        self.add('large committed view')
+        data = json.loads(self.store.read_text())
+        data['nodes'][0]['note'] = 'x' * (512 * 1024)
+        self.store.write_text(json.dumps(data))
+        proc = subprocess.Popen([sys.executable, str(CLI), '--store',
+                                 str(self.store), 'json'], stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE)
+        try:
+            self.assertEqual(proc.stdout.read(1), b'{')
+            p = subprocess.run([sys.executable, str(CLI), '--store',
+                                str(self.store), 'add', '--title', 'concurrent'],
+                               capture_output=True, text=True, timeout=3)
+            self.assertEqual(p.returncode, 0, p.stderr)
+        finally:
+            proc.communicate(timeout=5)
 
     def test_all_parent_mutators_reject_cycles(self):
         parent = self.add('parent')
@@ -296,6 +344,161 @@ class StorageTests(unittest.TestCase):
         next(n for n in data['nodes'] if n['id']==old)['status'] = 'todo'
         self.store.write_text(json.dumps(data))
         self.assertNotEqual(self.run_cli('dispatch', old, '--observation', self.observation()).returncode, 0)
+
+
+class CollectorLockTests(unittest.TestCase):
+    """Real collector/CLI processes, with a FIFO standing in for delayed feed I/O."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.home = Path(self.tmp.name) / 'home'
+        (self.home / 'data').mkdir(parents=True)
+        self.store = self.home / 'loosetree' / 'store.json'
+        self.processes = []
+        self.writers = []
+        self.addCleanup(self.cleanup_processes)
+        self.nid = self.cli('add', '--title', 'original', '--auto',
+                            '--auto-key', 'existing').stdout.strip()
+        data = json.loads(self.store.read_text())
+        data['nodes'][0]['workflow_history'] = [{'event': 'original-review'}]
+        self.store.write_text(json.dumps(data))
+
+    def cli(self, *args):
+        p = subprocess.run([sys.executable, str(CLI), '--store', str(self.store),
+                            *args], capture_output=True, text=True, timeout=3)
+        self.assertEqual(p.returncode, 0, p.stderr)
+        return p
+
+    def cleanup_processes(self):
+        for fd in self.writers:
+            os.close(fd)
+        for proc in self.processes:
+            try:
+                proc.communicate(timeout=6)
+            except subprocess.TimeoutExpired:
+                # This exact unreaped session leader was started by this fixture.
+                self.assertEqual(os.getpgid(proc.pid), proc.pid)
+                os.killpg(proc.pid, signal.SIGKILL)
+                proc.communicate(timeout=3)
+
+    def start_collector(self, budget, fault=False):
+        # Load the real embedded engine, omitting only its CLI main invocation.
+        # The production built-in still runs its actual worker and timeout path.
+        code = """
+import json, os, pathlib, sys
+path = pathlib.Path(sys.argv[1])
+text = path.read_text().split('engine() {', 1)[1].split("<<'PYEOF'\\n", 1)[1]
+text = text.split('\\nPYEOF\\n}', 1)[0].rsplit('\\nsys.exit(main())', 1)[0]
+scope = {'__name__': 'collector_regression'}
+exec(compile(text, str(path), 'exec'), scope)
+print(json.dumps(scope['_collect_one']('loosetree', 300, '',
+                                      'DASHBOARD_CMD_LOOSETREE', float(sys.argv[2]))))
+"""
+        env = {k: v for k, v in os.environ.items()
+               if not k.startswith('DASHBOARD_CMD_')}
+        env.update(MISSION_CONTROL_HOME=str(self.home),
+                   REPO_ROOT=str(CLI.parent.parent),
+                   MISSION_CONTROL_RUNTIME_DIR=str(CLI.parent),
+                   PYTHONDONTWRITEBYTECODE='1')
+        if fault:
+            env['LOOSE_TREE_FAULT'] = '1'
+        proc = subprocess.Popen([sys.executable, '-c', code,
+                                 str(CLI.with_name('dashboard')), str(budget)],
+                                env=env, stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE, text=True,
+                                start_new_session=True)
+        self.processes.append(proc)
+        return proc
+
+    def stall_chats(self, budget):
+        fifo = self.home / 'data' / 'chats.json'
+        os.mkfifo(fifo)
+        proc = self.start_collector(budget)
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            if proc.poll() is not None:
+                stdout, stderr = proc.communicate()
+                self.fail('collector exited before slow-read barrier: %s %s' %
+                          (stdout, stderr))
+            try:
+                fd = os.open(fifo, os.O_WRONLY | os.O_NONBLOCK)
+                self.writers.append(fd)
+                return proc, fd
+            except OSError as exc:
+                if exc.errno != errno.ENXIO:  # The reader has not opened the FIFO yet.
+                    raise
+                time.sleep(.01)
+        self.fail('collector did not reach the synthetic slow chats read')
+
+    def chats(self):
+        return {'schema': 1, 'feed': 'chats', 'cadence_s': 1800,
+                'ok': True, 'generated_epoch': int(time.time()),
+                'data': {'nodes': [], 'counts': {
+                    'last_full_ingest_age_s': 0, 'full_ingest_state': 'fresh',
+                    'full_ingest_stale': False}, 'loose_ends': [
+                    {'item_key': 'existing', 'kind': 'todo_open',
+                     'text': 'older feed title', 'source_node': 'repo:fixture'},
+                    {'item_key': 'new', 'kind': 'todo_open',
+                     'text': 'new obligation', 'source_node': 'repo:fixture'}]}}
+
+    def finish(self, proc):
+        stdout, stderr = proc.communicate(timeout=15)
+        self.assertEqual(proc.returncode, 0, stderr)
+        return json.loads(stdout)
+
+    def test_slow_feed_preparation_keeps_cli_live_and_merges_latest_history(self):
+        proc, fd = self.stall_chats(8)
+        self.cli('json')
+        self.cli('adopt', self.nid)
+        self.cli('update', self.nid, '--title', 'newer manual title',
+                 '--note', 'newer decision evidence')
+        os.write(fd, json.dumps(self.chats()).encode())
+        os.close(fd)
+        self.writers.remove(fd)
+        self.assertEqual(self.finish(proc), 'ok')
+        nodes = json.loads(self.store.read_text())['nodes']
+        existing = next(n for n in nodes if n['id'] == self.nid)
+        self.assertFalse(existing['auto'])
+        self.assertEqual(existing['title'], 'newer manual title')
+        self.assertEqual(existing['note'], 'newer decision evidence')
+        self.assertEqual(existing['workflow_history'], [{'event': 'original-review'}])
+        self.assertEqual(sum(n.get('auto_key') == 'new' for n in nodes), 1)
+        published = json.loads((self.home / 'data' / 'loosetree.json').read_text())
+        self.assertEqual(published['data']['nodes'], nodes)
+
+    def test_stalled_feed_hits_budget_and_preserves_last_good_and_store(self):
+        before = self.store.read_bytes()
+        last_good = self.home / 'data' / 'loosetree.json'
+        last_good.write_text(json.dumps({'ok': True, 'generated_epoch': int(time.time()),
+                                        'data': json.loads(before)}))
+        prior_feed = last_good.read_bytes()
+        started = time.monotonic()
+        # Include real interpreter/shell startup in the budget on loaded Macs.
+        proc, _ = self.stall_chats(8)
+        self.assertEqual(self.finish(proc), 'error')
+        self.assertLess(time.monotonic() - started, 14)
+        self.assertEqual(self.store.read_bytes(), before)
+        self.assertEqual(last_good.read_bytes(), prior_feed)
+        error = json.loads((self.home / 'data' / 'loosetree.error.json').read_text())
+        self.assertIn('timed out', error['error'])
+        try:
+            fd = os.open(self.home / 'data' / 'chats.json', os.O_WRONLY | os.O_NONBLOCK)
+        except OSError as exc:
+            self.assertEqual(exc.errno, errno.ENXIO)
+        else:
+            os.close(fd)
+            self.fail('timed-out collector left a FIFO reader alive')
+        self.cli('add', '--title', 'usable after bounded failure')
+
+    def test_collector_preserves_corruption_and_failed_atomic_write(self):
+        (self.home / 'data' / 'chats.json').write_text(json.dumps(self.chats()))
+        valid = self.store.read_bytes()
+        for before, fault in [(b'{broken', False), (valid, True)]:
+            self.store.write_bytes(before)
+            self.assertEqual(self.finish(self.start_collector(2, fault)), 'error')
+            self.assertEqual(self.store.read_bytes(), before)
+            self.assertFalse(list(self.store.parent.glob('.loosetree-*.tmp')))
 
 
 if __name__ == '__main__':
