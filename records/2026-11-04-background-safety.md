@@ -11,3 +11,6 @@ Containment: supported ~/.mission-control/self-repair/DISABLE created by this au
 Evidence: Global .git/local-verification/background-safety-01a1a5ca/ holds inventory, installed source hashes, isolated reproduction and containment receipts. Global and Mac Health foreign edits preserved. Whole background-system audit remains open; this record covers only Mission Control.
 
 Pending: regressions, source checks/review, publication, exact runtime installation with preimage, installed isolated checks, natural-run acceptance and global map/ledger delivery. No claim of installed repair yet.
+
+
+Review follow-up: CodeRabbit correctly identified lost CLI findings on report-write failure and stale observations counted as current heartbeat failures. Source now preserves JSON/text findings and heartbeat errors, stops before unlogged work, carries the original health timestamp/shared freshness verdict, and counts unverified reports separately. The automation summary carries those new counters. Four added self-tests exercise both output formats and stale-source counts; no live executor is used. Prior42-suite pass belongs to the earlier commit; the revised candidate requires its new gate/review before installation.

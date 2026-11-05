@@ -112,12 +112,15 @@ def append_report(path, record):
         pass
 
 
-def plan_jobs(automation, attempts):
+def plan_jobs(automation, attempts, now=None):
     """Report red jobs; stored health never authorizes a process restart."""
     out = []
     data = (automation or {}).get("data")
     jobs = data.get("jobs") if isinstance(data, dict) else None
-    uid = os.getuid()
+    source = automation if isinstance(automation, dict) else {}
+    source_health = feed_health(source, CADENCE["automation"],
+                                int(time.time()) if now is None else int(now),
+                                stale_multiple=STALE_MULTIPLE)
     for job in jobs or []:
         if not isinstance(job, dict) or job.get("state") != "red":
             continue
@@ -146,6 +149,11 @@ def plan_jobs(automation, attempts):
             "why_report": "automatic service restarts are disabled; inspect live "
                           "health and the service owner before restarting",
         })
+    for item in out:
+        epoch = source.get("generated_epoch")
+        item["source_generated_epoch"] = epoch if type(epoch) is int else None
+        item["source_health"] = source_health
+        item["verified"] = False  # A stored snapshot is not live recovery proof.
     return out
 
 
@@ -271,21 +279,34 @@ def main(argv=None):
     attempts = dict(attempts)
 
     automation = load_json(os.path.join(DATA, "automation.json"))
-    plan = plan_jobs(automation, attempts) + plan_feeds(now)
+    plan = plan_jobs(automation, attempts, now) + plan_feeds(now)
     fixable = [p for p in plan if p.get("op")]
     reports = [p for p in plan if not p.get("op")]
 
+    report_errors = []
+    def record(value):
+        try:
+            append_report(REPORT, value)
+            return True
+        except OSError as error:
+            report_errors.append("report write failed: %s" % error)
+            return False
+
     for item in reports:
-        append_report(REPORT, dict(item, applied=False, ok=None,
-                                   result="reported-without-intervention", t=now))
+        if not record(dict(item, applied=False, ok=None,
+                           result="reported-without-intervention", t=now)):
+            break
 
     done, failed = [], []
     for item in fixable:
+        if report_errors:
+            break  # Preserve output/heartbeat, but never perform unlogged work.
         if not args.apply:
-            append_report(REPORT, dict(item, applied=False, ok=None, t=now))
+            record(dict(item, applied=False, ok=None, t=now))
             continue
-        append_report(REPORT, dict(item, applied=False, ok=None,
-                                   result="attempt-started", t=now))
+        if not record(dict(item, applied=False, ok=None,
+                           result="attempt-started", t=now)):
+            break
         ok, err = perform(item)
         if ok:
             # A collector that exits 0 but leaves a bad envelope is not a
@@ -293,7 +314,7 @@ def main(argv=None):
             ok, err2 = verify_repair(item)
             if not ok:
                 err = err2 or "repair did not produce a trusted feed"
-        append_report(REPORT, dict(item, applied=True, ok=ok, error=err, t=now))
+        record(dict(item, applied=True, ok=ok, error=err, t=now))
         if ok:
             (done).append(item)
             attempts[item["id"]] = 0
@@ -301,26 +322,33 @@ def main(argv=None):
             failed.append(dict(item, _error=err))
             attempts[item["id"]] = attempts.get(item["id"], 0) + 1
 
-    write_json(HEARTBEAT, {
-        "last_run_epoch": now, "dry_run": not args.apply,
-        "planned": len(fixable), "repaired": len(done),
-        "failures": len(failed) + len(reports),
-        "attempts": dict((k, v) for k, v in attempts.items() if v),
-    })
+    unverified = sum(item.get("verified") is False for item in reports)
+    try:
+        write_json(HEARTBEAT, {
+            "last_run_epoch": now, "dry_run": not args.apply,
+            "planned": len(fixable), "repaired": len(done),
+            "failures": len(failed) + len(reports) - unverified + bool(report_errors),
+            "reported": len(reports), "unverified_reports": unverified,
+            "report_errors": list(report_errors),
+            "attempts": dict((k, v) for k, v in attempts.items() if v),
+        })
+    except OSError as error:
+        report_errors.append("heartbeat write failed: %s" % error)
 
     if args.json:
         print(json.dumps({"schema": 1, "generated_epoch": now, "dry_run": not args.apply,
                           "fixable": fixable, "reports": reports,
-                          "repaired": done, "failed": failed},
+                          "repaired": done, "failed": failed,
+                          "report_errors": report_errors},
                          sort_keys=True, indent=2, default=str))
         # Dry-run planning is informational; an applied run that could not
         # complete every repair must say so in its exit code.
-        return 1 if (args.apply and failed) else 0
+        return 1 if (report_errors or (args.apply and failed)) else 0
 
     verb = "Would fix" if not args.apply else "Fixed"
     if not fixable and not reports:
         print("self-repair: nothing to do")
-    for item in done:
+    for item in (done if args.apply else fixable):
         print("%s: %s ok" % (verb, item["what"]))
         print("      %s" % describe(item))
     for item in failed:
@@ -328,10 +356,15 @@ def main(argv=None):
         print("      %s" % describe(item))
         print("      failure: %s" % item.get("_error", "unknown"))
     for item in reports:
-        print("Needs you: %s - %s" % (item["what"], item["why_report"]))
+        print("Reported: %s - %s" % (item["what"], item["why_report"]))
+        if item.get("verified") is False:
+            print("      unverified observation; source=%s generated_epoch=%s" % (
+                item["source_health"]["state"], item["source_generated_epoch"]))
+    for error in report_errors:
+        print("self-repair: %s" % error, file=sys.stderr)
     # A dry run with planned repairs is still success (nothing was attempted).
     # An applied run with failures is NOT: the scheduler must see it.
-    return 1 if (args.apply and failed) else 0
+    return 1 if (report_errors or (args.apply and failed)) else 0
 
 
 def self_test():
@@ -452,7 +485,45 @@ def self_test():
         first = json.loads(open(report).readline())
         check("trim keeps the NEWEST records", first["i"] == 50)
 
-    total = 20
+    from contextlib import redirect_stdout, redirect_stderr
+    from io import StringIO
+    from unittest.mock import patch
+    with tempfile.TemporaryDirectory() as tmp:
+        heartbeat = os.path.join(tmp, "heartbeat.json")
+        def no_execution(item):
+            raise AssertionError("receipt failure must prevent execution")
+        values = {"DISABLE": os.path.join(tmp, "absent"), "HEARTBEAT": heartbeat,
+                  "REPORT": os.path.join(tmp, "report.jsonl"), "DATA": tmp,
+                  "plan_jobs": lambda *args: stale,
+                  "plan_feeds": lambda *args: [], "perform": no_execution}
+        with patch.dict(globals(), values), redirect_stdout(StringIO()) as output:
+            rc = main(["--json"])
+        result = json.loads(output.getvalue())
+        saved = load_json(heartbeat)
+        check("stale observations retain timestamp and unverified source state",
+              result["reports"][0]["source_generated_epoch"] == 1
+              and result["reports"][0]["verified"] is False
+              and result["reports"][0]["source_health"]["state"] == "error")
+        check("unverified reports do not become current heartbeat failures",
+              rc == 0 and saved["unverified_reports"] == 1
+              and saved["reported"] == 1 and saved["failures"] == 0)
+        values["plan_feeds"] = lambda *args: [{"kind": "feed", "id": "attention",
+                                              "op": "exec", "what": "fixture"}]
+        def cannot_report(*args):
+            raise OSError("fixture report unavailable")
+        values["append_report"] = cannot_report
+        for json_mode in (True, False):
+            with patch.dict(globals(), values), redirect_stdout(StringIO()) as output, redirect_stderr(StringIO()):
+                rc = main(["--apply"] + (["--json"] if json_mode else []))
+            content = output.getvalue()
+            saved = load_json(heartbeat)
+            preserved = (len(json.loads(content)["reports"]) == 1 if json_mode
+                         else stale[0]["what"] in content)
+            check("report failure preserves %s findings and heartbeat without execution" %
+                  ("JSON" if json_mode else "text"),
+                  rc == 1 and preserved and bool(saved["report_errors"]))
+
+    total = 24
     print("%d passed; %d failed" % (total - len(failures), len(failures)))
     return 1 if failures else 0
 

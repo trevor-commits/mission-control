@@ -35,6 +35,11 @@ with open(os.path.join(expected, "self-repair", "heartbeat.json"), "w") as out:
     json.dump({"last_run_epoch": 123}, out)
 automation = load("automation-status")
 assert automation._self_check_receipt() == {"last_run_epoch": 123}
+with open(os.path.join(expected, "self-repair", "heartbeat.json"), "w") as out:
+    json.dump({"last_run_epoch": 123, "failures": 0,
+               "reported": 2, "unverified_reports": 2}, out)
+assert automation._self_check_receipt() == {
+    "last_run_epoch": 123, "failures": 0, "reported": 2, "unverified_reports": 2}
 '''
         with tempfile.TemporaryDirectory() as raw:
             home = Path(raw) / "home"
