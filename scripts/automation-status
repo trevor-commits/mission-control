@@ -144,11 +144,13 @@ def _self_check_receipt():
     if not isinstance(epoch, int) or isinstance(epoch, bool) or epoch <= 0:
         return None
     out = {"last_run_epoch": epoch}
-    for key in ("planned", "repaired", "failures"):
+    for key in ("planned", "repaired", "failures", "reported", "unverified_reports"):
         if isinstance(value.get(key), int) and not isinstance(value.get(key), bool):
             out[key] = value[key]
     if isinstance(value.get("dry_run"), bool):
         out["dry_run"] = value["dry_run"]
+    if isinstance(value.get("report_errors"), list):
+        out["report_errors"] = value["report_errors"]
     return out
 
 

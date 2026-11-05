@@ -509,6 +509,22 @@ async function main() {
         assert.ok(!/warn/.test(await page.locator('#hr-selfcheck').getAttribute('class')));
       });
 
+      await withPanel(state(Object.assign(healthyCore(), {
+        automation: withJobs({ self_check: { last_run_epoch: NOW - 60, failures: 0,
+          report_errors: ['report write failed: fixture'] } }),
+      })), {}, async page => {
+        assert.match(await page.locator('#hr-selfcheck').innerText(), /report log could not be written/);
+        assert.match(await page.locator('#hr-selfcheck').getAttribute('class'), /warn/);
+      });
+
+      await withPanel(state(Object.assign(healthyCore(), {
+        automation: withJobs({ self_check: { last_run_epoch: NOW - 60, failures: 3,
+          report_errors: [] } }),
+      })), {}, async page => {
+        assert.doesNotMatch(await page.locator('#hr-selfcheck').innerText(), /report log could not be written/);
+        assert.ok(!/warn/.test(await page.locator('#hr-selfcheck').getAttribute('class')));
+      });
+
       // Never run at all.
       await withPanel(state(Object.assign(healthyCore(), { automation: withJobs({}) })), {}, async page => {
         assert.match(await page.locator('#hr-selfcheck').innerText(), /never run/i);

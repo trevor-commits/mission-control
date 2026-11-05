@@ -2,6 +2,14 @@
 
 ## Active Next Steps
 
+- Background safety audit: repair self-repair stale-input restart authority and missing job-health verification; keep supported DISABLE containment until reviewed installed acceptance. Owner Codex 01a1a5ca; self-contained/repo-only; source branch codex/background-safety-01a1a5ca, target main. Record: records/2026-11-04-background-safety.md.
+  - [x] Reproduce unsafe restart/verification paths and verify the repairs; e1626fa passes 42 local/remote suites and exact-head Codex review.
+  - [ ] Finish final documentation review and publish the pinned source to main; preserve the collector-lock repair.
+  - [ ] Verify the coherent retained source with the existing collector coordinator, save/check runtime preimages, and use the supported code-only installer.
+  - [ ] Verify installed bytes/stamp and isolated failure paths; remove only this audit's unchanged DISABLE after acceptance.
+  - [ ] Record later natural-run receipts separately; preserve automatic-routing holds.
+  - [ ] Deliver final installed/held states and rollback evidence in the Global map and system-change ledger.
+
 - Collector lock repair: source candidate passes 25 focused regressions; five
   failures reproduce on the original source. Finish normal publication and
   independent coordinator verification before installation and natural-cycle
@@ -1311,6 +1319,16 @@ Keep materially new suggestions here so they survive beyond the current chat.
 - 2026-07-05 | recommendation: do not adopt the GitHub Copilot enterprise-observability stack (OpenTelemetry Collector, Prometheus, Grafana, OpenObserve, Superset, Metabase, Airbyte, Meltano, dbt-core, Great Expectations, TensorZero, Helicone, OpenLIT, traceAI, TraceRoot, Pull Request Analytics Action); treat `records/2026-07-04-dashboard-coding-tracker-search-audit.md` as the real same-niche repo map; if a chart is ever justified, prefer vendorable zero-dependency `leeoniya/uPlot` over Chart.js/ECharts/CDN — but not for V1. | why: Copilot recommended from the repo description alone (it said so); every headline pick runs as a background service, framework, or separate warehouse and collides with the explicit non-goals of offline single-file, single-user, no-server. Full evaluation in Feedback Decision Log 2026-07-05. | by: Claude Code (Opus 4.8) session `a9724039-6595-4205-a25b-bf361020250a`. | linear: self-contained until Linear is configured.
 
 ## Active Branch Ledger
+
+### `codex/background-safety-01a1a5ca`
+- owner: Codex 01a1a5ca-533b-7943-8dd8-edfe286fb051
+- purpose: repair confirmed unsafe background restart authority and trace actions
+- merge target: main
+- delete when: reviewed code, checks, remote integration and installed acceptance verified
+- status: implementation; supported self-repair DISABLE containment remains
+- pre-existing dirt: none; root main clean at intake
+- source chat: Trevor requested auditing and repairing other background systems
+
 
 ### `codex/collector-lock-01a16afb`
 - status: source candidate for independent review; created 2026-11-04 from verified origin/main `bb76de2`. Publication, integration and cleanup facts are bound in the record's `repair-candidate.json`; installation/natural acceptance remain separate.

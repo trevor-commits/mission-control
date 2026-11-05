@@ -15,6 +15,7 @@ SCRIPTS = ROOT / "scripts"
 
 class StateHomeExpansionTests(unittest.TestCase):
     def test_python_runtimes_expand_tilde_mission_control_home(self) -> None:
+        """Preserve expanded state homes and heartbeat diagnostics in isolation."""
         program = r'''
 import importlib.machinery, importlib.util, json, os, sys
 scripts = sys.argv[1]
@@ -35,6 +36,15 @@ with open(os.path.join(expected, "self-repair", "heartbeat.json"), "w") as out:
     json.dump({"last_run_epoch": 123}, out)
 automation = load("automation-status")
 assert automation._self_check_receipt() == {"last_run_epoch": 123}
+with open(os.path.join(expected, "self-repair", "heartbeat.json"), "w") as out:
+    json.dump({"last_run_epoch": 123, "failures": 0,
+               "reported": 2, "unverified_reports": 2}, out)
+assert automation._self_check_receipt() == {
+    "last_run_epoch": 123, "failures": 0, "reported": 2, "unverified_reports": 2}
+with open(os.path.join(expected, "self-repair", "heartbeat.json"), "w") as out:
+    json.dump({"last_run_epoch": 123, "report_errors": ["report write failed: fixture"]}, out)
+assert automation._self_check_receipt() == {
+    "last_run_epoch": 123, "report_errors": ["report write failed: fixture"]}
 '''
         with tempfile.TemporaryDirectory() as raw:
             home = Path(raw) / "home"
