@@ -25,7 +25,7 @@ The page lives at `~/.mission-control/index.html` (installed copy), refreshes it
 | `scripts/dashboard attention` | The attention lane: `add`, `resolve`, `list` on `~/.mission-control/attention/queue.jsonl`. |
 | `scripts/decision-alert`, `scripts/compose-decision-prompt.py` | Decision delivery lifecycle: raise a decision, take the answer, compose the resume prompt. |
 | `scripts/morning-brief`, `scripts/morning-brief-deadman` | The Morning Brief and its independent deadman. |
-| `scripts/self-repair`, `scripts/usage-watch`, `scripts/headroom-refresh` | Fail-closed runtime repair, usage silence detection, on-demand headroom. |
+| `scripts/self-repair`, `scripts/usage-watch`, `scripts/headroom-refresh` | Feed repair with attempt/outcome receipts; red services are reported without automatic restarts; usage silence detection and on-demand headroom. |
 | `dashboard/index.html` | The page — one self-contained file (design tokens + layout CSS + renderers). |
 | `dashboard/fixtures/*.json` | Synthetic sample feeds for `demo` + the render tests. No real chat ids or transcript text. |
 

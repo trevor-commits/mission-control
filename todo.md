@@ -2,6 +2,8 @@
 
 ## Active Next Steps
 
+- Background safety audit: repair self-repair stale-input restart authority and missing job-health verification; keep supported DISABLE containment until reviewed installed acceptance. Owner Codex 01a1a5ca; self-contained/repo-only; source branch codex/background-safety-01a1a5ca, target main. Record: records/2026-11-04-background-safety.md.
+
 - Mission Control actionable work loop: reconcile stale/duplicate records, route
   already-authorized tasks to existing owners, and verify completion. Owner Codex
   `01a16afb-4d78-7fd2-beec-605a7fd11e64`; main → origin/main; no new scheduler.
@@ -1304,6 +1306,16 @@ Keep materially new suggestions here so they survive beyond the current chat.
 - 2026-07-05 | recommendation: do not adopt the GitHub Copilot enterprise-observability stack (OpenTelemetry Collector, Prometheus, Grafana, OpenObserve, Superset, Metabase, Airbyte, Meltano, dbt-core, Great Expectations, TensorZero, Helicone, OpenLIT, traceAI, TraceRoot, Pull Request Analytics Action); treat `records/2026-07-04-dashboard-coding-tracker-search-audit.md` as the real same-niche repo map; if a chart is ever justified, prefer vendorable zero-dependency `leeoniya/uPlot` over Chart.js/ECharts/CDN — but not for V1. | why: Copilot recommended from the repo description alone (it said so); every headline pick runs as a background service, framework, or separate warehouse and collides with the explicit non-goals of offline single-file, single-user, no-server. Full evaluation in Feedback Decision Log 2026-07-05. | by: Claude Code (Opus 4.8) session `a9724039-6595-4205-a25b-bf361020250a`. | linear: self-contained until Linear is configured.
 
 ## Active Branch Ledger
+
+### `codex/background-safety-01a1a5ca`
+- owner: Codex 01a1a5ca-533b-7943-8dd8-edfe286fb051
+- purpose: repair confirmed unsafe background restart authority and trace actions
+- merge target: main
+- delete when: reviewed code, checks, remote integration and installed acceptance verified
+- status: implementation; supported self-repair DISABLE containment remains
+- pre-existing dirt: none; root main clean at intake
+- source chat: Trevor requested auditing and repairing other background systems
+
 
 ### `codex/actionable-work-01a07221`
 - status: merged to `main` 2026-09-09 as `67450da` (Trevor authorized the merge); full `scripts/verify.sh` 40/40 on the merged tree; pushed to `origin/main`. Branch ref + worktree stay until the row's runtime cleanup conditions (installed feeder root repointed, no active writer or recovery dependency, owner-authenticated cleanup) are met by the owning Codex chat; remaining observation items stay in Active Next Steps.

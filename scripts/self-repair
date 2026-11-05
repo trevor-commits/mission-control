@@ -15,7 +15,7 @@ drift away from the two already in use.
   daily  stale feed / red job                  -> repaired here, if reversible
 
 Repaired (reversible, mechanically checkable, every action logged with its undo):
-  * kickstart a launchd job that is red
+  * report a red launchd job without stopping or restarting it
   * re-run a feed whose collector went stale
 
 Reported, never touched: auth and credentials, registry drift (it edits a repo
@@ -113,7 +113,7 @@ def append_report(path, record):
 
 
 def plan_jobs(automation, attempts):
-    """Red launchd jobs that can be safely restarted."""
+    """Report red jobs; stored health never authorizes a process restart."""
     out = []
     data = (automation or {}).get("data")
     jobs = data.get("jobs") if isinstance(data, dict) else None
@@ -140,11 +140,11 @@ def plan_jobs(automation, attempts):
                         "op": None,
                         "why_report": "repeated failure - retrying again would only add noise"})
             continue
-        target = "gui/%d/%s" % (uid, name)
         out.append({
             "kind": "job", "id": name, "what": "%s is red" % label,
-            "op": "exec", "argv": ["launchctl", "kickstart", "-k", target],
-            "undo": "launchctl kickstart %s" % target,
+            "op": None,
+            "why_report": "automatic service restarts are disabled; inspect live "
+                          "health and the service owner before restarting",
         })
     return out
 
@@ -232,7 +232,7 @@ def verify_repair(item, data_dir=DATA):
     advance instead of resetting.
     """
     if item.get("kind") != "feed":
-        return True, ""
+        return False, "service recovery was not independently verified"
     feed = item.get("id")
     secs = CADENCE.get(feed)
     if not isinstance(secs, int) or secs <= 0:
@@ -275,11 +275,17 @@ def main(argv=None):
     fixable = [p for p in plan if p.get("op")]
     reports = [p for p in plan if not p.get("op")]
 
+    for item in reports:
+        append_report(REPORT, dict(item, applied=False, ok=None,
+                                   result="reported-without-intervention", t=now))
+
     done, failed = [], []
     for item in fixable:
         if not args.apply:
             append_report(REPORT, dict(item, applied=False, ok=None, t=now))
             continue
+        append_report(REPORT, dict(item, applied=False, ok=None,
+                                   result="attempt-started", t=now))
         ok, err = perform(item)
         if ok:
             # A collector that exits 0 but leaves a bad envelope is not a
@@ -340,8 +346,14 @@ def self_test():
         return {"data": {"jobs": [kw]}}
 
     plan = plan_jobs(env(name="com.x.job", label="Job", state="red", loaded=True), {})
-    check("a red loaded job is restarted",
-          len(plan) == 1 and plan[0]["argv"][:3] == ["launchctl", "kickstart", "-k"])
+    check("a red loaded job is reported without restart",
+          len(plan) == 1 and plan[0]["op"] is None and "argv" not in plan[0])
+
+    stale = plan_jobs({"generated_epoch": 1, "ok": False, "data": {
+        "jobs": [{"name": "com.fixture.job", "state": "red", "loaded": True}]
+    }}, {})
+    check("stale failed metadata cannot authorize a restart",
+          len(stale) == 1 and stale[0]["op"] is None and "argv" not in stale[0])
 
     check("a green job is left alone",
           plan_jobs(env(name="com.x.job", label="Job", state="green", loaded=True), {}) == [])
@@ -426,7 +438,7 @@ def self_test():
               not ok and err)
         ok, err = verify_repair({"kind": "job", "id": "com.x"},
                                 data_dir=tmp)
-        check("non-feed repairs skip envelope verification", ok)
+        check("job recovery cannot pass without verification", not ok)
 
     # Report retention: the rolling ops log never grows past its keep window.
     with tempfile.TemporaryDirectory() as tmp:
@@ -440,7 +452,7 @@ def self_test():
         first = json.loads(open(report).readline())
         check("trim keeps the NEWEST records", first["i"] == 50)
 
-    total = 19
+    total = 20
     print("%d passed; %d failed" % (total - len(failures), len(failures)))
     return 1 if failures else 0
 
