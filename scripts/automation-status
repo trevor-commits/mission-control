@@ -149,6 +149,8 @@ def _self_check_receipt():
             out[key] = value[key]
     if isinstance(value.get("dry_run"), bool):
         out["dry_run"] = value["dry_run"]
+    if isinstance(value.get("report_errors"), list):
+        out["report_errors"] = value["report_errors"]
     return out
 
 

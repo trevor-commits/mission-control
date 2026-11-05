@@ -808,9 +808,11 @@ body.pin .hr-head { padding-top: 10px; }
         var repaired = Number.isInteger(receipt.repaired) ? receipt.repaired : 0;
         var tail = receipt.dry_run === true ? " (dry run)"
           : repaired > 0 ? " · repaired " + repaired : "";
+        var reportWarning = Array.isArray(receipt.report_errors) && receipt.report_errors.length > 0;
+        if (reportWarning) tail += " · report log could not be written";
         selfBox.textContent = "Self-check " + ago + " ago" + tail + ".";
         // Past a day and a half the daily pass has missed a run of its own.
-        if (since > 129600) selfBox.className = "hr-selfcheck warn";
+        if (since > 129600 || reportWarning) selfBox.className = "hr-selfcheck warn";
       }
     }
 
