@@ -4,6 +4,13 @@
 
 - Background safety audit: repair self-repair stale-input restart authority and missing job-health verification; keep supported DISABLE containment until reviewed installed acceptance. Owner Codex 01a1a5ca; self-contained/repo-only; source branch codex/background-safety-01a1a5ca, target main. Record: records/2026-11-04-background-safety.md.
 
+- Collector lock repair: source candidate passes 25 focused regressions; five
+  failures reproduce on the original source. Finish normal publication and
+  independent coordinator verification before installation and natural-cycle
+  acceptance. Owner Codex `01a16afb`; branch
+  `codex/collector-lock-01a16afb` targets main. Self-contained/repo-only.
+  [Record](records/2026-11-04-collector-lock.md).
+
 - Mission Control actionable work loop: reconcile stale/duplicate records, route
   already-authorized tasks to existing owners, and verify completion. Owner Codex
   `01a16afb-4d78-7fd2-beec-605a7fd11e64`; main → origin/main; no new scheduler.
@@ -1316,6 +1323,19 @@ Keep materially new suggestions here so they survive beyond the current chat.
 - pre-existing dirt: none; root main clean at intake
 - source chat: Trevor requested auditing and repairing other background systems
 
+
+### `codex/collector-lock-01a16afb`
+- status: source candidate for independent review; created 2026-11-04 from verified origin/main `bb76de2`. Publication, integration and cleanup facts are bound in the record's `repair-candidate.json`; installation/natural acceptance remain separate.
+- owner/source chat: Codex `01a16afb-4d78-7fd2-beec-605a7fd11e64`, Trevor's manual collector-lock repair request; refreshed 2026-11-04.
+- worktree: `/Users/gillettes/Coding Projects/mission-control-worktrees/codex/collector-lock-01a16afb`; lease `64439579-b63f-40a8-8a73-e7acc78ad74b`.
+- purpose: prevent slow collection from locking out the live task ledger while preserving atomic data/history.
+- issue/mirror: self-contained, repo-only; no configured Mission Control Linear workspace.
+- merge expectation/target: merge to main; review surface: immutable commit and private regression/gate receipts, independently reviewed by coordinator before installation.
+- pre-existing dirt: none in owned worktree; canonical checkout's background-safety record, automation-status and self-repair edits are foreign and preserved.
+- exit: required checks, remote main containment, candidate/rollback handoff, authenticated release and existing cleanup broker disposition.
+- retain/delete: retain until the source delivery and independent candidate handoff are complete; cleanup through owner lease release and existing broker, never raw removal.
+- usable invocation: existing dashboard collect and loose-tree commands after independently approved installation.
+- record: `records/2026-11-04-collector-lock.md`.
 
 ### `codex/actionable-work-01a07221`
 - status: merged to `main` 2026-09-09 as `67450da` (Trevor authorized the merge); full `scripts/verify.sh` 40/40 on the merged tree; pushed to `origin/main`. Branch ref + worktree stay until the row's runtime cleanup conditions (installed feeder root repointed, no active writer or recovery dependency, owner-authenticated cleanup) are met by the owning Codex chat; remaining observation items stay in Active Next Steps.

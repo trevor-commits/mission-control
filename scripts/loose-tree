@@ -24,10 +24,12 @@ Usage:
 Statuses: todo doing blocked needs-decision awaiting-trevor done dropped
 """
 import argparse
+import errno
 import fcntl
 from contextlib import contextmanager
 import hashlib
 import json
+import math
 import os
 import sys
 import tempfile
@@ -78,11 +80,26 @@ def _load(path):
 
 
 @contextmanager
-def store_lock(path):
-    """Serialize the entire read/modify/write transaction across processes."""
+def store_lock(path, timeout_s=5):
+    """Bound acquisition of the shared atomic read/modify/write transaction."""
+    timeout_s = float(timeout_s)
+    if not math.isfinite(timeout_s) or timeout_s < 0:
+        raise ValueError("store lock timeout must be finite and nonnegative")
+    deadline = time.monotonic() + timeout_s
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
     with open(path + ".lock", "a", encoding="utf-8") as lock:
-        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        while True:
+            try:
+                fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except OSError as exc:
+                if exc.errno not in (errno.EACCES, errno.EAGAIN):
+                    raise
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError("timed out waiting for loose-tree store lock; "
+                                       "no changes made") from exc
+                time.sleep(min(.05, remaining))
         try:
             yield
         finally:
@@ -912,6 +929,10 @@ def main(argv=None):
         p.print_usage(sys.stderr)
         return 64
     try:
+        # Writers publish by atomic replace. Readers can use that committed
+        # snapshot without waiting for a writer or holding a lock on stdout.
+        if args.cmd in ("board", "show", "json", "queue"):
+            return args.func(args)
         with store_lock(_store_path(args)):
             return args.func(args)
     except (OSError, ValueError) as exc:
