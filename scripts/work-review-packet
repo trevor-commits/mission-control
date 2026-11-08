@@ -9,6 +9,7 @@ from collections import Counter, defaultdict
 from datetime import datetime
 import hashlib
 import json
+import math
 from pathlib import Path
 import sys
 import time
@@ -21,17 +22,19 @@ def digest(raw):
 
 
 def epoch(value):
-    if type(value) in (int, float):
+    if type(value) in (int, float) and math.isfinite(value):
         return value
     if isinstance(value, str):
         try:
-            return datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+            return parsed.timestamp() if parsed.tzinfo is not None else None
         except ValueError:
             pass
     return None
 
 
 def metadata(snapshot):
+    observed = epoch(snapshot.get("at", snapshot.get("observed_at")))
     rows = snapshot.get("sources", snapshot.get("threads", []))
     rows = rows + snapshot.get("pinnedThreads", [])
     result = {}
@@ -46,6 +49,7 @@ def metadata(snapshot):
             "id": row["id"], "title": str(row.get("title", ""))[:180],
             "updated_at": epoch(row.get("updatedAt")),
             "state": state,
+            "observed_at": epoch(row.get("observed_at")) if "observed_at" in row else observed,
         }
     return result
 
@@ -71,7 +75,7 @@ def build(checkpoint, ledger, native, previous, now, limit, stale_limit):
     def changed(owner):
         if owner not in current or owner not in prior:
             return None
-        return current[owner] != prior[owner]
+        return any(current[owner][k] != prior[owner][k] for k in ("title", "updated_at", "state"))
 
     def rank(row):
         node = by_id[row["id"]]
@@ -151,6 +155,104 @@ def build(checkpoint, ledger, native, previous, now, limit, stale_limit):
     }
 
 
+def validate_decisions(packet, proposal):
+    """Reject mechanically unsafe plans; this does not certify source semantics."""
+    if not isinstance(proposal, dict) or set(proposal) != {"outcomes"}:
+        raise ValueError("worksheet must contain only outcomes; unrelated actions are not validated")
+    expected = {r["id"]: (True, r) for r in packet["accepted_selected"]}
+    expected.update({r["id"]: (False, r) for r in packet["rotation"]["selected"]})
+    rows = proposal.get("outcomes")
+    if not isinstance(rows, list) or any(not isinstance(r, dict) for r in rows):
+        raise ValueError("outcomes must be an array of decision objects")
+    ids = [r.get("task_id") for r in rows]
+    if any(not isinstance(i, str) for i in ids) or len(set(ids)) != len(ids) or set(ids) != set(expected):
+        raise ValueError("every selected outcome ID is required exactly once; do not merge or omit obligations")
+    states = {"candidate", "held", "ready", "doing", "waiting", "closure_candidate"}
+    operation_states = {
+        "no_change": {"candidate", "held", "ready", "doing", "waiting"},
+        "record_answer": {"candidate", "held", "ready", "doing", "waiting"},
+        "record_state": {"ready", "doing", "waiting"},
+        "preserve_candidate": {"candidate"}, "preserve_hold": {"held"},
+        "prepare_dispatch": {"ready"}, "propose_closure": {"closure_candidate"},
+    }
+    questions = {"not_applicable", "unanswered", "unknown", "answered", "deferred", "cancelled"}
+    risks = {"internal", "customer", "financial", "production", "credential",
+             "destructive", "installed_runtime", "unknown"}
+    required = {"task_id", "accepted", "work_state", "question_id", "question_state",
+                "question_to_user", "newer_answer_coverage", "evidence_ids", "operation",
+                "closure_target", "risk_class", "independent_verification_required",
+                "stronger_review_required", "cursor_advance_to", "reason"}
+    routes, stronger = [], []
+    for row in rows:
+        ident = row["task_id"]
+        accepted, source = expected[ident]
+        if not required <= row.keys():
+            raise ValueError(ident + ": missing decision fields")
+        if not isinstance(row["reason"], str) or not row["reason"].strip():
+            raise ValueError(ident + ": reason must retain the next action and applicable restrictions")
+        if type(row["accepted"]) is not bool or (accepted and not row["accepted"]):
+            raise ValueError(ident + ": accepted work cannot be demoted to a suggestion")
+        if (row["work_state"] not in states or row["operation"] not in operation_states or
+                row["question_state"] not in questions or row["risk_class"] not in risks):
+            raise ValueError(ident + ": unknown decision value")
+        if row["work_state"] not in operation_states[row["operation"]]:
+            raise ValueError(ident + ": operation and work state disagree")
+        if (row["work_state"] == "candidate") != (not row["accepted"]):
+            raise ValueError(ident + ": candidate means unaccepted; waiting work and suggestions are distinct")
+        if not isinstance(row["evidence_ids"], list) or not row["evidence_ids"] or not all(
+                isinstance(i, str) and i.strip() for i in row["evidence_ids"]):
+            raise ValueError(ident + ": exact evidence IDs required")
+        if not accepted and row["accepted"]:
+            authority = row.get("authority_evidence_ids")
+            if not isinstance(authority, list) or not authority or not all(
+                    isinstance(i, str) and i.strip() for i in authority):
+                raise ValueError(ident + ": promoting a candidate requires exact user authority evidence IDs")
+        if row["question_id"] is None and row["question_state"] != "not_applicable":
+            raise ValueError(ident + ": request understood is not a human question answered")
+        if row["question_id"] is not None and (not isinstance(row["question_id"], str)
+                or not row["question_id"].strip() or row["question_state"] == "not_applicable"):
+            raise ValueError(ident + ": exact question identity and state must agree")
+        if row["operation"] == "record_answer" and row["question_state"] not in {"answered", "deferred", "cancelled"}:
+            raise ValueError(ident + ": record_answer requires a resolved exact human question")
+        if row["newer_answer_coverage"] not in {"complete", "partial", "unknown", "not_applicable"}:
+            raise ValueError(ident + ": invalid answer coverage")
+        if row["question_to_user"] is not None and (not isinstance(row["question_to_user"], str)
+                or not row["question_to_user"].strip() or row["question_state"] != "unanswered"
+                or row["newer_answer_coverage"] != "complete"):
+            raise ValueError(ident + ": ask only an unanswered exact question after complete relevant coverage")
+        if row["cursor_advance_to"] is not None:
+            raise ValueError(ident + ": metadata packet proves no new continuous transcript range; preserve cursors")
+        if (row["operation"] == "propose_closure") != (row["work_state"] == "closure_candidate"):
+            raise ValueError(ident + ": closure operation and work state must agree")
+        if row["operation"] == "propose_closure":
+            if row["closure_target"] != ident or row["independent_verification_required"] is not True:
+                raise ValueError(ident + ": exact closure target and independent verification required")
+            if row["risk_class"] != "internal" and row["stronger_review_required"] is not True:
+                raise ValueError(ident + ": consequential or unknown closure requires stronger review")
+        elif row["closure_target"] is not None:
+            raise ValueError(ident + ": non-closure cannot carry a closure target")
+        if type(row["independent_verification_required"]) is not bool or type(row["stronger_review_required"]) is not bool:
+            raise ValueError(ident + ": verification flags must be booleans")
+        if row["stronger_review_required"]:
+            stronger.append(ident)
+        if row["operation"] == "prepare_dispatch":
+            owner = source.get("owner", {})
+            observed = epoch(owner.get("observed_at"))
+            if (row["work_state"] != "ready" or not accepted or source.get("status") != "todo" or owner.get("state") != "idle"
+                    or not owner.get("id") or row.get("route_owner") != owner["id"]
+                    or source.get("dispatch", {}).get("state") in {"prepared", "unknown", "delivered"}):
+                raise ValueError(ident + ": routing requires a ready exact idle owner and no uncertain attempt")
+            if observed is None or not 0 <= packet["observed_at"] - observed <= 300:
+                raise ValueError(ident + ": owner observation is stale, missing or future-dated; re-read native state")
+            routes.append(owner["id"])
+    if len(routes) > 3 or len(routes) != len(set(routes)):
+        raise ValueError("maximum three proposed deliveries and one per owner")
+    return {"schema": "unfinished-work-decisions/v1", "valid": True,
+            "outcomes_checked": len(rows), "stronger_review_ids": stronger,
+            "execution_authorized": False,
+            "limits": "Shape and ledger invariants only. Check actual authority, latest answers, fresh routing preflight and artifacts independently; use installed CLI guards."}
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--state", type=Path, required=True, help="existing review state directory")
@@ -161,6 +263,7 @@ def main(argv=None):
     parser.add_argument("--limit", type=int, default=12)
     parser.add_argument("--stale-limit", type=int, default=4)
     parser.add_argument("--now", type=int, default=int(time.time()))
+    parser.add_argument("--decisions", type=Path, help="validate a proposed decision worksheet; never execute it")
     args = parser.parse_args(argv)
     if not 1 <= args.limit <= 50 or not 1 <= args.stale_limit <= 20:
         parser.error("limit must be 1..50 and stale-limit 1..20")
@@ -210,12 +313,20 @@ def main(argv=None):
                             for r in rows if r.get("provider", "unknown") == p), default="")
                     for p in providers}
                 packet["chatgpt_transcript_coverage"] = "unknown; metadata is not transcript evidence"
+        proposal = read(args.decisions) if args.decisions else None
+        result = validate_decisions(packet, proposal) if args.decisions else None
         for path, raw in raw_inputs.items():
             if path.read_bytes() != raw:
                 raise ValueError("input changed during preparation; obtain consistent fresh snapshots")
         packet["inputs"] = inputs
         packet["input_bytes"] = sum(v["bytes"] for v in inputs.values())
-        print(json.dumps(packet, ensure_ascii=False, indent=2))
+        if args.decisions:
+            result["proposal_sha256"] = inputs[str(args.decisions.resolve())]["sha256"]
+            result["inputs"] = inputs
+            result["selected_ids"] = [r["id"] for r in packet["accepted_selected"] + packet["rotation"]["selected"]]
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+        else:
+            print(json.dumps(packet, ensure_ascii=False, indent=2))
         return 0
     except (OSError, ValueError, KeyError, TypeError, AttributeError) as error:
         print("work-review-packet: " + str(error), file=sys.stderr)

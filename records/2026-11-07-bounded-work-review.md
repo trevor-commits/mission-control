@@ -71,3 +71,43 @@ Rollback is removal/reversion of this source-only helper and its documentation.
 No runtime or scheduler restoration is necessary because neither is changed.
 GPT-6 Luna/High is a provisional trial recommendation, not a completed pilot.
 First smaller-model natural-run acceptance remains open until actual execution.
+
+
+## November 8 model trial and repairs
+
+Trevor explicitly selected GPT-6 Luna/High for a read-only trial, required repair
+of misses and independent verification before daily use, and required newer
+answers first. The parent reviewer kept Astra/Max. Native worker metadata, actual
+tool calls, frozen input/key hashes, exact outputs and protected-file hashes are
+retained privately in the existing review state, not a transcript corpus.
+
+The initial 14-case calibration found four substantive misses: a missing stronger
+production-verification gate, accepted work demoted to a suggestion, two same-owner
+obligations merged, and an unaccepted suggestion labelled cancelled. The next
+24-case run corrected those distinctions but used an inconsistent operation/state
+pairing. Independent review also identified a contradictory timestamp fixture;
+its original key and qualification remain preserved rather than silently changed.
+
+A fresh 28-case run passed the mechanical gate and timestamp controls, but omitted
+explicit send restrictions from its decision explanation. The independent reviewer
+caught an incomplete parent evaluator that had counted only state/evidence checks.
+That failed result and original evaluator remain preserved; it did not authorize
+activation. The guard now rejects missing/empty reasons, and semantic review must
+check the exact recipient/body reference, permitted window and no-resend rule.
+
+The existing preparer now validates one worksheet row per selected outcome,
+accepted/candidate separation, exact question state, independent closure scope,
+stronger review gates, unchanged unread cursors, fresh native observations and
+per-owner delivery limits. Guard success always says execution_authorized:false.
+Twenty-seven focused regressions cover the observed failures and guard rejection
+paths. No additional dependency, scheduler, task store or autonomous executor was
+added. Frozen retests include real local artifact reads and deliberately incomplete
+files, plus missing/stale/future/per-row-old native observations.
+
+Final 30-case acceptance, independent review, normal source publication, native
+configuration and first natural scheduled execution are recorded separately in the
+private acceptance receipt. The last two cases are new constraint-transfer cases;
+prior failed outputs are never rewritten. Trial input/output/cached token counts
+are observed usage, not a cost comparison or proof of end-to-end savings. Evaluate
+useful findings, misses, repeated noise, elapsed time and actual usage after seven
+accepted daily runs; keep the user-confirmed daily cadence.

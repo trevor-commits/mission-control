@@ -2,11 +2,12 @@
 
 ## Active Next Steps
 
-- Bounded unfinished-work review: read-only packet preparation and a smaller-model
-  process, owned by the existing unfinished-work coordinator on main -> origin/main.
-  Helper, process and prompt have local verification; normal publication still uses
-  the required gate. Proposed model trial, installation and natural-run acceptance
-  remain separate. [Record](records/2026-11-07-bounded-work-review.md).
+- Bounded unfinished-work review: packet source published at3df1b91; the current
+  Luna/High trial adds decision validation, exact constraint retention and fresh
+  native-observation checks. Existing coordinator owns main -> origin/main.
+  Focused regressions pass; independent trial acceptance, native configuration
+  and first natural scheduled-run proof remain separately recorded.
+  [Record](records/2026-11-07-bounded-work-review.md).
 
 - Background safety audit: repair self-repair stale-input restart authority and missing job-health verification; keep supported DISABLE containment until reviewed installed acceptance. Owner Codex 01a1a5ca; self-contained/repo-only; source branch codex/background-safety-01a1a5ca, target main. Record: records/2026-11-04-background-safety.md.
   - [x] Reproduce unsafe restart/verification paths and verify the repairs; e1626fa passes 42 local/remote suites and exact-head Codex review.
