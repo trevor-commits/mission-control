@@ -2,6 +2,12 @@
 
 ## Active Next Steps
 
+- Bounded unfinished-work review: read-only packet preparation and a smaller-model
+  process, owned by the existing unfinished-work coordinator on main -> origin/main.
+  Helper, process and prompt have local verification; normal publication still uses
+  the required gate. Proposed model trial, installation and natural-run acceptance
+  remain separate. [Record](records/2026-11-07-bounded-work-review.md).
+
 - Background safety audit: repair self-repair stale-input restart authority and missing job-health verification; keep supported DISABLE containment until reviewed installed acceptance. Owner Codex 01a1a5ca; self-contained/repo-only; source branch codex/background-safety-01a1a5ca, target main. Record: records/2026-11-04-background-safety.md.
   - [x] Reproduce unsafe restart/verification paths and verify the repairs; e1626fa passes 42 local/remote suites and exact-head Codex review.
   - [ ] Finish final documentation review and publish the pinned source to main; preserve the collector-lock repair.

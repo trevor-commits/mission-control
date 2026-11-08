@@ -193,6 +193,7 @@ run "decision operation bounds" python3 scripts/decision-bounds.test.py
 run "ER-134 usability" /bin/bash scripts/er134-usability.test.sh
 run "loose-end runner" /bin/bash scripts/loose-end-runner.test.sh
 run "loose ends" /bin/bash scripts/loose-ends.test.sh
+run "bounded work review packet" python3 scripts/work-review-packet.test.py
 run "loose tree" /bin/bash scripts/loose-tree.test.sh
 run "shared Mission Control policy" /bin/bash scripts/mission-control-common.test.sh
 run "Morning Brief" /bin/bash scripts/morning-brief.test.sh

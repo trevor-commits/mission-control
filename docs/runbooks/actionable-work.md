@@ -8,6 +8,10 @@ The existing `review-unfinished-chat-work` heartbeat owns this coordination at
 
 ## Review and reconcile
 
+For bounded deterministic preparation and the smaller-model rollout plan, use
+[bounded-work-review.md](bounded-work-review.md). Its packet selects evidence;
+the authorization, routing and verification rules below remain unchanged.
+
 Read the existing checkpoint/latest report and `loose-tree json`. Resolve source
 identity, latest actual user intent, linked continuations and authoritative
 artifacts before acting. Old source titles, source age, idle state and assistant
