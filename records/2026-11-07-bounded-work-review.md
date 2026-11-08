@@ -111,3 +111,58 @@ prior failed outputs are never rewritten. Trial input/output/cached token counts
 are observed usage, not a cost comparison or proof of end-to-end savings. Evaluate
 useful findings, misses, repeated noise, elapsed time and actual usage after seven
 accepted daily runs; keep the user-confirmed daily cadence.
+
+## November 8 completion prompt and newly observed gap
+
+Trevor requested next steps and a thorough prompt for one sustained autonomous
+implementation and independent verification run. The artifact is
+[unfinished-work-completion.prompt.md](../docs/runbooks/unfinished-work-completion.prompt.md).
+Its scope is this review system and coordination of accepted work, with original
+project and external-action boundaries retained. Authoring the prompt does not
+execute its implementation plan or certify future scheduled events.
+
+Current source is `f46babd`, already published with the normal43-suite gate.
+The final30-case Luna/High trial and independent27-test review passed. A direct
+heartbeat model override was rejected by the native interface; the supported
+configuration retains the selected coordinator and uses a read-only Luna/High
+classifier. First actual scheduled-run acceptance was still open at this intake.
+The current prompt-authoring environment lacks native chat/scheduler tools;
+the execution prompt requires capability discovery instead of assuming availability.
+
+A read-only reproduction found a separate current-view consistency gap:
+`latest.md` states535 nodes/290 candidates while its bound `inventory.json`
+contains536/291. Both checkpoint hashes match, and packet preparation exits0.
+The newer installed CLI snapshot contains539/294, which is legitimate later
+intake; it is not itself evidence of corruption. The missing invariant is
+semantic agreement between current views claiming one committed generation.
+Historical snapshots should stay historical. This is not proof that an accepted
+task was lost or that the earlier loose-tree JSON repair regressed.
+
+Keep the existing snapshot/hash protection. The implementation prompt requires
+one shared current-view projection/check, a meaningful stale-but-correctly-hashed
+regression, interruption/concurrent-intake recovery, and independent verification
+before accepting the changed runtime/pins. No second state store or monitoring
+service is proposed. Source freshness causes, actual scheduled execution, and
+combined coordinator/worker savings remain distinct unresolved checks.
+
+Private intake and source-table evidence is retained in the existing review
+state's `completion-prompt-20261108/` directory. The resolved chat table stays
+private. The correct handoff syntax is `chat-source prompt --latest-exchange`:
+bare `latest-exchange` was treated as a source-title query and exited1; the
+corrected bounded metadata command succeeded in3.331seconds. The original
+process had exited and was reaped; no unrelated process was signalled.
+
+The prompt passed the installed cold-start structure validator and a fresh-context
+independent read-only review. The reviewer correctly identified scope, mutation
+boundaries, the exact report destination and first command without chat history.
+Its three concrete suggestions were applied: an executable Python3.11 help
+command, the existing code-only installation route with its holds, and an
+up-to-three priority cap. Unchanged model cases reuse their existing receipts;
+changed semantics require affected and new independent cases.
+
+Authoring ownership: existing unfinished-work coordinator, main -> origin/main;
+purpose is this prompt and its existing record/todo links. Exit is validated,
+independently reviewed normal source delivery. Runtime repairs described by the
+prompt remain unexecuted by this authoring task. The required publication gate
+and remote readback are retained in the same private evidence directory; no
+hosted workflow or production activation is requested by prompt publication.

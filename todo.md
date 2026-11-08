@@ -2,12 +2,24 @@
 
 ## Active Next Steps
 
-- Bounded unfinished-work review: packet source published at3df1b91; the current
-  Luna/High trial adds decision validation, exact constraint retention and fresh
-  native-observation checks. Existing coordinator owns main -> origin/main.
-  Focused regressions pass; independent trial acceptance, native configuration
-  and first natural scheduled-run proof remain separately recorded.
-  [Record](records/2026-11-07-bounded-work-review.md).
+- Bounded unfinished-work review completion: P1; owner existing unfinished-work
+  coordinator; target TODO: verify at the actual scheduled acceptance event.
+  Source `f46babd` and the bounded Luna/High classification trial are verified;
+  first natural-run acceptance and combined usage savings remain open.
+  [Implementation prompt](docs/runbooks/unfinished-work-completion.prompt.md);
+  [record](records/2026-11-07-bounded-work-review.md).
+  - [ ] P2; owner same coordinator; target before rollout closure: repair current
+    report/inventory semantic disagreement despite matching hashes, with a
+    regression and preserved historical snapshots. This is distinct from the
+    previously repaired loose-tree JSON projection.
+  - [ ] P1; owner existing collector/review owners; target TODO: verify after
+    current capability and freshness checks: diagnose actual stale sources and
+    preserve blocked routing when native controls are unavailable.
+  - [ ] P2; owner same coordinator; target before rollout closure: reconcile
+    provisional source instructions with the verified coordinator/worker design;
+    keep frozen trials and past failures intact.
+  - [ ] P2; owner same coordinator; target after seven accepted natural runs:
+    assess total coordinator-plus-classifier work and useful findings/noise.
 
 - Background safety audit: repair self-repair stale-input restart authority and missing job-health verification; keep supported DISABLE containment until reviewed installed acceptance. Owner Codex 01a1a5ca; self-contained/repo-only; source branch codex/background-safety-01a1a5ca, target main. Record: records/2026-11-04-background-safety.md.
   - [x] Reproduce unsafe restart/verification paths and verify the repairs; e1626fa passes 42 local/remote suites and exact-head Codex review.
